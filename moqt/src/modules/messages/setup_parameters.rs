@@ -4,6 +4,7 @@ use super::payload::Payload;
 use anyhow::{bail, ensure, Result};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
+// TODO FIXME: そもそもvalueだけ持たせれば後ろの個別のstructはいらないのでは?
 pub(crate) enum SetupParameter {
     RoleParameter(RoleParameter),
     PathParameter(PathParameter),
@@ -34,11 +35,7 @@ impl Payload for SetupParameter {
                     bail!("Invalid value in ROLE parameter {:?}", err);
                 }
 
-                Ok(SetupParameter::RoleParameter(RoleParameter {
-                    key: SetupParameterType::Role,
-                    value_length,
-                    value: value?,
-                }))
+                Ok(SetupParameter::RoleParameter(RoleParameter::new(value?)))
             }
             SetupParameterType::Path => {
                 let value_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
@@ -65,6 +62,16 @@ pub(crate) struct RoleParameter {
     pub value: RoleCase,
 }
 
+impl RoleParameter {
+    pub fn new(role: RoleCase) -> Self {
+        RoleParameter {
+            key: SetupParameterType::Role,
+            value_length: 0x01,
+            value: role,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
 #[repr(u8)]
 pub enum RoleCase {
@@ -77,6 +84,16 @@ pub(crate) struct PathParameter {
     pub key: SetupParameterType, // 0x01
     pub value_length: u8,        // tmp
     pub value: String,
+}
+
+impl PathParameter {
+    pub fn new(value: String) -> Self {
+        PathParameter {
+            key: SetupParameterType::Path,
+            value_length: value.len() as u8,
+            value,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
