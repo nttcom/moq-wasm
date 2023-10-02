@@ -1,5 +1,8 @@
+use num_enum::IntoPrimitive;
+
 // 仮
-#[derive(Debug)]
+#[derive(Debug, IntoPrimitive)]
+#[repr(u8)]
 pub enum TerminationErrorCode {
     SessionTerminated = 0x0,
     GenericError = 0x1,

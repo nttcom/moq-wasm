@@ -58,10 +58,10 @@ pub(crate) fn write_variable_integer(value: u64) -> BytesMut {
 }
 
 #[cfg(test)]
-mod tests {
+mod decoder {
     use bytes::{Buf, BufMut, BytesMut};
 
-    use super::{read_variable_integer, write_variable_integer};
+    use super::read_variable_integer;
 
     use std::io::Cursor;
 
@@ -135,6 +135,13 @@ mod tests {
 
         assert!(decoded_value.is_err());
     }
+}
+
+#[cfg(test)]
+mod encoder {
+    use bytes::Buf;
+
+    use crate::modules::variable_integer::write_variable_integer;
 
     #[test]
     fn encode_single_byte_1() {
