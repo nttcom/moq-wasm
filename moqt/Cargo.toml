@@ -10,4 +10,6 @@ anyhow = { version = "1.0.75", features = ["backtrace"] }
 tokio = { version = "1.32.0", features = ["rt-multi-thread"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
-wtransport = "0.1.4"
+wtransport = "0.1.5"
+bytes = "1"
+num_enum = "0.7.0"
