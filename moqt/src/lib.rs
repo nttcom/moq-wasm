@@ -1,13 +1,24 @@
-pub mod constants;
-// mod modules;
-use constants::UnderlayType;
+mod modules;
+use bytes::BytesMut;
+use modules::buffer_manager;
+use modules::constants::UnderlayType;
+use modules::message_handler::*;
+use modules::moqt_client;
+use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Ok, Result};
 use tracing::{self, Instrument};
 use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
 use wtransport::{endpoint::IncomingSession, tls::Certificate, Endpoint, ServerConfig};
+
+use crate::modules::buffer_manager::buffer_manager;
+use crate::modules::buffer_manager::BufferCommand;
+
+pub use modules::constants;
 
 pub enum AuthCallbackType {
     Announce,
@@ -20,7 +31,8 @@ pub struct MOQTConfig {
     pub key_path: String,
     pub keep_alive_interval_sec: u64,
     pub underlay: UnderlayType,
-    pub auth_callback: Option<fn(track_name: String, auth_payload: String, AuthCallbackType)>,
+    pub auth_callback:
+        Option<fn(track_name: String, auth_payload: String, AuthCallbackType) -> Result<()>>,
 }
 
 impl MOQTConfig {
@@ -42,7 +54,8 @@ pub struct MOQT {
     key_path: String,
     keep_alive_interval_sec: u64,
     underlay: UnderlayType,
-    auth_callback: Option<fn(track_name: String, auth_payload: String, AuthCallbackType)>,
+    auth_callback:
+        Option<fn(track_name: String, auth_payload: String, AuthCallbackType) -> Result<()>>,
 }
 
 impl MOQT {
@@ -59,13 +72,16 @@ impl MOQT {
     pub async fn start(&self) -> Result<()> {
         init_logging();
 
+        let (tx, mut rx) = mpsc::channel::<BufferCommand>(1024);
+
         if let UnderlayType::WebTransport = self.underlay {
         } else {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay)
         }
 
-        // 以下はWebTransportの場合
+        tokio::spawn(async move { buffer_manager(&mut rx).await });
 
+        // 以下はWebTransportの場合
         let config = ServerConfig::builder()
             .with_bind_default(self.port)
             .with_certificate(
@@ -84,9 +100,10 @@ impl MOQT {
         tracing::info!("Server ready!");
 
         for id in 0.. {
+            let tx = tx.clone();
             let incoming_session = server.accept().await;
             tokio::spawn(
-                handle_connection(incoming_session)
+                handle_connection(tx, incoming_session)
                     .instrument(tracing::info_span!("Connection", id)),
             );
         }
@@ -95,14 +112,15 @@ impl MOQT {
     }
 }
 
-async fn handle_connection(incoming_session: IncomingSession) {
-    let result = handle_connection_impl(incoming_session).await;
+async fn handle_connection(tx: mpsc::Sender<BufferCommand>, incoming_session: IncomingSession) {
+    let result = handle_connection_impl(tx, incoming_session).await;
     tracing::error!("{:?}", result);
 }
 
-async fn handle_connection_impl(incoming_session: IncomingSession) -> Result<()> {
-    let mut buffer = vec![0; 65536].into_boxed_slice();
-
+async fn handle_connection_impl(
+    tx: mpsc::Sender<BufferCommand>,
+    incoming_session: IncomingSession,
+) -> Result<()> {
     tracing::info!("Waiting for session request...");
 
     let session_request = incoming_session.await?;
@@ -120,72 +138,133 @@ async fn handle_connection_impl(incoming_session: IncomingSession) -> Result<()>
     let span = tracing::info_span!("sid", stable_id);
     let _guard = span.enter();
 
+    let client = Arc::new(Mutex::new(moqt_client::MOQTClient::new(stable_id)));
+
     tracing::info!("Waiting for data from client...");
+
+    let (close_tx, mut close_rx) = mpsc::channel::<(u64,String)>(32);
 
     loop {
         tokio::select! {
             stream = connection.accept_bi() => {
                 let span = tracing::info_span!("sid", stable_id);
 
-                let mut stream = stream?;
-                tracing::info!("Accepted BI stream");
+                let stream = stream?;
 
-                let bytes_read = match stream.1.read(&mut buffer).instrument(span).await? {
-                    Some(bytes_read) => bytes_read,
-                    None => continue,
-                };
-
-                let span = tracing::info_span!("sid", stable_id);
-                let _ = span.in_scope(|| -> Result<()> {
-                    let str_data = std::str::from_utf8(&buffer[..bytes_read])?;
-
-                    tracing::info!("Received (bi) '{str_data}' from client");
-
-                    Ok(())
+                span.in_scope(|| {
+                    tracing::info!("Accepted BI stream");
                 });
 
-                stream.0.write_all(b"ACK").await?;
+                let stream_id = stream.1.id().into_u64();
+
+                let (mut write_stream, mut read_stream) = stream;
+
+                let tx = tx.clone();
+                let close_tx = close_tx.clone();
+                let client = client.clone();
+                tokio::spawn(async move {
+                    let mut buffer = vec![0; 65536].into_boxed_slice();
+
+                    loop {
+                        let span = tracing::info_span!("sid", stable_id);
+                        let bytes_read = match read_stream.read(&mut buffer).instrument(span).await? {
+                            Some(bytes_read) => bytes_read,
+                            None => break,
+                        };
+
+                        let span = tracing::info_span!("sid", stable_id);
+
+                        span.in_scope(|| {
+                            tracing::info!("bytes_read: {}", bytes_read);
+                        });
+
+                        let tx = tx.clone();
+                        let read_buf = BytesMut::from(&buffer[..bytes_read]);
+                        let buf = buffer_manager::request_buffer(tx,stable_id,stream_id).await;
+                        let mut buf = buf.lock().await;
+                        buf.extend_from_slice(&read_buf.to_vec());
+
+                        let mut client = client.lock().await;
+                        let message_result = message_handler(&mut buf, StreamType::Bi, UnderlayType::WebTransport,  &mut client);
+
+                        match message_result {
+                            MessageProcessResult::Success(buf) => {
+                                write_stream.write_all(&mut buf.to_vec()).await?;
+                                span.in_scope(|| {
+                                    tracing::info!("sent {:?}", buf.to_vec());
+                                });
+                            },
+                            MessageProcessResult::Failure => {
+                                close_tx.send((0,String::from(""))).await?;
+                                break;
+                            },
+                            MessageProcessResult::Fragment => (),
+                        };
+                    }
+
+                    Ok::<()>(())
+                });
             },
             stream = connection.accept_uni() => {
                 let span = tracing::info_span!("sid", stable_id);
 
-                let mut stream = stream?;
+                let stream = stream?;
                 tracing::info!("Accepted UNI stream");
 
-                let bytes_read = match stream.read(&mut buffer).instrument(span).await? {
-                    Some(bytes_read) => bytes_read,
-                    None => continue,
-                };
+                let stream_id = stream.id().into_u64();
 
-                let span = tracing::info_span!("sid", stable_id);
-                let _ = span.in_scope(|| -> Result<()> {
-                    let str_data = std::str::from_utf8(&buffer[..bytes_read])?;
+                let mut read_stream = stream;
+                let mut write_stream = connection.open_uni().await?.await?;
 
-                    tracing::info!("Received (uni) '{str_data}' from client");
+                let tx = tx.clone();
+                let close_tx = close_tx.clone();
+                let client = client.clone();
+                tokio::spawn(async move {
+                    let mut buffer = vec![0; 65536].into_boxed_slice();
 
-                    Ok(())
+                    loop {
+                        let span = tracing::info_span!("sid", stable_id);
+                        let bytes_read = match read_stream.read(&mut buffer).instrument(span).await? {
+                            Some(bytes_read) => bytes_read,
+                            None => break,
+                        };
+
+                        tracing::info!("bytes_read: {}", bytes_read);
+
+                        let tx = tx.clone();
+                        let read_buf = BytesMut::from(&buffer[..bytes_read]);
+                        let buf = buffer_manager::request_buffer(tx,stable_id,stream_id).await;
+                        let mut buf = buf.lock().await;
+                        buf.extend_from_slice(&read_buf.to_vec());
+
+                        let mut client = client.lock().await;
+                        let message_result = message_handler(&mut buf, StreamType::Uni, UnderlayType::WebTransport,  &mut client);
+
+                        match message_result {
+                            MessageProcessResult::Success(buf) => {
+                                write_stream.write_all(&mut buf.to_vec()).await?;
+                                tracing::info!("sent {:?}", buf.to_vec());
+                            },
+                            MessageProcessResult::Failure => {
+                                close_tx.send((0,String::from(""))).await?;
+                                break;
+                            },
+                            MessageProcessResult::Fragment => (),
+                        };
+                    }
+
+                    Ok::<()>(())
                 });
-
-                let mut stream = connection.open_uni().await?.await?;
-                stream.write_all(b"ACK").await?;
             },
-            // MOQTではdatagramは使わないため
-            // dgram = connection.receive_datagram() => {
-            //     let span = tracing::info_span!("sid", stable_id);
-
-            //     let dgram = dgram?;
-            //     let str_data = std::str::from_utf8(&dgram)?;
-
-            //     let _ = span.in_scope(|| -> Result<()> {
-            //         tracing::info!("Received (dgram) '{str_data}' from client");
-
-            //         Ok(())
-            //     });
-
-            //     connection.send_datagram(b"ACK")?;
-            // },
             _ = connection.closed() => {
                 tracing::info!("Connection closed, rtt={:?}", connection.rtt());
+                break;
+            },
+            Some((code, reason)) = close_rx.recv() => {
+                tracing::info!("close channel received");
+                // FIXME: closeしたいけどVarIntがexportされていないのでお茶を濁す
+                // wtransport-protoにあるかも?
+                // connection.close(VarInt)
                 break;
             }
         }
@@ -205,18 +284,3 @@ fn init_logging() {
         .with_env_filter(env_filter)
         .init();
 }
-
-// pub fn add(left: usize, right: usize) -> usize {
-//     left + right
-// }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-
-//     #[test]
-//     fn it_works() {
-//         let result = add(2, 2);
-//         assert_eq!(result, 4);
-//     }
-// }
