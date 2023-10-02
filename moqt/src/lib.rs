@@ -202,6 +202,8 @@ async fn handle_connection_impl(
         }
     }
 
+    tx.send(BufferCommand::ReleaseSession { session_id: stable_id }).await?;
+
     Ok(())
 }
 
@@ -252,6 +254,8 @@ async fn handle_stream(
             MessageProcessResult::Fragment => (),
         };
     }
+
+    tx.send(BufferCommand::ReleaseStream { session_id: stable_id, stream_id }).await?;
 
     Ok::<()>(())
 }
