@@ -1,15 +1,17 @@
 use std::io::Cursor;
 
+use crate::constants::TerminationErrorCode;
+use crate::modules::messages::setup_message::ClientSetupMessage;
+
 use super::constants::UnderlayType;
 use super::handlers::server_setup_handler::setup_handler;
-use super::message_type::{self, MessageType};
+use super::message_type::MessageType;
 use super::messages::payload::Payload;
 use super::moqt_client::{MOQTClient, MOQTClientStatus};
 use super::variable_integer::{read_variable_integer, write_variable_integer};
-use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StreamType {
     Uni,
     Bi,
@@ -17,7 +19,7 @@ pub(crate) enum StreamType {
 
 pub(crate) enum MessageProcessResult {
     Success(BytesMut),
-    Failure,
+    Failure(TerminationErrorCode, String),
     Fragment,
 }
 
@@ -40,7 +42,7 @@ pub(crate) fn message_handler(
         read_buf.advance(read_cur.position() as usize);
 
         tracing::info!("{:?}", err);
-        return MessageProcessResult::Failure;
+        return MessageProcessResult::Failure(TerminationErrorCode::GenericError, err.to_string());
     }
     let type_value = type_value.unwrap();
 
@@ -49,7 +51,7 @@ pub(crate) fn message_handler(
         read_buf.advance(read_cur.position() as usize);
 
         tracing::info!("message_type is not u8 {:?}", err);
-        return MessageProcessResult::Failure;
+        return MessageProcessResult::Failure(TerminationErrorCode::GenericError, err.to_string());
     }
     let type_value = type_value.unwrap();
 
@@ -59,7 +61,10 @@ pub(crate) fn message_handler(
             read_buf.advance(read_cur.position() as usize);
 
             tracing::info!("message_type is wrong {:?}", err);
-            return MessageProcessResult::Failure;
+            return MessageProcessResult::Failure(
+                TerminationErrorCode::GenericError,
+                err.to_string(),
+            );
         }
     };
 
@@ -69,8 +74,9 @@ pub(crate) fn message_handler(
     if message_type == MessageType::Setup && stream_type == StreamType::Uni {
         read_buf.advance(read_cur.position() as usize);
 
-        tracing::info!("Setup message must be sent on bidirectional stream");
-        return MessageProcessResult::Failure;
+        let message = String::from("Setup message must be sent on bidirectional stream");
+        tracing::info!(message);
+        return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
     }
 
     if read_cur.remaining() == 0 {
@@ -85,7 +91,7 @@ pub(crate) fn message_handler(
         read_buf.advance(read_cur.position() as usize);
 
         tracing::info!("{:?}", err);
-        return MessageProcessResult::Failure;
+        return MessageProcessResult::Failure(TerminationErrorCode::GenericError, err.to_string());
     }
     let payload_length = payload_length.unwrap() as usize;
 
@@ -106,13 +112,29 @@ pub(crate) fn message_handler(
     // 各メッセージでクラス化
     // 自分はサーバであるととりあえず仮定
     match message_type {
-        MessageType::Object => {
-            if client.status() != MOQTClientStatus::SetUp {
-                return MessageProcessResult::Failure;
-            }
-        }
+        // MessageType::Object => {
+        //     if client.status() != MOQTClientStatus::SetUp {
+        //         return MessageProcessResult::Failure;
+        //     }
+        // }
         MessageType::Setup => {
-            let setup_result = setup_handler(&mut payload_buf, underlay_type, client);
+            if client.status() != MOQTClientStatus::Connected {
+                let message = String::from("Invalid timing");
+                tracing::info!(message);
+                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
+            }
+
+            let client_setup_message = ClientSetupMessage::depacketize(&mut payload_buf);
+            if let Err(err) = client_setup_message {
+                tracing::info!("{:#?}", err);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::GenericError,
+                    err.to_string(),
+                );
+            }
+            let client_setup_message = client_setup_message.unwrap();
+
+            let setup_result = setup_handler(client_setup_message, underlay_type, client);
             match setup_result {
                 Ok(server_setup_message) => {
                     server_setup_message.packetize(&mut write_buf);
@@ -120,41 +142,45 @@ pub(crate) fn message_handler(
                 Err(err) => {
                     // fix
                     tracing::info!("{:#?}", err);
-                    return MessageProcessResult::Failure;
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::GenericError,
+                        err.to_string(),
+                    );
                 }
             }
         }
-        MessageType::SubscribeRequest => {
-            if client.status() != MOQTClientStatus::SetUp {
-                return MessageProcessResult::Failure;
-            }
-        }
-        MessageType::SubscribeOk => {
-            if client.status() != MOQTClientStatus::SetUp {
-                return MessageProcessResult::Failure;
-            }
-        }
-        MessageType::SubscribeError => {
-            if client.status() != MOQTClientStatus::SetUp {
-                return MessageProcessResult::Failure;
-            }
-        }
-        MessageType::Announce => {
-            if client.status() != MOQTClientStatus::SetUp {
-                return MessageProcessResult::Failure;
-            }
-        }
-        MessageType::AnnounceOk => {
-            if client.status() != MOQTClientStatus::SetUp {
-                return MessageProcessResult::Failure;
-            }
-        }
-        MessageType::AnnounceError => {
-            if client.status() != MOQTClientStatus::SetUp {
-                return MessageProcessResult::Failure;
-            }
-        }
-        MessageType::GoAway => {}
+        // MessageType::SubscribeRequest => {
+        //     if client.status() != MOQTClientStatus::SetUp {
+        //         return MessageProcessResult::Failure;
+        //     }
+        // }
+        // MessageType::SubscribeOk => {
+        //     if client.status() != MOQTClientStatus::SetUp {
+        //         return MessageProcessResult::Failure;
+        //     }
+        // }
+        // MessageType::SubscribeError => {
+        //     if client.status() != MOQTClientStatus::SetUp {
+        //         return MessageProcessResult::Failure;
+        //     }
+        // }
+        // MessageType::Announce => {
+        //     if client.status() != MOQTClientStatus::SetUp {
+        //         return MessageProcessResult::Failure;
+        //     }
+        // }
+        // MessageType::AnnounceOk => {
+        //     if client.status() != MOQTClientStatus::SetUp {
+        //         return MessageProcessResult::Failure;
+        //     }
+        // }
+        // MessageType::AnnounceError => {
+        //     if client.status() != MOQTClientStatus::SetUp {
+        //         return MessageProcessResult::Failure;
+        //     }
+        // }
+        // MessageType::GoAway => {}
+        _ => {}
     };
 
     let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);

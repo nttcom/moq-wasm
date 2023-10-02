@@ -46,6 +46,17 @@ impl Payload for ClientSetupMessage {
     }
 }
 
+#[cfg(test)]
+impl ClientSetupMessage {
+    pub fn new(supported_versions: Vec<u8>, setup_parameters: Vec<SetupParameter>) -> Self {
+        ClientSetupMessage {
+            number_of_supported_versions: supported_versions.len() as u8,
+            supported_versions,
+            setup_parameters,
+        }
+    }
+}
+
 pub(crate) struct ServerSetupMessage {
     pub(crate) selected_version: u8,
     pub(crate) setup_parameters: Vec<SetupParameter>,

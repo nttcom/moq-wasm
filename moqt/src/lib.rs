@@ -4,8 +4,12 @@ use modules::buffer_manager;
 use modules::constants::UnderlayType;
 use modules::message_handler::*;
 use modules::moqt_client;
-use tokio::sync::Mutex;
+use modules::moqt_client::MOQTClient;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::Mutex;
+use wtransport::RecvStream;
+use wtransport::SendStream;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -138,11 +142,11 @@ async fn handle_connection_impl(
     let span = tracing::info_span!("sid", stable_id);
     let _guard = span.enter();
 
-    let client = Arc::new(Mutex::new(moqt_client::MOQTClient::new(stable_id)));
+    let client = Arc::new(Mutex::new(MOQTClient::new(stable_id)));
 
     tracing::info!("Waiting for data from client...");
 
-    let (close_tx, mut close_rx) = mpsc::channel::<(u64,String)>(32);
+    let (close_tx, mut close_rx) = mpsc::channel::<(u64, String)>(32);
 
     loop {
         tokio::select! {
@@ -163,46 +167,7 @@ async fn handle_connection_impl(
                 let close_tx = close_tx.clone();
                 let client = client.clone();
                 tokio::spawn(async move {
-                    let mut buffer = vec![0; 65536].into_boxed_slice();
-
-                    loop {
-                        let span = tracing::info_span!("sid", stable_id);
-                        let bytes_read = match read_stream.read(&mut buffer).instrument(span).await? {
-                            Some(bytes_read) => bytes_read,
-                            None => break,
-                        };
-
-                        let span = tracing::info_span!("sid", stable_id);
-
-                        span.in_scope(|| {
-                            tracing::info!("bytes_read: {}", bytes_read);
-                        });
-
-                        let tx = tx.clone();
-                        let read_buf = BytesMut::from(&buffer[..bytes_read]);
-                        let buf = buffer_manager::request_buffer(tx,stable_id,stream_id).await;
-                        let mut buf = buf.lock().await;
-                        buf.extend_from_slice(&read_buf.to_vec());
-
-                        let mut client = client.lock().await;
-                        let message_result = message_handler(&mut buf, StreamType::Bi, UnderlayType::WebTransport,  &mut client);
-
-                        match message_result {
-                            MessageProcessResult::Success(buf) => {
-                                write_stream.write_all(&mut buf.to_vec()).await?;
-                                span.in_scope(|| {
-                                    tracing::info!("sent {:?}", buf.to_vec());
-                                });
-                            },
-                            MessageProcessResult::Failure => {
-                                close_tx.send((0,String::from(""))).await?;
-                                break;
-                            },
-                            MessageProcessResult::Fragment => (),
-                        };
-                    }
-
-                    Ok::<()>(())
+                    handle_stream(StreamType::Bi,client, stable_id, stream_id, &mut read_stream, &mut write_stream, tx, close_tx).await
                 });
             },
             stream = connection.accept_uni() => {
@@ -220,40 +185,7 @@ async fn handle_connection_impl(
                 let close_tx = close_tx.clone();
                 let client = client.clone();
                 tokio::spawn(async move {
-                    let mut buffer = vec![0; 65536].into_boxed_slice();
-
-                    loop {
-                        let span = tracing::info_span!("sid", stable_id);
-                        let bytes_read = match read_stream.read(&mut buffer).instrument(span).await? {
-                            Some(bytes_read) => bytes_read,
-                            None => break,
-                        };
-
-                        tracing::info!("bytes_read: {}", bytes_read);
-
-                        let tx = tx.clone();
-                        let read_buf = BytesMut::from(&buffer[..bytes_read]);
-                        let buf = buffer_manager::request_buffer(tx,stable_id,stream_id).await;
-                        let mut buf = buf.lock().await;
-                        buf.extend_from_slice(&read_buf.to_vec());
-
-                        let mut client = client.lock().await;
-                        let message_result = message_handler(&mut buf, StreamType::Uni, UnderlayType::WebTransport,  &mut client);
-
-                        match message_result {
-                            MessageProcessResult::Success(buf) => {
-                                write_stream.write_all(&mut buf.to_vec()).await?;
-                                tracing::info!("sent {:?}", buf.to_vec());
-                            },
-                            MessageProcessResult::Failure => {
-                                close_tx.send((0,String::from(""))).await?;
-                                break;
-                            },
-                            MessageProcessResult::Fragment => (),
-                        };
-                    }
-
-                    Ok::<()>(())
+                    handle_stream(StreamType::Uni,client, stable_id, stream_id, &mut read_stream, &mut write_stream, tx, close_tx).await
                 });
             },
             _ = connection.closed() => {
@@ -271,6 +203,57 @@ async fn handle_connection_impl(
     }
 
     Ok(())
+}
+
+async fn handle_stream(
+    stream_type: StreamType,
+    client: Arc<Mutex<MOQTClient>>,
+    stable_id: usize,
+    stream_id: u64,
+    read_stream: &mut RecvStream,
+    write_stream: &mut SendStream,
+    tx: Sender<BufferCommand>,
+    close_tx: Sender<(u64, String)>,
+) -> Result<()> {
+    let mut buffer = vec![0; 65536].into_boxed_slice();
+
+    loop {
+        let span = tracing::info_span!("sid", stable_id);
+        let bytes_read = match read_stream.read(&mut buffer).instrument(span).await? {
+            Some(bytes_read) => bytes_read,
+            None => break,
+        };
+
+        tracing::info!("bytes_read: {}", bytes_read);
+
+        let tx = tx.clone();
+        let read_buf = BytesMut::from(&buffer[..bytes_read]);
+        let buf = buffer_manager::request_buffer(tx, stable_id, stream_id).await;
+        let mut buf = buf.lock().await;
+        buf.extend_from_slice(&read_buf.to_vec());
+
+        let mut client = client.lock().await;
+        let message_result = message_handler(
+            &mut buf,
+            stream_type.clone(),
+            UnderlayType::WebTransport,
+            &mut client,
+        );
+
+        match message_result {
+            MessageProcessResult::Success(buf) => {
+                write_stream.write_all(&mut buf.to_vec()).await?;
+                tracing::info!("sent {:?}", buf.to_vec());
+            }
+            MessageProcessResult::Failure(code, message) => {
+                close_tx.send((u8::from(code) as u64, message)).await?;
+                break;
+            }
+            MessageProcessResult::Fragment => (),
+        };
+    }
+
+    Ok::<()>(())
 }
 
 fn init_logging() {
