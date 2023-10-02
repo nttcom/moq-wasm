@@ -7,7 +7,7 @@ pub enum TerminationErrorCode {
     GoAway = 0x10,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum UnderlayType {
     QUIC,
     WebTransport,
