@@ -3,4 +3,5 @@ resolver = "2"
 members = [
     'moqt-core',
     'moqt-server',
+    'moqt-server-sample',
 ]
