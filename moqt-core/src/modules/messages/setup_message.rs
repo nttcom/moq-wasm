@@ -8,7 +8,7 @@ use super::{payload::Payload, setup_parameters::SetupParameter};
 
 pub(crate) struct ClientSetupMessage {
     pub(crate) number_of_supported_versions: u8,
-    pub(crate) supported_versions: Vec<u8>,
+    pub(crate) supported_versions: Vec<u32>,
     pub(crate) setup_parameters: Vec<SetupParameter>,
 }
 
@@ -18,7 +18,7 @@ impl Payload for ClientSetupMessage {
 
         let mut supported_versions = Vec::with_capacity(number_of_supported_versions as usize);
         for _ in 0..number_of_supported_versions {
-            let supported_version = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+            let supported_version = u32::try_from(read_variable_integer_from_buffer(buf)?)?;
             supported_versions.push(supported_version);
         }
 
@@ -43,7 +43,7 @@ impl Payload for ClientSetupMessage {
 
 #[cfg(test)]
 impl ClientSetupMessage {
-    pub fn new(supported_versions: Vec<u8>, setup_parameters: Vec<SetupParameter>) -> Self {
+    pub fn new(supported_versions: Vec<u32>, setup_parameters: Vec<SetupParameter>) -> Self {
         ClientSetupMessage {
             number_of_supported_versions: supported_versions.len() as u8,
             supported_versions,
@@ -53,12 +53,12 @@ impl ClientSetupMessage {
 }
 
 pub(crate) struct ServerSetupMessage {
-    pub(crate) selected_version: u8,
+    pub(crate) selected_version: u32,
     pub(crate) setup_parameters: Vec<SetupParameter>,
 }
 
 impl ServerSetupMessage {
-    pub(crate) fn new(selected_version: u8, setup_parameters: Vec<SetupParameter>) -> Self {
+    pub(crate) fn new(selected_version: u32, setup_parameters: Vec<SetupParameter>) -> Self {
         ServerSetupMessage {
             selected_version,
             setup_parameters,

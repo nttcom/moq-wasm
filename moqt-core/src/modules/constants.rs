@@ -1,5 +1,7 @@
 use num_enum::IntoPrimitive;
 
+pub const MOQ_TRANSPORT_VERSION: u32 = 0xff000001;
+
 // 仮
 #[derive(Debug, IntoPrimitive)]
 #[repr(u8)]

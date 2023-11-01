@@ -1,6 +1,9 @@
-use crate::modules::{
-    constants::UnderlayType, messages::setup_parameters::SetupParameter,
-    moqt_client::MOQTClientStatus,
+use crate::{
+    constants,
+    modules::{
+        constants::UnderlayType, messages::setup_parameters::SetupParameter,
+        moqt_client::MOQTClientStatus,
+    },
 };
 use anyhow::{bail, Result};
 
@@ -16,12 +19,10 @@ pub(crate) fn setup_handler(
 ) -> Result<ServerSetupMessage> {
     tracing::info!("setup_handler");
 
-    let tmp_supported_version = 1;
-
     if !client_setup_message
         .supported_versions
         .iter()
-        .any(|v| *v == tmp_supported_version)
+        .any(|v| *v == constants::MOQ_TRANSPORT_VERSION)
     {
         bail!("Supported version is not included");
     }
@@ -46,7 +47,7 @@ pub(crate) fn setup_handler(
         bail!("Role parameter is required in SETUP parameter from client.");
     }
 
-    let server_setup_message = ServerSetupMessage::new(tmp_supported_version, vec![]);
+    let server_setup_message = ServerSetupMessage::new(constants::MOQ_TRANSPORT_VERSION, vec![]);
     // Connected -> Setup
     client.update_status(MOQTClientStatus::SetUp);
 
