@@ -27,14 +27,16 @@ pub enum AuthCallbackType {
     Subscribe,
 }
 
+pub type AuthCallbackFunctionType =
+    fn(track_name: String, auth_payload: String, AuthCallbackType) -> Result<()>;
+
 pub struct MOQTConfig {
     pub port: u16,
     pub cert_path: String,
     pub key_path: String,
     pub keep_alive_interval_sec: u64,
     pub underlay: UnderlayType,
-    pub auth_callback:
-        Option<fn(track_name: String, auth_payload: String, AuthCallbackType) -> Result<()>>,
+    pub auth_callback: Option<AuthCallbackFunctionType>,
 }
 
 impl MOQTConfig {
@@ -56,8 +58,7 @@ pub struct MOQT {
     key_path: String,
     keep_alive_interval_sec: u64,
     underlay: UnderlayType,
-    auth_callback:
-        Option<fn(track_name: String, auth_payload: String, AuthCallbackType) -> Result<()>>,
+    auth_callback: Option<AuthCallbackFunctionType>,
 }
 
 impl MOQT {
@@ -159,13 +160,20 @@ async fn handle_connection_impl(
 
                 let stream_id = stream.1.id().into_u64();
 
-                let (mut write_stream, mut read_stream) = stream;
+                let (write_stream, read_stream) = stream;
 
                 let tx = tx.clone();
                 let close_tx = close_tx.clone();
                 let client = client.clone();
                 tokio::spawn(async move {
-                    handle_stream(StreamType::Bi,client, stable_id, stream_id, &mut read_stream, &mut write_stream, tx, close_tx).await
+                    let mut stream = Stream {
+                        stream_type: StreamType::Bi,
+                        stable_id,
+                        stream_id,
+                        read_stream,
+                        write_stream,
+                    };
+                    handle_stream(&mut stream, client, tx, close_tx).await
                 });
             },
             stream = connection.accept_uni() => {
@@ -176,14 +184,21 @@ async fn handle_connection_impl(
 
                 let stream_id = stream.id().into_u64();
 
-                let mut read_stream = stream;
-                let mut write_stream = connection.open_uni().await?.await?;
+                let read_stream = stream;
+                let write_stream = connection.open_uni().await?.await?;
 
                 let tx = tx.clone();
                 let close_tx = close_tx.clone();
                 let client = client.clone();
                 tokio::spawn(async move {
-                    handle_stream(StreamType::Uni,client, stable_id, stream_id, &mut read_stream, &mut write_stream, tx, close_tx).await
+                    let mut stream = Stream {
+                        stream_type: StreamType::Uni,
+                        stable_id,
+                        stream_id,
+                        read_stream,
+                        write_stream,
+                    };
+                    handle_stream(&mut stream, client, tx, close_tx).await
                 });
             },
             _ = connection.closed() => {
@@ -208,17 +223,27 @@ async fn handle_connection_impl(
     Ok(())
 }
 
-async fn handle_stream(
+struct Stream {
     stream_type: StreamType,
-    client: Arc<Mutex<MOQTClient>>,
     stable_id: usize,
     stream_id: u64,
-    read_stream: &mut RecvStream,
-    write_stream: &mut SendStream,
+    read_stream: RecvStream,
+    write_stream: SendStream,
+}
+
+async fn handle_stream(
+    stream: &mut Stream,
+    client: Arc<Mutex<MOQTClient>>,
     tx: Sender<BufferCommand>,
     close_tx: Sender<(u64, String)>,
 ) -> Result<()> {
     let mut buffer = vec![0; 65536].into_boxed_slice();
+
+    let stream_type = stream.stream_type;
+    let stable_id = stream.stable_id;
+    let stream_id = stream.stream_id;
+    let read_stream = &mut stream.read_stream;
+    let write_stream = &mut stream.write_stream;
 
     loop {
         let span = tracing::info_span!("sid", stable_id);
@@ -233,19 +258,19 @@ async fn handle_stream(
         let read_buf = BytesMut::from(&buffer[..bytes_read]);
         let buf = buffer_manager::request_buffer(tx, stable_id, stream_id).await;
         let mut buf = buf.lock().await;
-        buf.extend_from_slice(&read_buf.to_vec());
+        buf.extend_from_slice(&read_buf);
 
         let mut client = client.lock().await;
         let message_result = message_handler(
             &mut buf,
-            stream_type.clone(),
+            stream_type,
             UnderlayType::WebTransport,
             &mut client,
         );
 
         match message_result {
             MessageProcessResult::Success(buf) => {
-                write_stream.write_all(&mut buf.to_vec()).await?;
+                write_stream.write_all(&buf).await?;
                 tracing::info!("sent {:?}", buf.to_vec());
             }
             MessageProcessResult::Failure(code, message) => {

@@ -1,6 +1,5 @@
 use super::messages::setup_parameters::RoleCase;
 use anyhow::{bail, Ok, Result};
-use bytes::BytesMut;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum MOQTClientStatus {
@@ -38,7 +37,7 @@ impl MOQTClient {
         self.status = new_status;
     }
     pub fn set_role(&mut self, new_role: RoleCase) -> Result<()> {
-        if let Some(_) = self.role {
+        if self.role.is_some() {
             bail!("Client's role is already set.");
         }
         self.role = Some(new_role);

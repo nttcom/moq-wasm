@@ -2,14 +2,10 @@ use crate::modules::{
     constants::UnderlayType, messages::setup_parameters::SetupParameter,
     moqt_client::MOQTClientStatus,
 };
-use anyhow::{bail, ensure, Result};
-use bytes::BytesMut;
+use anyhow::{bail, Result};
 
 use crate::modules::{
-    messages::{
-        payload::Payload,
-        setup_message::{ClientSetupMessage, ServerSetupMessage},
-    },
+    messages::setup_message::{ClientSetupMessage, ServerSetupMessage},
     moqt_client::MOQTClient,
 };
 
@@ -46,7 +42,7 @@ pub(crate) fn setup_handler(
         }
     }
 
-    if let None = client.role() {
+    if client.role().is_none() {
         bail!("Role parameter is required in SETUP parameter from client.");
     }
 

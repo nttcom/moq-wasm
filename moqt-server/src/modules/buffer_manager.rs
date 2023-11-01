@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use bytes::{buf, BytesMut};
+use bytes::BytesMut;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
@@ -18,14 +18,14 @@ pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
                 resp,
             } => {
                 let mut session_hash = buffers.get_mut(&session_id);
-                if let None = session_hash {
+                if session_hash.is_none() {
                     buffers.insert(session_id, HashMap::<u64, Arc<Mutex<BytesMut>>>::new());
                     session_hash = buffers.get_mut(&session_id);
                 }
                 let session_hash = session_hash.unwrap();
 
                 let mut stream_hash = session_hash.get(&stream_id);
-                if let None = stream_hash {
+                if stream_hash.is_none() {
                     session_hash.insert(stream_id, Arc::new(Mutex::new(BytesMut::new())));
                     stream_hash = session_hash.get(&stream_id);
                 }
@@ -91,37 +91,4 @@ pub(crate) async fn request_buffer(
     tracing::info!("request_buffer end");
 
     buf
-}
-
-pub(crate) struct PayloadBuffer {
-    buffer: BufferType,
-    session_id: usize,
-    stream_id: u64,
-    tx: mpsc::Sender<BufferCommand>,
-}
-
-impl PayloadBuffer {
-    async fn new(tx: mpsc::Sender<BufferCommand>, session_id: usize, stream_id: u64) -> Self {
-        let (resp_tx, resp_rx) = oneshot::channel::<BufferType>();
-
-        let cmd = BufferCommand::Get {
-            session_id,
-            stream_id,
-            resp: resp_tx,
-        };
-        tx.send(cmd).await.unwrap();
-
-        let buf = resp_rx.await.unwrap();
-
-        PayloadBuffer {
-            buffer: buf,
-            session_id,
-            stream_id,
-            tx,
-        }
-    }
-
-    pub(crate) fn buffer(&self) -> BufferType {
-        self.buffer.clone()
-    }
 }
