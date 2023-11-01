@@ -88,12 +88,14 @@ impl MOQT {
         let config = ServerConfig::builder()
             .with_bind_default(self.port)
             .with_certificate(
-                Certificate::load(&self.cert_path, &self.key_path).with_context(|| {
-                    format!(
-                        "cert load failed. '{}' or '{}' not found.",
-                        self.cert_path, self.key_path
-                    )
-                })?,
+                Certificate::load(&self.cert_path, &self.key_path)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "cert load failed. '{}' or '{}' not found.",
+                            self.cert_path, self.key_path
+                        )
+                    })?,
             )
             .keep_alive_interval(Some(Duration::from_secs(self.keep_alive_interval_sec)))
             .build();
