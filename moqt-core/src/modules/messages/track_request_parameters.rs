@@ -1,7 +1,7 @@
 pub(crate) enum TrackRequestParameter {
-    GroupSequenceParameter(GroupSequenceParameter),
-    ObjectSequenceParameter(ObjectSequenceParameter),
-    AuthorizationInfoParameter(AuthorizationInfoParameter),
+    GroupSequence(GroupSequenceParameter),
+    ObjectSequence(ObjectSequenceParameter),
+    AuthorizationInfo(AuthorizationInfoParameter),
 }
 
 // for SUBSCRIBE REQUEST
