@@ -2,14 +2,9 @@ use std::vec;
 
 use anyhow::Result;
 
-use crate::modules::variable_integer::{
-    read_variable_integer, read_variable_integer_from_buffer, write_variable_integer,
-};
+use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 
-use super::{
-    payload::Payload,
-    setup_parameters::{self, SetupParameter},
-};
+use super::{payload::Payload, setup_parameters::SetupParameter};
 
 pub(crate) struct ClientSetupMessage {
     pub(crate) number_of_supported_versions: u8,

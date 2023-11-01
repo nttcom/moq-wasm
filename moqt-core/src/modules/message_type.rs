@@ -1,5 +1,3 @@
-use std::fmt;
-
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 #[derive(Debug, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]

@@ -11,7 +11,7 @@ use super::moqt_client::{MOQTClient, MOQTClientStatus};
 use super::variable_integer::{read_variable_integer, write_variable_integer};
 use bytes::{Buf, BytesMut};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamType {
     Uni,
     Bi,
