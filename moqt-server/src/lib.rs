@@ -1,10 +1,6 @@
 mod modules;
 use bytes::BytesMut;
 use modules::buffer_manager;
-use modules::constants::UnderlayType;
-use modules::message_handler::*;
-use modules::moqt_client;
-use modules::moqt_client::MOQTClient;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
@@ -22,7 +18,9 @@ use wtransport::{endpoint::IncomingSession, tls::Certificate, Endpoint, ServerCo
 use crate::modules::buffer_manager::buffer_manager;
 use crate::modules::buffer_manager::BufferCommand;
 
-pub use modules::constants;
+pub use moqt_core::constants;
+
+use moqt_core::{constants::UnderlayType, message_handler::*, MOQTClient};
 
 pub enum AuthCallbackType {
     Announce,
@@ -202,7 +200,10 @@ async fn handle_connection_impl(
         }
     }
 
-    tx.send(BufferCommand::ReleaseSession { session_id: stable_id }).await?;
+    tx.send(BufferCommand::ReleaseSession {
+        session_id: stable_id,
+    })
+    .await?;
 
     Ok(())
 }
@@ -255,7 +256,11 @@ async fn handle_stream(
         };
     }
 
-    tx.send(BufferCommand::ReleaseStream { session_id: stable_id, stream_id }).await?;
+    tx.send(BufferCommand::ReleaseStream {
+        session_id: stable_id,
+        stream_id,
+    })
+    .await?;
 
     Ok::<()>(())
 }

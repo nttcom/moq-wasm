@@ -12,19 +12,19 @@ use super::variable_integer::{read_variable_integer, write_variable_integer};
 use bytes::{Buf, BytesMut};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum StreamType {
+pub enum StreamType {
     Uni,
     Bi,
 }
 
-pub(crate) enum MessageProcessResult {
+pub enum MessageProcessResult {
     Success(BytesMut),
     Failure(TerminationErrorCode, String),
     Fragment,
 }
 
 #[tracing::instrument(name="StableID",skip_all,fields(id=client.id()))]
-pub(crate) fn message_handler(
+pub fn message_handler(
     read_buf: &mut BytesMut,
     stream_type: StreamType,
     underlay_type: UnderlayType,
