@@ -124,17 +124,10 @@ pub fn message_handler(
                 return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
             }
 
-            let client_setup_message = ClientSetupMessage::depacketize(&mut payload_buf);
-            if let Err(err) = client_setup_message {
-                tracing::info!("{:#?}", err);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::GenericError,
-                    err.to_string(),
-                );
-            }
-            let client_setup_message = client_setup_message.unwrap();
+            let setup_result = ClientSetupMessage::depacketize(&mut payload_buf).and_then(
+                |client_setup_message| setup_handler(client_setup_message, underlay_type, client),
+            );
 
-            let setup_result = setup_handler(client_setup_message, underlay_type, client);
             match setup_result {
                 Ok(server_setup_message) => {
                     server_setup_message.packetize(&mut write_buf);
@@ -179,7 +172,9 @@ pub fn message_handler(
         //         return MessageProcessResult::Failure;
         //     }
         // }
-        // MessageType::GoAway => {}
+        MessageType::GoAway => {
+            todo!("GoAway");
+        }
         _ => {}
     };
 
