@@ -149,9 +149,17 @@ async fn handle_connection_impl(
 
     let (close_tx, mut close_rx) = mpsc::channel::<(u64, String)>(32);
 
+    let mut is_control_stream_opened = false;
     loop {
         tokio::select! {
             stream = connection.accept_bi() => {
+                if is_control_stream_opened {
+                    tracing::info!("Control stream already opened");
+                    close_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    break;
+                }
+                is_control_stream_opened = true;
+
                 let span = tracing::info_span!("sid", stable_id);
 
                 let stream = stream?;
