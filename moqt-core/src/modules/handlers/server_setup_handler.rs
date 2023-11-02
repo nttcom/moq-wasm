@@ -8,8 +8,8 @@ use crate::{
 use anyhow::{bail, Result};
 
 use crate::modules::{
-    messages::setup_message::{ClientSetupMessage, ServerSetupMessage},
-    moqt_client::MOQTClient,
+    messages::client_setup_message::ClientSetupMessage,
+    messages::server_setup_message::ServerSetupMessage, moqt_client::MOQTClient,
 };
 
 pub(crate) fn setup_handler(
@@ -18,6 +18,8 @@ pub(crate) fn setup_handler(
     client: &mut MOQTClient,
 ) -> Result<ServerSetupMessage> {
     tracing::info!("setup_handler");
+
+    tracing::info!("supported_versions: {:#x?}", client_setup_message.supported_versions);
 
     if !client_setup_message
         .supported_versions
@@ -64,7 +66,7 @@ mod success {
     use crate::modules::{
         handlers::server_setup_handler::setup_handler,
         messages::{
-            setup_message::ClientSetupMessage,
+            client_setup_message::ClientSetupMessage,
             setup_parameters::{PathParameter, RoleCase, RoleParameter, SetupParameter},
         },
         moqt_client::MOQTClient,
@@ -109,7 +111,7 @@ mod failure {
     use crate::modules::{
         handlers::server_setup_handler::setup_handler,
         messages::{
-            setup_message::ClientSetupMessage,
+            client_setup_message::ClientSetupMessage,
             setup_parameters::{PathParameter, SetupParameter},
         },
         moqt_client::MOQTClient,

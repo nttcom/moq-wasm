@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
-use crate::modules::messages::setup_message::ClientSetupMessage;
+use crate::modules::messages::client_setup_message::ClientSetupMessage;
 
 use super::constants::UnderlayType;
 use super::handlers::server_setup_handler::setup_handler;
@@ -70,13 +70,26 @@ pub fn message_handler(
 
     tracing::info!("Message Type: {:?}", message_type);
 
-    // Setup message must be sent on bidirectional stream
-    if message_type == MessageType::Setup && stream_type == StreamType::Uni {
-        read_buf.advance(read_cur.position() as usize);
+    if message_type.is_setup_message() {
+        // Setup message must be sent on bidirectional stream
+        if stream_type == StreamType::Uni {
+            read_buf.advance(read_cur.position() as usize);
 
-        let message = String::from("Setup message must be sent on bidirectional stream");
-        tracing::info!(message);
-        return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
+            let message = String::from("Setup message must be sent on bidirectional stream");
+            tracing::info!(message);
+            return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
+        }
+    } else if message_type.is_control_message() {
+        // TODO: SETUPメッセージと異なるストリームだったらProtocol Violationで落とす
+    } else {
+        // Object message must be sent on unidirectional stream
+        if stream_type == StreamType::Bi {
+            read_buf.advance(read_cur.position() as usize);
+
+            let message = String::from("Object message must be sent on unidirectional stream");
+            tracing::info!(message);
+            return MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, message);
+        }
     }
 
     if read_cur.remaining() == 0 {
@@ -117,7 +130,7 @@ pub fn message_handler(
         //         return MessageProcessResult::Failure;
         //     }
         // }
-        MessageType::Setup => {
+        MessageType::ClientSetup => {
             if client.status() != MOQTClientStatus::Connected {
                 let message = String::from("Invalid timing");
                 tracing::info!(message);
