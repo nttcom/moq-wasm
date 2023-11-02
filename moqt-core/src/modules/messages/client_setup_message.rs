@@ -9,6 +9,7 @@ use super::{payload::Payload, setup_parameters::SetupParameter};
 pub(crate) struct ClientSetupMessage {
     pub(crate) number_of_supported_versions: u8,
     pub(crate) supported_versions: Vec<u32>,
+    pub(crate) number_of_parameters: u8,
     pub(crate) setup_parameters: Vec<SetupParameter>,
 }
 
@@ -22,14 +23,17 @@ impl Payload for ClientSetupMessage {
             supported_versions.push(supported_version);
         }
 
+        let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+
         let mut setup_parameters = vec![];
-        while !buf.is_empty() {
+        for _ in 0..number_of_parameters {
             setup_parameters.push(SetupParameter::depacketize(buf)?);
         }
 
         let client_setup_message = ClientSetupMessage {
             number_of_supported_versions,
             supported_versions,
+            number_of_parameters,
             setup_parameters,
         };
 
@@ -47,36 +51,8 @@ impl ClientSetupMessage {
         ClientSetupMessage {
             number_of_supported_versions: supported_versions.len() as u8,
             supported_versions,
+            number_of_parameters: setup_parameters.len() as u8,
             setup_parameters,
-        }
-    }
-}
-
-pub(crate) struct ServerSetupMessage {
-    pub(crate) selected_version: u32,
-    pub(crate) setup_parameters: Vec<SetupParameter>,
-}
-
-impl ServerSetupMessage {
-    pub(crate) fn new(selected_version: u32, setup_parameters: Vec<SetupParameter>) -> Self {
-        ServerSetupMessage {
-            selected_version,
-            setup_parameters,
-        }
-    }
-}
-
-impl Payload for ServerSetupMessage {
-    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        todo!()
-    }
-
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
-        let version_buf = write_variable_integer(self.selected_version as u64);
-        buf.extend(version_buf);
-
-        for setup_parameter in self.setup_parameters.iter() {
-            setup_parameter.packetize(buf);
         }
     }
 }
