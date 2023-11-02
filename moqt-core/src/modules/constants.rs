@@ -6,10 +6,11 @@ pub const MOQ_TRANSPORT_VERSION: u32 = 0xff000001;
 #[derive(Debug, IntoPrimitive)]
 #[repr(u8)]
 pub enum TerminationErrorCode {
-    SessionTerminated = 0x0,
+    NoError = 0x0,
     GenericError = 0x1,
     Unauthorized = 0x2,
-    GoAway = 0x10,
+    ProtocolViolation = 0x3,
+    GoAwayTimeout = 0x10,
 }
 
 #[derive(Debug, PartialEq, Eq)]
