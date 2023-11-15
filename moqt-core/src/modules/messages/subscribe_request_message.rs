@@ -1,4 +1,4 @@
-use super::track_request_parameters::TrackRequestParameter;
+use super::version_specific_parameters::TrackRequestParameter;
 
 pub(crate) struct SubscribeRequestMessage {
     full_track_name_length: u16,
