@@ -17,6 +17,7 @@ use wtransport::{endpoint::IncomingSession, tls::Certificate, Endpoint, ServerCo
 
 use crate::modules::buffer_manager::buffer_manager;
 use crate::modules::buffer_manager::BufferCommand;
+use crate::modules::track_manager::TrackCommand;
 
 pub use moqt_core::constants;
 
@@ -76,13 +77,18 @@ impl MOQT {
         init_logging();
 
         let (tx, mut rx) = mpsc::channel::<BufferCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
 
         if let UnderlayType::WebTransport = self.underlay {
         } else {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay)
         }
 
+        // Start buffer management thread
         tokio::spawn(async move { buffer_manager(&mut rx).await });
+
+        // Start track management thread
+        tokio::spawn(async move { modules::track_manager::track_manager(&mut track_rx).await });
 
         // 以下はWebTransportの場合
         let config = ServerConfig::builder()
@@ -106,9 +112,10 @@ impl MOQT {
 
         for id in 0.. {
             let tx = tx.clone();
+            let track_tx = track_tx.clone();
             let incoming_session = server.accept().await;
             tokio::spawn(
-                handle_connection(tx, incoming_session)
+                handle_connection(tx, track_tx, incoming_session)
                     .instrument(tracing::info_span!("Connection", id)),
             );
         }
@@ -117,13 +124,18 @@ impl MOQT {
     }
 }
 
-async fn handle_connection(tx: mpsc::Sender<BufferCommand>, incoming_session: IncomingSession) {
-    let result = handle_connection_impl(tx, incoming_session).await;
+async fn handle_connection(
+    tx: mpsc::Sender<BufferCommand>,
+    track_tx: mpsc::Sender<TrackCommand>,
+    incoming_session: IncomingSession,
+) {
+    let result = handle_connection_impl(tx, track_tx, incoming_session).await;
     tracing::error!("{:?}", result);
 }
 
 async fn handle_connection_impl(
     tx: mpsc::Sender<BufferCommand>,
+    track_tx: mpsc::Sender<TrackCommand>,
     incoming_session: IncomingSession,
 ) -> Result<()> {
     tracing::info!("Waiting for session request...");
@@ -173,6 +185,7 @@ async fn handle_connection_impl(
                 let (write_stream, read_stream) = stream;
 
                 let tx = tx.clone();
+                let track_tx = track_tx.clone();
                 let close_tx = close_tx.clone();
                 let client = client.clone();
                 tokio::spawn(async move {
@@ -183,7 +196,7 @@ async fn handle_connection_impl(
                         read_stream,
                         write_stream,
                     };
-                    handle_stream(&mut stream, client, tx, close_tx).await
+                    handle_stream(&mut stream, client, tx, track_tx, close_tx).await
                 });
             },
             stream = connection.accept_uni() => {
@@ -198,6 +211,7 @@ async fn handle_connection_impl(
                 let write_stream = connection.open_uni().await?.await?;
 
                 let tx = tx.clone();
+                let track_tx = track_tx.clone();
                 let close_tx = close_tx.clone();
                 let client = client.clone();
                 tokio::spawn(async move {
@@ -208,7 +222,7 @@ async fn handle_connection_impl(
                         read_stream,
                         write_stream,
                     };
-                    handle_stream(&mut stream, client, tx, close_tx).await
+                    handle_stream(&mut stream, client, tx, track_tx, close_tx).await
                 });
             },
             _ = connection.closed() => {
@@ -225,6 +239,7 @@ async fn handle_connection_impl(
         }
     }
 
+    // FIXME: QUICレベルのsessionを保持する場合は消してはいけない
     tx.send(BufferCommand::ReleaseSession {
         session_id: stable_id,
     })
@@ -245,6 +260,7 @@ async fn handle_stream(
     stream: &mut Stream,
     client: Arc<Mutex<MOQTClient>>,
     tx: Sender<BufferCommand>,
+    track_tx: Sender<TrackCommand>,
     close_tx: Sender<(u64, String)>,
 ) -> Result<()> {
     let mut buffer = vec![0; 65536].into_boxed_slice();
@@ -254,6 +270,8 @@ async fn handle_stream(
     let stream_id = stream.stream_id;
     let read_stream = &mut stream.read_stream;
     let write_stream = &mut stream.write_stream;
+
+    let mut track_manager = modules::track_manager::TrackManager::new(track_tx.clone());
 
     loop {
         let span = tracing::info_span!("sid", stable_id);
@@ -276,7 +294,9 @@ async fn handle_stream(
             stream_type,
             UnderlayType::WebTransport,
             &mut client,
-        );
+            &mut track_manager,
+        )
+        .await;
 
         match message_result {
             MessageProcessResult::Success(buf) => {

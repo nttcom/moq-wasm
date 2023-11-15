@@ -1,13 +1,18 @@
 use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
+use crate::modules::handlers::unannounce_handler::unannounce_handler;
+use crate::modules::messages::announce_message::AnnounceMessage;
 use crate::modules::messages::client_setup_message::ClientSetupMessage;
+use crate::modules::messages::unannounce_message::UnAnnounceMessage;
 
 use super::constants::UnderlayType;
+use super::handlers::announce_handler::announce_handler;
 use super::handlers::server_setup_handler::setup_handler;
 use super::message_type::MessageType;
 use super::messages::payload::Payload;
 use super::moqt_client::{MOQTClient, MOQTClientStatus};
+use super::track_manager_repository::{self, TrackManagerRepository};
 use super::variable_integer::{read_variable_integer, write_variable_integer};
 use bytes::{Buf, BytesMut};
 
@@ -24,11 +29,12 @@ pub enum MessageProcessResult {
 }
 
 #[tracing::instrument(name="StableID",skip_all,fields(id=client.id()))]
-pub fn message_handler(
+pub async fn message_handler(
     read_buf: &mut BytesMut,
     stream_type: StreamType,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
+    track_manager_repository: &mut dyn TrackManagerRepository,
 ) -> MessageProcessResult {
     // tracing::info!("message_handler!");
     tracing::info!("message_handler! {}", read_buf.len());
@@ -124,7 +130,7 @@ pub fn message_handler(
 
     // 各メッセージでクラス化
     // 自分はサーバであるととりあえず仮定
-    match message_type {
+    let return_message_type = match message_type {
         // MessageType::Object => {
         //     if client.status() != MOQTClientStatus::SetUp {
         //         return MessageProcessResult::Failure;
@@ -133,7 +139,7 @@ pub fn message_handler(
         MessageType::ClientSetup => {
             if client.status() != MOQTClientStatus::Connected {
                 let message = String::from("Invalid timing");
-                tracing::info!(message);
+                tracing::error!(message);
                 return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
             }
 
@@ -144,6 +150,7 @@ pub fn message_handler(
             match setup_result {
                 Ok(server_setup_message) => {
                     server_setup_message.packetize(&mut write_buf);
+                    MessageType::ServerSetup
                 }
                 Err(err) => {
                     // fix
@@ -170,11 +177,52 @@ pub fn message_handler(
         //         return MessageProcessResult::Failure;
         //     }
         // }
-        // MessageType::Announce => {
-        //     if client.status() != MOQTClientStatus::SetUp {
-        //         return MessageProcessResult::Failure;
-        //     }
-        // }
+        MessageType::Announce => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
+            }
+
+            let announce_message = AnnounceMessage::depacketize(&mut payload_buf);
+
+            if let Err(err) = announce_message {
+                // fix
+                tracing::info!("{:#?}", err);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::GenericError,
+                    err.to_string(),
+                );
+            }
+
+            let announce_result =
+                announce_handler(announce_message.unwrap(), client, track_manager_repository).await;
+
+            match announce_result {
+                Ok(announce_message) => match announce_message {
+                    crate::modules::handlers::announce_handler::AnnounceResponse::Success(
+                        ok_message,
+                    ) => {
+                        ok_message.packetize(&mut write_buf);
+                        MessageType::AnnounceOk
+                    }
+                    crate::modules::handlers::announce_handler::AnnounceResponse::Failure(
+                        err_message,
+                    ) => {
+                        err_message.packetize(&mut write_buf);
+                        MessageType::AnnounceError
+                    }
+                },
+                Err(err) => {
+                    // fix
+                    tracing::info!("{:#?}", err);
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::GenericError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
         // MessageType::AnnounceOk => {
         //     if client.status() != MOQTClientStatus::SetUp {
         //         return MessageProcessResult::Failure;
@@ -185,15 +233,47 @@ pub fn message_handler(
         //         return MessageProcessResult::Failure;
         //     }
         // }
+        MessageType::UnAnnounce => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
+            }
+
+            let unannounce_message = UnAnnounceMessage::depacketize(&mut payload_buf);
+
+            if let Err(err) = unannounce_message {
+                // fix
+                tracing::info!("{:#?}", err);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::GenericError,
+                    err.to_string(),
+                );
+            }
+
+            let unannounce_result = unannounce_handler(
+                unannounce_message.unwrap(),
+                client,
+                track_manager_repository,
+            )
+            .await;
+
+            return MessageProcessResult::Success(BytesMut::with_capacity(0));
+        }
         MessageType::GoAway => {
             todo!("GoAway");
         }
-        _ => {}
+        unknown => {
+            return MessageProcessResult::Failure(
+                TerminationErrorCode::GenericError,
+                format!("Unknown message type: {:?}", unknown),
+            );
+        }
     };
 
     let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
     // Add type
-    message_buf.extend(write_variable_integer(u8::from(message_type) as u64));
+    message_buf.extend(write_variable_integer(u8::from(return_message_type) as u64));
     // Add length
     message_buf.extend(write_variable_integer(write_buf.len() as u64));
     // Add payload
