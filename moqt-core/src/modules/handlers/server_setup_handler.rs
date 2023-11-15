@@ -19,7 +19,10 @@ pub(crate) fn setup_handler(
 ) -> Result<ServerSetupMessage> {
     tracing::info!("setup_handler");
 
-    tracing::info!("supported_versions: {:#x?}", client_setup_message.supported_versions);
+    tracing::info!(
+        "supported_versions: {:#x?}",
+        client_setup_message.supported_versions
+    );
 
     if !client_setup_message
         .supported_versions
