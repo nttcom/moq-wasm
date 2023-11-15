@@ -25,7 +25,10 @@ impl MessageType {
         matches!(self, MessageType::ClientSetup | MessageType::ServerSetup)
     }
     pub fn is_object(&self) -> bool {
-        matches!(self, MessageType::ObjectWithLength | MessageType::ObjectWithoutLength)
+        matches!(
+            self,
+            MessageType::ObjectWithLength | MessageType::ObjectWithoutLength
+        )
     }
     pub fn is_control_message(&self) -> bool {
         !self.is_setup_message() && !self.is_object()
