@@ -26,6 +26,7 @@ pub(crate) async fn unannounce_handler(
         .await;
 
     match delete_result {
+        // TODO: 接続しているクライアントに対して、unannounceされたことを通知する
         Ok(_) => Ok(()),
         Err(err) => {
             tracing::info!("unannounce_handler: err: {:?}", err.to_string());
