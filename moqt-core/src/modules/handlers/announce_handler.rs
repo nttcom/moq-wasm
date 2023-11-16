@@ -35,6 +35,7 @@ pub(crate) async fn announce_handler(
         .await;
 
     match set_result {
+        // TODO: 接続しているクライアントに対して、announceされたことを通知する
         Ok(_) => Ok(AnnounceResponse::Success(AnnounceOk::new(
             announce_message.track_namespace().to_string(),
         ))),
