@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 
-use super::{payload::Payload, setup_parameters::SetupParameter};
+use super::{moqt_payload::MOQTPayload, setup_parameters::SetupParameter};
 
 pub(crate) struct ServerSetupMessage {
     pub(crate) selected_version: u32,
@@ -20,7 +20,7 @@ impl ServerSetupMessage {
     }
 }
 
-impl Payload for ServerSetupMessage {
+impl MOQTPayload for ServerSetupMessage {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         todo!()
     }

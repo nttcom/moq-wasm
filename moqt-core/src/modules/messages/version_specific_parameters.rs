@@ -5,14 +5,14 @@ use crate::modules::{
     variable_integer::read_variable_integer_from_buffer,
 };
 
-use super::payload::Payload;
+use super::moqt_payload::MOQTPayload;
 
 pub(crate) enum TrackRequestParameter {
     AuthorizationInfo(AuthorizationInfoParameter),
     Unknown(u8),
 }
 
-impl Payload for TrackRequestParameter {
+impl MOQTPayload for TrackRequestParameter {
     fn depacketize(buf: &mut bytes::BytesMut) -> anyhow::Result<Self> {
         let parameter_key = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
 

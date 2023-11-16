@@ -1,6 +1,6 @@
 use crate::modules::variable_bytes::write_variable_bytes;
 
-use super::payload::Payload;
+use super::moqt_payload::MOQTPayload;
 
 pub(crate) struct AnnounceOk {
     track_namespace: String,
@@ -12,7 +12,7 @@ impl AnnounceOk {
     }
 }
 
-impl Payload for AnnounceOk {
+impl MOQTPayload for AnnounceOk {
     fn depacketize(buf: &mut bytes::BytesMut) -> anyhow::Result<Self>
     where
         Self: Sized,
