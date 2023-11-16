@@ -5,7 +5,7 @@ use crate::modules::{
     variable_integer::read_variable_integer_from_buffer,
 };
 
-use super::{payload::Payload, version_specific_parameters::TrackRequestParameter};
+use super::{moqt_payload::MOQTPayload, version_specific_parameters::TrackRequestParameter};
 
 pub(crate) struct AnnounceMessage {
     track_namespace: String,
@@ -19,7 +19,7 @@ impl AnnounceMessage {
     }
 }
 
-impl Payload for AnnounceMessage {
+impl MOQTPayload for AnnounceMessage {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let track_namespace = read_variable_bytes_from_buffer(buf)?;
 

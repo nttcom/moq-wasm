@@ -1,6 +1,6 @@
 use crate::modules::variable_integer::read_variable_integer_from_buffer;
 
-use super::payload::Payload;
+use super::moqt_payload::MOQTPayload;
 use anyhow::{bail, ensure, Result};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
@@ -11,7 +11,7 @@ pub(crate) enum SetupParameter {
     Unknown(u8),
 }
 
-impl Payload for SetupParameter {
+impl MOQTPayload for SetupParameter {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let key =
             SetupParameterType::try_from(u8::try_from(read_variable_integer_from_buffer(buf)?)?);

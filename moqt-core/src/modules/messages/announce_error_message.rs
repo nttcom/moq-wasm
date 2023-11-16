@@ -2,7 +2,7 @@ use crate::modules::{
     variable_bytes::write_variable_bytes, variable_integer::write_variable_integer,
 };
 
-use super::payload::Payload;
+use super::moqt_payload::MOQTPayload;
 
 pub(crate) struct AnnounceError {
     track_namespace: String,
@@ -20,7 +20,7 @@ impl AnnounceError {
     }
 }
 
-impl Payload for AnnounceError {
+impl MOQTPayload for AnnounceError {
     fn depacketize(buf: &mut bytes::BytesMut) -> anyhow::Result<Self>
     where
         Self: Sized,

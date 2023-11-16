@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::modules::variable_bytes::read_variable_bytes_from_buffer;
 
-use super::payload::Payload;
+use super::moqt_payload::MOQTPayload;
 
 pub(crate) struct UnAnnounceMessage {
     track_namespace: String,
@@ -14,7 +14,7 @@ impl UnAnnounceMessage {
     }
 }
 
-impl Payload for UnAnnounceMessage {
+impl MOQTPayload for UnAnnounceMessage {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let track_namespace = read_variable_bytes_from_buffer(buf)?;
 
