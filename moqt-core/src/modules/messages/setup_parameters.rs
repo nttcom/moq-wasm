@@ -3,9 +3,11 @@ use crate::modules::variable_integer::read_variable_integer_from_buffer;
 use super::moqt_payload::MOQTPayload;
 use anyhow::{bail, ensure, Result};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
+use serde::Serialize;
 
 // TODO FIXME: そもそもvalueだけ持たせれば後ろの個別のstructはいらないのでは?
-pub(crate) enum SetupParameter {
+#[derive(Debug, Serialize, Clone)]
+pub enum SetupParameter {
     RoleParameter(RoleParameter),
     PathParameter(PathParameter),
     Unknown(u8),
@@ -56,6 +58,7 @@ impl MOQTPayload for SetupParameter {
     }
 }
 
+#[derive(Debug, Serialize, Clone)]
 pub(crate) struct RoleParameter {
     pub key: SetupParameterType, // 0x00
     pub value_length: u8,        // 0x01
@@ -72,7 +75,7 @@ impl RoleParameter {
     }
 }
 
-#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Serialize)]
 #[repr(u8)]
 pub enum RoleCase {
     Injection = 0x01,
@@ -80,6 +83,7 @@ pub enum RoleCase {
     Both = 0x03,
 }
 
+#[derive(Debug, Serialize, Clone)]
 pub(crate) struct PathParameter {
     pub key: SetupParameterType, // 0x01
     pub value_length: u8,        // tmp
@@ -96,7 +100,7 @@ impl PathParameter {
     }
 }
 
-#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Serialize)]
 #[repr(u8)]
 pub(crate) enum SetupParameterType {
     Role = 0x00,

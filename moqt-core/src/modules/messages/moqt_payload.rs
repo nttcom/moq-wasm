@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bytes::BytesMut;
 
-pub(crate) trait MOQTPayload {
+pub trait MOQTPayload {
     fn depacketize(buf: &mut BytesMut) -> Result<Self>
     where
         Self: Sized;

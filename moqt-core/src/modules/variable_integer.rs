@@ -3,7 +3,7 @@ use std::io::Cursor;
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, BytesMut};
 
-pub(crate) fn read_variable_integer_from_buffer(buf: &mut BytesMut) -> Result<u64> {
+pub fn read_variable_integer_from_buffer(buf: &mut BytesMut) -> Result<u64> {
     let mut cur = Cursor::new(&buf[..]);
 
     let ret = read_variable_integer(&mut cur);
@@ -13,9 +13,9 @@ pub(crate) fn read_variable_integer_from_buffer(buf: &mut BytesMut) -> Result<u6
     ret
 }
 
-pub(crate) fn read_variable_integer(buf: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
+pub fn read_variable_integer(buf: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
     if buf.remaining() == 0 {
-        bail!("buffer is empty");
+        bail!("buffer is empty in read_variable_integer");
     }
 
     let first_byte = buf.get_u8();
@@ -39,7 +39,7 @@ pub(crate) fn read_variable_integer(buf: &mut std::io::Cursor<&[u8]>) -> Result<
     Ok(value)
 }
 
-pub(crate) fn write_variable_integer(value: u64) -> BytesMut {
+pub fn write_variable_integer(value: u64) -> BytesMut {
     let mut buf = BytesMut::with_capacity(0);
 
     if value < 0x40 {

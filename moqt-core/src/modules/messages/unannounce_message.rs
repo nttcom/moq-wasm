@@ -1,6 +1,8 @@
 use anyhow::Result;
 
-use crate::modules::variable_bytes::read_variable_bytes_from_buffer;
+use crate::{
+    modules::variable_bytes::read_variable_bytes_from_buffer, variable_bytes::write_variable_bytes,
+};
 
 use super::moqt_payload::MOQTPayload;
 
@@ -26,6 +28,8 @@ impl MOQTPayload for UnAnnounceMessage {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        todo!()
+        buf.extend(write_variable_bytes(
+            &self.track_namespace.as_bytes().to_vec(),
+        ))
     }
 }
