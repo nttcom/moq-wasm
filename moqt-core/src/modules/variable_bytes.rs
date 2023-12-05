@@ -5,7 +5,7 @@ use bytes::{Buf, BytesMut};
 
 use super::variable_integer::{read_variable_integer, write_variable_integer};
 
-pub(crate) fn read_variable_bytes_from_buffer(buf: &mut BytesMut) -> Result<Vec<u8>> {
+pub fn read_variable_bytes_from_buffer(buf: &mut BytesMut) -> Result<Vec<u8>> {
     let mut cur = Cursor::new(&buf[..]);
 
     let ret = read_variable_bytes(&mut cur);
@@ -15,9 +15,9 @@ pub(crate) fn read_variable_bytes_from_buffer(buf: &mut BytesMut) -> Result<Vec<
     ret
 }
 
-pub(crate) fn read_variable_bytes(buf: &mut std::io::Cursor<&[u8]>) -> Result<Vec<u8>> {
+pub fn read_variable_bytes(buf: &mut std::io::Cursor<&[u8]>) -> Result<Vec<u8>> {
     if buf.remaining() == 0 {
-        bail!("buffer is empty");
+        bail!("buffer is empty in read_variable_bytes");
     }
 
     let len = read_variable_integer(buf)? as usize;
@@ -39,7 +39,7 @@ pub(crate) fn read_variable_bytes(buf: &mut std::io::Cursor<&[u8]>) -> Result<Ve
     Ok(value)
 }
 
-pub(crate) fn write_variable_bytes(value: &Vec<u8>) -> BytesMut {
+pub fn write_variable_bytes(value: &Vec<u8>) -> BytesMut {
     let mut buf = BytesMut::with_capacity(0);
 
     let len = value.len();

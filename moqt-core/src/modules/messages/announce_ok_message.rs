@@ -1,8 +1,14 @@
-use crate::modules::variable_bytes::write_variable_bytes;
+use anyhow::Result;
+use serde::Serialize;
+
+use crate::{
+    modules::variable_bytes::write_variable_bytes, variable_bytes::read_variable_bytes_from_buffer,
+};
 
 use super::moqt_payload::MOQTPayload;
 
-pub(crate) struct AnnounceOk {
+#[derive(Debug, Serialize, Clone)]
+pub struct AnnounceOk {
     track_namespace: String,
 }
 
@@ -13,11 +19,13 @@ impl AnnounceOk {
 }
 
 impl MOQTPayload for AnnounceOk {
-    fn depacketize(buf: &mut bytes::BytesMut) -> anyhow::Result<Self>
+    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self>
     where
         Self: Sized,
     {
-        todo!()
+        let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
+
+        Ok(AnnounceOk { track_namespace })
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {

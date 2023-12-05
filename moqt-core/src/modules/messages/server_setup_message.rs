@@ -1,17 +1,19 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use serde::Serialize;
 
 use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 
 use super::{moqt_payload::MOQTPayload, setup_parameters::SetupParameter};
 
-pub(crate) struct ServerSetupMessage {
-    pub(crate) selected_version: u32,
-    pub(crate) number_of_parameters: u8,
-    pub(crate) setup_parameters: Vec<SetupParameter>,
+#[derive(Debug, Serialize, Clone)]
+pub struct ServerSetupMessage {
+    pub selected_version: u32,
+    pub number_of_parameters: u8,
+    pub setup_parameters: Vec<SetupParameter>,
 }
 
 impl ServerSetupMessage {
-    pub(crate) fn new(selected_version: u32, setup_parameters: Vec<SetupParameter>) -> Self {
+    pub fn new(selected_version: u32, setup_parameters: Vec<SetupParameter>) -> Self {
         ServerSetupMessage {
             selected_version,
             number_of_parameters: setup_parameters.len() as u8,
@@ -22,7 +24,25 @@ impl ServerSetupMessage {
 
 impl MOQTPayload for ServerSetupMessage {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        todo!()
+        let selected_version = u32::try_from(read_variable_integer_from_buffer(buf)?)
+            .context("Depacketize elected version")?;
+
+        let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
+            .context("Depacketize number of parameters")?;
+
+        let mut setup_parameters = vec![];
+        for _ in 0..number_of_parameters {
+            setup_parameters
+                .push(SetupParameter::depacketize(buf).context("Depacketize setup parameter")?);
+        }
+
+        let server_setup_message = ServerSetupMessage {
+            selected_version,
+            number_of_parameters,
+            setup_parameters,
+        };
+
+        Ok(server_setup_message)
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
