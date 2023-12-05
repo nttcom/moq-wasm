@@ -1,9 +1,11 @@
 use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
+use crate::modules::handlers::subscribe_handler::subscribe_handler;
 use crate::modules::handlers::unannounce_handler::unannounce_handler;
 use crate::modules::messages::announce_message::AnnounceMessage;
 use crate::modules::messages::client_setup_message::ClientSetupMessage;
+use crate::modules::messages::subscribe_request_message::SubscribeRequestMessage;
 use crate::modules::messages::unannounce_message::UnAnnounceMessage;
 
 use super::constants::UnderlayType;
@@ -162,11 +164,56 @@ pub async fn message_handler(
                 }
             }
         }
-        // MessageType::SubscribeRequest => {
-        //     if client.status() != MOQTClientStatus::SetUp {
-        //         return MessageProcessResult::Failure;
-        //     }
-        // }
+        MessageType::Subscribe => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
+            }
+
+            let subscribe_request_message = SubscribeRequestMessage::depacketize(&mut payload_buf);
+
+            if let Err(err) = subscribe_request_message {
+                // fix
+                tracing::info!("{:#?}", err);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::GenericError,
+                    err.to_string(),
+                );
+            }
+
+            let subscribe_result = subscribe_handler(
+                subscribe_request_message.unwrap(),
+                client,
+                track_manager_repository,
+            )
+            .await;
+
+            match subscribe_result {
+                Ok(subscribe_response) => match subscribe_response {
+                    crate::modules::handlers::subscribe_handler::SubscribeResponse::Success(
+                        subscribe_ok,
+                    ) => {
+                        subscribe_ok.packetize(&mut write_buf);
+                        MessageType::SubscribeOk
+                    }
+                    crate::modules::handlers::subscribe_handler::SubscribeResponse::Failure(
+                        subscribe_error,
+                    ) => {
+                        subscribe_error.packetize(&mut write_buf);
+                        MessageType::SubscribeError
+                    }
+                },
+                Err(err) => {
+                    // fix
+                    tracing::info!("{:#?}", err);
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::GenericError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
         // MessageType::SubscribeOk => {
         //     if client.status() != MOQTClientStatus::SetUp {
         //         return MessageProcessResult::Failure;
@@ -177,6 +224,32 @@ pub async fn message_handler(
         //         return MessageProcessResult::Failure;
         //     }
         // }
+        MessageType::UnSubscribe => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
+            }
+
+            let unsubscribe_message = UnAnnounceMessage::depacketize(&mut payload_buf);
+
+            if let Err(err) = unsubscribe_message {
+                // fix
+                tracing::info!("{:#?}", err);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::GenericError,
+                    err.to_string(),
+                );
+            }
+
+            let unsubscribe_result = unannounce_handler(
+                unsubscribe_message.unwrap(),
+                client,
+                track_manager_repository,
+            );
+
+            return MessageProcessResult::Success(BytesMut::with_capacity(0));
+        }
         MessageType::Announce => {
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
