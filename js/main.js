@@ -28,7 +28,15 @@ init().then(async () => {
     client.onAnnounceCallback(async (announceResponse) => {
       console.log({announceResponse});
 
+      await client.sendSubscribeMessage('this is track namespace', 'this is track name');
+
+      await client.sendUnsubscribeMessage('this is track namespace', 'this is track name');
+
       await client.sendUnannounceMessage('this is track namespace');
+    });
+
+    client.onSubscribeCallback(async (subscribeResponse) => {
+      console.log({subscribeResponse});
     });
 
     await client.start();

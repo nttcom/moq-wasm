@@ -94,14 +94,17 @@ impl MOQTClient {
 
     #[wasm_bindgen(js_name = onSetupCallback)]
     pub fn set_setup_callback(&mut self, callback: js_sys::Function) {
-        // self.setup_callback = Some(callback);
         self.callbacks.borrow_mut().set_setup_callback(callback);
     }
 
     #[wasm_bindgen(js_name = onAnnounceCallback)]
     pub fn set_announce_callback(&mut self, callback: js_sys::Function) {
-        // self.setup_callback = Some(callback);
         self.callbacks.borrow_mut().set_announce_callback(callback);
+    }
+
+    #[wasm_bindgen(js_name = onSubscribeCallback)]
+    pub fn set_subscribe_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().set_subscribe_callback(callback);
     }
 
     // TODO: Roleを設定できるようにする
@@ -167,6 +170,71 @@ impl MOQTClient {
         }
     }
 
+    #[wasm_bindgen(js_name = sendSubscribeMessage)]
+    pub async fn send_subscribe_message(
+        &self,
+        track_name_space: String,
+        track_name: String,
+        // start_group: Option<String>,
+        // start_object: Option<String>,
+        // end_group: Option<String>,
+        // end_object: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        if let Some(writer) = &*self.control_stream_writer.borrow() {
+            let subscribe_message = moqt_core::messages::subscribe_request_message::SubscribeRequestMessage::new(
+                track_name_space,
+                track_name,
+                moqt_core::messages::subscribe_request_message::Location::RelativePrevious(0),
+                moqt_core::messages::subscribe_request_message::Location::Absolute(0),
+                moqt_core::messages::subscribe_request_message::Location::None,
+                moqt_core::messages::subscribe_request_message::Location::None,
+                Vec::new(),
+            );
+            let mut subscribe_message_buf = BytesMut::new();
+            subscribe_message.packetize(&mut subscribe_message_buf);
+
+            let mut buf = Vec::new();
+            buf.put_u8(0x03); // subscribe
+            buf.extend(write_variable_integer(subscribe_message_buf.len() as u64)); // payload length
+            buf.extend(subscribe_message_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+
+            JsFuture::from(writer.write_with_chunk(&buffer)).await
+        } else {
+            Err(JsValue::from_str("control_stream_writer is None"))
+        }
+    }
+
+    #[wasm_bindgen(js_name = sendUnsubscribeMessage)]
+    pub async fn send_unsubscribe_message(
+        &self,
+        track_name_space: String,
+        track_name: String,
+    ) -> Result<JsValue, JsValue> {
+        if let Some(writer) = &*self.control_stream_writer.borrow() {
+            let unsubscribe_message = moqt_core::messages::unsubscribe_message::UnsubscribeMessage::new(
+                track_name_space,
+                track_name,
+            );
+            let mut unsubscribe_message_buf = BytesMut::new();
+            unsubscribe_message.packetize(&mut unsubscribe_message_buf);
+
+            let mut buf = Vec::new();
+            buf.put_u8(0x0a); // unsubscribe
+            buf.extend(write_variable_integer(unsubscribe_message_buf.len() as u64)); // payload length
+            buf.extend(unsubscribe_message_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+
+            JsFuture::from(writer.write_with_chunk(&buffer)).await
+        } else {
+            Err(JsValue::from_str("control_stream_writer is None"))
+        }
+    }
+
     pub async fn start(&self) -> Result<JsValue, JsValue> {
         let transport = web_sys::WebTransport::new(self.url.as_str());
         match &transport {
@@ -189,31 +257,11 @@ impl MOQTClient {
         let control_stream_reader =
             web_sys::ReadableStreamDefaultReader::new(&control_stream_readable.into())?;
 
-        // let f1 = self.control_stream_read_thread(&control_stream_reader);
-        // let f1 = control_stream_read_thread(&control_stream_reader);
-
         let control_stream_writable = control_stream.writable();
         let control_stream_writer = control_stream_writable.get_writer()?;
-        // self.control_stream_writer = Some(control_stream_writer);
         *self.control_stream_writer.borrow_mut() = Some(control_stream_writer);
 
-        // writer.write_with_chunk(&(serde_wasm_bindgen::to_value(&vec![1])?));
-        // writer.write_with_chunk(&(serde_wasm_bindgen::to_value(&vec![3])?));
-        // writer.write_with_chunk(&(serde_wasm_bindgen::to_value(&vec![0, 1, 1])?));
-        // let buffer = js_sys::Uint8Array::new_with_length(7);
-        // buffer.copy_from(&[1,5,1,1,0,1,1]); // type,length,# of versions,versions,role param
-
-        // let buffer = js_sys::Uint8Array::new_with_length(11);
-        // let data_view = js_sys::DataView::new(&buffer.buffer(), 0, buffer.byte_length() as usize);
-        // data_view.set_uint16(0, 0x4040);
-        // data_view.set_uint8(2, 1);
-        // data_view.set_uint32(3, 0xc0000000ff000001);
-        // data_view.set_uint8(7, 0);
-        // buffer.copy_from(&[0x4040,1,0xc0000000ff000001,0]); // type,# of versions,versions,# of params,params
-        // JsFuture::from(control_stream_writer.write_with_chunk(&buffer)).await?;
-
         log("before join");
-        // futures::join!(f1);
 
         let callbacks = self.callbacks.clone();
         wasm_bindgen_futures::spawn_local(
@@ -221,14 +269,7 @@ impl MOQTClient {
                 control_stream_read_thread(callbacks, &control_stream_reader).await;
             }
         );
-        // let f1 = self.control_stream_read_thread(&control_stream_reader);
-        // let f1 = f(&|| self.tmp());
-        // wasm_bindgen_futures::spawn_local(async move {
-        //     f1.await;
-        // });
-        // std::thread::spawn(async || {
-        //     f1.await;
-        // });
+
         log("after join");
 
         Ok(JsValue::null())
@@ -347,6 +388,32 @@ async fn control_message_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, mut buf:
                             .unwrap();
                     }
                 }
+                MessageType::SubscribeOk => {
+                    let subscribe_ok_message =
+                        moqt_core::messages::subscribe_ok_message::SubscribeOk::depacketize(
+                            &mut buf,
+                        )?;
+
+                    if let Some(callback) = callbacks.borrow().subscribe_callback() {
+                        let v = serde_wasm_bindgen::to_value(&subscribe_ok_message).unwrap();
+                        callback
+                            .call1(&JsValue::null(), &(v))
+                            .unwrap();
+                    }
+                }
+                MessageType::SubscribeError => {
+                    let subscribe_error_message =
+                        moqt_core::messages::subscribe_error_message::SubscribeError::depacketize(
+                            &mut buf,
+                        )?;
+
+                    if let Some(callback) = callbacks.borrow().subscribe_callback() {
+                        let v = serde_wasm_bindgen::to_value(&subscribe_error_message).unwrap();
+                        callback
+                            .call1(&JsValue::null(), &(v))
+                            .unwrap();
+                    }
+                }
                 _ => {
                     log(std::format!("message_type: {:#?}", message_type).as_str());
                 }
@@ -366,6 +433,7 @@ async fn control_message_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, mut buf:
 struct MOQTCallbacks {
     setup_callback: Option<js_sys::Function>,
     announce_callback: Option<js_sys::Function>,
+    subscribe_callback: Option<js_sys::Function>,
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -374,6 +442,7 @@ impl MOQTCallbacks {
         MOQTCallbacks {
             setup_callback: None,
             announce_callback: None,
+            subscribe_callback: None,
         }
     }
 
@@ -391,5 +460,13 @@ impl MOQTCallbacks {
 
     pub fn set_announce_callback(&mut self, callback: js_sys::Function) {
         self.announce_callback = Some(callback);
+    }
+
+    pub fn subscribe_callback(&self) -> Option<js_sys::Function> {
+        self.subscribe_callback.clone()
+    }
+
+    pub fn set_subscribe_callback(&mut self, callback: js_sys::Function) {
+        self.subscribe_callback = Some(callback);
     }
 }

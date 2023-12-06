@@ -7,7 +7,7 @@ use crate::modules::{
 
 use super::moqt_payload::MOQTPayload;
 
-pub(crate) enum TrackRequestParameter {
+pub enum TrackRequestParameter {
     AuthorizationInfo(AuthorizationInfoParameter),
     Unknown(u8),
 }
@@ -43,7 +43,7 @@ impl MOQTPayload for TrackRequestParameter {
 }
 
 // for SUBSCRIBE REQUEST and ANNOUNCE
-pub(crate) struct AuthorizationInfoParameter {
+pub struct AuthorizationInfoParameter {
     parameter_key: u8, // 0x02
     parameter_length: u8,
     parameter_value: String,

@@ -1,15 +1,22 @@
 use anyhow::Result;
 
-use crate::modules::variable_bytes::read_variable_bytes_from_buffer;
+use crate::{modules::variable_bytes::read_variable_bytes_from_buffer, variable_bytes::write_variable_bytes};
 
 use super::moqt_payload::MOQTPayload;
 
-pub(crate) struct UnsubscribeMessage {
+pub struct UnsubscribeMessage {
     track_namespace: String,
     track_name: String,
 }
 
 impl UnsubscribeMessage {
+    pub fn new(track_namespace: String, track_name: String) -> UnsubscribeMessage {
+        UnsubscribeMessage {
+            track_namespace,
+            track_name,
+        }
+    }
+
     pub(crate) fn track_namespace(&self) -> &str {
         &self.track_namespace
     }
@@ -33,6 +40,9 @@ impl MOQTPayload for UnsubscribeMessage {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        todo!()
+        buf.extend(write_variable_bytes(
+            &self.track_namespace.as_bytes().to_vec(),
+        ));
+        buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
     }
 }

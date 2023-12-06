@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::modules::{
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
@@ -5,7 +7,8 @@ use crate::modules::{
 
 use super::moqt_payload::MOQTPayload;
 
-pub(crate) struct SubscribeError {
+#[derive(Debug, Serialize, Clone)]
+pub struct SubscribeError {
     track_namespace: String,
     track_name: String,
     error_code: u64,
