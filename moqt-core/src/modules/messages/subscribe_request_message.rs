@@ -1,14 +1,17 @@
 use anyhow::bail;
 use tracing::info;
 
-use crate::modules::{
-    variable_bytes::read_variable_bytes_from_buffer,
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+use crate::{
+    modules::{
+        variable_bytes::read_variable_bytes_from_buffer,
+        variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+    },
+    variable_bytes::write_variable_bytes,
 };
 
 use super::{moqt_payload::MOQTPayload, version_specific_parameters::TrackRequestParameter};
 
-pub(crate) struct SubscribeRequestMessage {
+pub struct SubscribeRequestMessage {
     track_namespace: String,
     track_name: String,
     start_group: Location,
@@ -19,6 +22,26 @@ pub(crate) struct SubscribeRequestMessage {
 }
 
 impl SubscribeRequestMessage {
+    pub fn new(
+        track_namespace: String,
+        track_name: String,
+        start_group: Location,
+        start_object: Location,
+        end_group: Location,
+        end_object: Location,
+        track_request_parameters: Vec<TrackRequestParameter>,
+    ) -> SubscribeRequestMessage {
+        SubscribeRequestMessage {
+            track_namespace,
+            track_name,
+            start_group,
+            start_object,
+            end_group,
+            end_object,
+            track_request_parameters,
+        }
+    }
+
     pub fn track_namespace(&self) -> &str {
         &self.track_namespace
     }
@@ -61,12 +84,22 @@ impl MOQTPayload for SubscribeRequestMessage {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        todo!()
+        buf.extend(write_variable_bytes(
+            &self.track_namespace.as_bytes().to_vec(),
+        ));
+        buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
+        self.start_group.packetize(buf);
+        self.start_object.packetize(buf);
+        self.end_group.packetize(buf);
+        self.end_object.packetize(buf);
+        for track_request_parameter in &self.track_request_parameters {
+            track_request_parameter.packetize(buf);
+        }
     }
 }
 
 #[derive(Debug)]
-pub(crate) enum Location {
+pub enum Location {
     None,                  // 0x00
     Absolute(u64),         // 0x01
     RelativePrevious(u64), // 0x02
