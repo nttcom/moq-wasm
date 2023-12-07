@@ -1,47 +1,74 @@
 import init, {MOQTClient} from './pkg/moqt_client_sample';
 
 init().then(async () => {
-    console.log('init wasm-pack');
+  console.log('init wasm-pack');
 
-    const client = new MOQTClient("https://localhost:4433");
+  const connectBtn = document.getElementById('connectBtn');
+  connectBtn.addEventListener('click', async () => {
+    const url = document.form.url.value;
+
+    const client = new MOQTClient(url);
     console.log(client.id, client);
     console.log("URL:", client.url());
 
-    client.set_and_exec_callback((a,b) => {
-      console.log(a + b);
-      console.log(a - b);
-      console.log(a * b);
-      console.log(a / b);
-    });
+    const ary = new Uint8Array([1,1,2,3,5,8,13,21,34,55,89,144,233]);
+    console.log(ary);
+    client.array_buffer_sample_method(ary);
+    client.array_buffer_sample_method(ary);
 
-    client.set_and_exec_callback((a,b) => {
-      console.log(a, b);
-    });
-
-    console.log("URL:", client.url());
-
-    client.onSetupCallback(async (serverSetupMessage) => {
+    client.onSetup(async (serverSetupMessage) => {
       console.log({serverSetupMessage});
-      await client.sendAnnounceMessage('this is track namespace');
     });
 
-    client.onAnnounceCallback(async (announceResponse) => {
+    client.onAnnounce(async (announceResponse) => {
       console.log({announceResponse});
-
-      await client.sendSubscribeMessage('this is track namespace', 'this is track name');
-
-      await client.sendUnsubscribeMessage('this is track namespace', 'this is track name');
-
-      await client.sendUnannounceMessage('this is track namespace');
     });
 
-    client.onSubscribeCallback(async (subscribeResponse) => {
+    client.onSubscribe(async (subscribeResponse) => {
+      console.log('relay will want to subscribe');
       console.log({subscribeResponse});
     });
 
-    await client.start();
-
-    client.sendSetupMessage().then(() => {
-      console.log("sendSetupMessage");
+    client.onSubscribeResponse(async (subscribeResponse) => {
+      console.log({subscribeResponse});
     });
+
+    const sendBtn = document.getElementById('sendBtn');
+
+    const send = async () => {
+      console.log('send btn clicked');
+      const streamDatagram = Array.from(form['stream-datagram']).filter(elem => elem.checked)[0].value;
+      const messageType = form['message-type'].value;
+      const versions = form['versions'].value.split(',').map(BigInt);
+      const role = Array.from(form['role']).filter(elem => elem.checked)[0].value;
+      const isAddPath = !!form['add-path'].checked;
+
+      console.log({streamDatagram,messageType,versions,role,isAddPath});
+
+      const trackNamespace = 'this is track namespace';
+      const trackName = 'this is track name';
+
+      switch (messageType) {
+        case 'setup':
+          await client.sendSetupMessage(role, versions);
+          break;
+        case 'announce':
+          await client.sendAnnounceMessage(trackNamespace);
+          break;
+        case 'unannounce':
+          await client.sendUnannounceMessage(trackNamespace);
+          break;
+        case 'subscribe':
+          await client.sendSubscribeMessage(trackNamespace, trackName);
+          break;
+        case 'unsubscribe':
+          await client.sendUnsubscribeMessage(trackNamespace, trackName);
+          break;
+      }
+    };
+
+    sendBtn.addEventListener('click', send);
+
+    await client.start();
+  });
 });
