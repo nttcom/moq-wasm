@@ -7,7 +7,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use futures::join;
 use moqt_core::{
     message_type::{self, MessageType},
-    messages::moqt_payload::MOQTPayload,
+    messages::{moqt_payload::MOQTPayload, client_setup_message::{ClientSetupMessage, self}, setup_parameters::{RoleCase, RoleParameter, SetupParameter}},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer}, variable_bytes::write_variable_bytes,
 };
 use serde::{Deserialize, Serialize};
@@ -92,34 +92,40 @@ impl MOQTClient {
             .unwrap();
     }
 
-    #[wasm_bindgen(js_name = onSetupCallback)]
+    #[wasm_bindgen(js_name = onSetup)]
     pub fn set_setup_callback(&mut self, callback: js_sys::Function) {
         self.callbacks.borrow_mut().set_setup_callback(callback);
     }
 
-    #[wasm_bindgen(js_name = onAnnounceCallback)]
+    #[wasm_bindgen(js_name = onAnnounce)]
     pub fn set_announce_callback(&mut self, callback: js_sys::Function) {
         self.callbacks.borrow_mut().set_announce_callback(callback);
     }
 
-    #[wasm_bindgen(js_name = onSubscribeCallback)]
+    #[wasm_bindgen(js_name = onSubscribe)]
     pub fn set_subscribe_callback(&mut self, callback: js_sys::Function) {
         self.callbacks.borrow_mut().set_subscribe_callback(callback);
     }
 
-    // TODO: Roleを設定できるようにする
+    #[wasm_bindgen(js_name = onSubscribeResponse)]
+    pub fn set_subscribe_response_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().set_subscribe_response_callback(callback);
+    }
+
     #[wasm_bindgen(js_name = sendSetupMessage)]
-    pub async fn send_setup_message(&self) -> Result<JsValue, JsValue> {
+    pub async fn send_setup_message(&self, role_value: u8, versions: Vec<u64>) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
+            let role = RoleCase::try_from(role_value).unwrap();
+            let versions = versions.iter().map(|v| *v as u32).collect::<Vec<u32>>();
+
+            let client_setup_message = ClientSetupMessage::new(versions, vec![SetupParameter::RoleParameter(RoleParameter::new(role))]);
+            let mut client_setup_message_buf = BytesMut::new();
+            client_setup_message.packetize(&mut client_setup_message_buf);
+
             let mut buf = Vec::new();
-            buf.put_u16(0x4040); // client setup
-            buf.put_u8(13); // length
-            buf.put_u8(0x01); // # of versions
-            buf.put_u64(0xc0000000ff000001); // version
-            buf.put_u8(0x01); // # of params
-            buf.put_u8(0x00); // role param
-            buf.put_u8(0x01); // role value length
-            buf.put_u8(0x01); // role value (injection)
+            buf.extend(write_variable_integer(u8::try_from(MessageType::ClientSetup).unwrap() as u64)); // client setup
+            buf.extend(write_variable_integer(client_setup_message_buf.len() as u64)); // payload length
+            buf.extend(client_setup_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
@@ -274,13 +280,9 @@ impl MOQTClient {
 
         Ok(JsValue::null())
     }
-}
 
-// 関数を一つ引数に取るfという関数
-// async fn f(g: fn() -> ()) {
-async fn f(g: &dyn Fn()) {
-    loop {
-        g();
+    pub fn array_buffer_sample_method(&self, buf: Vec<u8>) {
+        log(std::format!("array_buffer_sample_method: {:#?}", buf).as_str());
     }
 }
 
@@ -394,7 +396,7 @@ async fn control_message_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, mut buf:
                             &mut buf,
                         )?;
 
-                    if let Some(callback) = callbacks.borrow().subscribe_callback() {
+                    if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
                         let v = serde_wasm_bindgen::to_value(&subscribe_ok_message).unwrap();
                         callback
                             .call1(&JsValue::null(), &(v))
@@ -407,7 +409,7 @@ async fn control_message_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, mut buf:
                             &mut buf,
                         )?;
 
-                    if let Some(callback) = callbacks.borrow().subscribe_callback() {
+                    if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
                         let v = serde_wasm_bindgen::to_value(&subscribe_error_message).unwrap();
                         callback
                             .call1(&JsValue::null(), &(v))
@@ -434,6 +436,8 @@ struct MOQTCallbacks {
     setup_callback: Option<js_sys::Function>,
     announce_callback: Option<js_sys::Function>,
     subscribe_callback: Option<js_sys::Function>,
+    subscribe_response_callback: Option<js_sys::Function>,
+    object_callback: Option<js_sys::Function>,
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -443,6 +447,8 @@ impl MOQTCallbacks {
             setup_callback: None,
             announce_callback: None,
             subscribe_callback: None,
+            subscribe_response_callback: None,
+            object_callback: None,
         }
     }
 
@@ -468,5 +474,21 @@ impl MOQTCallbacks {
 
     pub fn set_subscribe_callback(&mut self, callback: js_sys::Function) {
         self.subscribe_callback = Some(callback);
+    }
+
+    pub fn subscribe_response_callback(&self) -> Option<js_sys::Function> {
+        self.subscribe_response_callback.clone()
+    }
+
+    pub fn set_subscribe_response_callback(&mut self, callback: js_sys::Function) {
+        self.subscribe_response_callback = Some(callback);
+    }
+
+    pub fn object_callback(&self) -> Option<js_sys::Function> {
+        self.object_callback.clone()
+    }
+
+    pub fn set_object_callback(&mut self, callback: js_sys::Function) {
+        self.object_callback = Some(callback);
     }
 }
