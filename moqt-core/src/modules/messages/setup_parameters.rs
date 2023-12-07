@@ -1,7 +1,8 @@
-use crate::modules::variable_integer::read_variable_integer_from_buffer;
+use crate::{modules::variable_integer::read_variable_integer_from_buffer, variable_integer::write_variable_integer, variable_bytes::write_variable_bytes};
 
 use super::moqt_payload::MOQTPayload;
 use anyhow::{bail, ensure, Result};
+use bytes::BufMut;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
 
@@ -54,12 +55,23 @@ impl MOQTPayload for SetupParameter {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        todo!()
+        match self {
+            SetupParameter::RoleParameter(param) => {
+                buf.put_u8(param.key.into());
+                buf.put_u8(0x01);
+                buf.put_u8(param.value.into());
+            },
+            SetupParameter::PathParameter(param) => {
+                buf.put_u8(param.key.into());
+                buf.extend(write_variable_bytes(&param.value.as_bytes().to_vec()));
+            },
+            SetupParameter::Unknown(_) => unimplemented!("Unknown SETUP parameter"),
+        }
     }
 }
 
 #[derive(Debug, Serialize, Clone)]
-pub(crate) struct RoleParameter {
+pub struct RoleParameter {
     pub key: SetupParameterType, // 0x00
     pub value_length: u8,        // 0x01
     pub value: RoleCase,
@@ -84,7 +96,7 @@ pub enum RoleCase {
 }
 
 #[derive(Debug, Serialize, Clone)]
-pub(crate) struct PathParameter {
+pub struct PathParameter {
     pub key: SetupParameterType, // 0x01
     pub value_length: u8,        // tmp
     pub value: String,
@@ -102,7 +114,7 @@ impl PathParameter {
 
 #[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Serialize)]
 #[repr(u8)]
-pub(crate) enum SetupParameterType {
+pub enum SetupParameterType {
     Role = 0x00,
     Path = 0x01,
 }

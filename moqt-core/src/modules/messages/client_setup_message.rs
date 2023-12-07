@@ -6,11 +6,26 @@ use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_
 
 use super::{moqt_payload::MOQTPayload, setup_parameters::SetupParameter};
 
-pub(crate) struct ClientSetupMessage {
+#[derive(Debug)]
+pub struct ClientSetupMessage {
     pub(crate) number_of_supported_versions: u8,
     pub(crate) supported_versions: Vec<u32>,
     pub(crate) number_of_parameters: u8,
     pub(crate) setup_parameters: Vec<SetupParameter>,
+}
+
+impl ClientSetupMessage {
+    pub fn new(
+        supported_versions: Vec<u32>,
+        setup_parameters: Vec<SetupParameter>,
+    ) -> ClientSetupMessage {
+        ClientSetupMessage {
+            number_of_supported_versions: supported_versions.len() as u8,
+            supported_versions,
+            number_of_parameters: setup_parameters.len() as u8,
+            setup_parameters,
+        }
+    }
 }
 
 impl MOQTPayload for ClientSetupMessage {
@@ -41,18 +56,16 @@ impl MOQTPayload for ClientSetupMessage {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        todo!()
-    }
-}
+        buf.extend(write_variable_integer(
+            self.number_of_supported_versions as u64,
+        ));
+        for supported_version in &self.supported_versions {
+            buf.extend(write_variable_integer(*supported_version as u64));
+        }
 
-#[cfg(test)]
-impl ClientSetupMessage {
-    pub fn new(supported_versions: Vec<u32>, setup_parameters: Vec<SetupParameter>) -> Self {
-        ClientSetupMessage {
-            number_of_supported_versions: supported_versions.len() as u8,
-            supported_versions,
-            number_of_parameters: setup_parameters.len() as u8,
-            setup_parameters,
+        buf.extend(write_variable_integer(self.number_of_parameters as u64));
+        for setup_parameter in &self.setup_parameters {
+            setup_parameter.packetize(buf);
         }
     }
 }
