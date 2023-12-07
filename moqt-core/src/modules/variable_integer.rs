@@ -51,7 +51,7 @@ pub fn write_variable_integer(value: u64) -> BytesMut {
     } else if value < 0x4000000000000000 {
         buf.put_u64(value ^ 0xc000000000000000)
     } else {
-        panic!("Invalid use of `write_variable_integer` with {}", value);
+        unreachable!("Invalid use of `write_variable_integer` with {}", value);
     }
 
     buf

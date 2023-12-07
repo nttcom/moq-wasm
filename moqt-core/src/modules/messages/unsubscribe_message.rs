@@ -1,6 +1,8 @@
 use anyhow::Result;
 
-use crate::{modules::variable_bytes::read_variable_bytes_from_buffer, variable_bytes::write_variable_bytes};
+use crate::{
+    modules::variable_bytes::read_variable_bytes_from_buffer, variable_bytes::write_variable_bytes,
+};
 
 use super::moqt_payload::MOQTPayload;
 
