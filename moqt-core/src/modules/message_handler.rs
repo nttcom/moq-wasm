@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
+use crate::messages::object_message::{ObjectMessageWithPayloadLength, ObjectMessageWithoutPayloadLength};
 use crate::modules::handlers::subscribe_handler::subscribe_handler;
 use crate::modules::handlers::unannounce_handler::unannounce_handler;
 use crate::modules::messages::announce_message::AnnounceMessage;
@@ -133,11 +134,58 @@ pub async fn message_handler(
     // 各メッセージでクラス化
     // 自分はサーバであるととりあえず仮定
     let return_message_type = match message_type {
-        // MessageType::Object => {
-        //     if client.status() != MOQTClientStatus::SetUp {
-        //         return MessageProcessResult::Failure;
-        //     }
-        // }
+        MessageType::ObjectWithLength => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
+            }
+
+            // FIXME: 仮でechoする
+            let object_message = ObjectMessageWithPayloadLength::depacketize(&mut payload_buf);
+            tracing::info!("object_message: {:#x?}", object_message);
+            match object_message {
+                Ok(object_message) => {
+                    object_message.packetize(&mut write_buf);
+
+                    MessageType::ObjectWithLength
+                }
+                Err(err) => {
+                    // fix
+                    tracing::info!("{:#?}", err);
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::GenericError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
+        MessageType::ObjectWithoutLength => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
+            }
+
+            // FIXME: 仮でechoする
+            let object_message = ObjectMessageWithoutPayloadLength::depacketize(&mut payload_buf);
+            tracing::info!("object_message: {:#x?}", object_message);
+            match object_message {
+                Ok(object_message) => {
+                    object_message.packetize(&mut write_buf);
+
+                    MessageType::ObjectWithoutLength
+                }
+                Err(err) => {
+                    // fix
+                    tracing::info!("{:#?}", err);
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::GenericError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
         MessageType::ClientSetup => {
             if client.status() != MOQTClientStatus::Connected {
                 let message = String::from("Invalid timing");
@@ -351,6 +399,8 @@ pub async fn message_handler(
     message_buf.extend(write_variable_integer(write_buf.len() as u64));
     // Add payload
     message_buf.extend(write_buf);
+
+    tracing::info!("message_buf: {:#x?}", message_buf);
 
     MessageProcessResult::Success(message_buf)
 }
