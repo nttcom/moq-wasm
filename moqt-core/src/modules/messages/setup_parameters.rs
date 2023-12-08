@@ -1,4 +1,7 @@
-use crate::{modules::variable_integer::read_variable_integer_from_buffer, variable_integer::write_variable_integer, variable_bytes::write_variable_bytes};
+use crate::{
+    modules::variable_integer::read_variable_integer_from_buffer,
+    variable_bytes::write_variable_bytes,
+};
 
 use super::moqt_payload::MOQTPayload;
 use anyhow::{bail, ensure, Result};
@@ -60,11 +63,11 @@ impl MOQTPayload for SetupParameter {
                 buf.put_u8(param.key.into());
                 buf.put_u8(0x01);
                 buf.put_u8(param.value.into());
-            },
+            }
             SetupParameter::PathParameter(param) => {
                 buf.put_u8(param.key.into());
                 buf.extend(write_variable_bytes(&param.value.as_bytes().to_vec()));
-            },
+            }
             SetupParameter::Unknown(_) => unimplemented!("Unknown SETUP parameter"),
         }
     }

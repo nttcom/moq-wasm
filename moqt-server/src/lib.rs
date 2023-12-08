@@ -301,7 +301,7 @@ async fn handle_stream(
         match message_result {
             MessageProcessResult::Success(buf) => {
                 write_stream.write_all(&buf).await?;
-                tracing::info!("sent {:?}", buf.to_vec());
+                tracing::info!("sent {:x?}", buf.to_vec());
             }
             MessageProcessResult::Failure(code, message) => {
                 close_tx.send((u8::from(code) as u64, message)).await?;
