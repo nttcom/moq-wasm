@@ -8,7 +8,7 @@ use futures::join;
 use moqt_core::{
     message_type::{self, MessageType},
     messages::{moqt_payload::MOQTPayload, client_setup_message::{ClientSetupMessage, self}, setup_parameters::{RoleCase, RoleParameter, SetupParameter}},
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer}, variable_bytes::write_variable_bytes,
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer}, variable_bytes::write_variable_bytes, message_handler::StreamType,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -58,7 +58,7 @@ pub struct MOQTClient {
     pub id: u64,
     url: String,
     setup_callback: Option<js_sys::Function>,
-    transport: Option<web_sys::WebTransport>,
+    transport: Rc<RefCell<Option<web_sys::WebTransport>>>,
     control_stream_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
     callbacks: Rc<RefCell<MOQTCallbacks>>,
 }
@@ -70,9 +70,9 @@ impl MOQTClient {
     pub fn new(url: String) -> Self {
         MOQTClient {
             id: 42,
-            url: url.clone(),
+            url,
             setup_callback: None,
-            transport: None,
+            transport: Rc::new(RefCell::new(None)),
             control_stream_writer: Rc::new(RefCell::new(None)),
             callbacks: Rc::new(RefCell::new(MOQTCallbacks::new())),
         }
@@ -112,6 +112,11 @@ impl MOQTClient {
         self.callbacks.borrow_mut().set_subscribe_response_callback(callback);
     }
 
+    #[wasm_bindgen(js_name = onObject)]
+    pub fn set_object_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().set_object_callback(callback);
+    }
+
     #[wasm_bindgen(js_name = sendSetupMessage)]
     pub async fn send_setup_message(&self, role_value: u8, versions: Vec<u64>) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
@@ -123,7 +128,7 @@ impl MOQTClient {
             client_setup_message.packetize(&mut client_setup_message_buf);
 
             let mut buf = Vec::new();
-            buf.extend(write_variable_integer(u8::try_from(MessageType::ClientSetup).unwrap() as u64)); // client setup
+            buf.extend(write_variable_integer(u8::from(MessageType::ClientSetup) as u64)); // client setup
             buf.extend(write_variable_integer(client_setup_message_buf.len() as u64)); // payload length
             buf.extend(client_setup_message_buf);
 
@@ -200,7 +205,7 @@ impl MOQTClient {
             subscribe_message.packetize(&mut subscribe_message_buf);
 
             let mut buf = Vec::new();
-            buf.put_u8(0x03); // subscribe
+            buf.extend(write_variable_integer(u8::from(MessageType::Subscribe) as u64)); // subscribe
             buf.extend(write_variable_integer(subscribe_message_buf.len() as u64)); // payload length
             buf.extend(subscribe_message_buf);
 
@@ -228,7 +233,7 @@ impl MOQTClient {
             unsubscribe_message.packetize(&mut unsubscribe_message_buf);
 
             let mut buf = Vec::new();
-            buf.put_u8(0x0a); // unsubscribe
+            buf.extend(write_variable_integer(u8::from(MessageType::UnSubscribe) as u64)); // unsubscribe
             buf.extend(write_variable_integer(unsubscribe_message_buf.len() as u64)); // payload length
             buf.extend(unsubscribe_message_buf);
 
@@ -236,6 +241,90 @@ impl MOQTClient {
             buffer.copy_from(&buf);
 
             JsFuture::from(writer.write_with_chunk(&buffer)).await
+        } else {
+            Err(JsValue::from_str("control_stream_writer is None"))
+        }
+    }
+
+    #[wasm_bindgen(js_name = sendObjectMessage)]
+    pub async fn send_object_message(
+        &self,
+        track_id: u64,
+        group_sequence: u64,
+        object_sequence: u64,
+        object_send_order: u64,
+        object_payload: Vec<u8>,
+    ) -> Result<JsValue, JsValue> {
+        if let Some(writer) = &*self.control_stream_writer.borrow() {
+            let uni_stream = web_sys::WritableStream::from(
+                JsFuture::from(self.transport.borrow().as_ref().unwrap().create_unidirectional_stream()).await?,
+            );
+            let writer = uni_stream.get_writer()?;
+
+            let object_message = moqt_core::messages::object_message::ObjectMessageWithPayloadLength::new(
+                track_id,
+                group_sequence,
+                object_sequence,
+                object_send_order,
+                object_payload,
+            );
+            let mut object_message_buf = BytesMut::new();
+            object_message.packetize(&mut object_message_buf);
+
+            let mut buf = Vec::new();
+            buf.extend(write_variable_integer(u8::from(MessageType::ObjectWithLength) as u64)); // object
+            buf.extend(write_variable_integer(object_message_buf.len() as u64)); // payload length
+            buf.extend(object_message_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+
+            let result = JsFuture::from(writer.write_with_chunk(&buffer)).await;
+            JsFuture::from(writer.close()).await;
+
+            result
+        } else {
+            Err(JsValue::from_str("control_stream_writer is None"))
+        }
+    }
+
+    #[wasm_bindgen(js_name = sendObjectMessageWithoutLength)]
+    pub async fn send_object_message_without_length(
+        &self,
+        track_id: u64,
+        group_sequence: u64,
+        object_sequence: u64,
+        object_send_order: u64,
+        object_payload: Vec<u8>,
+    ) -> Result<JsValue, JsValue> {
+        if let Some(writer) = &*self.control_stream_writer.borrow() {
+            let uni_stream = web_sys::WritableStream::from(
+                JsFuture::from(self.transport.borrow().as_ref().unwrap().create_unidirectional_stream()).await?,
+            );
+            let writer = uni_stream.get_writer()?;
+
+            let object_message = moqt_core::messages::object_message::ObjectMessageWithoutPayloadLength::new(
+                track_id,
+                group_sequence,
+                object_sequence,
+                object_send_order,
+                object_payload,
+            );
+            let mut object_message_buf = BytesMut::new();
+            object_message.packetize(&mut object_message_buf);
+
+            let mut buf = Vec::new();
+            buf.extend(write_variable_integer(u8::from(MessageType::ObjectWithoutLength) as u64)); // object
+            buf.extend(write_variable_integer(object_message_buf.len() as u64)); // payload length
+            buf.extend(object_message_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+
+            let result = JsFuture::from(writer.write_with_chunk(&buffer)).await;
+            JsFuture::from(writer.close()).await;
+
+            result
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
         }
@@ -252,6 +341,7 @@ impl MOQTClient {
         }
 
         let transport = transport?;
+        *self.transport.borrow_mut() = Some(transport.clone());
         // await相当
         JsFuture::from(transport.ready()).await?;
 
@@ -272,7 +362,16 @@ impl MOQTClient {
         let callbacks = self.callbacks.clone();
         wasm_bindgen_futures::spawn_local(
             async move  {
-                control_stream_read_thread(callbacks, &control_stream_reader).await;
+                stream_read_thread(callbacks, StreamType::Bi, &control_stream_reader).await;
+            }
+        );
+
+        let incoming_stream = transport.incoming_unidirectional_streams();
+        let incoming_stream_reader = web_sys::ReadableStreamDefaultReader::new(&&incoming_stream.into())?;
+        let callbacks = self.callbacks.clone();
+        wasm_bindgen_futures::spawn_local(
+            async move  {
+                receive_unidirectional_thread(callbacks, &incoming_stream_reader).await;
             }
         );
 
@@ -287,8 +386,45 @@ impl MOQTClient {
 }
 
 #[cfg(web_sys_unstable_apis)]
-async fn control_stream_read_thread(
+async fn receive_unidirectional_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
+    reader: &ReadableStreamDefaultReader,
+) -> Result<(), JsValue> {
+    log("receive_unidirectional_thread");
+
+    loop {
+        let ret = reader.read();
+        let ret = JsFuture::from(ret).await?;
+
+        // JsValueの中のobjectを取り出すコード
+        let ret_value = js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?;
+        let ret_done = js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?;
+        // JsValueからboolを取り出すコード
+        let ret_done = js_sys::Boolean::from(ret_done).value_of();
+
+        if ret_done {
+            break;
+        }
+
+        // JsValueからUint8Arrayを取り出すコード
+        // let ret_value = js_sys::Uint8Array::from(ret_value).value_of();
+        let ret_value = web_sys::ReadableStream::from(ret_value);
+
+        let callbacks = callbacks.clone();
+        // let reader = ret_value.get_reader()?;
+        let reader = web_sys::ReadableStreamDefaultReader::new(&ret_value)?;
+        wasm_bindgen_futures::spawn_local(async move {
+            stream_read_thread(callbacks, StreamType::Uni, &reader).await;
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(web_sys_unstable_apis)]
+async fn stream_read_thread(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    stream_type: StreamType,
     reader: &ReadableStreamDefaultReader,
 ) -> Result<(), JsValue> {
     log("control_stream_read_thread");
@@ -300,9 +436,6 @@ async fn control_stream_read_thread(
         // JsValueの中のobjectを取り出すコード
         let ret_value = js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?;
         let ret_done = js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?;
-        // JsValueからUint8Arrayを取り出すコード
-        // let ret_value = js_sys::Uint8Array::from(ret_value).value_of();
-        let ret_value = js_sys::Uint8Array::from(ret_value).to_vec();
         // JsValueからboolを取り出すコード
         let ret_done = js_sys::Boolean::from(ret_done).value_of();
 
@@ -310,14 +443,18 @@ async fn control_stream_read_thread(
             break;
         }
 
-        log(std::format!("recv value: {} {:#x?}", ret_value.len(), ret_value).as_str());
+        // JsValueからUint8Arrayを取り出すコード
+        // let ret_value = js_sys::Uint8Array::from(ret_value).value_of();
+        let ret_value = js_sys::Uint8Array::from(ret_value).to_vec();
+
+        log(std::format!("recv value: {:#?} {} {:#x?}", stream_type, ret_value.len(), ret_value).as_str());
 
         let mut buf = BytesMut::with_capacity(ret_value.len());
         for i in ret_value {
             buf.put_u8(i);
         }
 
-        if let Err(e) = control_message_handler(callbacks.clone(), &mut buf).await {
+        if let Err(e) = message_handler(callbacks.clone(), stream_type.clone(), &mut buf).await {
             log(std::format!("error: {:#?}", e).as_str());
             return Err(js_sys::Error::new(&e.to_string()).into());
         }
@@ -327,7 +464,7 @@ async fn control_stream_read_thread(
 }
 
 #[cfg(web_sys_unstable_apis)]
-async fn control_message_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, mut buf: &mut BytesMut) -> Result<()> {
+async fn message_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, stream_type: StreamType, mut buf: &mut BytesMut) -> Result<()> {
     // TODO: 読み戻しがあるかもしれないのでカーソルを使うようにする
 
     use moqt_core::messages::announce_ok_message;
@@ -411,6 +548,32 @@ async fn control_message_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, mut buf:
 
                     if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
                         let v = serde_wasm_bindgen::to_value(&subscribe_error_message).unwrap();
+                        callback
+                            .call1(&JsValue::null(), &(v))
+                            .unwrap();
+                    }
+                }
+                MessageType::ObjectWithLength => {
+                    let object_with_length_message =
+                        moqt_core::messages::object_message::ObjectMessageWithPayloadLength::depacketize(
+                            &mut buf,
+                        )?;
+
+                    if let Some(callback) = callbacks.borrow().object_callback() {
+                        let v = serde_wasm_bindgen::to_value(&object_with_length_message).unwrap();
+                        callback
+                            .call1(&JsValue::null(), &(v))
+                            .unwrap();
+                    }
+                }
+                MessageType::ObjectWithoutLength => {
+                    let object_without_length_message =
+                        moqt_core::messages::object_message::ObjectMessageWithoutPayloadLength::depacketize(
+                            &mut buf,
+                        )?;
+
+                    if let Some(callback) = callbacks.borrow().object_callback() {
+                        let v = serde_wasm_bindgen::to_value(&object_without_length_message).unwrap();
                         callback
                             .call1(&JsValue::null(), &(v))
                             .unwrap();
