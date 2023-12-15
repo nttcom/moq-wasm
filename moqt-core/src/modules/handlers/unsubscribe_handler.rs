@@ -27,6 +27,6 @@ pub(crate) async fn unsubscribe_handler(
 
     // TODO: unsubscribe情報を削除
 
-    // tmp
+    // FIXME: tmp
     Ok(UnSubscribeResponse::Success)
 }

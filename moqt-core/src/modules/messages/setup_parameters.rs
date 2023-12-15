@@ -9,7 +9,7 @@ use bytes::BufMut;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
 
-// TODO FIXME: そもそもvalueだけ持たせれば後ろの個別のstructはいらないのでは?
+// TODO: FIXME: そもそもvalueだけ持たせれば後ろの個別のstructはいらないのでは?
 #[derive(Debug, Serialize, Clone)]
 pub enum SetupParameter {
     RoleParameter(RoleParameter),

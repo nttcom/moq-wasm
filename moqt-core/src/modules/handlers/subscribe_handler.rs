@@ -38,11 +38,13 @@ pub(crate) async fn subscribe_handler(
 
     // TODO: subscribe情報を登録
 
-    // tmp
+    // TODO: subscriber -> relayならrelay -> publisherに伝える
+
+    // FIXME: tmp
     Ok(SubscribeResponse::Success(SubscribeOk::new(
         subscribe_message.track_namespace().to_string(),
         subscribe_message.track_name().to_string(),
-        1,
+        1, // tmp
         0, // unlimited
     )))
 }

@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use bytes::BytesMut;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
+// Called as a separate thread
 pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
     tracing::info!("buffer_manager start");
 
@@ -18,6 +19,7 @@ pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
                 resp,
             } => {
                 let mut session_hash = buffers.get_mut(&session_id);
+                // Create empty hashmap if not exists
                 if session_hash.is_none() {
                     buffers.insert(session_id, HashMap::<u64, Arc<Mutex<BytesMut>>>::new());
                     session_hash = buffers.get_mut(&session_id);
@@ -25,6 +27,7 @@ pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
                 let session_hash = session_hash.unwrap();
 
                 let mut stream_hash = session_hash.get(&stream_id);
+                // Create empty buffer if not exists
                 if stream_hash.is_none() {
                     session_hash.insert(stream_id, Arc::new(Mutex::new(BytesMut::new())));
                     stream_hash = session_hash.get(&stream_id);
@@ -33,6 +36,7 @@ pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
 
                 let buf = stream_hash.clone();
 
+                // response the buffer
                 let _ = resp.send(buf);
             }
             ReleaseStream {
@@ -70,6 +74,7 @@ pub(crate) enum BufferCommand {
 
 type BufferType = Arc<Mutex<BytesMut>>;
 
+// buffer要求時のchannel周りの処理を隠蔽するためのラッパー
 pub(crate) async fn request_buffer(
     tx: mpsc::Sender<BufferCommand>,
     session_id: usize,

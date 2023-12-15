@@ -3,6 +3,8 @@ use std::io::Cursor;
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, BytesMut};
 
+// See https://datatracker.ietf.org/doc/html/rfc9000#name-variable-length-integer-enc
+
 pub fn read_variable_integer_from_buffer(buf: &mut BytesMut) -> Result<u64> {
     let mut cur = Cursor::new(&buf[..]);
 

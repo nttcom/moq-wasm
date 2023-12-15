@@ -1,7 +1,9 @@
 use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
-use crate::messages::object_message::{ObjectMessageWithPayloadLength, ObjectMessageWithoutPayloadLength};
+use crate::messages::object_message::{
+    ObjectMessageWithPayloadLength, ObjectMessageWithoutPayloadLength,
+};
 use crate::modules::handlers::subscribe_handler::subscribe_handler;
 use crate::modules::handlers::unannounce_handler::unannounce_handler;
 use crate::modules::messages::announce_message::AnnounceMessage;
@@ -42,6 +44,7 @@ pub async fn message_handler(
     // tracing::info!("message_handler!");
     tracing::info!("message_handler! {}", read_buf.len());
 
+    // 断片化している場合などは元に戻す必要があるのでcursorを用いる
     // ちゃんと読んだ場合はread_bufも対応してupdateが必要
     let mut read_cur = Cursor::new(&read_buf[..]);
 

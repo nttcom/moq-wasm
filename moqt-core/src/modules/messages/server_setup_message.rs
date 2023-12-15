@@ -25,7 +25,7 @@ impl ServerSetupMessage {
 impl MOQTPayload for ServerSetupMessage {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let selected_version = u32::try_from(read_variable_integer_from_buffer(buf)?)
-            .context("Depacketize elected version")?;
+            .context("Depacketize selected version")?;
 
         let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("Depacketize number of parameters")?;
