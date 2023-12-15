@@ -53,7 +53,7 @@ pub(crate) fn setup_handler(
     }
 
     let server_setup_message = ServerSetupMessage::new(constants::MOQ_TRANSPORT_VERSION, vec![]);
-    // Connected -> Setup
+    // State: Connected -> Setup
     client.update_status(MOQTClientStatus::SetUp);
 
     tracing::info!("setup_handler completed. {:#?}", client);

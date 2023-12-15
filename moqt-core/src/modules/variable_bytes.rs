@@ -5,6 +5,8 @@ use bytes::{Buf, BytesMut};
 
 use super::variable_integer::{read_variable_integer, write_variable_integer};
 
+// See https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-01#name-notational-conventions
+
 pub fn read_variable_bytes_from_buffer(buf: &mut BytesMut) -> Result<Vec<u8>> {
     let mut cur = Cursor::new(&buf[..]);
 

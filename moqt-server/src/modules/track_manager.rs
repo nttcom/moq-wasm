@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use moqt_core::TrackManagerRepository;
 use tokio::sync::{mpsc, oneshot};
 
+// Called as a separate thread
 pub(crate) async fn track_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
     tracing::info!("track_manager start");
 
@@ -49,6 +50,7 @@ pub(crate) enum TrackCommand {
     },
 }
 
+// channel周りの処理を隠蔽するためのラッパー
 pub(crate) struct TrackManager {
     tx: mpsc::Sender<TrackCommand>,
 }

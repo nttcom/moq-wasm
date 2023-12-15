@@ -23,6 +23,7 @@ pub use moqt_core::constants;
 
 use moqt_core::{constants::UnderlayType, message_handler::*, MOQTClient};
 
+// Auth paramを検証するためのcallback
 pub enum AuthCallbackType {
     Announce,
     Subscribe,
@@ -76,12 +77,13 @@ impl MOQT {
     pub async fn start(&self) -> Result<()> {
         init_logging();
 
+        // For buffer management for each stream
         let (tx, mut rx) = mpsc::channel::<BufferCommand>(1024);
+        // For track management but this is meaningless for now because transferring Object message is not implemented yet
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
 
-        if let UnderlayType::WebTransport = self.underlay {
-        } else {
-            bail!("Underlay must be WebTransport, not {:?}", self.underlay)
+        if self.underlay != UnderlayType::WebTransport {
+            bail!("Underlay must be WebTransport, not {:?}", self.underlay);
         }
 
         // Start buffer management thread
@@ -91,6 +93,7 @@ impl MOQT {
         tokio::spawn(async move { modules::track_manager::track_manager(&mut track_rx).await });
 
         // 以下はWebTransportの場合
+        // Start wtransport server
         let config = ServerConfig::builder()
             .with_bind_default(self.port)
             .with_certificate(
@@ -114,6 +117,7 @@ impl MOQT {
             let tx = tx.clone();
             let track_tx = track_tx.clone();
             let incoming_session = server.accept().await;
+            // Create a thread for each session
             tokio::spawn(
                 handle_connection(tx, track_tx, incoming_session)
                     .instrument(tracing::info_span!("Connection", id)),
@@ -159,13 +163,16 @@ async fn handle_connection_impl(
 
     tracing::info!("Waiting for data from client...");
 
+    // Close処理をまとめるためにチャネルで処理を送る
     let (close_tx, mut close_rx) = mpsc::channel::<(u64, String)>(32);
 
+    // TODO: FIXME: QUICレベルの再接続対応のためにはスレッド間で記憶する必要がある
     let mut is_control_stream_opened = false;
     loop {
         tokio::select! {
             stream = connection.accept_bi() => {
                 if is_control_stream_opened {
+                    // Only 1 control stream is allowed
                     tracing::info!("Control stream already opened");
                     close_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
@@ -180,9 +187,8 @@ async fn handle_connection_impl(
                     tracing::info!("Accepted BI stream");
                 });
 
-                let stream_id = stream.1.id().into_u64();
-
                 let (write_stream, read_stream) = stream;
+                let stream_id = read_stream.id().into_u64();
 
                 let tx = tx.clone();
                 let track_tx = track_tx.clone();
@@ -205,10 +211,9 @@ async fn handle_connection_impl(
                 let stream = stream?;
                 tracing::info!("Accepted UNI stream");
 
-                let stream_id = stream.id().into_u64();
-
                 let read_stream = stream;
                 let write_stream = connection.open_uni().await?.await?;
+                let stream_id = read_stream.id().into_u64();
 
                 let tx = tx.clone();
                 let track_tx = track_tx.clone();
@@ -289,6 +294,7 @@ async fn handle_stream(
         buf.extend_from_slice(&read_buf);
 
         let mut client = client.lock().await;
+        // TODO: message_handlerはserverでしか使わないのでserver側に実装を移動する
         let message_result = message_handler(
             &mut buf,
             stream_type,
@@ -311,6 +317,7 @@ async fn handle_stream(
         };
     }
 
+    // TODO: FIXME: QUICレベルの再接続時をサポートする時に呼んで良いか確認
     tx.send(BufferCommand::ReleaseStream {
         session_id: stable_id,
         stream_id,
@@ -320,6 +327,7 @@ async fn handle_stream(
     Ok::<()>(())
 }
 
+// TODO: LogLevelを設定できるようにする
 fn init_logging() {
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
