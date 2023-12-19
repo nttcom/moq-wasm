@@ -1,12 +1,15 @@
-use crate::modules::{
-    constants::UnderlayType, messages::setup_parameters::SetupParameter,
-    moqt_client::MOQTClientStatus,
+use crate::{
+    constants,
+    modules::{
+        constants::UnderlayType, messages::setup_parameters::SetupParameter,
+        moqt_client::MOQTClientStatus,
+    },
 };
 use anyhow::{bail, Result};
 
 use crate::modules::{
-    messages::setup_message::{ClientSetupMessage, ServerSetupMessage},
-    moqt_client::MOQTClient,
+    messages::client_setup_message::ClientSetupMessage,
+    messages::server_setup_message::ServerSetupMessage, moqt_client::MOQTClient,
 };
 
 pub(crate) fn setup_handler(
@@ -16,12 +19,15 @@ pub(crate) fn setup_handler(
 ) -> Result<ServerSetupMessage> {
     tracing::info!("setup_handler");
 
-    let tmp_supported_version = 1;
+    tracing::info!(
+        "supported_versions: {:#x?}",
+        client_setup_message.supported_versions
+    );
 
     if !client_setup_message
         .supported_versions
         .iter()
-        .any(|v| *v == tmp_supported_version)
+        .any(|v| *v == constants::MOQ_TRANSPORT_VERSION)
     {
         bail!("Supported version is not included");
     }
@@ -46,8 +52,8 @@ pub(crate) fn setup_handler(
         bail!("Role parameter is required in SETUP parameter from client.");
     }
 
-    let server_setup_message = ServerSetupMessage::new(tmp_supported_version, vec![]);
-    // Connected -> Setup
+    let server_setup_message = ServerSetupMessage::new(constants::MOQ_TRANSPORT_VERSION, vec![]);
+    // State: Connected -> Setup
     client.update_status(MOQTClientStatus::SetUp);
 
     tracing::info!("setup_handler completed. {:#?}", client);
@@ -63,7 +69,7 @@ mod success {
     use crate::modules::{
         handlers::server_setup_handler::setup_handler,
         messages::{
-            setup_message::ClientSetupMessage,
+            client_setup_message::ClientSetupMessage,
             setup_parameters::{PathParameter, RoleCase, RoleParameter, SetupParameter},
         },
         moqt_client::MOQTClient,
@@ -108,7 +114,7 @@ mod failure {
     use crate::modules::{
         handlers::server_setup_handler::setup_handler,
         messages::{
-            setup_message::ClientSetupMessage,
+            client_setup_message::ClientSetupMessage,
             setup_parameters::{PathParameter, SetupParameter},
         },
         moqt_client::MOQTClient,
