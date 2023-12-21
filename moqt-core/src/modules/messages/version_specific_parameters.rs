@@ -19,6 +19,7 @@ impl MOQTPayload for TrackRequestParameter {
         match parameter_key {
             0x02 => {
                 // AuthorizationInfo
+                // TODO: FIXME: parameter_lengthは無い方が動くかも
                 let parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
                 let parameter_value = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
 

@@ -4,7 +4,7 @@ use crate::{
 };
 
 use super::moqt_payload::MOQTPayload;
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, ensure, Context, Result};
 use bytes::BufMut;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
@@ -19,8 +19,9 @@ pub enum SetupParameter {
 
 impl MOQTPayload for SetupParameter {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        let key =
-            SetupParameterType::try_from(u8::try_from(read_variable_integer_from_buffer(buf)?)?);
+        let key = SetupParameterType::try_from(u8::try_from(
+            read_variable_integer_from_buffer(buf).context("key")?,
+        )?);
         if let Err(err) = key {
             tracing::info!("Unknown SETUP parameter {:#04x}", err.number);
             return Ok(SetupParameter::Unknown(err.number));
@@ -28,15 +29,17 @@ impl MOQTPayload for SetupParameter {
 
         match key? {
             SetupParameterType::Role => {
-                let value_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+                let value_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
+                    .context("role value length")?;
                 ensure!(
                     value_length == 1,
                     "Invalid value length in ROLE parameter {:#04x}",
                     value_length
                 );
 
-                let value =
-                    RoleCase::try_from(u8::try_from(read_variable_integer_from_buffer(buf)?)?);
+                let value = RoleCase::try_from(u8::try_from(
+                    read_variable_integer_from_buffer(buf).context("role value")?,
+                )?);
                 if let Err(err) = value {
                     bail!("Invalid value in ROLE parameter {:?}", err);
                 }
@@ -44,7 +47,9 @@ impl MOQTPayload for SetupParameter {
                 Ok(SetupParameter::RoleParameter(RoleParameter::new(value?)))
             }
             SetupParameterType::Path => {
-                let value_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+                // read_variable_bytes_from_bufferでも良い?
+                let value_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
+                    .context("path value length")?;
 
                 let value = String::from_utf8(buf.to_vec());
 

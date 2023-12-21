@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::modules::{
     variable_bytes::read_variable_bytes_from_buffer,
@@ -21,9 +21,10 @@ impl AnnounceMessage {
 
 impl MOQTPayload for AnnounceMessage {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        let track_namespace = read_variable_bytes_from_buffer(buf)?;
+        let track_namespace = read_variable_bytes_from_buffer(buf).context("track namespace")?;
 
-        let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+        let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
+            .context("number of parameters")?;
 
         let mut parameters = vec![];
         for _ in 0..number_of_parameters {
