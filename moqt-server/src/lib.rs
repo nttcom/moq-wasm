@@ -42,6 +42,7 @@ pub struct MOQTConfig {
 }
 
 impl MOQTConfig {
+    // TODO: use getter/setter
     pub fn new() -> MOQTConfig {
         MOQTConfig {
             port: 4433,
@@ -78,7 +79,7 @@ impl MOQT {
         init_logging();
 
         // For buffer management for each stream
-        let (tx, mut rx) = mpsc::channel::<BufferCommand>(1024);
+        let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
         // For track management but this is meaningless for now because transferring Object message is not implemented yet
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
 
@@ -87,7 +88,7 @@ impl MOQT {
         }
 
         // Start buffer management thread
-        tokio::spawn(async move { buffer_manager(&mut rx).await });
+        tokio::spawn(async move { buffer_manager(&mut buffer_rx).await });
 
         // Start track management thread
         tokio::spawn(async move { modules::track_manager::track_manager(&mut track_rx).await });
@@ -114,12 +115,12 @@ impl MOQT {
         tracing::info!("Server ready!");
 
         for id in 0.. {
-            let tx = tx.clone();
+            let buffer_tx = buffer_tx.clone();
             let track_tx = track_tx.clone();
             let incoming_session = server.accept().await;
             // Create a thread for each session
             tokio::spawn(
-                handle_connection(tx, track_tx, incoming_session)
+                handle_connection(buffer_tx, track_tx, incoming_session)
                     .instrument(tracing::info_span!("Connection", id)),
             );
         }
@@ -129,16 +130,16 @@ impl MOQT {
 }
 
 async fn handle_connection(
-    tx: mpsc::Sender<BufferCommand>,
+    buffer_tx: mpsc::Sender<BufferCommand>,
     track_tx: mpsc::Sender<TrackCommand>,
     incoming_session: IncomingSession,
 ) {
-    let result = handle_connection_impl(tx, track_tx, incoming_session).await;
+    let result = handle_connection_impl(buffer_tx, track_tx, incoming_session).await;
     tracing::error!("{:?}", result);
 }
 
 async fn handle_connection_impl(
-    tx: mpsc::Sender<BufferCommand>,
+    buffer_tx: mpsc::Sender<BufferCommand>,
     track_tx: mpsc::Sender<TrackCommand>,
     incoming_session: IncomingSession,
 ) -> Result<()> {
@@ -190,7 +191,7 @@ async fn handle_connection_impl(
                 let (write_stream, read_stream) = stream;
                 let stream_id = read_stream.id().into_u64();
 
-                let tx = tx.clone();
+                let buffer_tx = buffer_tx.clone();
                 let track_tx = track_tx.clone();
                 let close_tx = close_tx.clone();
                 let client = client.clone();
@@ -202,7 +203,7 @@ async fn handle_connection_impl(
                         read_stream,
                         write_stream,
                     };
-                    handle_stream(&mut stream, client, tx, track_tx, close_tx).await
+                    handle_stream(&mut stream, client, buffer_tx, track_tx, close_tx).await
                 });
             },
             stream = connection.accept_uni() => {
@@ -215,7 +216,7 @@ async fn handle_connection_impl(
                 let write_stream = connection.open_uni().await?.await?;
                 let stream_id = read_stream.id().into_u64();
 
-                let tx = tx.clone();
+                let buffer_tx = buffer_tx.clone();
                 let track_tx = track_tx.clone();
                 let close_tx = close_tx.clone();
                 let client = client.clone();
@@ -227,7 +228,7 @@ async fn handle_connection_impl(
                         read_stream,
                         write_stream,
                     };
-                    handle_stream(&mut stream, client, tx, track_tx, close_tx).await
+                    handle_stream(&mut stream, client, buffer_tx, track_tx, close_tx).await
                 });
             },
             _ = connection.closed() => {
@@ -245,10 +246,11 @@ async fn handle_connection_impl(
     }
 
     // FIXME: QUICレベルのsessionを保持する場合は消してはいけない
-    tx.send(BufferCommand::ReleaseSession {
-        session_id: stable_id,
-    })
-    .await?;
+    buffer_tx
+        .send(BufferCommand::ReleaseSession {
+            session_id: stable_id,
+        })
+        .await?;
 
     Ok(())
 }
@@ -264,7 +266,7 @@ struct Stream {
 async fn handle_stream(
     stream: &mut Stream,
     client: Arc<Mutex<MOQTClient>>,
-    tx: Sender<BufferCommand>,
+    buffer_tx: Sender<BufferCommand>,
     track_tx: Sender<TrackCommand>,
     close_tx: Sender<(u64, String)>,
 ) -> Result<()> {
@@ -287,9 +289,9 @@ async fn handle_stream(
 
         tracing::info!("bytes_read: {}", bytes_read);
 
-        let tx = tx.clone();
+        let buffer_tx = buffer_tx.clone();
         let read_buf = BytesMut::from(&buffer[..bytes_read]);
-        let buf = buffer_manager::request_buffer(tx, stable_id, stream_id).await;
+        let buf = buffer_manager::request_buffer(buffer_tx, stable_id, stream_id).await;
         let mut buf = buf.lock().await;
         buf.extend_from_slice(&read_buf);
 
@@ -318,11 +320,12 @@ async fn handle_stream(
     }
 
     // TODO: FIXME: QUICレベルの再接続時をサポートする時に呼んで良いか確認
-    tx.send(BufferCommand::ReleaseStream {
-        session_id: stable_id,
-        stream_id,
-    })
-    .await?;
+    buffer_tx
+        .send(BufferCommand::ReleaseStream {
+            session_id: stable_id,
+            stream_id,
+        })
+        .await?;
 
     Ok::<()>(())
 }

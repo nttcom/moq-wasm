@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::{
@@ -47,11 +47,12 @@ impl MOQTPayload for ObjectMessageWithPayloadLength {
     where
         Self: Sized,
     {
-        let track_id = read_variable_integer_from_buffer(buf)?;
-        let group_sequence = read_variable_integer_from_buffer(buf)?;
-        let object_sequence = read_variable_integer_from_buffer(buf)?;
-        let object_send_order = read_variable_integer_from_buffer(buf)?;
-        let object_payload = read_variable_bytes_from_buffer(buf)?;
+        let track_id = read_variable_integer_from_buffer(buf).context("track id")?;
+        let group_sequence = read_variable_integer_from_buffer(buf).context("group sequence")?;
+        let object_sequence = read_variable_integer_from_buffer(buf).context("object sequence")?;
+        let object_send_order =
+            read_variable_integer_from_buffer(buf).context("object send order")?;
+        let object_payload = read_variable_bytes_from_buffer(buf).context("object payload")?;
         let object_payload_length = object_payload.len() as u64;
 
         Ok(ObjectMessageWithPayloadLength {
@@ -105,11 +106,13 @@ impl MOQTPayload for ObjectMessageWithoutPayloadLength {
     where
         Self: Sized,
     {
-        let track_id = read_variable_integer_from_buffer(buf)?;
-        let group_sequence = read_variable_integer_from_buffer(buf)?;
-        let object_sequence = read_variable_integer_from_buffer(buf)?;
-        let object_send_order = read_variable_integer_from_buffer(buf)?;
-        let object_payload = read_variable_bytes_to_end_from_buffer(buf)?;
+        let track_id = read_variable_integer_from_buffer(buf).context("track id")?;
+        let group_sequence = read_variable_integer_from_buffer(buf).context("group sequence")?;
+        let object_sequence = read_variable_integer_from_buffer(buf).context("object sequence")?;
+        let object_send_order =
+            read_variable_integer_from_buffer(buf).context("object send order")?;
+        let object_payload =
+            read_variable_bytes_to_end_from_buffer(buf).context("object payload")?;
 
         Ok(ObjectMessageWithoutPayloadLength {
             track_id,

@@ -1,6 +1,6 @@
 use std::error;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::{
@@ -33,9 +33,11 @@ impl MOQTPayload for AnnounceError {
     where
         Self: Sized,
     {
-        let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
-        let error_code = read_variable_integer_from_buffer(buf)?;
-        let reason_phrase = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
+        let track_namespace =
+            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
+        let error_code = read_variable_integer_from_buffer(buf).context("error code")?;
+        let reason_phrase =
+            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
 
         Ok(AnnounceError {
             track_namespace,

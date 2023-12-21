@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::{
@@ -23,7 +23,8 @@ impl MOQTPayload for AnnounceOk {
     where
         Self: Sized,
     {
-        let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
+        let track_namespace =
+            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
 
         Ok(AnnounceOk { track_namespace })
     }

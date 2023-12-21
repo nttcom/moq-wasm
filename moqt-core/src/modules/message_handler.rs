@@ -41,7 +41,6 @@ pub async fn message_handler(
     client: &mut MOQTClient,
     track_manager_repository: &mut dyn TrackManagerRepository,
 ) -> MessageProcessResult {
-    // tracing::info!("message_handler!");
     tracing::info!("message_handler! {}", read_buf.len());
 
     // 断片化している場合などは元に戻す必要があるのでcursorを用いる
@@ -127,6 +126,7 @@ pub async fn message_handler(
         return MessageProcessResult::Fragment;
     }
 
+    // 正しく読めたのでその分bufferを進める
     read_buf.advance(read_cur.position() as usize);
 
     // payload相当の部分だけ切り出す
