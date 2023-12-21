@@ -1,3 +1,4 @@
+use anyhow::Context;
 use serde::Serialize;
 
 use crate::modules::{
@@ -36,10 +37,12 @@ impl MOQTPayload for SubscribeOk {
     where
         Self: Sized,
     {
-        let full_track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
-        let full_track_name = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
-        let track_id = read_variable_integer_from_buffer(buf)?;
-        let expires = read_variable_integer_from_buffer(buf)?;
+        let full_track_namespace =
+            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
+        let full_track_name =
+            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track name")?;
+        let track_id = read_variable_integer_from_buffer(buf).context("track id")?;
+        let expires = read_variable_integer_from_buffer(buf).context("expires")?;
 
         Ok(SubscribeOk {
             track_namespace: full_track_namespace,

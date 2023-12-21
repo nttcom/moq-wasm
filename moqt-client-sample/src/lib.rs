@@ -417,6 +417,7 @@ async fn receive_unidirectional_thread(
     log("receive_unidirectional_thread");
 
     loop {
+        // Be careful about returned value of reader.read. It is a unidirectional stream of WebTransport.
         let ret = reader.read();
         let ret = JsFuture::from(ret).await?;
 
@@ -591,6 +592,7 @@ async fn message_handler(
                     }
                 }
                 _ => {
+                    // TODO: impl rest of message type
                     log(std::format!("message_type: {:#?}", message_type).as_str());
                 }
             };
@@ -604,7 +606,7 @@ async fn message_handler(
     Ok(())
 }
 
-// lifetimeの問題のため、MOQTClientと別に持っておく必要がある
+// `spawn_local`のlifetimeの問題のため、MOQTClientと別に持っておく必要がある
 // callbackはJSから渡される
 #[cfg(web_sys_unstable_apis)]
 struct MOQTCallbacks {

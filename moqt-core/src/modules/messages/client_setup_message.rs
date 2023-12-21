@@ -1,6 +1,6 @@
 use std::vec;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 
@@ -30,15 +30,18 @@ impl ClientSetupMessage {
 
 impl MOQTPayload for ClientSetupMessage {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        let number_of_supported_versions = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+        let number_of_supported_versions = u8::try_from(read_variable_integer_from_buffer(buf)?)
+            .context("number of supported versions")?;
 
         let mut supported_versions = Vec::with_capacity(number_of_supported_versions as usize);
         for _ in 0..number_of_supported_versions {
-            let supported_version = u32::try_from(read_variable_integer_from_buffer(buf)?)?;
+            let supported_version = u32::try_from(read_variable_integer_from_buffer(buf)?)
+                .context("supported version")?;
             supported_versions.push(supported_version);
         }
 
-        let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+        let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
+            .context("number of parameters")?;
 
         let mut setup_parameters = vec![];
         for _ in 0..number_of_parameters {

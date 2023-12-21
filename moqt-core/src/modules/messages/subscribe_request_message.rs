@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{bail, Context};
 use tracing::info;
 
 use crate::{
@@ -111,7 +111,7 @@ impl MOQTPayload for Location {
     where
         Self: Sized,
     {
-        let location = read_variable_integer_from_buffer(buf)?;
+        let location = read_variable_integer_from_buffer(buf).context("location")?;
 
         match location {
             0x00 => Ok(Location::None),
