@@ -1,4 +1,5 @@
 # loc-over-moqt
+
 ~~"Low Overhead Media Container" (LOC) over~~ "Media over QUIC Transport" (MOQT)
 
 Both server and browser client are written in Rust.
@@ -46,15 +47,3 @@ Both server and browser client are written in Rust.
 ## moqt-client-sample
 
 - `cd js && npm install && npm run dev`
-
-# Tips
-
-If you use VSCode, add following config to `.vscode/settings.json`
-
-```json
-{
-    "rust-analyzer.cargo.cfgs": {
-        "web_sys_unstable_apis": "",
-    }
-}
-```
