@@ -1,0 +1,5 @@
+{
+  "rust-analyzer.cargo.cfgs": {
+    "web_sys_unstable_apis": ""
+  }
+}
