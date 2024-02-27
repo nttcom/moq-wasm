@@ -9,8 +9,8 @@ use super::{moqt_payload::MOQTPayload, version_specific_parameters::TrackRequest
 
 pub(crate) struct AnnounceMessage {
     track_namespace: String,
-    number_of_parameters: u8,
-    parameters: Vec<TrackRequestParameter>,
+    _number_of_parameters: u8,               // TODO: 未実装
+    _parameters: Vec<TrackRequestParameter>, // TODO: 未実装
 }
 
 impl AnnounceMessage {
@@ -39,14 +39,15 @@ impl MOQTPayload for AnnounceMessage {
 
         let announce_message = AnnounceMessage {
             track_namespace: String::from_utf8(track_namespace)?,
-            number_of_parameters,
-            parameters,
+            _number_of_parameters: number_of_parameters, // TODO: 未実装のため_をつけている
+            _parameters: parameters,                     // TODO: 未実装のため_をつけている
         };
 
         Ok(announce_message)
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    // TODO: 未実装のため_をつけている
+    fn packetize(&self, _buf: &mut bytes::BytesMut) {
         todo!()
     }
 }

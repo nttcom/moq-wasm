@@ -3,9 +3,9 @@ use anyhow::Result;
 use crate::{
     modules::{
         messages::{
-            announce_error_message::AnnounceError,
-            announce_message::{self, AnnounceMessage},
-            announce_ok_message::AnnounceOk,
+            // announce_error_message::AnnounceError,
+            // announce_message::{self, AnnounceMessage},
+            // announce_ok_message::AnnounceOk,
             subscribe_error_message::SubscribeError,
             subscribe_ok_message::SubscribeOk,
             subscribe_request_message::SubscribeRequestMessage,
@@ -15,15 +15,17 @@ use crate::{
     MOQTClient,
 };
 
+// Failureの場合は未実装のため、allow dead_codeをつけている
+#[allow(dead_code)]
 pub(crate) enum SubscribeResponse {
     Success(SubscribeOk),
-    Failure(SubscribeError),
+    Failure(SubscribeError), // TODO: 未実装
 }
 
 pub(crate) async fn subscribe_handler(
     subscribe_message: SubscribeRequestMessage,
-    client: &mut MOQTClient,
-    track_manager_repository: &mut dyn TrackManagerRepository,
+    _client: &mut MOQTClient, // TODO: 未実装のため_をつけている
+    _track_manager_repository: &mut dyn TrackManagerRepository, // TODO: 未実装のため_をつけている
 ) -> Result<SubscribeResponse> {
     tracing::info!("subscribe_handler!");
 

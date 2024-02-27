@@ -87,7 +87,7 @@ mod success {
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
 
         assert!(server_setup_message.is_ok());
-        let server_setup_message = server_setup_message.unwrap();
+        let _server_setup_message = server_setup_message.unwrap(); // TODO: 未実装のため_をつけている
     }
 
     #[test]
@@ -103,7 +103,7 @@ mod success {
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
 
         assert!(server_setup_message.is_ok());
-        let server_setup_message = server_setup_message.unwrap();
+        let _server_setup_message = server_setup_message.unwrap(); // TODO: 未実装のため_をつけている
     }
 }
 

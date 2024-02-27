@@ -38,12 +38,15 @@ impl MOQTPayload for TrackRequestParameter {
         }
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    // TODO: 未実装のため_をつけている
+    fn packetize(&self, _buf: &mut bytes::BytesMut) {
         todo!()
     }
 }
 
 // for SUBSCRIBE REQUEST and ANNOUNCE
+// TODO: 未実装のためallow dead codeをつけている
+#[allow(dead_code)]
 pub struct AuthorizationInfoParameter {
     parameter_key: u8, // 0x02
     parameter_length: u8,
