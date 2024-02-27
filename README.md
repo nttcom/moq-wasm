@@ -4,7 +4,7 @@
 
 Both server and browser client are written in Rust.
 
-# Implementation
+## Implementation
 
 - [x] Send/Recv SETUP message
 - [x] Send/Recv ANNOUNCE message
@@ -17,33 +17,42 @@ Both server and browser client are written in Rust.
 - [ ] Transfer OBJECT message
   - [ ] Manage subscriptions
 
-# Modules
+## Modules
 
-## moqt-core
+### moqt-core
 
 - Core module for both server and client
 - Includes handlers and data structures
 
-## moqt-server
+### moqt-server
 
 - Module for server application
   - Only for WebTransport
     - Using [`wtransport`](https://github.com/BiagioFesta/wtransport)
 
-## moqt-server-sample
+### moqt-server-sample
 
 - Sample server application
 
-## moqt-client-sample
+### moqt-client-sample
 
 - Module for browser client and sample browser client application
 
-# How to run
+## How to run
 
-## moqt-server-sample
+### サーバ用の公開鍵と秘密鍵を作成する
+
+```shell
+cd moqt-server-sample
+mkdir keys
+cd keys
+openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -out cert.pem -subj '/CN=Test Certificate' -addext "subjectAltName = DNS:localhost"
+```
+
+### moqt-server-sample の実行
 
 - `cargo run -p moqt-server-sample`
 
-## moqt-client-sample
+### moqt-client-sample の実行
 
 - `cd js && npm install && npm run dev`
