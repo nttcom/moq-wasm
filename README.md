@@ -64,3 +64,9 @@ openssl x509 -pubkey -noout -in moqt-server-sample/keys/cert.pem | openssl rsa -
 Chromeを完全に終了してから下記コマンドを打たないとオプションが反映されない可能性がある
 open -a "Google Chrome" --args --origin-to-force-quic-on=localhost:4433 --ignore-certificate-errors-spki-list=<ENCODE_KEY>
 ```
+
+もしくは、Mac の KeyChain Access アプリに cert.pem を追加し、右クリックから「常に信頼」に変更することで、証明書エラーを無視するオプションを省略することも可能
+
+```
+open -a "Google Chrome" --args --origin-to-force-quic-on=localhost:4433
+```

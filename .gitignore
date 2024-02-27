@@ -19,3 +19,4 @@ js/node_modules/*
 /target
 
 *.pem
+.DS_Store
