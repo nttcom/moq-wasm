@@ -1,5 +1,10 @@
 {
   "rust-analyzer.cargo.cfgs": {
     "web_sys_unstable_apis": ""
+  },
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "editor.formatOnSave": true,
+    "editor.inlayHints.enabled": "off"
   }
 }
