@@ -1,24 +1,27 @@
 mod utils;
 
-use std::{cell::RefCell, rc::Rc};
-
-use anyhow::{bail, Result};
-use bytes::{Buf, BufMut, BytesMut};
-use futures::join;
+#[cfg(web_sys_unstable_apis)]
+use anyhow::Result;
+#[cfg(web_sys_unstable_apis)]
+use bytes::{BufMut, BytesMut};
+#[cfg(web_sys_unstable_apis)]
 use moqt_core::{
     message_handler::StreamType,
-    message_type::{self, MessageType},
+    message_type::MessageType,
     messages::{
-        client_setup_message::{self, ClientSetupMessage},
+        client_setup_message::ClientSetupMessage,
         moqt_payload::MOQTPayload,
         setup_parameters::{RoleCase, RoleParameter, SetupParameter},
     },
     variable_bytes::write_variable_bytes,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-use serde::{Deserialize, Serialize};
+#[cfg(web_sys_unstable_apis)]
+use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::prelude::*;
+#[cfg(web_sys_unstable_apis)]
 use wasm_bindgen_futures::JsFuture;
+#[cfg(web_sys_unstable_apis)]
 use web_sys::ReadableStreamDefaultReader;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -35,6 +38,7 @@ extern "C" {
     fn log(s: &str);
 }
 
+#[cfg(web_sys_unstable_apis)]
 macro_rules! console_log {
     // Note that this is using the `log` function imported above during
     // `bare_bones`
@@ -260,7 +264,7 @@ impl MOQTClient {
         object_send_order: u64,
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.control_stream_writer.borrow() {
+        if let Some(_) = &*self.control_stream_writer.borrow() {
             // Object message is sent on unidirectional stream
             let uni_stream = web_sys::WritableStream::from(
                 JsFuture::from(
@@ -296,7 +300,7 @@ impl MOQTClient {
             buffer.copy_from(&buf);
 
             let result = JsFuture::from(writer.write_with_chunk(&buffer)).await;
-            JsFuture::from(writer.close()).await;
+            let _ = JsFuture::from(writer.close()).await;
 
             result
         } else {
@@ -313,7 +317,7 @@ impl MOQTClient {
         object_send_order: u64,
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.control_stream_writer.borrow() {
+        if let Some(_) = &*self.control_stream_writer.borrow() {
             // Object message is sent on unidirectional stream
             let uni_stream = web_sys::WritableStream::from(
                 JsFuture::from(
@@ -349,7 +353,7 @@ impl MOQTClient {
             buffer.copy_from(&buf);
 
             let result = JsFuture::from(writer.write_with_chunk(&buffer)).await;
-            JsFuture::from(writer.close()).await;
+            let _ = JsFuture::from(writer.close()).await;
 
             result
         } else {
@@ -389,7 +393,7 @@ impl MOQTClient {
         // For receiving control messages
         let callbacks = self.callbacks.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            stream_read_thread(callbacks, StreamType::Bi, &control_stream_reader).await;
+            let _ = stream_read_thread(callbacks, StreamType::Bi, &control_stream_reader).await;
         });
 
         // For receiving object messages
@@ -398,7 +402,7 @@ impl MOQTClient {
             web_sys::ReadableStreamDefaultReader::new(&&incoming_stream.into())?;
         let callbacks = self.callbacks.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            receive_unidirectional_thread(callbacks, &incoming_stream_reader).await;
+            let _ = receive_unidirectional_thread(callbacks, &incoming_stream_reader).await;
         });
 
         Ok(JsValue::null())
@@ -434,7 +438,7 @@ async fn receive_unidirectional_thread(
         let callbacks = callbacks.clone();
         let reader = web_sys::ReadableStreamDefaultReader::new(&ret_value)?;
         wasm_bindgen_futures::spawn_local(async move {
-            stream_read_thread(callbacks, StreamType::Uni, &reader).await;
+            let _ = stream_read_thread(callbacks, StreamType::Uni, &reader).await;
         });
     }
 
@@ -488,7 +492,7 @@ async fn stream_read_thread(
 #[cfg(web_sys_unstable_apis)]
 async fn message_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
-    stream_type: StreamType,
+    _stream_type: StreamType,
     mut buf: &mut BytesMut,
 ) -> Result<()> {
     // TODO: 読み戻しがあるかもしれないのでカーソルを使うようにする
@@ -497,7 +501,7 @@ async fn message_handler(
 
     let message_type_value = read_variable_integer_from_buffer(&mut buf);
 
-    let message_length = read_variable_integer_from_buffer(&mut buf)?;
+    let _message_length = read_variable_integer_from_buffer(&mut buf)?;
 
     // TODO: Check stream type
     match message_type_value {
@@ -645,6 +649,8 @@ impl MOQTCallbacks {
         self.announce_callback = Some(callback);
     }
 
+    // 未実装のためallow dead codeをつけている
+    #[allow(dead_code)]
     pub fn subscribe_callback(&self) -> Option<js_sys::Function> {
         self.subscribe_callback.clone()
     }

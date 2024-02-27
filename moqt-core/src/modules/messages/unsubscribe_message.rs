@@ -19,10 +19,14 @@ impl UnsubscribeMessage {
         }
     }
 
+    // TODO: 未実装のためallow dead codeをつけている
+    #[allow(dead_code)]
     pub(crate) fn track_namespace(&self) -> &str {
         &self.track_namespace
     }
 
+    // TODO: 未実装のためallow dead codeをつけている
+    #[allow(dead_code)]
     pub(crate) fn track_name(&self) -> &str {
         &self.track_name
     }

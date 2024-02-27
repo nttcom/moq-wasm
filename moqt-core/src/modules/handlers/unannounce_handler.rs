@@ -10,7 +10,7 @@ use crate::{
 
 pub(crate) async fn unannounce_handler(
     unannounce_message: UnAnnounceMessage,
-    client: &mut MOQTClient,
+    _client: &mut MOQTClient, // 未実装のため_をつけている
     track_manager_repository: &mut dyn TrackManagerRepository,
 ) -> Result<()> {
     tracing::info!("unannounce_handler!");
