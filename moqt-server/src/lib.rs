@@ -55,6 +55,12 @@ impl MOQTConfig {
     }
 }
 
+impl Default for MOQTConfig {
+    fn default() -> Self {
+        MOQTConfig::new()
+    }
+}
+
 pub struct MOQT {
     port: u16,
     cert_path: String,
