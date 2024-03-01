@@ -492,7 +492,7 @@ async fn stream_read_thread(
 #[cfg(web_sys_unstable_apis)]
 async fn message_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
-    _stream_type: StreamType,
+    _stream_type: StreamType, // TODO: 未実装のため_をつけている
     mut buf: &mut BytesMut,
 ) -> Result<()> {
     // TODO: 読み戻しがあるかもしれないのでカーソルを使うようにする
