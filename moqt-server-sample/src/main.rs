@@ -1,5 +1,5 @@
 use anyhow::{Ok, Result};
-use moqt_server::{constants::UnderlayType, AuthCallbackType, MOQTConfig, MOQT};
+use moqt_server::{constants::UnderlayType, MOQTConfig, MOQT};
 
 #[tokio::main]
 async fn main() -> Result<()> {

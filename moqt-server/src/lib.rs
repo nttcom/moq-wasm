@@ -55,13 +55,19 @@ impl MOQTConfig {
     }
 }
 
+impl Default for MOQTConfig {
+    fn default() -> Self {
+        MOQTConfig::new()
+    }
+}
+
 pub struct MOQT {
     port: u16,
     cert_path: String,
     key_path: String,
     keep_alive_interval_sec: u64,
     underlay: UnderlayType,
-    auth_callback: Option<AuthCallbackFunctionType>,
+    // auth_callback: Option<AuthCallbackFunctionType>,
 }
 
 impl MOQT {
@@ -72,7 +78,7 @@ impl MOQT {
             key_path: config.key_path,
             keep_alive_interval_sec: config.keep_alive_interval_sec,
             underlay: config.underlay,
-            auth_callback: config.auth_callback,
+            // auth_callback: config.auth_callback,
         }
     }
     pub async fn start(&self) -> Result<()> {
@@ -207,7 +213,7 @@ async fn handle_connection_impl(
                 });
             },
             stream = connection.accept_uni() => {
-                let span = tracing::info_span!("sid", stable_id);
+                let _span = tracing::info_span!("sid", stable_id); // TODO: 未実装
 
                 let stream = stream?;
                 tracing::info!("Accepted UNI stream");
@@ -235,7 +241,8 @@ async fn handle_connection_impl(
                 tracing::info!("Connection closed, rtt={:?}", connection.rtt());
                 break;
             },
-            Some((code, reason)) = close_rx.recv() => {
+            // TODO: 未実装のため＿をつけている
+            Some((_code, _reason)) = close_rx.recv() => {
                 tracing::info!("close channel received");
                 // FIXME: closeしたいけどVarIntがexportされていないのでお茶を濁す
                 // wtransport-protoにあるかも?

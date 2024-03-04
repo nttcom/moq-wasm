@@ -1,5 +1,5 @@
 use anyhow::{bail, Context};
-use tracing::info;
+use tracing;
 
 use crate::{
     modules::{

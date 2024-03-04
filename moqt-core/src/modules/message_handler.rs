@@ -17,7 +17,7 @@ use super::handlers::server_setup_handler::setup_handler;
 use super::message_type::MessageType;
 use super::messages::moqt_payload::MOQTPayload;
 use super::moqt_client::{MOQTClient, MOQTClientStatus};
-use super::track_manager_repository::{self, TrackManagerRepository};
+use super::track_manager_repository::TrackManagerRepository;
 use super::variable_integer::{read_variable_integer, write_variable_integer};
 use bytes::{Buf, BytesMut};
 
@@ -293,7 +293,8 @@ pub async fn message_handler(
                 );
             }
 
-            let unsubscribe_result = unannounce_handler(
+            // TODO: 未実装のため_をつけている
+            let _unsubscribe_result = unannounce_handler(
                 unsubscribe_message.unwrap(),
                 client,
                 track_manager_repository,
@@ -375,7 +376,8 @@ pub async fn message_handler(
                 );
             }
 
-            let unannounce_result = unannounce_handler(
+            // TODO: 未実装のため_をつけている
+            let _unannounce_result = unannounce_handler(
                 unannounce_message.unwrap(),
                 client,
                 track_manager_repository,
