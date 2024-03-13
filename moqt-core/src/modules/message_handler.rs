@@ -109,16 +109,7 @@ pub async fn message_handler(
         return MessageProcessResult::Fragment;
     }
 
-    // lenを読む
-    let payload_length = read_variable_integer(&mut read_cur);
-    if let Err(err) = payload_length {
-        read_buf.advance(read_cur.position() as usize);
-
-        tracing::info!("{:?}", err);
-        return MessageProcessResult::Failure(TerminationErrorCode::GenericError, err.to_string());
-    }
-    let payload_length = payload_length.unwrap() as usize;
-
+    let payload_length = read_cur.remaining() as usize;
     let rest_buf_len = read_buf.len() - (read_cur.position() as usize);
     if rest_buf_len < payload_length {
         // 長さが足りないので何もしない。cursorと同期もしない
