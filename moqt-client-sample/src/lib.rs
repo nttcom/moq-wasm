@@ -126,7 +126,6 @@ impl MOQTClient {
             buf.extend(write_variable_integer(
                 u8::from(MessageType::ClientSetup) as u64
             )); // client setup
-            buf.extend(write_variable_integer(client_setup_message_buf.len() as u64)); // payload length
             buf.extend(client_setup_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
