@@ -110,18 +110,11 @@ pub async fn message_handler(
     }
 
     let payload_length = read_cur.remaining() as usize;
-    let rest_buf_len = read_buf.len() - (read_cur.position() as usize);
-    if rest_buf_len < payload_length {
-        // 長さが足りないので何もしない。cursorと同期もしない
-        tracing::info!("fragmented {} {}", rest_buf_len, payload_length);
-        return MessageProcessResult::Fragment;
-    }
 
     // 正しく読めたのでその分bufferを進める
     read_buf.advance(read_cur.position() as usize);
 
     // payload相当の部分だけ切り出す
-    // payload長が間違っていると後ろが狂うが、困るのはこのclientだけなので許容
     let mut payload_buf = read_buf.split_to(payload_length);
     let mut write_buf = BytesMut::new();
 
