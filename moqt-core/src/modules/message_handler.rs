@@ -46,7 +46,7 @@ pub async fn message_handler(
     // 断片化している場合などは元に戻す必要があるのでcursorを用いる
     // ちゃんと読んだ場合はread_bufも対応してupdateが必要
     let mut read_cur = Cursor::new(&read_buf[..]);
-
+    tracing::info!("read_cur! {:?}", read_cur);
     // typeを読む
     let type_value = read_variable_integer(&mut read_cur);
     if let Err(err) = type_value {
