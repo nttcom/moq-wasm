@@ -147,7 +147,6 @@ impl MOQTClient {
             // TODO: construct Announce Message
             let mut buf = Vec::new();
             buf.put_u8(0x06); // announce
-            buf.extend(write_variable_integer(track_name_space.len() as u64 + 2)); // payload length
             buf.extend(write_variable_bytes(&track_name_space.as_bytes().to_vec()));
             buf.put_u8(0x00); // # of params
 
@@ -169,7 +168,6 @@ impl MOQTClient {
             // TODO: construct UnAnnounce Message
             let mut buf = Vec::new();
             buf.put_u8(0x09); // unannounce
-            buf.extend(write_variable_integer(track_name_space.len() as u64 + 1)); // payload length
             buf.extend(write_variable_bytes(&track_name_space.as_bytes().to_vec()));
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
@@ -211,7 +209,6 @@ impl MOQTClient {
             buf.extend(write_variable_integer(
                 u8::from(MessageType::Subscribe) as u64
             )); // subscribe
-            buf.extend(write_variable_integer(subscribe_message_buf.len() as u64)); // payload length
             buf.extend(subscribe_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
@@ -242,7 +239,6 @@ impl MOQTClient {
             buf.extend(write_variable_integer(
                 u8::from(MessageType::UnSubscribe) as u64
             )); // unsubscribe
-            buf.extend(write_variable_integer(unsubscribe_message_buf.len() as u64)); // payload length
             buf.extend(unsubscribe_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
@@ -292,7 +288,6 @@ impl MOQTClient {
             buf.extend(write_variable_integer(
                 u8::from(MessageType::ObjectWithLength) as u64,
             )); // object
-            buf.extend(write_variable_integer(object_message_buf.len() as u64)); // payload length
             buf.extend(object_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
@@ -345,7 +340,6 @@ impl MOQTClient {
             buf.extend(write_variable_integer(
                 u8::from(MessageType::ObjectWithoutLength) as u64,
             )); // object
-            buf.extend(write_variable_integer(object_message_buf.len() as u64)); // payload length
             buf.extend(object_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
