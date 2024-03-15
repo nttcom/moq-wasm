@@ -384,8 +384,6 @@ pub async fn message_handler(
     let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
     // Add type
     message_buf.extend(write_variable_integer(u8::from(return_message_type) as u64));
-    // Add length
-    message_buf.extend(write_variable_integer(write_buf.len() as u64));
     // Add payload
     message_buf.extend(write_buf);
 
