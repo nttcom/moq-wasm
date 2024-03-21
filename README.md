@@ -61,7 +61,6 @@ openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -out cert.pem -subj '/
 - chrome の WebTransport 機能の ON と証明書の追加
 
 ```shell
+Mac の場合
 ./scripts/start-localhost-test-chrome.sh
 ```
-
-もしくは、Mac の KeyChain Access アプリに cert.pem を追加し、右クリックから「常に信頼」に変更することで、証明書エラーを無視するオプションを省略することも可能
