@@ -1,0 +1,25 @@
+version: 2.1
+
+jobs:
+  clippy_check:
+    docker:
+      - image: rust:latest
+    steps:
+      - checkout
+      - run:
+          name: Install Rust toolchain and Clippy
+          command: |
+            rustup component add clippy
+      - run:
+          name: Run Clippy
+          command: |
+            cargo clippy -- -D warnings
+
+workflows:
+  version: 2
+  build_and_test:
+    jobs:
+      - clippy_check:
+          filters:
+            branches:
+              ignore: /main|master/
