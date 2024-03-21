@@ -5,4 +5,4 @@
 | SkyWay Client -> Meta Server | ✅           | -            | ❌     | ❌        | -            | -               | ❌          | ❌            | ❌            | ❌       | -           | -              | ❌         | ❌     |
 | SkyWay Client <- Meta Server | -            | ✅           | ❌     | -         | ❌           | ❌              | -           | ❌            | ❌            | -        | ❌          | ❌             | -          | ❌     |
 | Meta Client -> SkyWay Server | ✅           | -            | ❌     | ❌        | -            | -               | ❌          | ❌            | ❌            | ❌       | -           | -              | ❌         | ❌     |
-| Meta Client <- SkyWay Server | -            | ❌           | ❌     | -         | ❌           | ❌              | -           | ❌            | ❌            | -        | ❌          | ❌             | -          | ❌     |
+| Meta Client <- SkyWay Server | -            | ✅           | ❌     | -         | ❌           | ❌              | -           | ❌            | ❌            | -        | ❌          | ❌             | -          | ❌     |
