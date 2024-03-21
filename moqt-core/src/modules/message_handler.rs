@@ -109,6 +109,7 @@ pub async fn message_handler(
         return MessageProcessResult::Fragment;
     }
 
+    // ciでエラーが出るかを確認
     let payload_length = read_cur.remaining() as usize;
 
     // 正しく読めたのでその分bufferを進める
