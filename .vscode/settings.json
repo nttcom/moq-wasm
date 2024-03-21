@@ -1,10 +1,13 @@
 {
+  "editor.formatOnSave": true,
   "rust-analyzer.cargo.cfgs": {
     "web_sys_unstable_apis": ""
   },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
   "[rust]": {
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
-    "editor.formatOnSave": true,
     "editor.inlayHints.enabled": "off"
   },
   "rust-analyzer.checkOnSave": true,
