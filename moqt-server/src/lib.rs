@@ -41,6 +41,12 @@ pub struct MOQTConfig {
     pub auth_callback: Option<AuthCallbackFunctionType>,
 }
 
+impl Default for MOQTConfig {
+    fn default() -> Self {
+        MOQTConfig::new()
+    }
+}
+
 impl MOQTConfig {
     // TODO: use getter/setter
     pub fn new() -> MOQTConfig {
@@ -52,12 +58,6 @@ impl MOQTConfig {
             underlay: UnderlayType::Both,
             auth_callback: None,
         }
-    }
-}
-
-impl Default for MOQTConfig {
-    fn default() -> Self {
-        MOQTConfig::new()
     }
 }
 
@@ -340,7 +340,7 @@ async fn handle_stream(
 // TODO: LogLevelを設定できるようにする
 fn init_logging() {
     let env_filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
+        .with_default_directive(LevelFilter::DEBUG.into())
         .from_env_lossy();
 
     tracing_subscriber::fmt()

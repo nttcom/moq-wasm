@@ -1,5 +1,6 @@
 use crate::{
     constants,
+    messages::setup_parameters::{RoleCase, RoleParameter},
     modules::{
         constants::UnderlayType, messages::setup_parameters::SetupParameter,
         moqt_client::MOQTClientStatus,
@@ -52,7 +53,11 @@ pub(crate) fn setup_handler(
         bail!("Role parameter is required in SETUP parameter from client.");
     }
 
-    let server_setup_message = ServerSetupMessage::new(constants::MOQ_TRANSPORT_VERSION, vec![]);
+    // setupParametersでroleが2になるように作成して、付与する。
+    // 本来であれば、ここはserver側でroleを決めるところだが、一旦は、roleは2とする。
+    let role_parameter = SetupParameter::RoleParameter(RoleParameter::new(RoleCase::Delivery));
+    let server_setup_message =
+        ServerSetupMessage::new(constants::MOQ_TRANSPORT_VERSION, vec![role_parameter]);
     // State: Connected -> Setup
     client.update_status(MOQTClientStatus::SetUp);
 

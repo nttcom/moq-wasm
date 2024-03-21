@@ -46,7 +46,7 @@ pub async fn message_handler(
     // 断片化している場合などは元に戻す必要があるのでcursorを用いる
     // ちゃんと読んだ場合はread_bufも対応してupdateが必要
     let mut read_cur = Cursor::new(&read_buf[..]);
-
+    tracing::info!("read_cur! {:?}", read_cur);
     // typeを読む
     let type_value = read_variable_integer(&mut read_cur);
     if let Err(err) = type_value {
@@ -109,28 +109,12 @@ pub async fn message_handler(
         return MessageProcessResult::Fragment;
     }
 
-    // lenを読む
-    let payload_length = read_variable_integer(&mut read_cur);
-    if let Err(err) = payload_length {
-        read_buf.advance(read_cur.position() as usize);
-
-        tracing::info!("{:?}", err);
-        return MessageProcessResult::Failure(TerminationErrorCode::GenericError, err.to_string());
-    }
-    let payload_length = payload_length.unwrap() as usize;
-
-    let rest_buf_len = read_buf.len() - (read_cur.position() as usize);
-    if rest_buf_len < payload_length {
-        // 長さが足りないので何もしない。cursorと同期もしない
-        tracing::info!("fragmented {} {}", rest_buf_len, payload_length);
-        return MessageProcessResult::Fragment;
-    }
+    let payload_length = read_cur.remaining() as usize;
 
     // 正しく読めたのでその分bufferを進める
     read_buf.advance(read_cur.position() as usize);
 
     // payload相当の部分だけ切り出す
-    // payload長が間違っていると後ろが狂うが、困るのはこのclientだけなので許容
     let mut payload_buf = read_buf.split_to(payload_length);
     let mut write_buf = BytesMut::new();
 
@@ -400,8 +384,6 @@ pub async fn message_handler(
     let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
     // Add type
     message_buf.extend(write_variable_integer(u8::from(return_message_type) as u64));
-    // Add length
-    message_buf.extend(write_variable_integer(write_buf.len() as u64));
     // Add payload
     message_buf.extend(write_buf);
 

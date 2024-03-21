@@ -1,3 +1,5 @@
+use std::io::Cursor;
+
 use anyhow::{Context, Result};
 use serde::Serialize;
 
@@ -46,14 +48,37 @@ impl MOQTPayload for ServerSetupMessage {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
+        // for debug
+        let read_cur = Cursor::new(&buf[..]);
+        tracing::debug!("server setup message before packetizing: {:#?}", read_cur);
+        // end debug
+
         let version_buf = write_variable_integer(self.selected_version as u64);
         buf.extend(version_buf);
+        // for debug
+        let read_cur = Cursor::new(&buf[..]);
+        tracing::debug!("server setup message packetizing version: {:#?}", read_cur);
+        // end debug
 
         let number_of_parameters_buf = write_variable_integer(self.number_of_parameters as u64);
         buf.extend(number_of_parameters_buf);
+        // for debug
+        let read_cur = Cursor::new(&buf[..]);
+        tracing::debug!(
+            "server setup message packetizing number_of_parameters: {:#?}",
+            read_cur
+        );
+        // end debug
 
         for setup_parameter in self.setup_parameters.iter() {
             setup_parameter.packetize(buf);
         }
+        // for debug
+        let read_cur = Cursor::new(&buf[..]);
+        tracing::debug!(
+            "server setup message packetizing setup_parameters: {:#?}",
+            read_cur
+        );
+        // end debug
     }
 }
