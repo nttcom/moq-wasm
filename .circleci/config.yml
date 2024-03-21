@@ -14,12 +14,30 @@ jobs:
           name: Run Clippy
           command: |
             cargo clippy -- -D warnings
+  prettier:
+    docker:
+      - image: cimg/node:21.6.2
+    steps:
+      - checkout
+      - run:
+          name: Change Directory
+          command: cd js
+      - run:
+          name: Install Dependencies
+          command: npm install
+      - run:
+          name: Check Prettier Formatting
+          command: npx prettier --check "**/*.{js,jsx,ts,tsx,json,css,md}"
 
 workflows:
   version: 2
   build_and_test:
     jobs:
       - clippy_check:
+          filters:
+            branches:
+              ignore: /main|master/
+      - prettier:
           filters:
             branches:
               ignore: /main|master/
