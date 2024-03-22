@@ -24,10 +24,10 @@ jobs:
           command: cd js
       - run:
           name: Install Dependencies
-          command: npm install
+          command: npm install ./js
       - run:
           name: Check Prettier Formatting
-          command: npx prettier --check "**/*.{js,jsx,ts,tsx,json,css,md}"
+          command: npx prettier --check "js/**/*.{js,jsx,ts,tsx,json,css,md}"
 
 workflows:
   version: 2
