@@ -20,9 +20,6 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Change Directory
-          command: cd js
-      - run:
           name: Install Dependencies
           command: npm install ./js
       - run:
