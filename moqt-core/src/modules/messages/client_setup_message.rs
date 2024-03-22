@@ -75,6 +75,13 @@ impl MOQTPayload for ClientSetupMessage {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
+        /*
+            Client SETUP Message Payload {
+                Number of Supported Versions (i),
+                Supported Version (i) ...,
+                SETUP Parameters (..) ...,
+            }
+        */
         buf.extend(write_variable_integer(
             self.number_of_supported_versions as u64,
         ));
