@@ -3,6 +3,7 @@ use serde::Serialize;
 
 use crate::{
     modules::variable_bytes::write_variable_bytes, variable_bytes::read_variable_bytes_from_buffer,
+    variable_integer::write_variable_integer,
 };
 
 use super::moqt_payload::MOQTPayload;
@@ -30,6 +31,10 @@ impl MOQTPayload for AnnounceOk {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
+        // Track Namespace bytes Length
+        buf.extend(write_variable_integer(self.track_namespace.len() as u64));
+
+        // Track Namespace bytes
         buf.extend(write_variable_bytes(
             &self.track_namespace.as_bytes().to_vec(),
         ));

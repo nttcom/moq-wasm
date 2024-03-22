@@ -43,6 +43,7 @@ init().then(async () => {
       console.log('send btn clicked')
       const streamDatagram = Array.from(form['stream-datagram']).filter((elem) => elem.checked)[0].value
       const messageType = form['message-type'].value
+      const trackNamespace = form['track-namespace'].value
       const versions = form['versions'].value.split(',').map(BigInt)
       const role = Array.from(form['role']).filter((elem) => elem.checked)[0].value
       const isAddPath = !!form['add-path'].checked
@@ -50,7 +51,6 @@ init().then(async () => {
       console.log({ streamDatagram, messageType, versions, role, isAddPath })
 
       // FIXME: Set these values from form
-      const trackNamespace = 'this is track namespace'
       const trackName = 'this is track name'
 
       switch (messageType) {
@@ -66,7 +66,8 @@ init().then(async () => {
           await client.sendObjectMessageWithoutLength(1n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
           break
         case 'announce':
-          await client.sendAnnounceMessage(trackNamespace)
+          // FIXME: Set AuthInfo from form
+          await client.sendAnnounceMessage(trackNamespace, 1, 'secret')
           break
         case 'unannounce':
           await client.sendUnannounceMessage(trackNamespace)

@@ -9,8 +9,10 @@ use moqt_core::{
     message_handler::StreamType,
     message_type::MessageType,
     messages::{
+        announce_message::AnnounceMessage,
         client_setup_message::ClientSetupMessage,
         moqt_payload::MOQTPayload,
+        parameter::{Parameter, ParameterType},
         setup_parameters::{RoleCase, RoleParameter, SetupParameter},
     },
     variable_bytes::write_variable_bytes,
@@ -123,14 +125,16 @@ impl MOQTClient {
             client_setup_message.packetize(&mut client_setup_message_buf);
 
             let mut buf = Vec::new();
+            // Message Type
             buf.extend(write_variable_integer(
                 u8::from(MessageType::ClientSetup) as u64
-            )); // client setup
+            ));
+            // Message Payload
             buf.extend(client_setup_message_buf);
 
+            // send
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
-
             JsFuture::from(writer.write_with_chunk(&buffer)).await
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
@@ -142,17 +146,35 @@ impl MOQTClient {
     pub async fn send_announce_message(
         &self,
         track_name_space: String,
+        number_of_parameters: u8,
+        auth_info: String, // param[0]
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
-            // TODO: construct Announce Message
-            let mut buf = Vec::new();
-            buf.put_u8(0x06); // announce
-            buf.extend(write_variable_bytes(&track_name_space.as_bytes().to_vec()));
-            buf.put_u8(0x00); // # of params
+            let auth_info_parameter = Parameter::new(
+                ParameterType::AuthorizationInfo,
+                auth_info.len() as u8,
+                auth_info,
+            );
 
+            let announce_message = AnnounceMessage::new(
+                track_name_space,
+                number_of_parameters,
+                vec![auth_info_parameter],
+            );
+            let mut announce_message_buf = BytesMut::new();
+            announce_message.packetize(&mut announce_message_buf);
+
+            let mut buf = Vec::new();
+            // Message Type
+            buf.extend(write_variable_integer(
+                u8::from(MessageType::Announce) as u64
+            ));
+            // Message Payload
+            buf.extend(announce_message_buf);
+
+            // send
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
-
             JsFuture::from(writer.write_with_chunk(&buffer)).await
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
