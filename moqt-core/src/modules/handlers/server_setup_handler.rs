@@ -86,7 +86,7 @@ mod success {
         let setup_parameters = vec![SetupParameter::RoleParameter(RoleParameter::new(
             RoleCase::Injection,
         ))];
-        let client_setup_message = ClientSetupMessage::new(vec![1], setup_parameters);
+        let client_setup_message = ClientSetupMessage::new(vec![0xff000001], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
@@ -102,7 +102,7 @@ mod success {
             SetupParameter::RoleParameter(RoleParameter::new(RoleCase::Injection)),
             SetupParameter::PathParameter(PathParameter::new(String::from("test"))),
         ];
-        let client_setup_message = ClientSetupMessage::new(vec![1], setup_parameters);
+        let client_setup_message = ClientSetupMessage::new(vec![0xff000001], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
@@ -129,7 +129,7 @@ mod failure {
     fn no_setup_parameter() {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![];
-        let client_setup_message = ClientSetupMessage::new(vec![1], setup_parameters);
+        let client_setup_message = ClientSetupMessage::new(vec![0xff000001], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
@@ -143,7 +143,7 @@ mod failure {
         let setup_parameters = vec![SetupParameter::PathParameter(PathParameter::new(
             String::from("test"),
         ))];
-        let client_setup_message = ClientSetupMessage::new(vec![1], setup_parameters);
+        let client_setup_message = ClientSetupMessage::new(vec![0xff000001], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
