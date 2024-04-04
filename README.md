@@ -56,7 +56,11 @@ openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -out cert.pem -subj '/
 
 ### moqt-client-sample の実行
 
-- `cd js && npm install && npm run dev`
+```shell
+cd js
+npm install
+npm run dev
+```
 
 - chrome の WebTransport 機能の ON と証明書の追加
 
