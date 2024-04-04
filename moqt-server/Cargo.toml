@@ -11,6 +11,6 @@ moqt-core = {path = "../moqt-core"}
 tokio = { version = "1.32.0", features = ["rt-multi-thread"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
-wtransport = "0.1.8"
+wtransport = "0.1.12"
 bytes = "1"
 async-trait = "0.1.74"

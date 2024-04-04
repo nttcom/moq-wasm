@@ -13,7 +13,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Ok, Result};
 use tracing::{self, Instrument};
 use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
-use wtransport::{endpoint::IncomingSession, tls::Certificate, Endpoint, ServerConfig};
+use wtransport::{endpoint::IncomingSession, Endpoint, Identity, ServerConfig};
 
 use crate::modules::buffer_manager::buffer_manager;
 use crate::modules::buffer_manager::BufferCommand;
@@ -103,8 +103,8 @@ impl MOQT {
         // Start wtransport server
         let config = ServerConfig::builder()
             .with_bind_default(self.port)
-            .with_certificate(
-                Certificate::load(&self.cert_path, &self.key_path)
+            .with_identity(
+                &Identity::load_pemfiles(&self.cert_path, &self.key_path)
                     .await
                     .with_context(|| {
                         format!(
