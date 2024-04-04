@@ -147,10 +147,10 @@ pub async fn message_handler(
             }
 
             // FIXME: 仮でechoする
-
             match ObjectMessageWithoutPayloadLength::depacketize(&mut payload_buf) {
                 Ok(object_message) => {
                     object_message.packetize(&mut write_buf);
+
                     MessageType::ObjectWithoutLength
                 }
                 Err(err) => {
