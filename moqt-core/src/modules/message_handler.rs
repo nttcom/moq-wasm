@@ -6,14 +6,12 @@ use crate::messages::object_message::{
 };
 use crate::modules::handlers::subscribe_handler::subscribe_handler;
 use crate::modules::handlers::unannounce_handler::unannounce_handler;
-use crate::modules::messages::announce_message::AnnounceMessage;
-use crate::modules::messages::client_setup_message::ClientSetupMessage;
 use crate::modules::messages::subscribe_request_message::SubscribeRequestMessage;
 use crate::modules::messages::unannounce_message::UnAnnounceMessage;
+use crate::server_processes::announce_message::{process_announce_message, AnnounceType};
+use crate::server_processes::client_setup_message::process_client_setup_message;
 
 use super::constants::UnderlayType;
-use super::handlers::announce_handler::announce_handler;
-use super::handlers::server_setup_handler::setup_handler;
 use super::message_type::MessageType;
 use super::messages::moqt_payload::MOQTPayload;
 use super::moqt_client::{MOQTClient, MOQTClientStatus};
@@ -64,6 +62,7 @@ pub async fn message_handler(
     let mut read_cur = Cursor::new(&read_buf[..]);
     tracing::info!("read_cur! {:?}", read_cur);
 
+    // メッセージタイプを読む
     let message_type = match read_message_type(&mut read_cur) {
         Ok(v) => v,
         Err(err) => {
@@ -76,9 +75,7 @@ pub async fn message_handler(
             );
         }
     };
-
     tracing::info!("Message Type: {:?}", message_type);
-
     if message_type.is_setup_message() {
         // Setup message must be sent on bidirectional stream
         if stream_type == StreamType::Uni {
@@ -107,6 +104,7 @@ pub async fn message_handler(
         return MessageProcessResult::Fragment;
     }
 
+    // ペイロードを読む
     let payload_length = read_cur.remaining();
     read_buf.advance(read_cur.position() as usize);
 
@@ -118,6 +116,7 @@ pub async fn message_handler(
     // 自分はサーバであるととりあえず仮定
     let return_message_type = match message_type {
         MessageType::ObjectWithLength => {
+            // TODO: server_processesフォルダに移管する
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
@@ -140,6 +139,7 @@ pub async fn message_handler(
             }
         }
         MessageType::ObjectWithoutLength => {
+            // TODO: server_processesフォルダに移管する
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
@@ -164,29 +164,14 @@ pub async fn message_handler(
             }
         }
         MessageType::ClientSetup => {
-            if client.status() != MOQTClientStatus::Connected {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
-            }
-            let client_setup_message = match ClientSetupMessage::depacketize(&mut payload_buf) {
-                Ok(client_setup_message) => client_setup_message,
+            match process_client_setup_message(
+                &mut payload_buf,
+                client,
+                underlay_type,
+                &mut write_buf,
+            ) {
+                Ok(_) => MessageType::ServerSetup,
                 Err(err) => {
-                    tracing::info!("{:#?}", err);
-                    return MessageProcessResult::Failure(
-                        TerminationErrorCode::GenericError,
-                        err.to_string(),
-                    );
-                }
-            };
-
-            match setup_handler(client_setup_message, underlay_type, client) {
-                Ok(server_setup_message) => {
-                    server_setup_message.packetize(&mut write_buf);
-                    MessageType::ServerSetup
-                }
-                Err(err) => {
-                    tracing::info!("{:#?}", err);
                     return MessageProcessResult::Failure(
                         TerminationErrorCode::GenericError,
                         err.to_string(),
@@ -195,6 +180,7 @@ pub async fn message_handler(
             }
         }
         MessageType::Subscribe => {
+            // TODO: server_processesフォルダに移管する
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
@@ -245,16 +231,19 @@ pub async fn message_handler(
             }
         }
         // MessageType::SubscribeOk => {
+        //       // TODO: server_processesフォルダに移管する
         //     if client.status() != MOQTClientStatus::SetUp {
         //         return MessageProcessResult::Failure;
         //     }
         // }
         // MessageType::SubscribeError => {
+        //      // TODO: server_processesフォルダに移管する
         //     if client.status() != MOQTClientStatus::SetUp {
         //         return MessageProcessResult::Failure;
         //     }
         // }
         MessageType::UnSubscribe => {
+            // TODO: server_processesフォルダに移管する
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
@@ -282,44 +271,20 @@ pub async fn message_handler(
             return MessageProcessResult::Success(BytesMut::with_capacity(0));
         }
         MessageType::Announce => {
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
-            }
-
-            let announce_message = AnnounceMessage::depacketize(&mut payload_buf);
-
-            if let Err(err) = announce_message {
-                // fix
-                tracing::info!("{:#?}", err);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::GenericError,
-                    err.to_string(),
-                );
-            }
-
-            let announce_result =
-                announce_handler(announce_message.unwrap(), client, track_manager_repository).await;
+            let announce_result = process_announce_message(
+                &mut payload_buf,
+                client,
+                &mut write_buf,
+                track_manager_repository,
+            )
+            .await;
 
             match announce_result {
-                Ok(announce_message) => match announce_message {
-                    crate::modules::handlers::announce_handler::AnnounceResponse::Success(
-                        ok_message,
-                    ) => {
-                        ok_message.packetize(&mut write_buf);
-                        MessageType::AnnounceOk
-                    }
-                    crate::modules::handlers::announce_handler::AnnounceResponse::Failure(
-                        err_message,
-                    ) => {
-                        err_message.packetize(&mut write_buf);
-                        MessageType::AnnounceError
-                    }
+                Ok(announce_result) => match announce_result {
+                    AnnounceType::Ok => MessageType::AnnounceOk,
+                    AnnounceType::Error => MessageType::AnnounceError,
                 },
                 Err(err) => {
-                    // fix
-                    tracing::info!("{:#?}", err);
                     return MessageProcessResult::Failure(
                         TerminationErrorCode::GenericError,
                         err.to_string(),
@@ -328,16 +293,19 @@ pub async fn message_handler(
             }
         }
         // MessageType::AnnounceOk => {
+        //     // TODO: server_processesフォルダに移管する
         //     if client.status() != MOQTClientStatus::SetUp {
         //         return MessageProcessResult::Failure;
         //     }
         // }
         // MessageType::AnnounceError => {
+        //     // TODO: server_processesフォルダに移管する
         //     if client.status() != MOQTClientStatus::SetUp {
         //         return MessageProcessResult::Failure;
         //     }
         // }
         MessageType::UnAnnounce => {
+            // TODO: server_processesフォルダに移管する
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
@@ -366,6 +334,7 @@ pub async fn message_handler(
             return MessageProcessResult::Success(BytesMut::with_capacity(0));
         }
         MessageType::GoAway => {
+            // TODO: server_processesフォルダに移管する
             todo!("GoAway");
         }
         unknown => {
