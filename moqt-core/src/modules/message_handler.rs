@@ -19,6 +19,7 @@ use super::messages::moqt_payload::MOQTPayload;
 use super::moqt_client::{MOQTClient, MOQTClientStatus};
 use super::track_manager_repository::TrackManagerRepository;
 use super::variable_integer::{read_variable_integer, write_variable_integer};
+use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +34,23 @@ pub enum MessageProcessResult {
     Fragment,
 }
 
+fn read_message_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<MessageType> {
+    let type_value = match read_variable_integer(read_cur) {
+        Ok(v) => v as u8,
+        Err(err) => {
+            bail!(err.to_string());
+        }
+    };
+
+    let message_type: MessageType = match MessageType::try_from(type_value) {
+        Ok(v) => v,
+        Err(err) => {
+            bail!(err.to_string());
+        }
+    };
+    Ok(message_type)
+}
+
 #[tracing::instrument(name="StableID",skip_all,fields(id=client.id()))]
 pub async fn message_handler(
     read_buf: &mut BytesMut,
@@ -43,30 +61,10 @@ pub async fn message_handler(
 ) -> MessageProcessResult {
     tracing::info!("message_handler! {}", read_buf.len());
 
-    // 断片化している場合などは元に戻す必要があるのでcursorを用いる
-    // ちゃんと読んだ場合はread_bufも対応してupdateが必要
     let mut read_cur = Cursor::new(&read_buf[..]);
     tracing::info!("read_cur! {:?}", read_cur);
-    // typeを読む
-    let type_value = read_variable_integer(&mut read_cur);
-    if let Err(err) = type_value {
-        read_buf.advance(read_cur.position() as usize);
 
-        tracing::info!("{:?}", err);
-        return MessageProcessResult::Failure(TerminationErrorCode::GenericError, err.to_string());
-    }
-    let type_value = type_value.unwrap();
-
-    let type_value = u8::try_from(type_value);
-    if let Err(err) = type_value {
-        read_buf.advance(read_cur.position() as usize);
-
-        tracing::info!("message_type is not u8 {:?}", err);
-        return MessageProcessResult::Failure(TerminationErrorCode::GenericError, err.to_string());
-    }
-    let type_value = type_value.unwrap();
-
-    let message_type: MessageType = match MessageType::try_from(type_value) {
+    let message_type = match read_message_type(&mut read_cur) {
         Ok(v) => v,
         Err(err) => {
             read_buf.advance(read_cur.position() as usize);
@@ -110,8 +108,6 @@ pub async fn message_handler(
     }
 
     let payload_length = read_cur.remaining();
-
-    // 正しく読めたのでその分bufferを進める
     read_buf.advance(read_cur.position() as usize);
 
     // payload相当の部分だけ切り出す
@@ -129,16 +125,12 @@ pub async fn message_handler(
             }
 
             // FIXME: 仮でechoする
-            let object_message = ObjectMessageWithPayloadLength::depacketize(&mut payload_buf);
-            tracing::info!("object_message: {:#x?}", object_message);
-            match object_message {
+            match ObjectMessageWithPayloadLength::depacketize(&mut payload_buf) {
                 Ok(object_message) => {
                     object_message.packetize(&mut write_buf);
-
                     MessageType::ObjectWithLength
                 }
                 Err(err) => {
-                    // fix
                     tracing::info!("{:#?}", err);
                     return MessageProcessResult::Failure(
                         TerminationErrorCode::GenericError,
@@ -155,12 +147,10 @@ pub async fn message_handler(
             }
 
             // FIXME: 仮でechoする
-            let object_message = ObjectMessageWithoutPayloadLength::depacketize(&mut payload_buf);
-            tracing::info!("object_message: {:#x?}", object_message);
-            match object_message {
+
+            match ObjectMessageWithoutPayloadLength::depacketize(&mut payload_buf) {
                 Ok(object_message) => {
                     object_message.packetize(&mut write_buf);
-
                     MessageType::ObjectWithoutLength
                 }
                 Err(err) => {
@@ -179,18 +169,23 @@ pub async fn message_handler(
                 tracing::error!(message);
                 return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
             }
+            let client_setup_message = match ClientSetupMessage::depacketize(&mut payload_buf) {
+                Ok(client_setup_message) => client_setup_message,
+                Err(err) => {
+                    tracing::info!("{:#?}", err);
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::GenericError,
+                        err.to_string(),
+                    );
+                }
+            };
 
-            let setup_result = ClientSetupMessage::depacketize(&mut payload_buf).and_then(
-                |client_setup_message| setup_handler(client_setup_message, underlay_type, client),
-            );
-
-            match setup_result {
+            match setup_handler(client_setup_message, underlay_type, client) {
                 Ok(server_setup_message) => {
                     server_setup_message.packetize(&mut write_buf);
                     MessageType::ServerSetup
                 }
                 Err(err) => {
-                    // fix
                     tracing::info!("{:#?}", err);
                     return MessageProcessResult::Failure(
                         TerminationErrorCode::GenericError,
