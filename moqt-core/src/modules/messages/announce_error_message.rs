@@ -11,7 +11,7 @@ use crate::{
 
 use super::moqt_payload::MOQTPayload;
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct AnnounceError {
     track_namespace: String,
     error_code: u64,
@@ -69,5 +69,52 @@ impl MOQTPayload for AnnounceError {
         buf.extend(write_variable_bytes(
             &self.reason_phrase.as_bytes().to_vec(),
         ));
+    }
+}
+
+#[cfg(test)]
+mod success {
+    use crate::{
+        messages::moqt_payload::MOQTPayload,
+        modules::messages::announce_error_message::AnnounceError,
+    };
+    #[test]
+    fn packetize_announce_error() {
+        let track_namespace = "test".to_string();
+        let track_namespace_length = track_namespace.len() as u8;
+        let error_code: u64 = 1;
+        let reason_phrase = "already exist".to_string();
+
+        let announce_error =
+            AnnounceError::new(track_namespace.clone(), error_code, reason_phrase.clone());
+        let mut buf = bytes::BytesMut::new();
+        announce_error.packetize(&mut buf);
+
+        let mut combined_bytes = Vec::from(track_namespace_length.to_be_bytes());
+        combined_bytes.extend_from_slice(track_namespace.as_bytes());
+        combined_bytes.extend_from_slice(&(error_code as u8).to_be_bytes());
+        combined_bytes.extend_from_slice(reason_phrase.as_bytes());
+
+        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+    }
+
+    #[test]
+    fn depacketize_announce_error() {
+        let track_namespace = "test".to_string();
+        let track_namespace_length = track_namespace.len() as u8;
+        let error_code: u64 = 1;
+        let reason_phrase = "already exist".to_string();
+        let expected_announce_error =
+            AnnounceError::new(track_namespace.clone(), error_code, reason_phrase.clone());
+
+        let mut combined_bytes = Vec::from(track_namespace_length.to_be_bytes());
+        combined_bytes.extend_from_slice(track_namespace.as_bytes());
+        combined_bytes.extend_from_slice(&(error_code as u8).to_be_bytes());
+        combined_bytes.extend_from_slice(reason_phrase.as_bytes());
+
+        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let depacketized_announce_error = AnnounceError::depacketize(&mut buf).unwrap();
+
+        assert_eq!(depacketized_announce_error, expected_announce_error);
     }
 }
