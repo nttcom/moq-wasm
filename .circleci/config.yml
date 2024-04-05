@@ -14,6 +14,15 @@ jobs:
           name: Run Clippy
           command: |
             cargo clippy -- -D warnings
+  unit_test:
+    docker:
+      - image: rust:latest
+    steps:
+      - checkout
+      - run:
+          name: Run Unit Tests
+          command: |
+            cargo test
   prettier:
     docker:
       - image: cimg/node:21.6.2
@@ -31,6 +40,10 @@ workflows:
   build_and_test:
     jobs:
       - clippy_check:
+          filters:
+            branches:
+              ignore: /main|master/
+      - unit_test:
           filters:
             branches:
               ignore: /main|master/
