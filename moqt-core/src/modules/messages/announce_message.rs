@@ -41,9 +41,11 @@ impl MOQTPayload for AnnounceMessage {
         tracing::info!("read_cur! {:?}", read_cur);
         let track_namespace_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("track namespace length")?;
-        let track_namespace =
-            read_variable_bytes_with_length_from_buffer(buf, track_namespace_length as usize)
-                .context("track namespace")?;
+        let track_namespace = String::from_utf8(read_variable_bytes_with_length_from_buffer(
+            buf,
+            track_namespace_length as usize,
+        )?)
+        .context("track namespace")?;
 
         tracing::info!("track_namespace! {:?}", track_namespace);
 
@@ -59,7 +61,7 @@ impl MOQTPayload for AnnounceMessage {
         }
 
         let announce_message = AnnounceMessage {
-            track_namespace: String::from_utf8(track_namespace)?,
+            track_namespace,
             number_of_parameters,
             parameters,
         };

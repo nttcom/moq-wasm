@@ -20,10 +20,7 @@ impl AnnounceOk {
 }
 
 impl MOQTPayload for AnnounceOk {
-    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self>
-    where
-        Self: Sized,
-    {
+    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let track_namespace =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
 
