@@ -8,43 +8,38 @@ use crate::{
 };
 use anyhow::{bail, Result};
 
-pub enum AnnounceType {
-    Ok,
-    Error,
-}
-
 pub(crate) async fn process_announce_message(
     payload_buf: &mut BytesMut,
     client: &mut MOQTClient,
     write_buf: &mut BytesMut,
     track_manager_repository: &mut dyn TrackManagerRepository,
-) -> Result<AnnounceType> {
+) -> Result<AnnounceResponse> {
     if client.status() != MOQTClientStatus::SetUp {
         let message = String::from("Invalid timing");
         tracing::error!(message);
         bail!(message);
     }
 
-    let announce_message = AnnounceMessage::depacketize(payload_buf);
+    let announce_message = match AnnounceMessage::depacketize(payload_buf) {
+        Ok(announce_message) => announce_message,
+        Err(err) => {
+            tracing::info!("{:#?}", err);
+            bail!(err.to_string());
+        }
+    };
 
-    if let Err(err) = announce_message {
-        // fix
-        tracing::info!("{:#?}", err);
-        bail!(err.to_string());
-    }
+    let announce_response =
+        announce_handler(announce_message, client, track_manager_repository).await;
 
-    let announce_result =
-        announce_handler(announce_message.unwrap(), client, track_manager_repository).await;
-
-    match announce_result {
-        Ok(announce_message) => match announce_message {
+    match announce_response {
+        Ok(announce_response_message) => match announce_response_message {
             AnnounceResponse::Success(ok_message) => {
                 ok_message.packetize(write_buf);
-                Ok(AnnounceType::Ok)
+                Ok(AnnounceResponse::Success(ok_message))
             }
             AnnounceResponse::Failure(err_message) => {
                 err_message.packetize(write_buf);
-                Ok(AnnounceType::Error)
+                Ok(AnnounceResponse::Failure(err_message))
             }
         },
         Err(err) => {
