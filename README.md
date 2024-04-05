@@ -54,6 +54,11 @@ openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -out cert.pem -subj '/
 
 - `cargo run -p moqt-server-sample`
 
+#### ログレベルの指定
+
+- `cargo run -p moqt-server-sample -- -log <Log Level>`
+  - Default setting is `DEBUG`
+
 ### moqt-client-sample の実行
 
 ```shell
