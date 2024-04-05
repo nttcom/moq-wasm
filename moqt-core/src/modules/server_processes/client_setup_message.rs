@@ -23,7 +23,7 @@ pub(crate) fn process_client_setup_message(
     let client_setup_message = match ClientSetupMessage::depacketize(payload_buf) {
         Ok(client_setup_message) => client_setup_message,
         Err(err) => {
-            tracing::info!("{:#?}", err);
+            tracing::error!("{:#?}", err);
             bail!(err.to_string());
         }
     };

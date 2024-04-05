@@ -23,7 +23,7 @@ pub(crate) async fn process_announce_message(
     let announce_message = match AnnounceMessage::depacketize(payload_buf) {
         Ok(announce_message) => announce_message,
         Err(err) => {
-            tracing::info!("{:#?}", err);
+            tracing::error!("{:#?}", err);
             bail!(err.to_string());
         }
     };
@@ -44,7 +44,7 @@ pub(crate) async fn process_announce_message(
         },
         Err(err) => {
             // fix
-            tracing::info!("{:#?}", err);
+            tracing::error!("{:#?}", err);
             bail!(err.to_string());
         }
     }
