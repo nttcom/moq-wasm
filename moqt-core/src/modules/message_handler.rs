@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
+use crate::handlers::announce_handler::AnnounceResponse;
 use crate::messages::object_message::{
     ObjectMessageWithPayloadLength, ObjectMessageWithoutPayloadLength,
 };
@@ -8,7 +9,7 @@ use crate::modules::handlers::subscribe_handler::subscribe_handler;
 use crate::modules::handlers::unannounce_handler::unannounce_handler;
 use crate::modules::messages::subscribe_request_message::SubscribeRequestMessage;
 use crate::modules::messages::unannounce_message::UnAnnounceMessage;
-use crate::server_processes::announce_message::{process_announce_message, AnnounceType};
+use crate::server_processes::announce_message::process_announce_message;
 use crate::server_processes::client_setup_message::process_client_setup_message;
 
 use super::constants::UnderlayType;
@@ -280,9 +281,9 @@ pub async fn message_handler(
             .await;
 
             match announce_result {
-                Ok(announce_result) => match announce_result {
-                    AnnounceType::Ok => MessageType::AnnounceOk,
-                    AnnounceType::Error => MessageType::AnnounceError,
+                Ok(announce_response) => match announce_response {
+                    AnnounceResponse::Success(_) => MessageType::AnnounceOk,
+                    AnnounceResponse::Failure(_) => MessageType::AnnounceError,
                 },
                 Err(err) => {
                     return MessageProcessResult::Failure(
