@@ -9,6 +9,7 @@ edition = "2021"
 anyhow = { version = "1.0.75", features = ["backtrace"] }
 moqt-server = {path = "../moqt-server"}
 tokio = { version = "1.32.0", features = ["rt-multi-thread"] }
+clap = { version = "4.5.4", features = ["derive"] }
 
 
 [features]

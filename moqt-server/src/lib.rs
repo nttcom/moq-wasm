@@ -39,6 +39,7 @@ pub struct MOQTConfig {
     pub keep_alive_interval_sec: u64,
     pub underlay: UnderlayType,
     pub auth_callback: Option<AuthCallbackFunctionType>,
+    pub log_level: String,
 }
 
 impl Default for MOQTConfig {
@@ -57,6 +58,7 @@ impl MOQTConfig {
             keep_alive_interval_sec: 3,
             underlay: UnderlayType::Both,
             auth_callback: None,
+            log_level: "DEBUG".to_string(),
         }
     }
 }
@@ -68,6 +70,7 @@ pub struct MOQT {
     keep_alive_interval_sec: u64,
     underlay: UnderlayType,
     // auth_callback: Option<AuthCallbackFunctionType>,
+    log_level: String,
 }
 
 impl MOQT {
@@ -79,10 +82,11 @@ impl MOQT {
             keep_alive_interval_sec: config.keep_alive_interval_sec,
             underlay: config.underlay,
             // auth_callback: config.auth_callback,
+            log_level: config.log_level,
         }
     }
     pub async fn start(&self) -> Result<()> {
-        init_logging();
+        init_logging(self.log_level.to_string());
 
         // For buffer management for each stream
         let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
@@ -337,10 +341,24 @@ async fn handle_stream(
     Ok::<()>(())
 }
 
-// TODO: LogLevelを設定できるようにする
-fn init_logging() {
+fn init_logging(log_level: String) {
+    let level_filter: LevelFilter = match log_level.to_uppercase().as_str() {
+        "OFF" => LevelFilter::OFF,
+        "TRACE" => LevelFilter::TRACE,
+        "DEBUG" => LevelFilter::DEBUG,
+        "INFO" => LevelFilter::INFO,
+        "WARN" => LevelFilter::WARN,
+        "ERROR" => LevelFilter::ERROR,
+        _ => {
+            panic!(
+                "Invalid log level: '{}'.\n  Valid log levels: [OFF, TRACE, DEBUG, INFO, WARN, ERROR]",
+                log_level
+            );
+        }
+    };
+
     let env_filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::DEBUG.into())
+        .with_default_directive(level_filter.into())
         .from_env_lossy();
 
     tracing_subscriber::fmt()
@@ -348,4 +366,6 @@ fn init_logging() {
         .with_level(true)
         .with_env_filter(env_filter)
         .init();
+
+    tracing::info!("Logging initialized. (Level: {})", log_level);
 }
