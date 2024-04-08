@@ -516,8 +516,6 @@ async fn message_handler(
 
     let message_type_value = read_variable_integer_from_buffer(&mut buf);
 
-    let _message_length = read_variable_integer_from_buffer(&mut buf)?;
-
     // TODO: Check stream type
     match message_type_value {
         Ok(v) => {
@@ -548,6 +546,7 @@ async fn message_handler(
                 MessageType::AnnounceOk => {
                     let announce_ok_message =
                         announce_ok_message::AnnounceOk::depacketize(&mut buf)?;
+                    log(std::format!("announce_ok_message: {:#x?}", announce_ok_message).as_str());
 
                     if let Some(callback) = callbacks.borrow().announce_callback() {
                         let v = serde_wasm_bindgen::to_value(&announce_ok_message).unwrap();
@@ -559,6 +558,10 @@ async fn message_handler(
                         moqt_core::messages::announce_error_message::AnnounceError::depacketize(
                             &mut buf,
                         )?;
+                    log(
+                        std::format!("announce_error_message: {:#x?}", announce_error_message)
+                            .as_str(),
+                    );
 
                     if let Some(callback) = callbacks.borrow().announce_callback() {
                         let v = serde_wasm_bindgen::to_value(&announce_error_message).unwrap();
