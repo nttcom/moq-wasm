@@ -38,7 +38,7 @@ impl MOQTPayload for AnnounceError {
             track_namespace_length as usize,
         )?)
         .context("track namespace")?;
-        let error_code = read_variable_integer_from_buffer(buf).context("error_code")?;
+        let error_code = read_variable_integer_from_buffer(buf).context("error code")?;
         let reason_phrase =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
 
