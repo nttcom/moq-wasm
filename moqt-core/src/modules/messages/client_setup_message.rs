@@ -6,7 +6,7 @@ use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_
 
 use super::{moqt_payload::MOQTPayload, setup_parameters::SetupParameter};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ClientSetupMessage {
     pub(crate) number_of_supported_versions: u8,
     pub(crate) supported_versions: Vec<u32>,
@@ -79,6 +79,7 @@ impl MOQTPayload for ClientSetupMessage {
             Client SETUP Message Payload {
                 Number of Supported Versions (i),
                 Supported Version (i) ...,
+                Number of Parameters (i) ...,
                 SETUP Parameters (..) ...,
             }
         */
@@ -94,4 +95,83 @@ impl MOQTPayload for ClientSetupMessage {
             setup_parameter.packetize(buf);
         }
     }
+}
+
+#[cfg(test)]
+mod success {
+    use crate::modules::variable_integer::write_variable_integer;
+    use crate::{
+        constants::MOQ_TRANSPORT_VERSION,
+        messages::moqt_payload::MOQTPayload,
+        modules::messages::{
+            client_setup_message::ClientSetupMessage,
+            setup_parameters::{RoleCase, RoleParameter, SetupParameter},
+        },
+    };
+    #[test]
+    fn packetize_client_setup() {
+        let supported_versions = vec![MOQ_TRANSPORT_VERSION];
+        let supported_versions_length = supported_versions.len() as u8;
+
+        let role_parameter = RoleParameter::new(RoleCase::Injection);
+        let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
+        let setup_parameters_length = setup_parameters.len() as u8;
+
+        let client_setup = ClientSetupMessage::new(supported_versions, setup_parameters);
+        let mut buf = bytes::BytesMut::new();
+        client_setup.packetize(&mut buf);
+
+        // Number of Supported Versions (i)
+        let mut combined_bytes = Vec::from(supported_versions_length.to_be_bytes());
+        // Supported Version (i)
+        combined_bytes.extend(write_variable_integer(MOQ_TRANSPORT_VERSION as u64));
+        // Number of Parameters (i)
+        combined_bytes.extend(setup_parameters_length.to_be_bytes());
+        // SETUP Parameters (..)
+        combined_bytes.extend(
+            &([
+                role_parameter.key as u8,
+                role_parameter.value_length,
+                role_parameter.value as u8,
+            ])
+            .to_vec(),
+        );
+
+        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+    }
+
+    #[test]
+    fn depacketize_client_setup() {
+        let supported_versions = vec![MOQ_TRANSPORT_VERSION];
+        let supported_versions_length = supported_versions.len() as u8;
+
+        let role_parameter = RoleParameter::new(RoleCase::Injection);
+        let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
+        let setup_parameters_length = setup_parameters.len() as u8;
+
+        let expected_client_setup = ClientSetupMessage::new(supported_versions, setup_parameters);
+
+        // Number of Supported Versions (i)
+        let mut combined_bytes = Vec::from(supported_versions_length.to_be_bytes());
+        // Supported Version (i)
+        combined_bytes.extend(write_variable_integer(MOQ_TRANSPORT_VERSION as u64));
+        // Number of Parameters (i)
+        combined_bytes.extend(setup_parameters_length.to_be_bytes());
+        // SETUP Parameters (..)
+        combined_bytes.extend(
+            &([
+                role_parameter.key as u8,
+                role_parameter.value_length,
+                role_parameter.value as u8,
+            ])
+            .to_vec(),
+        );
+
+        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let depacketized_client_setup = ClientSetupMessage::depacketize(&mut buf).unwrap();
+
+        assert_eq!(depacketized_client_setup, expected_client_setup);
+    }
+
+    // TODO: Add tests for PathParameter when implementing QUIC Version
 }

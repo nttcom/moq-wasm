@@ -10,7 +10,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
 
 // TODO: FIXME: そもそもvalueだけ持たせれば後ろの個別のstructはいらないのでは?
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub enum SetupParameter {
     RoleParameter(RoleParameter),
     PathParameter(PathParameter),
@@ -78,7 +78,7 @@ impl MOQTPayload for SetupParameter {
     }
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct RoleParameter {
     pub key: SetupParameterType, // 0x00
     pub value_length: u8,        // 0x01
@@ -95,7 +95,7 @@ impl RoleParameter {
     }
 }
 
-#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Serialize)]
+#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Serialize, PartialEq)]
 #[repr(u8)]
 pub enum RoleCase {
     Injection = 0x01,
@@ -103,7 +103,7 @@ pub enum RoleCase {
     Both = 0x03,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct PathParameter {
     pub key: SetupParameterType, // 0x01
     pub value_length: u8,        // tmp
@@ -120,7 +120,7 @@ impl PathParameter {
     }
 }
 
-#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Serialize)]
+#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Serialize, PartialEq)]
 #[repr(u8)]
 pub enum SetupParameterType {
     Role = 0x00,
