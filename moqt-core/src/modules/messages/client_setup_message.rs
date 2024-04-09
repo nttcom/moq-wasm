@@ -128,14 +128,11 @@ mod success {
         // Number of Parameters (i)
         combined_bytes.extend(setup_parameters_length.to_be_bytes());
         // SETUP Parameters (..)
-        combined_bytes.extend(
-            &([
-                role_parameter.key as u8,
-                role_parameter.value_length,
-                role_parameter.value as u8,
-            ])
-            .to_vec(),
-        );
+        combined_bytes.extend(vec![
+            role_parameter.key as u8,
+            role_parameter.value_length,
+            role_parameter.value as u8,
+        ]);
 
         assert_eq!(buf.as_ref(), combined_bytes.as_slice());
     }
@@ -158,14 +155,11 @@ mod success {
         // Number of Parameters (i)
         combined_bytes.extend(setup_parameters_length.to_be_bytes());
         // SETUP Parameters (..)
-        combined_bytes.extend(
-            &([
-                role_parameter.key as u8,
-                role_parameter.value_length,
-                role_parameter.value as u8,
-            ])
-            .to_vec(),
-        );
+        combined_bytes.extend(vec![
+            role_parameter.key as u8,
+            role_parameter.value_length,
+            role_parameter.value as u8,
+        ]);
 
         let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
         let depacketized_client_setup = ClientSetupMessage::depacketize(&mut buf).unwrap();
