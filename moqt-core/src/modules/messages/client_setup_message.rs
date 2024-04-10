@@ -113,11 +113,12 @@ mod success {
         let supported_versions = vec![MOQ_TRANSPORT_VERSION];
         let supported_versions_length = supported_versions.len() as u8;
 
-        let role_parameter = RoleParameter::new(RoleCase::Injection);
-        let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
+        let setup_parameters = vec![SetupParameter::RoleParameter(RoleParameter::new(
+            RoleCase::Injection,
+        ))];
         let setup_parameters_length = setup_parameters.len() as u8;
 
-        let client_setup = ClientSetupMessage::new(supported_versions, setup_parameters);
+        let client_setup = ClientSetupMessage::new(supported_versions, setup_parameters.clone());
         let mut buf = bytes::BytesMut::new();
         client_setup.packetize(&mut buf);
 
@@ -128,11 +129,13 @@ mod success {
         // Number of Parameters (i)
         combined_bytes.extend(setup_parameters_length.to_be_bytes());
         // SETUP Parameters (..)
-        combined_bytes.extend(vec![
-            role_parameter.key as u8,
-            role_parameter.value_length,
-            role_parameter.value as u8,
-        ]);
+        if let SetupParameter::RoleParameter(role_parameter) = &setup_parameters[0] {
+            combined_bytes.extend(vec![
+                role_parameter.key as u8,
+                role_parameter.value_length,
+                role_parameter.value as u8,
+            ]);
+        }
 
         assert_eq!(buf.as_ref(), combined_bytes.as_slice());
     }
@@ -142,11 +145,13 @@ mod success {
         let supported_versions = vec![MOQ_TRANSPORT_VERSION];
         let supported_versions_length = supported_versions.len() as u8;
 
-        let role_parameter = RoleParameter::new(RoleCase::Injection);
-        let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
+        let setup_parameters = vec![SetupParameter::RoleParameter(RoleParameter::new(
+            RoleCase::Injection,
+        ))];
         let setup_parameters_length = setup_parameters.len() as u8;
 
-        let expected_client_setup = ClientSetupMessage::new(supported_versions, setup_parameters);
+        let expected_client_setup =
+            ClientSetupMessage::new(supported_versions, setup_parameters.clone());
 
         // Number of Supported Versions (i)
         let mut combined_bytes = Vec::from(supported_versions_length.to_be_bytes());
@@ -155,11 +160,13 @@ mod success {
         // Number of Parameters (i)
         combined_bytes.extend(setup_parameters_length.to_be_bytes());
         // SETUP Parameters (..)
-        combined_bytes.extend(vec![
-            role_parameter.key as u8,
-            role_parameter.value_length,
-            role_parameter.value as u8,
-        ]);
+        if let SetupParameter::RoleParameter(role_parameter) = &setup_parameters[0] {
+            combined_bytes.extend(vec![
+                role_parameter.key as u8,
+                role_parameter.value_length,
+                role_parameter.value as u8,
+            ]);
+        }
 
         let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
         let depacketized_client_setup = ClientSetupMessage::depacketize(&mut buf).unwrap();
