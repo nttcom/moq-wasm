@@ -58,9 +58,9 @@ jobs:
             header=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 -w 0)
             unsigned_token="${header}.${payload}"
 
-            echo $GITHUB_APPS_PEM_BASE64 | base64 --decode > /githubapps
-            signed_token=$(echo -n $(echo -n "${unsigned_token}" | openssl dgst -binary -sha256 -sign "/githubapps" | base64))
-            rm /githubapps
+            echo $GITHUB_APPS_PEM_BASE64 | base64 --decode > ./githubapps
+            signed_token=$(echo -n $(echo -n "${unsigned_token}" | openssl dgst -binary -sha256 -sign "./githubapps" | base64))
+            rm ./githubapps
             jwt="${unsigned_token}.${signed_token}"
             org_name="nttcom-webcore" # github account name
 
@@ -79,7 +79,7 @@ jobs:
               | jq -r ".token"
             ) > ./githubapps_token
       - persist_to_workspace:
-          root: /githubapps
+          root: .
           paths:
             - githubapps_token
   coverage_report:
@@ -89,7 +89,7 @@ jobs:
     steps:
       - checkout
       - attach_workspace:
-          at: /githubapps
+          at: /githubapps_token
       - run:
           name: Post Coverage Report
           command: |          
@@ -101,7 +101,7 @@ jobs:
             comment="```shell\n${cov_result}\n```"
 
             github_comment_verion=6.0.4
-            github_apps_token=$(cat /githubapps/githubapps_token)
+            github_apps_token=$(cat ./githubapps_token)
 
             curl -L https://github.com/suzuki-shunsuke/github-comment/releases/download/v${github_comment_verion}/github-comment_${github_comment_verion}_linux_amd64.tar.gz -o linux_amd64.tar.gz
             tar -zxvf linux_amd64.tar.gz
