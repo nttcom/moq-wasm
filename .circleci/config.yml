@@ -1,5 +1,11 @@
 version: 2.1
 
+anchors:
+  working_directory: &working_directory
+    working_directory: ~/repo
+  resource_class: &resource_class
+    resource_class: medium
+
 jobs:
   clippy_check:
     docker:
@@ -34,7 +40,74 @@ jobs:
       - run:
           name: Check Prettier Formatting
           command: npx prettier --check "js/**/*.{js,jsx,ts,tsx,json,css,md}"
+  github_apps_token:
+    <<: [*resource_class, *working_directory]
+    docker:
+      - image: cimg/base:2021.04
+    steps:
+      - run:
+          name: Generate Coverage Report
+          command:
+            # Skipp if it is not a pull request
+            set -e
+            if [ -z "${CIRCLE_PULL_REQUEST}" ]; then
+              exit 1
+            fi
 
+            now=$(date "+%s")
+            iat=$((${now} - 60))
+            exp=$((${now} + (10 * 60)))
+            github_app_id="877010" # App ID
+            payload=$(echo -n "{\"iat\":${iat},\"exp\":${exp},\"iss\":${github_app_id}}" | base64 -w 0)
+            header=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 -w 0)
+            unsigned_token="${header}.${payload}"
+
+            echo $GITHUB_APPS_PEM_BASE64 | base64 --decode > ./githubapps
+            signed_token=$(echo -n $(echo -n "${unsigned_token}" | openssl dgst -binary -sha256 -sign "./githubapps" | base64))
+            rm ./githubapps
+            jwt="${unsigned_token}.${signed_token}"
+            org_name="nttcom-webcore" # github account name
+
+            installation_id=$(
+              curl -s -X GET \
+                -H "Authorization: Bearer ${jwt}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/app/installations" \
+              | jq -r ".[] | select(.account.login == \"${org_name}\" and .account.type == \"Organization\") | .id"
+
+            echo $(
+              curl -s -X POST \
+                -H "Authorization: Bearer ${jwt}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/app/installations/${installation_id}/access_tokens" \
+              | jq -r ".token"
+            ) > ./githubapps_token
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ./githubapps_token
+  coverage_report:
+    <<: [*resource_class, *working_directory]
+    docker:
+      - image: rust:latest
+    steps:
+      - checkout
+      - attach_workspace:
+          at: /githubapps
+      - run:
+          name: Post Coverage Report
+          command: |
+            cargo install cargo-llvm-cov
+            rustup component add llvm-tools-preview
+            cov_result=$(cargo llvm-cov | awk '/Filename/,0')
+            comment="```shell\n${cov_result}\n```"
+
+            github_comment_verion=6.0.4
+            github_apps_token=$(cat /githubapps/githubapps_token)
+
+            curl -L https://github.com/suzuki-shunsuke/github-comment/releases/download/v${github_comment_verion}/github-comment_${github_comment_verion}_linux_amd64.tar.gz -o linux_amd64.tar.gz
+            tar -zxvf linux_amd64.tar.gz
+            ./github-comment post -token ${github_apps_token} -org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${CIRCLE_PR_NUMBER} --template "${comment}"
 workflows:
   version: 2
   build_and_test:
@@ -48,6 +121,20 @@ workflows:
             branches:
               ignore: /main|master/
       - prettier:
+          filters:
+            branches:
+              ignore: /main|master/
+      - github_apps_token:
+          requires:
+            - clippy_check
+            - unit_test
+            - prettier
+          filters:
+            branches:
+              ignore: /main|master/
+      - coverage_report:
+          requires:
+            - github_apps_token
           filters:
             branches:
               ignore: /main|master/
