@@ -44,14 +44,12 @@ jobs:
     <<: [*resource_class, *working_directory]
     docker:
       - image: cimg/base:2021.04
-    steps:
-      - run:
-          name: Check PR
-          command: |
-            test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
+    steps:            
       - run:
           name: Get GitHub Apps Token
           command: |
+            test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
+
             now=$(date "+%s")
             iat=$((${now} - 60))
             exp=$((${now} + (10 * 60)))
@@ -60,9 +58,9 @@ jobs:
             header=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 -w 0)
             unsigned_token="${header}.${payload}"
 
-            echo $GITHUB_APPS_PEM_BASE64 | base64 --decode > ./githubapps
-            signed_token=$(echo -n $(echo -n "${unsigned_token}" | openssl dgst -binary -sha256 -sign "./githubapps" | base64))
-            rm ./githubapps
+            echo $GITHUB_APPS_PEM_BASE64 | base64 --decode > /githubapps
+            signed_token=$(echo -n $(echo -n "${unsigned_token}" | openssl dgst -binary -sha256 -sign "/githubapps" | base64))
+            rm /githubapps
             jwt="${unsigned_token}.${signed_token}"
             org_name="nttcom-webcore" # github account name
 
@@ -81,24 +79,22 @@ jobs:
               | jq -r ".token"
             ) > ./githubapps_token
       - persist_to_workspace:
-          root: .
+          root: /githubapps
           paths:
-            - ./githubapps_token
+            - githubapps_token
   coverage_report:
     <<: [*resource_class, *working_directory]
     docker:
       - image: rust:latest
     steps:
       - checkout
-      - run:
-          name: Check PR
-          command: |
-            test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
       - attach_workspace:
           at: /githubapps
       - run:
           name: Post Coverage Report
           command: |          
+            test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
+
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
             cov_result=$(cargo llvm-cov | awk '/Filename/,0')
