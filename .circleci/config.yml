@@ -131,36 +131,12 @@ workflows:
             - clippy_check
             - unit_test
             - prettier
-          when:
-            condition:
-              equal: [ "true", << pipeline.parameters.is_pull_request >> ]
           filters:
             branches:
               ignore: /main|master/
       - coverage_report:
           requires:
             - github_apps_token
-          when:
-            condition:
-              equal: [ "true", << pipeline.parameters.is_pull_request >> ]
           filters:
             branches:
               ignore: /main|master/
-
-parameters:
-  is_pull_request:
-    type: boolean
-    default: false
-
-triggers:
-  - schedule:
-      cron: "0 0 * * *"
-      filters:
-        branches:
-          only:
-            - main
-  - webhook:
-      parameters:
-        is_pull_request:
-          type: boolean
-          default: true
