@@ -46,14 +46,8 @@ jobs:
       - image: cimg/base:2021.04
     steps:
       - run:
-          name: Generate Coverage Report
+          name: Get GitHub Apps Token
           command: |
-            # Skip if it is not a pull request
-            set -e
-            if [ -z "${CIRCLE_PULL_REQUEST}" ]; then
-              exit 0
-            fi
-
             now=$(date "+%s")
             iat=$((${now} - 60))
             exp=$((${now} + (10 * 60)))
@@ -97,12 +91,6 @@ jobs:
       - run:
           name: Post Coverage Report
           command: |
-            # Skip if it is not a pull request
-            set -e
-            if [ -z "${CIRCLE_PULL_REQUEST}" ]; then
-              exit 0
-            fi
-
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
             cov_result=$(cargo llvm-cov | awk '/Filename/,0')
@@ -135,12 +123,36 @@ workflows:
             - clippy_check
             - unit_test
             - prettier
+          when:
+            condition:
+              equal: [ "true", << pipeline.parameters.is_pull_request >> ]
           filters:
             branches:
               ignore: /main|master/
       - coverage_report:
           requires:
             - github_apps_token
+          when:
+            condition:
+              equal: [ "true", << pipeline.parameters.is_pull_request >> ]
           filters:
             branches:
               ignore: /main|master/
+
+parameters:
+  is_pull_request:
+    type: boolean
+    default: false
+
+triggers:
+  - schedule:
+      cron: "0 0 * * *"
+      filters:
+        branches:
+          only:
+            - main
+  - webhook:
+      parameters:
+        is_pull_request:
+          type: boolean
+          default: true
