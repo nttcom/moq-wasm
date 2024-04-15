@@ -48,8 +48,6 @@ jobs:
       - run:
           name: Get GitHub Apps Token
           command: |
-            test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
-
             now=$(date "+%s")
             iat=$((${now} - 60))
             exp=$((${now} + (10 * 60)))
