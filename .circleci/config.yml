@@ -67,7 +67,7 @@ jobs:
                 -H "Authorization: Bearer ${jwt}" \
                 -H "Accept: application/vnd.github.v3+json" \
                 "https://api.github.com/app/installations" \
-              | jq -r ".[] | select(.account.login == \"${org_name}\" and .account.type == \"Organization\") | .id"
+              | jq -r ".[] | select(.account.login == \"${org_name}\" and .account.type == \"Organization\") | .id")
 
             echo $(
               curl -s -X POST \
