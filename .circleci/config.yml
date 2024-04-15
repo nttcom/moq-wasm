@@ -47,8 +47,8 @@ jobs:
     steps:
       - run:
           name: Generate Coverage Report
-          command:
-            # Skipp if it is not a pull request
+          command: |
+            # Skip if it is not a pull request
             set -e
             if [ -z "${CIRCLE_PULL_REQUEST}" ]; then
               exit 1
