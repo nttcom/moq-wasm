@@ -51,7 +51,7 @@ jobs:
             # Skip if it is not a pull request
             set -e
             if [ -z "${CIRCLE_PULL_REQUEST}" ]; then
-              exit 1
+              exit 0
             fi
 
             now=$(date "+%s")
@@ -97,6 +97,12 @@ jobs:
       - run:
           name: Post Coverage Report
           command: |
+            # Skip if it is not a pull request
+            set -e
+            if [ -z "${CIRCLE_PULL_REQUEST}" ]; then
+              exit 0
+            fi
+
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
             cov_result=$(cargo llvm-cov | awk '/Filename/,0')
