@@ -46,6 +46,10 @@ jobs:
       - image: cimg/base:2021.04
     steps:
       - run:
+          name: Check PR
+          command: |
+            test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
+      - run:
           name: Get GitHub Apps Token
           command: |
             now=$(date "+%s")
@@ -86,11 +90,15 @@ jobs:
       - image: rust:latest
     steps:
       - checkout
+      - run:
+          name: Check PR
+          command: |
+            test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
       - attach_workspace:
           at: /githubapps
       - run:
           name: Post Coverage Report
-          command: |
+          command: |          
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
             cov_result=$(cargo llvm-cov | awk '/Filename/,0')
