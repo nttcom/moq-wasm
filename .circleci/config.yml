@@ -79,7 +79,7 @@ jobs:
       - persist_to_workspace:
           root: .
           paths:
-            - githubapps_token
+            - .
   coverage_report:
     <<: [*resource_class, *working_directory]
     docker:
