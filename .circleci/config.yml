@@ -87,7 +87,7 @@ jobs:
     steps:
       - checkout
       - attach_workspace:
-          at: ./githubapps_token
+          at: .
       - run:
           name: Post Coverage Report
           command: |          
@@ -99,7 +99,7 @@ jobs:
             comment="\`\`\`shell-session\\n${cov_result}\\n\`\`\`"
 
             github_comment_verion=6.0.4
-            github_apps_token=$(cat ./githubapps_token)
+            github_apps_token=$(cat githubapps_token)
             PR_NUMBER=$(basename ${CIRCLE_PULL_REQUEST})
 
             curl -L https://github.com/suzuki-shunsuke/github-comment/releases/download/v${github_comment_verion}/github-comment_${github_comment_verion}_linux_amd64.tar.gz -o linux_amd64.tar.gz
