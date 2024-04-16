@@ -69,6 +69,10 @@ jobs:
                 "https://api.github.com/app/installations" \
               | jq -r ".[] | select(.account.login == \"${org_name}\" and .account.type == \"Organization\") | .id")
 
+            # debug
+            echo "installation_id"
+            echo $(cat installation_id)
+
             echo $(
               curl -s -X POST \
                 -H "Authorization: Bearer ${jwt}" \
@@ -78,6 +82,7 @@ jobs:
             ) > ./githubapps_token
 
             # debug
+            echo "githubapps_token"
             echo $(cat githubapps_token)
       - persist_to_workspace:
           root: .
