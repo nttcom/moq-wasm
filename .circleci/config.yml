@@ -104,7 +104,7 @@ jobs:
 
             curl -L https://github.com/suzuki-shunsuke/github-comment/releases/download/v${github_comment_verion}/github-comment_${github_comment_verion}_linux_amd64.tar.gz -o linux_amd64.tar.gz
             tar -zxvf linux_amd64.tar.gz
-            ./github-comment post -token ${github_apps_token} -org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${CIRCLE_PR_NUMBER} --template "${comment}"
+            ./github-comment post --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${CIRCLE_PR_NUMBER} --template "${comment}"
 workflows:
   version: 2
   build_and_test:
