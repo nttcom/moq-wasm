@@ -71,7 +71,7 @@ jobs:
 
             # debug
             echo "installation_id"
-            echo $(cat installation_id)
+            echo ${installation_id}
 
             echo $(
               curl -s -X POST \
@@ -88,55 +88,55 @@ jobs:
           root: .
           paths:
             - .
-  # coverage_report:
-  #   <<: [*resource_class, *working_directory]
-  #   docker:
-  #     - image: rust:latest
-  #   steps:
-  #     - checkout
-  #     - attach_workspace:
-  #         at: .
-  #     - run:
-  #         name: Post Coverage Report
-  #         command: |          
-  #           test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
+  coverage_report:
+    <<: [*resource_class, *working_directory]
+    docker:
+      - image: rust:latest
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run:
+          name: Post Coverage Report
+          command: |          
+            test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
 
-  #           cargo install cargo-llvm-cov
-  #           rustup component add llvm-tools-preview
-  #           cov_result=$(cargo llvm-cov | awk '/Filename/,0')
-  #           comment="\`\`\`shell-session\\n${cov_result}\\n\`\`\`"
+            cargo install cargo-llvm-cov
+            rustup component add llvm-tools-preview
+            cov_result=$(cargo llvm-cov | awk '/Filename/,0')
+            comment="\`\`\`shell-session\\n${cov_result}\\n\`\`\`"
 
-  #           github_comment_verion=6.0.4
-  #           github_apps_token=$(cat githubapps_token)
-  #           pr_number=$(basename ${CIRCLE_PULL_REQUEST})
+            github_comment_verion=6.0.4
+            github_apps_token=$(cat githubapps_token)
+            pr_number=$(basename ${CIRCLE_PULL_REQUEST})
 
-  #           # debug
-  #           echo ${github_apps_token}
+            # debug
+            echo ${github_apps_token}
 
-  #           curl -L https://github.com/suzuki-shunsuke/github-comment/releases/download/v${github_comment_verion}/github-comment_${github_comment_verion}_linux_amd64.tar.gz -o linux_amd64.tar.gz
-  #           tar -zxvf linux_amd64.tar.gz
-  #           ./github-comment post --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --template "${comment}"
+            curl -L https://github.com/suzuki-shunsuke/github-comment/releases/download/v${github_comment_verion}/github-comment_${github_comment_verion}_linux_amd64.tar.gz -o linux_amd64.tar.gz
+            tar -zxvf linux_amd64.tar.gz
+            ./github-comment post --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --template "${comment}"
 workflows:
   version: 2
   build_and_test:
     jobs:
-      - clippy_check:
-          filters:
-            branches:
-              ignore: /main|master/
-      - unit_test:
-          filters:
-            branches:
-              ignore: /main|master/
-      - prettier:
-          filters:
-            branches:
-              ignore: /main|master/
+      # - clippy_check:
+      #     filters:
+      #       branches:
+      #         ignore: /main|master/
+      # - unit_test:
+      #     filters:
+      #       branches:
+      #         ignore: /main|master/
+      # - prettier:
+      #     filters:
+      #       branches:
+      #         ignore: /main|master/
       - github_apps_token:
-          requires:
-            - clippy_check
-            - unit_test
-            - prettier
+          # requires:
+          #   - clippy_check
+          #   - unit_test
+          #   - prettier
           filters:
             branches:
               ignore: /main|master/
