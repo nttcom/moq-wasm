@@ -59,7 +59,7 @@ jobs:
             unsigned_token="${header}.${payload}"
 
             echo $GITHUB_APPS_PEM_BASE64 | base64 --decode > ./githubapps
-            signed_token=$(echo -n $(echo -n "${unsigned_token}" | openssl dgst -binary -sha256 -sign "./githubapps" | base64))
+            signed_token=$(echo -n $(echo -n "${unsigned_token}" | openssl dgst -binary -sha256 -sign "./githubapps" | base64 | tr '+/' '-_' | tr -d '='))
             rm ./githubapps
             jwt="${unsigned_token}.${signed_token}"
             org_name="nttcom-webcore" # github account name
