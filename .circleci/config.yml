@@ -87,7 +87,7 @@ jobs:
     steps:
       - checkout
       - attach_workspace:
-          at: /githubapps_token
+          at: ./githubapps_token
       - run:
           name: Post Coverage Report
           command: |          
