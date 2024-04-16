@@ -78,6 +78,14 @@ jobs:
             echo "jwt"
             echo ${jwt}
 
+            # debug
+            echo "unsigned_token"
+            echo ${unsigned_token}
+
+            # debug
+            echo "signed_token"
+            echo ${signed_token}
+
             echo $(
               curl -s -X POST \
                 -H "Authorization: Bearer ${jwt}" \
