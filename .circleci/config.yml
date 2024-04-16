@@ -96,7 +96,7 @@ jobs:
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
             cov_result=$(cargo llvm-cov | awk '/Filename/,0')
-            comment="```shell\n${cov_result}\n```"
+            comment="\`\`\`shell-session\\n${cov_result}\\n\`\`\`"
 
             github_comment_verion=6.0.4
             github_apps_token=$(cat ./githubapps_token)
