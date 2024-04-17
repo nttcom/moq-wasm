@@ -48,57 +48,38 @@ jobs:
       - run:
           name: Get GitHub Apps Token
           command: |
-            now=$(date "+%s")
-            iat=$((${now} - 60))
-            exp=$((${now} + (10 * 60)))
+            header="$(printf '{"alg":"RS256","typ":"JWT"}' | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
+
+            now="$(date '+%s')"
+            iat="$((now - 60))"
+            exp="$((now + (3 * 60)))"
+            template='{"iss":"%s","iat":%s,"exp":%s}'
             github_app_id="877010" # App ID
-            # payload=$(echo -n "{\"iat\":${iat},\"exp\":${exp},\"iss\":${github_app_id}}" | base64 -w 0)
-            # header=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 -w 0)
-            payload=$(echo -n "{\"iat\":${iat},\"exp\":${exp},\"iss\":${github_app_id}}" | base64 | tr '+/' '-_' | tr -d '=')
-            header=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | tr '+/' '-_' | tr -d '=')
-            unsigned_token="${header}.${payload}"
+            payload="$(printf "${template}" "${github_app_id}" "${iat}" "${exp}" | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
 
-            echo $GITHUB_APPS_PEM_BASE64 | base64 --decode > ./githubapps
-            signed_token=$(echo -n $(echo -n "${unsigned_token}" | openssl dgst -binary -sha256 -sign "./githubapps" | base64 | tr '+/' '-_' | tr -d '='))
-            rm ./githubapps
-            jwt="${unsigned_token}.${signed_token}"
-            org_name="nttcom-webcore" # github account name
+            signature="$(printf '%s' "${header}.${payload}" | openssl dgst -binary -sha256 -sign "./githubapps" | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
 
-            installation_id=$(
-              curl -s -X GET \
-                -H "Authorization: Bearer ${jwt}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/app/installations" \
-              | jq -r ".[] | select(.account.login == \"${org_name}\" and .account.type == \"Organization\") | .id"
-            )
+            jwt="${header}.${payload}.${signature}"
+            org="nttcom-webcore" # github org name
+            repo="moqt" # repository name
 
-            # debug
-            echo "installation_id"
-            echo ${installation_id}
+            installation_id="$(curl --location --silent --request GET \
+              --url "https://api.github.com/repos/${org}/${repo}/installation" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --header "Authorization: Bearer ${jwt}" \
+              | jq -r '.id'
+            )"
 
-            # debug
-            echo "jwt"
-            echo ${jwt}
+            token="$(curl --location --silent --request POST \
+              --url "https://api.github.com/app/installations/${installation_id}/access_tokens" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --header "Authorization: Bearer ${jwt}" \
+              | jq -r '.token'
+            )"
 
-            # debug
-            echo "unsigned_token"
-            echo ${unsigned_token}
-
-            # debug
-            echo "signed_token"
-            echo ${signed_token}
-
-            echo $(
-              curl -s -X POST \
-                -H "Authorization: Bearer ${jwt}" \
-                -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/app/installations/${installation_id}/access_tokens" \
-              | jq -r ".token"
-            ) > ./githubapps_token
-
-            # debug
-            echo "githubapps_token"
-            echo $(cat githubapps_token)
+            echo ${token} > ./githubapps_token
       - persist_to_workspace:
           root: .
           paths:
