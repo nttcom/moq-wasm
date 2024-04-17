@@ -81,9 +81,6 @@ jobs:
               | jq -r '.token'
             )"
 
-            # debug
-            echo ${token}
-
             echo ${token} > ./githubapps_token
       - persist_to_workspace:
           root: .
@@ -141,9 +138,9 @@ workflows:
           filters:
             branches:
               ignore: /main|master/
-      # - coverage_report:
-      #     requires:
-      #       - github_apps_token
-      #     filters:
-      #       branches:
-      #         ignore: /main|master/
+      - coverage_report:
+          requires:
+            - github_apps_token
+          filters:
+            branches:
+              ignore: /main|master/
