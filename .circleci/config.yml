@@ -57,7 +57,9 @@ jobs:
             github_app_id="877010" # App ID
             payload="$(printf "${template}" "${github_app_id}" "${iat}" "${exp}" | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
 
+            echo $GITHUB_APPS_PEM_BASE64 | base64 --decode > ./githubapps
             signature="$(printf '%s' "${header}.${payload}" | openssl dgst -binary -sha256 -sign "./githubapps" | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
+            rm ./githubapps
 
             jwt="${header}.${payload}.${signature}"
             org="nttcom-webcore" # github org name
