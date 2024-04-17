@@ -48,6 +48,8 @@ jobs:
       - run:
           name: Get GitHub Apps Token
           command: |
+            test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
+
             header="$(printf '{"alg":"RS256","typ":"JWT"}' | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
 
             now="$(date '+%s')"
