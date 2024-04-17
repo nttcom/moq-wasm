@@ -81,6 +81,9 @@ jobs:
               | jq -r '.token'
             )"
 
+            # debug
+            echo ${token}
+
             echo ${token} > ./githubapps_token
       - persist_to_workspace:
           root: .
