@@ -102,7 +102,9 @@ jobs:
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
             cov_result=$(cargo llvm-cov | awk '/Filename/,0')
-            comment="\`\`\`shell-session\\n${cov_result}\\n\`\`\`"
+            comment="\`\`\`shell-session
+            ${cov_result}
+            \`\`\`"
 
             github_comment_verion=6.0.4
             github_apps_token=$(cat githubapps_token)
@@ -118,23 +120,23 @@ workflows:
   version: 2
   build_and_test:
     jobs:
-      # - clippy_check:
-      #     filters:
-      #       branches:
-      #         ignore: /main|master/
-      # - unit_test:
-      #     filters:
-      #       branches:
-      #         ignore: /main|master/
-      # - prettier:
-      #     filters:
-      #       branches:
-      #         ignore: /main|master/
+      - clippy_check:
+          filters:
+            branches:
+              ignore: /main|master/
+      - unit_test:
+          filters:
+            branches:
+              ignore: /main|master/
+      - prettier:
+          filters:
+            branches:
+              ignore: /main|master/
       - github_apps_token:
-          # requires:
-          #   - clippy_check
-          #   - unit_test
-          #   - prettier
+          requires:
+            - clippy_check
+            - unit_test
+            - prettier
           filters:
             branches:
               ignore: /main|master/
