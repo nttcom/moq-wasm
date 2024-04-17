@@ -57,7 +57,8 @@ jobs:
             github_app_id="877010" # App ID
             payload="$(printf "${template}" "${github_app_id}" "${iat}" "${exp}" | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
 
-            signature="$(printf '%s' "${header}.${payload}" | openssl dgst -binary -sha256 -sign <(printf '%s' "$(${GITHUB_APPS_PEM_BASE64} | base64 --decode)") | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
+            key="$(${GITHUB_APPS_PEM_BASE64} | base64 --decode)"
+            signature="$(printf '%s' "${header}.${payload}" | openssl dgst -binary -sha256 -sign ${key} | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
 
             jwt="${header}.${payload}.${signature}"
 
