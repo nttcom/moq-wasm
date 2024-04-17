@@ -57,9 +57,7 @@ jobs:
             github_app_id="877010" # App ID
             payload="$(printf "${template}" "${github_app_id}" "${iat}" "${exp}" | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
 
-            echo $GITHUB_APPS_PEM_BASE64 | base64 --decode > ./githubapps
-            signature="$(printf '%s' "${header}.${payload}" | openssl dgst -binary -sha256 -sign "./githubapps" | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
-            rm ./githubapps
+            signature="$(printf '%s' "${header}.${payload}" | openssl dgst -binary -sha256 -sign <(printf '%s' "$(${GITHUB_APPS_PEM_BASE64} | base64 --decode)") | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
 
             jwt="${header}.${payload}.${signature}"
 
@@ -113,7 +111,7 @@ jobs:
 
             curl -L https://github.com/suzuki-shunsuke/github-comment/releases/download/v${github_comment_verion}/github-comment_${github_comment_verion}_linux_amd64.tar.gz -o linux_amd64.tar.gz
             tar -zxvf linux_amd64.tar.gz
-            ./github-comment hide --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} -condition 'Comment.HasMeta && Comment.Meta.TemplateKey == "default"'
+            ./github-comment hide --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --condition 'Comment.HasMeta && Comment.Meta.TemplateKey == "default"'
             ./github-comment post --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --template "${comment}"
 workflows:
   version: 2
