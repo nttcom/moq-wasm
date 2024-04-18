@@ -1,6 +1,6 @@
 use crate::{
     modules::variable_integer::read_variable_integer_from_buffer,
-    variable_bytes::write_variable_bytes,
+    variable_bytes::{read_length_and_variable_bytes_from_buffer, write_variable_bytes},
 };
 
 use super::moqt_payload::MOQTPayload;
@@ -47,17 +47,9 @@ impl MOQTPayload for SetupParameter {
                 Ok(SetupParameter::RoleParameter(RoleParameter::new(value?)))
             }
             SetupParameterType::Path => {
-                // read_variable_bytes_from_bufferでも良い?
-                let value_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
-                    .context("path value length")?;
+                let value = String::from_utf8(read_length_and_variable_bytes_from_buffer(buf)?)?;
 
-                let value = String::from_utf8(buf.to_vec());
-
-                Ok(SetupParameter::PathParameter(PathParameter {
-                    key: SetupParameterType::Path,
-                    value_length,
-                    value: value?,
-                }))
+                Ok(SetupParameter::PathParameter(PathParameter::new(value)))
             }
         }
     }
