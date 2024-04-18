@@ -3,7 +3,7 @@ use tracing;
 
 use crate::{
     modules::{
-        variable_bytes::read_variable_bytes_from_buffer,
+        variable_bytes::read_length_and_variable_bytes_from_buffer,
         variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
     },
     variable_bytes::write_variable_bytes,
@@ -55,8 +55,8 @@ impl MOQTPayload for SubscribeRequestMessage {
     where
         Self: Sized,
     {
-        let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
-        let track_name = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
+        let track_namespace = String::from_utf8(read_length_and_variable_bytes_from_buffer(buf)?)?;
+        let track_name = String::from_utf8(read_length_and_variable_bytes_from_buffer(buf)?)?;
         let start_group = Location::depacketize(buf)?;
         let start_object = Location::depacketize(buf)?;
         let end_group = Location::depacketize(buf)?;
