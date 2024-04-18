@@ -48,8 +48,6 @@ jobs:
       - run:
           name: Get GitHub Apps Token
           command: |
-            test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
-
             header="$(printf '{"alg":"RS256","typ":"JWT"}' | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
 
             now="$(date '+%s')"
@@ -96,8 +94,6 @@ jobs:
       - run:
           name: Post Coverage Report
           command: |          
-            test ${CI_PULL_REQUEST} || exit 0  # skip if it is not PR
-
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
             cov_result=$(cargo llvm-cov | awk '/Filename/,0')
