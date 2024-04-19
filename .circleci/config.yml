@@ -7,7 +7,7 @@ anchors:
     resource_class: medium
 
 jobs:
-  clippy_check:
+  linter_and_formatter:
     docker:
       - image: rust:latest
     steps:
@@ -20,6 +20,9 @@ jobs:
           name: Run Clippy
           command: |
             cargo clippy -- -D warnings
+      - run:
+          name: Check code formatting
+          command: cargo fmt --check
   unit_test:
     docker:
       - image: rust:latest
@@ -44,7 +47,7 @@ jobs:
     <<: [*resource_class, *working_directory]
     docker:
       - image: cimg/base:2021.04
-    steps:            
+    steps:
       - run:
           name: Get GitHub Apps Token
           command: |
@@ -93,7 +96,7 @@ jobs:
           at: .
       - run:
           name: Post Coverage Report
-          command: |          
+          command: |
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
             cov_result=$(cargo llvm-cov | awk '/Filename/,0')

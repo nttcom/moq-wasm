@@ -6,7 +6,7 @@ use crate::{
     modules::{
         messages::parameter::Parameter, variable_integer::read_variable_integer_from_buffer,
     },
-    variable_bytes::{read_length_and_variable_bytes_from_buffer, write_variable_bytes},
+    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::write_variable_integer,
 };
 
@@ -40,8 +40,8 @@ impl MOQTPayload for AnnounceMessage {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let read_cur = Cursor::new(&buf[..]);
         tracing::info!("read_cur! {:?}", read_cur);
-        let track_namespace = String::from_utf8(read_length_and_variable_bytes_from_buffer(buf)?)
-            .context("track namespace")?;
+        let track_namespace =
+            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
         let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("number of parameters")?;
         let mut parameters = vec![];
@@ -63,15 +63,13 @@ impl MOQTPayload for AnnounceMessage {
     fn packetize(&self, buf: &mut bytes::BytesMut) {
         /*
             ANNOUNCE Message {
-                Track Namespace(b), // (b): bytes Length and bytes
+                Track Namespace(b),
                 Number of Parameters (i),
                 Parameters (..) ...,
             }
         */
 
-        // Track Namespace bytes Length
-        buf.extend(write_variable_integer(self.track_namespace.len() as u64));
-        // Track Namespace bytes
+        // Track Namespace
         buf.extend(write_variable_bytes(
             &self.track_namespace.as_bytes().to_vec(),
         ));
