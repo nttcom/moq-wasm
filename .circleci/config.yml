@@ -16,13 +16,15 @@ jobs:
           name: Install Rust toolchain and Clippy
           command: |
             rustup component add clippy
+            rustup component add rustfmt
       - run:
           name: Run Clippy
           command: |
             cargo clippy -- -D warnings
       - run:
           name: Check code formatting
-          command: cargo fmt --check
+          command: |
+            cargo fmt --check
   unit_test:
     docker:
       - image: rust:latest
