@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 
 use crate::{
-    modules::variable_bytes::read_length_and_variable_bytes_from_buffer,
-    variable_bytes::write_variable_bytes,
+    modules::variable_bytes::read_variable_bytes_from_buffer, variable_bytes::write_variable_bytes,
 };
 
 use super::moqt_payload::MOQTPayload;
@@ -35,9 +34,8 @@ impl UnsubscribeMessage {
 
 impl MOQTPayload for UnsubscribeMessage {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        let track_namespace =
-            read_length_and_variable_bytes_from_buffer(buf).context("track namespace")?;
-        let track_name = read_length_and_variable_bytes_from_buffer(buf).context("track name")?;
+        let track_namespace = read_variable_bytes_from_buffer(buf).context("track namespace")?;
+        let track_name = read_variable_bytes_from_buffer(buf).context("track name")?;
 
         let unsubscribe_message = UnsubscribeMessage {
             track_namespace: String::from_utf8(track_namespace)?,

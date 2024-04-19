@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 
 use crate::{
-    modules::variable_bytes::read_length_and_variable_bytes_from_buffer,
-    variable_bytes::write_variable_bytes,
+    modules::variable_bytes::read_variable_bytes_from_buffer, variable_bytes::write_variable_bytes,
 };
 
 use super::moqt_payload::MOQTPayload;
@@ -19,8 +18,7 @@ impl UnAnnounceMessage {
 
 impl MOQTPayload for UnAnnounceMessage {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        let track_namespace =
-            read_length_and_variable_bytes_from_buffer(buf).context("track namespace")?;
+        let track_namespace = read_variable_bytes_from_buffer(buf).context("track namespace")?;
 
         let unannounce_message = UnAnnounceMessage {
             track_namespace: String::from_utf8(track_namespace)?,

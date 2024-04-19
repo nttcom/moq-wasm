@@ -2,7 +2,7 @@ use anyhow::Context;
 use serde::Serialize;
 
 use crate::modules::{
-    variable_bytes::{read_length_and_variable_bytes_from_buffer, write_variable_bytes},
+    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
@@ -21,13 +21,13 @@ impl MOQTPayload for SubscribeError {
     where
         Self: Sized,
     {
-        let track_namespace = String::from_utf8(read_length_and_variable_bytes_from_buffer(buf)?)
-            .context("track namespace")?;
-        let track_name = String::from_utf8(read_length_and_variable_bytes_from_buffer(buf)?)
-            .context("track name")?;
+        let track_namespace =
+            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
+        let track_name =
+            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track name")?;
         let error_code = read_variable_integer_from_buffer(buf).context("error code")?;
-        let reason_phrase = String::from_utf8(read_length_and_variable_bytes_from_buffer(buf)?)
-            .context("reason phrase")?;
+        let reason_phrase =
+            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
 
         Ok(SubscribeError {
             track_namespace,

@@ -3,8 +3,8 @@ use serde::Serialize;
 
 use crate::{
     variable_bytes::{
-        read_length_and_variable_bytes_from_buffer, read_variable_bytes_to_end_from_buffer,
-        write_variable_bytes, write_variable_bytes_to_end,
+        read_variable_bytes_from_buffer, read_variable_bytes_to_end_from_buffer,
+        write_variable_bytes,
     },
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
@@ -52,8 +52,7 @@ impl MOQTPayload for ObjectMessageWithPayloadLength {
         let object_sequence = read_variable_integer_from_buffer(buf).context("object sequence")?;
         let object_send_order =
             read_variable_integer_from_buffer(buf).context("object send order")?;
-        let object_payload =
-            read_length_and_variable_bytes_from_buffer(buf).context("object payload")?;
+        let object_payload = read_variable_bytes_from_buffer(buf).context("object payload")?;
         let object_payload_length = object_payload.len() as u64;
 
         Ok(ObjectMessageWithPayloadLength {
@@ -129,6 +128,6 @@ impl MOQTPayload for ObjectMessageWithoutPayloadLength {
         buf.extend(write_variable_integer(self.group_sequence));
         buf.extend(write_variable_integer(self.object_sequence));
         buf.extend(write_variable_integer(self.object_send_order));
-        buf.extend(write_variable_bytes_to_end(&self.object_payload));
+        buf.extend(write_variable_bytes(&self.object_payload));
     }
 }

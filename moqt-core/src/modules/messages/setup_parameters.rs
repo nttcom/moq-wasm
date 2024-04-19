@@ -46,7 +46,7 @@ impl MOQTPayload for SetupParameter {
 
             // Not implemented as only WebTransport is supported now.
             SetupParameterType::Path => {
-                // let value = String::from_utf8(read_length_and_variable_bytes_from_buffer(buf)?)?;
+                // let value = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
                 // Ok(SetupParameter::PathParameter(PathParameter::new(value)))
 
                 unimplemented!("Not implemented as only WebTransport is supported.")
