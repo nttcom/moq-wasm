@@ -7,7 +7,7 @@ anchors:
     resource_class: medium
 
 jobs:
-  linter_and_formatter:
+  rust_linter_and_formatter:
     docker:
       - image: rust:latest
     steps:
