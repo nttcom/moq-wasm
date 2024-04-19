@@ -116,7 +116,7 @@ workflows:
   version: 2
   build_and_test:
     jobs:
-      - clippy_check:
+      - linter_and_formatter:
           filters:
             branches:
               ignore: /main|master/
@@ -130,7 +130,7 @@ workflows:
               ignore: /main|master/
       - github_apps_token:
           requires:
-            - clippy_check
+            - linter_and_formatter
             - unit_test
             - prettier
           filters:
