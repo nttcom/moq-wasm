@@ -215,7 +215,7 @@ mod failure {
     #[test]
     #[should_panic]
     fn depacketize_path() {
-        // PATH 0x01
+        // Path 0x01
         let mut combined_bytes = Vec::from((SetupParameterType::Path as u8).to_be_bytes());
         // parameter length
         combined_bytes.extend(write_variable_integer("test".len() as u64));
