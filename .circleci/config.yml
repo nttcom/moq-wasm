@@ -118,7 +118,7 @@ workflows:
   version: 2
   build_and_test:
     jobs:
-      - linter_and_formatter:
+      - rust_linter_and_formatter:
           filters:
             branches:
               ignore: /main|master/
@@ -132,7 +132,7 @@ workflows:
               ignore: /main|master/
       - github_apps_token:
           requires:
-            - linter_and_formatter
+            - rust_linter_and_formatter
             - unit_test
             - prettier
           filters:
