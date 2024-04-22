@@ -1,9 +1,6 @@
 use crate::{
-    modules::{
-        variable_bytes::read_variable_bytes_from_buffer,
-        variable_integer::read_variable_integer_from_buffer,
-    },
-    variable_bytes::write_variable_bytes,
+    modules::variable_integer::read_variable_integer_from_buffer,
+    variable_bytes::{read_fixed_length_bytes_from_buffer, write_variable_bytes},
     variable_integer::write_variable_integer,
 };
 use anyhow::Ok;
@@ -23,6 +20,7 @@ impl From<ParameterType> for u64 {
     }
 }
 
+#[derive(Debug)]
 pub struct Parameter {
     parameter_type: ParameterType,
     length: u8,
@@ -50,7 +48,10 @@ impl MOQTPayload for Parameter {
         };
 
         let parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
-        let parameter_value = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
+        let parameter_value = String::from_utf8(read_fixed_length_bytes_from_buffer(
+            buf,
+            parameter_length as usize,
+        )?)?;
 
         Ok(Parameter {
             parameter_type,

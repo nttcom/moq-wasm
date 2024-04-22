@@ -1,5 +1,3 @@
-use std::io::Cursor;
-
 use anyhow::{Context, Result};
 use serde::Serialize;
 
@@ -7,7 +5,7 @@ use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_
 
 use super::{moqt_payload::MOQTPayload, setup_parameters::SetupParameter};
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ServerSetupMessage {
     pub selected_version: u32,
     pub number_of_parameters: u8,
@@ -48,37 +46,80 @@ impl MOQTPayload for ServerSetupMessage {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // for debug
-        let read_cur = Cursor::new(&buf[..]);
-        tracing::debug!("server setup message before packetizing: {:#?}", read_cur);
-        // end debug
-
         let version_buf = write_variable_integer(self.selected_version as u64);
         buf.extend(version_buf);
-        // for debug
-        let read_cur = Cursor::new(&buf[..]);
-        tracing::debug!("server setup message packetizing version: {:#?}", read_cur);
-        // end debug
 
         let number_of_parameters_buf = write_variable_integer(self.number_of_parameters as u64);
         buf.extend(number_of_parameters_buf);
-        // for debug
-        let read_cur = Cursor::new(&buf[..]);
-        tracing::debug!(
-            "server setup message packetizing number_of_parameters: {:#?}",
-            read_cur
-        );
-        // end debug
 
         for setup_parameter in self.setup_parameters.iter() {
             setup_parameter.packetize(buf);
         }
-        // for debug
-        let read_cur = Cursor::new(&buf[..]);
-        tracing::debug!(
-            "server setup message packetizing setup_parameters: {:#?}",
-            read_cur
-        );
-        // end debug
+    }
+}
+
+#[cfg(test)]
+mod success {
+    use crate::modules::variable_integer::write_variable_integer;
+    use crate::{
+        constants::MOQ_TRANSPORT_VERSION,
+        messages::moqt_payload::MOQTPayload,
+        modules::messages::{
+            server_setup_message::ServerSetupMessage,
+            setup_parameters::{RoleCase, RoleParameter, SetupParameter},
+        },
+    };
+    #[test]
+    fn packetize_server_setup() {
+        let selected_version = MOQ_TRANSPORT_VERSION;
+
+        let role_parameter = RoleParameter::new(RoleCase::Both);
+        let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
+        let setup_parameters_length = setup_parameters.len() as u8;
+
+        let server_setup = ServerSetupMessage::new(selected_version, setup_parameters.clone());
+        let mut buf = bytes::BytesMut::new();
+        server_setup.packetize(&mut buf);
+
+        // Selected Version (i)
+        let mut combined_bytes = Vec::from(write_variable_integer(selected_version as u64));
+        // Number of Parameters (i)
+        combined_bytes.extend(setup_parameters_length.to_be_bytes());
+        // SETUP Parameters (..)
+        combined_bytes.extend(vec![
+            role_parameter.key as u8,
+            role_parameter.value_length,
+            role_parameter.value as u8,
+        ]);
+
+        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+    }
+
+    #[test]
+    fn depacketize_server_setup() {
+        let selected_version = MOQ_TRANSPORT_VERSION;
+
+        let role_parameter = RoleParameter::new(RoleCase::Both);
+        let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
+        let setup_parameters_length = setup_parameters.len() as u8;
+
+        let expected_server_setup =
+            ServerSetupMessage::new(selected_version, setup_parameters.clone());
+
+        // Selected Version (i)
+        let mut combined_bytes = Vec::from(write_variable_integer(selected_version as u64));
+        // Number of Parameters (i)
+        combined_bytes.extend(setup_parameters_length.to_be_bytes());
+        // SETUP Parameters (..)
+        combined_bytes.extend(vec![
+            role_parameter.key as u8,
+            role_parameter.value_length,
+            role_parameter.value as u8,
+        ]);
+
+        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let depacketized_server_setup = ServerSetupMessage::depacketize(&mut buf).unwrap();
+
+        assert_eq!(depacketized_server_setup, expected_server_setup);
     }
 }
