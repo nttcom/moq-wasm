@@ -55,7 +55,7 @@ pub(crate) fn setup_handler(
 
     // setupParametersでroleが2になるように作成して、付与する。
     // 本来であれば、ここはserver側でroleを決めるところだが、一旦は、roleは2とする。
-    let role_parameter = SetupParameter::RoleParameter(RoleParameter::new(RoleCase::Delivery));
+    let role_parameter = SetupParameter::RoleParameter(RoleParameter::new(RoleCase::Injection));
     let server_setup_message =
         ServerSetupMessage::new(constants::MOQ_TRANSPORT_VERSION, vec![role_parameter]);
     // State: Connected -> Setup
