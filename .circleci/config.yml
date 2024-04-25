@@ -7,7 +7,7 @@ anchors:
     resource_class: medium
 
 jobs:
-  rust_linter_and_formatter:
+  clippy_check:
     docker:
       - image: rust:latest
     steps:
@@ -132,7 +132,7 @@ workflows:
               ignore: /main|master/
       - github_apps_token:
           requires:
-            - rust_linter_and_formatter
+            - clippy_check
             - unit_test
             - prettier
           filters:
