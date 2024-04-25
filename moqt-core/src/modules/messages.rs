@@ -5,7 +5,6 @@ pub mod client_setup_message;
 pub mod go_away_message;
 pub mod moqt_payload;
 pub mod object_message;
-pub mod parameter;
 pub mod server_setup_message;
 pub mod setup_parameters;
 pub mod subscribe_error_message;
