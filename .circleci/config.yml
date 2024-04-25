@@ -118,7 +118,7 @@ workflows:
   version: 2
   build_and_test:
     jobs:
-      - rust_linter_and_formatter:
+      - clippy_check:
           filters:
             branches:
               ignore: /main|master/
