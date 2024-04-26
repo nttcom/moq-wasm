@@ -64,11 +64,11 @@ impl MOQTPayload for SubscribeRequestMessage {
 
         let mut track_request_parameters = Vec::new();
         while !buf.is_empty() {
-            let track_request_parameter = VersionSpecificParameter::depacketize(buf)?;
-            if let VersionSpecificParameter::Unknown(code) = track_request_parameter {
+            let version_specific_parameter = VersionSpecificParameter::depacketize(buf)?;
+            if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
                 tracing::info!("unknown track request parameter {}", code);
             } else {
-                track_request_parameters.push(track_request_parameter);
+                track_request_parameters.push(version_specific_parameter);
             }
         }
 
@@ -92,8 +92,8 @@ impl MOQTPayload for SubscribeRequestMessage {
         self.start_object.packetize(buf);
         self.end_group.packetize(buf);
         self.end_object.packetize(buf);
-        for track_request_parameter in &self.track_request_parameters {
-            track_request_parameter.packetize(buf);
+        for version_specific_parameter in &self.track_request_parameters {
+            version_specific_parameter.packetize(buf);
         }
     }
 }
