@@ -13,10 +13,7 @@ use moqt_core::{
         client_setup_message::ClientSetupMessage,
         moqt_payload::MOQTPayload,
         setup_parameters::{RoleCase, RoleParameter, SetupParameter},
-        version_specific_parameters::{
-            AuthorizationInfo, StringParameter, VersionSpecificParameter,
-            VersionSpecificParameterType,
-        },
+        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     variable_bytes::write_variable_bytes,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
