@@ -18,7 +18,7 @@ pub struct SubscribeRequestMessage {
     start_object: Location,
     end_group: Location,
     end_object: Location,
-    version_specific_parameters: Vec<VersionSpecificParameter>,
+    track_request_parameters: Vec<VersionSpecificParameter>,
 }
 
 impl SubscribeRequestMessage {
@@ -29,7 +29,7 @@ impl SubscribeRequestMessage {
         start_object: Location,
         end_group: Location,
         end_object: Location,
-        version_specific_parameters: Vec<VersionSpecificParameter>,
+        track_request_parameters: Vec<VersionSpecificParameter>,
     ) -> SubscribeRequestMessage {
         SubscribeRequestMessage {
             track_namespace,
@@ -38,7 +38,7 @@ impl SubscribeRequestMessage {
             start_object,
             end_group,
             end_object,
-            version_specific_parameters,
+            track_request_parameters,
         }
     }
 
@@ -62,13 +62,13 @@ impl MOQTPayload for SubscribeRequestMessage {
         let end_group = Location::depacketize(buf)?;
         let end_object = Location::depacketize(buf)?;
 
-        let mut version_specific_parameters = Vec::new();
+        let mut track_request_parameters = Vec::new();
         while !buf.is_empty() {
             let track_request_parameter = VersionSpecificParameter::depacketize(buf)?;
             if let VersionSpecificParameter::Unknown(code) = track_request_parameter {
                 tracing::info!("unknown track request parameter {}", code);
             } else {
-                version_specific_parameters.push(track_request_parameter);
+                track_request_parameters.push(track_request_parameter);
             }
         }
 
@@ -79,7 +79,7 @@ impl MOQTPayload for SubscribeRequestMessage {
             start_object,
             end_group,
             end_object,
-            version_specific_parameters,
+            track_request_parameters,
         })
     }
 
@@ -92,7 +92,7 @@ impl MOQTPayload for SubscribeRequestMessage {
         self.start_object.packetize(buf);
         self.end_group.packetize(buf);
         self.end_object.packetize(buf);
-        for track_request_parameter in &self.version_specific_parameters {
+        for track_request_parameter in &self.track_request_parameters {
             track_request_parameter.packetize(buf);
         }
     }

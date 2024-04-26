@@ -10,8 +10,9 @@ use super::moqt_payload::MOQTPayload;
 
 #[derive(Debug, PartialEq)]
 pub enum VersionSpecificParameter {
-    StringParameter(StringParameter), // AUTHORIZATION INFO
-    VarintParameter(VarintParameter), // GROUP SEQUENCE | OBJECT SEQUENCE
+    GroupSequence(GroupSequence),
+    ObjectSequence(ObjectSequence),
+    AuthorizationInfo(AuthorizationInfo),
     Unknown(u8),
 }
 
@@ -27,8 +28,7 @@ impl MOQTPayload for VersionSpecificParameter {
         }
 
         match parameter_type? {
-            VersionSpecificParameterType::GroupSequence
-            | VersionSpecificParameterType::ObjectSequence => {
+            VersionSpecificParameterType::GroupSequence => {
                 let parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
                 // The value is of type varint.
                 let parameter_value = read_variable_integer_from_buffer(buf)?;
@@ -37,9 +37,26 @@ impl MOQTPayload for VersionSpecificParameter {
                 //   If the parameter value is a varint, but the self-encoded length of that
                 //   varint does not match the Parameter Length field, the receiver MUST
                 //   ignore the parameter using the value in the Parameter Length field.
+                // See: https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-01#name-parameters
 
-                Ok(VersionSpecificParameter::VarintParameter(
-                    VarintParameter::new(parameter_type?, parameter_length, parameter_value),
+                Ok(VersionSpecificParameter::GroupSequence(GroupSequence::new(
+                    parameter_length,
+                    parameter_value,
+                )))
+            }
+            VersionSpecificParameterType::ObjectSequence => {
+                let parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+                // The value is of type varint.
+                let parameter_value = read_variable_integer_from_buffer(buf)?;
+
+                // TODO
+                //   If the parameter value is a varint, but the self-encoded length of that
+                //   varint does not match the Parameter Length field, the receiver MUST
+                //   ignore the parameter using the value in the Parameter Length field.
+                // See: https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-01#name-parameters
+
+                Ok(VersionSpecificParameter::ObjectSequence(
+                    ObjectSequence::new(parameter_length, parameter_value),
                 ))
             }
             VersionSpecificParameterType::AuthorizationInfo => {
@@ -50,8 +67,8 @@ impl MOQTPayload for VersionSpecificParameter {
                     parameter_length as usize,
                 )?)?;
 
-                Ok(VersionSpecificParameter::StringParameter(
-                    StringParameter::new(parameter_type?, parameter_length, parameter_value),
+                Ok(VersionSpecificParameter::AuthorizationInfo(
+                    AuthorizationInfo::new(parameter_length, parameter_value),
                 ))
             }
         }
@@ -67,17 +84,19 @@ impl MOQTPayload for VersionSpecificParameter {
         */
 
         match self {
-            VersionSpecificParameter::VarintParameter(param) => {
-                // GROUP SEQUENCE | OBJECT SEQUENCE
-
+            VersionSpecificParameter::GroupSequence(param) => {
                 buf.extend(write_variable_integer(u64::from(param.parameter_type)));
                 buf.extend(write_variable_integer(param.length as u64));
                 //   The value is of type varint.
                 buf.extend(write_variable_integer(param.value));
             }
-            VersionSpecificParameter::StringParameter(param) => {
-                // AUTHORIZATION INFO
-
+            VersionSpecificParameter::ObjectSequence(param) => {
+                buf.extend(write_variable_integer(u64::from(param.parameter_type)));
+                buf.extend(write_variable_integer(param.length as u64));
+                //   The value is of type varint.
+                buf.extend(write_variable_integer(param.value));
+            }
+            VersionSpecificParameter::AuthorizationInfo(param) => {
                 buf.extend(write_variable_integer(u64::from(param.parameter_type)));
                 buf.extend(write_variable_integer(param.length as u64));
                 //   The value is an ASCII string.
@@ -105,16 +124,16 @@ impl From<VersionSpecificParameterType> for u64 {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct StringParameter {
+pub struct GroupSequence {
     parameter_type: VersionSpecificParameterType,
     length: u8,
-    value: String,
+    value: u64,
 }
 
-impl StringParameter {
-    pub fn new(parameter_type: VersionSpecificParameterType, length: u8, value: String) -> Self {
-        StringParameter {
-            parameter_type,
+impl GroupSequence {
+    pub fn new(length: u8, value: u64) -> Self {
+        GroupSequence {
+            parameter_type: VersionSpecificParameterType::GroupSequence,
             length,
             value,
         }
@@ -122,16 +141,33 @@ impl StringParameter {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct VarintParameter {
+pub struct ObjectSequence {
     parameter_type: VersionSpecificParameterType,
     length: u8,
     value: u64,
 }
 
-impl VarintParameter {
-    pub fn new(parameter_type: VersionSpecificParameterType, length: u8, value: u64) -> Self {
-        VarintParameter {
-            parameter_type,
+impl ObjectSequence {
+    pub fn new(length: u8, value: u64) -> Self {
+        ObjectSequence {
+            parameter_type: VersionSpecificParameterType::ObjectSequence,
+            length,
+            value,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct AuthorizationInfo {
+    parameter_type: VersionSpecificParameterType,
+    length: u8,
+    value: String,
+}
+
+impl AuthorizationInfo {
+    pub fn new(length: u8, value: String) -> Self {
+        AuthorizationInfo {
+            parameter_type: VersionSpecificParameterType::AuthorizationInfo,
             length,
             value,
         }
@@ -142,19 +178,18 @@ impl VarintParameter {
 mod success {
     use crate::modules::messages::moqt_payload::MOQTPayload;
     use crate::modules::messages::version_specific_parameters::{
-        StringParameter, VarintParameter, VersionSpecificParameter, VersionSpecificParameterType,
+        AuthorizationInfo, GroupSequence, ObjectSequence, VersionSpecificParameter,
+        VersionSpecificParameterType,
     };
     use crate::variable_bytes::write_fixed_length_bytes;
     use crate::variable_integer::write_variable_integer;
 
     #[test]
     fn packetize_group_sequence() {
-        let parameter_type = VersionSpecificParameterType::GroupSequence;
         let parameter_value = 0x01;
         let parameter_length = 1;
 
-        let parameter = VersionSpecificParameter::VarintParameter(VarintParameter::new(
-            parameter_type,
+        let parameter = VersionSpecificParameter::GroupSequence(GroupSequence::new(
             parameter_length,
             parameter_value,
         ));
@@ -175,12 +210,10 @@ mod success {
 
     #[test]
     fn packetize_object_sequence() {
-        let parameter_type = VersionSpecificParameterType::ObjectSequence;
         let parameter_value = 0x01;
         let parameter_length = 1;
 
-        let parameter = VersionSpecificParameter::VarintParameter(VarintParameter::new(
-            parameter_type,
+        let parameter = VersionSpecificParameter::ObjectSequence(ObjectSequence::new(
             parameter_length,
             parameter_value,
         ));
@@ -201,12 +234,10 @@ mod success {
 
     #[test]
     fn packetize_authorization_info() {
-        let parameter_type = VersionSpecificParameterType::AuthorizationInfo;
         let parameter_value = "test".to_string();
         let parameter_length = parameter_value.len() as u8;
 
-        let parameter = VersionSpecificParameter::StringParameter(StringParameter::new(
-            parameter_type,
+        let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
             parameter_length,
             parameter_value.clone(),
         ));
@@ -229,12 +260,10 @@ mod success {
 
     #[test]
     fn depacketize_group_sequence() {
-        let parameter_type = VersionSpecificParameterType::GroupSequence;
         let parameter_value = 0x01;
         let parameter_length = 1;
 
-        let expected_parameter = VersionSpecificParameter::VarintParameter(VarintParameter::new(
-            parameter_type,
+        let expected_parameter = VersionSpecificParameter::GroupSequence(GroupSequence::new(
             parameter_length,
             parameter_value,
         ));
@@ -255,12 +284,10 @@ mod success {
 
     #[test]
     fn depacketize_object_sequence() {
-        let parameter_type = VersionSpecificParameterType::ObjectSequence;
         let parameter_value = 0x01;
         let parameter_length = 1;
 
-        let expected_parameter = VersionSpecificParameter::VarintParameter(VarintParameter::new(
-            parameter_type,
+        let expected_parameter = VersionSpecificParameter::ObjectSequence(ObjectSequence::new(
             parameter_length,
             parameter_value,
         ));
@@ -281,15 +308,12 @@ mod success {
 
     #[test]
     fn depacketize_authorization_info() {
-        let parameter_type = VersionSpecificParameterType::AuthorizationInfo;
         let parameter_value = "test".to_string();
         let parameter_length = parameter_value.len() as u8;
 
-        let expected_parameter = VersionSpecificParameter::StringParameter(StringParameter::new(
-            parameter_type,
-            parameter_length,
-            parameter_value.clone(),
-        ));
+        let expected_parameter = VersionSpecificParameter::AuthorizationInfo(
+            AuthorizationInfo::new(parameter_length, parameter_value.clone()),
+        );
 
         // Parameter Type
         let mut combined_bytes =

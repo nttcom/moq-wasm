@@ -86,7 +86,7 @@ impl MOQTPayload for AnnounceMessage {
 #[cfg(test)]
 mod success {
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::messages::version_specific_parameters::StringParameter;
+    use crate::messages::version_specific_parameters::AuthorizationInfo;
     use crate::modules::messages::announce_message::AnnounceMessage;
     use crate::modules::messages::version_specific_parameters::{
         VersionSpecificParameter, VersionSpecificParameterType,
@@ -98,12 +98,10 @@ mod success {
         let track_namespace = "live.example.com/meeting/123/member/alice/".to_string();
         let number_of_parameters = 1;
 
-        let parameter_type = VersionSpecificParameterType::AuthorizationInfo;
         let parameter_value = "test".to_string();
         let parameter_length = parameter_value.len() as u8;
 
-        let parameter = VersionSpecificParameter::StringParameter(StringParameter::new(
-            parameter_type,
+        let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
             parameter_length,
             parameter_value.clone(),
         ));
@@ -120,7 +118,8 @@ mod success {
         // Number of Parameters
         combined_bytes.extend(1u8.to_be_bytes());
         // Parameters
-        combined_bytes.extend((parameter_type as u8).to_be_bytes());
+        combined_bytes
+            .extend((VersionSpecificParameterType::AuthorizationInfo as u8).to_be_bytes());
         combined_bytes.extend(write_variable_integer(parameter_length as u64));
         combined_bytes.extend(parameter_value.as_bytes());
 
@@ -132,12 +131,10 @@ mod success {
         let track_namespace = "live.example.com/meeting/123/member/alice/".to_string();
         let number_of_parameters = 1;
 
-        let parameter_type = VersionSpecificParameterType::AuthorizationInfo;
         let parameter_value = "test".to_string();
         let parameter_length = parameter_value.len() as u8;
 
-        let parameter = VersionSpecificParameter::StringParameter(StringParameter::new(
-            parameter_type,
+        let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
             parameter_length,
             parameter_value.clone(),
         ));
@@ -152,7 +149,8 @@ mod success {
         // Number of Parameters
         combined_bytes.extend(1u8.to_be_bytes());
         // Parameters
-        combined_bytes.extend((parameter_type as u8).to_be_bytes());
+        combined_bytes
+            .extend((VersionSpecificParameterType::AuthorizationInfo as u8).to_be_bytes());
         combined_bytes.extend(write_variable_integer(parameter_length as u64));
         combined_bytes.extend(parameter_value.as_bytes());
 
