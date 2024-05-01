@@ -14,7 +14,7 @@ commands:
           command: |
             echo $OS_VERSION | tee /tmp/build-env
             rustc --version | tee /tmp/build-env
-            echo "${CIRCLECI_CACHE_VERSION}" | tee /tmp/cache-ver
+            echo $CIRCLECI_CACHE_VERSION | tee /tmp/cache-ver
   save_cache_:
     steps:
       - save_cache:
