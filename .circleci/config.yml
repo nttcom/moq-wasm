@@ -115,7 +115,7 @@ jobs:
     docker:
       - image: rust:latest
     environment:
-      CIRCLECI_CACHE_VERSION: 1
+      - CIRCLECI_CACHE_VERSION=1
     steps:
       - checkout
       - record_build_env
@@ -129,8 +129,6 @@ jobs:
             rustup component add llvm-tools-preview
             apt update && apt install -y jq
 
-            cargo llvm-cov --html
-
             artifact_link="https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/${CIRCLE_NODE_INDEX}/coverage-report/index.html"
 
             cov_result=$(cargo llvm-cov | awk '/Filename/,0')
@@ -138,8 +136,10 @@ jobs:
             ${cov_result}
             \`\`\`
             
-            Coverage report detail is available [here](${artifact_link}).
+            [Coverage report details](${artifact_link})
             "
+
+            cargo llvm-cov --html
 
             github_comment_verion=6.0.4
             github_apps_token=$(cat githubapps_token)
