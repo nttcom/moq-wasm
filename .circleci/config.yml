@@ -14,10 +14,11 @@ commands:
           command: |
             echo $OS_VERSION | tee /tmp/build-env
             rustc --version | tee /tmp/build-env
+            echo "${CIRCLECI_CACHE_VERSION}" > cache.ver
   save_cache_:
     steps:
       - save_cache:
-          key: cache-cargo-target-{{ .Environment.CIRCLECI_CACHE_VERSION }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "/tmp/build-env" }}-{{ checksum "Cargo.lock" }}
+          key: cache-cargo-target-{{ checksum "cache.ver" }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "/tmp/build-env" }}-{{ checksum "Cargo.lock" }}
           paths:
             - ~/.cargo
             - target
@@ -25,8 +26,8 @@ commands:
     steps:
       - restore_cache:
           keys:
-            - cache-cargo-target-{{ .Environment.CIRCLECI_CACHE_VERSION }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "/tmp/build-env" }}-{{ checksum "Cargo.lock" }}
-            - cache-cargo-target-{{ .Environment.CIRCLECI_CACHE_VERSION }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "/tmp/build-env" }}
+            - cache-cargo-target-{{ checksum "cache.ver" }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "/tmp/build-env" }}-{{ checksum "Cargo.lock" }}
+            - cache-cargo-target-{{ checksum "cache.ver" }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "/tmp/build-env" }}
 
 jobs:
   rust_linter_and_formatter:
@@ -115,7 +116,7 @@ jobs:
     docker:
       - image: rust:latest
     environment:
-      - CIRCLECI_CACHE_VERSION=1
+      CIRCLECI_CACHE_VERSION: 1
     steps:
       - checkout
       - record_build_env
