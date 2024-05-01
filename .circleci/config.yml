@@ -106,6 +106,8 @@ jobs:
             ${cov_result}
             \`\`\`"
 
+            cargo llvm-cov --html
+
             github_comment_verion=6.0.4
             github_apps_token=$(cat githubapps_token)
             pr_number=$(basename ${CIRCLE_PULL_REQUEST})
@@ -114,6 +116,9 @@ jobs:
             tar -zxvf linux_amd64.tar.gz
             ./github-comment hide --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --condition 'Comment.HasMeta && Comment.Meta.TemplateKey == "default"'
             ./github-comment post --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --template "${comment}"
+      - store_artifacts:
+          path: target/llvmcov/html
+          destination: coverage-report
 workflows:
   version: 2
   build_and_test:
