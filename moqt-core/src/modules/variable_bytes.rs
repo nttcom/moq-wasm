@@ -112,3 +112,12 @@ pub fn write_fixed_length_bytes(value: &Vec<u8>) -> BytesMut {
 
     buf
 }
+
+pub fn convert_bytes_to_integer(value: Vec<u8>) -> Result<u64> {
+    let mut ret = 0;
+    for (i, &byte) in value.iter().enumerate() {
+        ret |= (byte as u64) << (i * 8);
+    }
+
+    Ok(ret)
+}

@@ -1,7 +1,10 @@
 use crate::{
     modules::variable_integer::read_variable_integer_from_buffer,
-    variable_bytes::{read_fixed_length_bytes_from_buffer, write_fixed_length_bytes},
-    variable_integer::write_variable_integer,
+    variable_bytes::{
+        convert_bytes_to_integer, read_fixed_length_bytes_from_buffer,
+        read_variable_bytes_from_buffer, write_fixed_length_bytes,
+    },
+    variable_integer::{calculate_variable_integer_length, write_variable_integer},
 };
 use anyhow::Ok;
 use num_enum::TryFromPrimitive;
@@ -33,30 +36,22 @@ impl MOQTPayload for VersionSpecificParameter {
 
         match parameter_type? {
             VersionSpecificParameterType::GroupSequence => {
-                let _parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
                 // The value is of type varint.
-                let parameter_value = read_variable_integer_from_buffer(buf)?;
-
-                // TODO
-                //   If the parameter value is a varint, but the self-encoded length of that
-                //   varint does not match the Parameter Length field, the receiver MUST
-                //   ignore the parameter using the value in the Parameter Length field.
-                // See: https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-01#name-parameters
+                // (Use length parameter to determine the encoded length)
+                let parameter_bytes = read_variable_bytes_from_buffer(buf)?;
+                // convert Vec<u8> to u64
+                let parameter_value = convert_bytes_to_integer(parameter_bytes)?;
 
                 Ok(VersionSpecificParameter::GroupSequence(GroupSequence::new(
                     parameter_value,
                 )))
             }
             VersionSpecificParameterType::ObjectSequence => {
-                let _parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
                 // The value is of type varint.
-                let parameter_value = read_variable_integer_from_buffer(buf)?;
-
-                // TODO
-                //   If the parameter value is a varint, but the self-encoded length of that
-                //   varint does not match the Parameter Length field, the receiver MUST
-                //   ignore the parameter using the value in the Parameter Length field.
-                // See: https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-01#name-parameters
+                // (Use length parameter to determine the encoded length)
+                let parameter_bytes = read_variable_bytes_from_buffer(buf)?;
+                // convert Vec<u8> to u64
+                let parameter_value = convert_bytes_to_integer(parameter_bytes)?;
 
                 Ok(VersionSpecificParameter::ObjectSequence(
                     ObjectSequence::new(parameter_value),
@@ -137,7 +132,7 @@ impl GroupSequence {
     pub fn new(value: u64) -> Self {
         GroupSequence {
             parameter_type: VersionSpecificParameterType::GroupSequence,
-            length: value.to_be_bytes().len() as u8,
+            length: calculate_variable_integer_length((value & 0xFF) as u8), // 0xFF: Bit mask to get the first byte
             value,
         }
     }
@@ -154,7 +149,7 @@ impl ObjectSequence {
     pub fn new(value: u64) -> Self {
         ObjectSequence {
             parameter_type: VersionSpecificParameterType::ObjectSequence,
-            length: value.to_be_bytes().len() as u8,
+            length: calculate_variable_integer_length((value & 0xFF) as u8), // 0xFF: Bit mask to get the first byte
             value,
         }
     }
@@ -189,8 +184,8 @@ mod success {
 
     #[test]
     fn packetize_group_sequence() {
-        let parameter_value = 0x01_u64;
-        let parameter_length = parameter_value.to_be_bytes().len() as u8;
+        let parameter_value = 0x01;
+        let parameter_length = 1;
 
         let parameter =
             VersionSpecificParameter::GroupSequence(GroupSequence::new(parameter_value));
@@ -211,8 +206,8 @@ mod success {
 
     #[test]
     fn packetize_object_sequence() {
-        let parameter_value = 0x01_u64;
-        let parameter_length = parameter_value.to_be_bytes().len() as u8;
+        let parameter_value = 0x01;
+        let parameter_length = 1;
 
         let parameter =
             VersionSpecificParameter::ObjectSequence(ObjectSequence::new(parameter_value));
@@ -258,8 +253,8 @@ mod success {
 
     #[test]
     fn depacketize_group_sequence() {
-        let parameter_value = 0x01_u64;
-        let parameter_length = parameter_value.to_be_bytes().len() as u8;
+        let parameter_value = 0x01;
+        let parameter_length = 1;
 
         let expected_parameter =
             VersionSpecificParameter::GroupSequence(GroupSequence::new(parameter_value));
@@ -280,8 +275,8 @@ mod success {
 
     #[test]
     fn depacketize_object_sequence() {
-        let parameter_value = 0x01_u64;
-        let parameter_length = parameter_value.to_be_bytes().len() as u8;
+        let parameter_value = 0x01;
+        let parameter_length = 1;
 
         let expected_parameter =
             VersionSpecificParameter::ObjectSequence(ObjectSequence::new(parameter_value));
