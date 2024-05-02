@@ -6,12 +6,37 @@ anchors:
   resource_class: &resource_class
     resource_class: medium
 
+commands:
+  record_build_env:
+    steps:
+      - run:
+          name: Record build environment to use as cache key
+          command: |
+            echo $OS_VERSION | tee /tmp/build-env
+            rustc --version | tee /tmp/build-env
+            echo $CIRCLECI_CACHE_VERSION | tee /tmp/cache-ver
+  save_cache_:
+    steps:
+      - save_cache:
+          key: cache-cargo-target-{{ checksum "/tmp/cache-ver" }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "/tmp/build-env" }}-{{ checksum "Cargo.lock" }}
+          paths:
+            - ~/.cargo
+            - target
+  restore_cache_:
+    steps:
+      - restore_cache:
+          keys:
+            - cache-cargo-target-{{ checksum "/tmp/cache-ver" }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "/tmp/build-env" }}-{{ checksum "Cargo.lock" }}
+            - cache-cargo-target-{{ checksum "/tmp/cache-ver" }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "/tmp/build-env" }}
+
 jobs:
-  rust_linter_and_formatter:
+  rust_linter_and_formatter_and_test:
     docker:
       - image: rust:latest
     steps:
       - checkout
+      - record_build_env
+      - restore_cache_
       - run:
           name: Install Rust toolchain and Clippy
           command: |
@@ -25,15 +50,11 @@ jobs:
           name: Check code formatting
           command: |
             cargo fmt --check
-  unit_test:
-    docker:
-      - image: rust:latest
-    steps:
-      - checkout
       - run:
           name: Run Unit Tests
           command: |
             cargo test
+      - save_cache_
   prettier:
     docker:
       - image: cimg/node:21.6.2
@@ -92,8 +113,12 @@ jobs:
     <<: [*resource_class, *working_directory]
     docker:
       - image: rust:latest
+    environment:
+      CIRCLECI_CACHE_VERSION: 1
     steps:
       - checkout
+      - record_build_env
+      - restore_cache_
       - attach_workspace:
           at: .
       - run:
@@ -101,10 +126,19 @@ jobs:
           command: |
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
+            apt update && apt install -y jq
+
+            artifact_link="https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/${CIRCLE_NODE_INDEX}/coverage-report/index.html"
+
             cov_result=$(cargo llvm-cov | awk '/Filename/,0')
             comment="\`\`\`shell-session
             ${cov_result}
-            \`\`\`"
+            \`\`\`
+            
+            [Coverage report details](${artifact_link})
+            "
+
+            cargo llvm-cov report --html
 
             github_comment_verion=6.0.4
             github_apps_token=$(cat githubapps_token)
@@ -114,15 +148,15 @@ jobs:
             tar -zxvf linux_amd64.tar.gz
             ./github-comment hide --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --condition 'Comment.HasMeta && Comment.Meta.TemplateKey == "default"'
             ./github-comment post --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --template "${comment}"
+      - store_artifacts:
+          path: target/llvm-cov/html
+          destination: coverage-report
+      - save_cache_
 workflows:
   version: 2
   build_and_test:
     jobs:
-      - rust_linter_and_formatter:
-          filters:
-            branches:
-              ignore: /main|master/
-      - unit_test:
+      - rust_linter_and_formatter_and_test:
           filters:
             branches:
               ignore: /main|master/
@@ -132,8 +166,7 @@ workflows:
               ignore: /main|master/
       - github_apps_token:
           requires:
-            - rust_linter_and_formatter
-            - unit_test
+            - rust_linter_and_formatter_and_test
             - prettier
           filters:
             branches:
