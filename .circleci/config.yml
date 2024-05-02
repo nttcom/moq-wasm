@@ -30,11 +30,13 @@ commands:
             - cache-cargo-target-{{ checksum "/tmp/cache-ver" }}-{{ .Environment.CIRCLE_JOB }}-{{ checksum "/tmp/build-env" }}
 
 jobs:
-  rust_linter_and_formatter:
+  rust_linter_and_formatter_and_test:
     docker:
       - image: rust:latest
     steps:
       - checkout
+      - record_build_env
+      - restore_cache_
       - run:
           name: Install Rust toolchain and Clippy
           command: |
@@ -48,15 +50,11 @@ jobs:
           name: Check code formatting
           command: |
             cargo fmt --check
-  unit_test:
-    docker:
-      - image: rust:latest
-    steps:
-      - checkout
       - run:
           name: Run Unit Tests
           command: |
             cargo test
+      - save_cache_
   prettier:
     docker:
       - image: cimg/node:21.6.2
@@ -158,11 +156,7 @@ workflows:
   version: 2
   build_and_test:
     jobs:
-      - rust_linter_and_formatter:
-          filters:
-            branches:
-              ignore: /main|master/
-      - unit_test:
+      - rust_linter_and_formatter_and_test:
           filters:
             branches:
               ignore: /main|master/
@@ -172,8 +166,7 @@ workflows:
               ignore: /main|master/
       - github_apps_token:
           requires:
-            - rust_linter_and_formatter
-            - unit_test
+            - rust_linter_and_formatter_and_test
             - prettier
           filters:
             branches:
