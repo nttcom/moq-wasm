@@ -102,7 +102,6 @@ mod success {
         let parameter_length = parameter_value.len() as u8;
 
         let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
-            parameter_length,
             parameter_value.clone(),
         ));
         let parameters = vec![parameter];
@@ -135,7 +134,6 @@ mod success {
         let parameter_length = parameter_value.len() as u8;
 
         let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
-            parameter_length,
             parameter_value.clone(),
         ));
         let parameters = vec![parameter];

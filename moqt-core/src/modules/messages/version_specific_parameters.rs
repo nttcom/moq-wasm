@@ -8,6 +8,10 @@ use num_enum::TryFromPrimitive;
 
 use super::moqt_payload::MOQTPayload;
 
+/// This structure is a parameter that uses a version-specific namespace, unlike Setup parameters,
+/// which uses a namespace that is constant across all MoQ Transport versions.
+///
+/// This structure is referred by messages using parameters other than Setup parameters.
 #[derive(Debug, PartialEq)]
 pub enum VersionSpecificParameter {
     GroupSequence(GroupSequence),
@@ -29,7 +33,7 @@ impl MOQTPayload for VersionSpecificParameter {
 
         match parameter_type? {
             VersionSpecificParameterType::GroupSequence => {
-                let parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+                let _parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
                 // The value is of type varint.
                 let parameter_value = read_variable_integer_from_buffer(buf)?;
 
@@ -40,12 +44,11 @@ impl MOQTPayload for VersionSpecificParameter {
                 // See: https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-01#name-parameters
 
                 Ok(VersionSpecificParameter::GroupSequence(GroupSequence::new(
-                    parameter_length,
                     parameter_value,
                 )))
             }
             VersionSpecificParameterType::ObjectSequence => {
-                let parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+                let _parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
                 // The value is of type varint.
                 let parameter_value = read_variable_integer_from_buffer(buf)?;
 
@@ -56,7 +59,7 @@ impl MOQTPayload for VersionSpecificParameter {
                 // See: https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-01#name-parameters
 
                 Ok(VersionSpecificParameter::ObjectSequence(
-                    ObjectSequence::new(parameter_length, parameter_value),
+                    ObjectSequence::new(parameter_value),
                 ))
             }
             VersionSpecificParameterType::AuthorizationInfo => {
@@ -68,7 +71,7 @@ impl MOQTPayload for VersionSpecificParameter {
                 )?)?;
 
                 Ok(VersionSpecificParameter::AuthorizationInfo(
-                    AuthorizationInfo::new(parameter_length, parameter_value),
+                    AuthorizationInfo::new(parameter_value),
                 ))
             }
         }
@@ -131,10 +134,10 @@ pub struct GroupSequence {
 }
 
 impl GroupSequence {
-    pub fn new(length: u8, value: u64) -> Self {
+    pub fn new(value: u64) -> Self {
         GroupSequence {
             parameter_type: VersionSpecificParameterType::GroupSequence,
-            length,
+            length: value.to_be_bytes().len() as u8,
             value,
         }
     }
@@ -148,10 +151,10 @@ pub struct ObjectSequence {
 }
 
 impl ObjectSequence {
-    pub fn new(length: u8, value: u64) -> Self {
+    pub fn new(value: u64) -> Self {
         ObjectSequence {
             parameter_type: VersionSpecificParameterType::ObjectSequence,
-            length,
+            length: value.to_be_bytes().len() as u8,
             value,
         }
     }
@@ -165,10 +168,10 @@ pub struct AuthorizationInfo {
 }
 
 impl AuthorizationInfo {
-    pub fn new(length: u8, value: String) -> Self {
+    pub fn new(value: String) -> Self {
         AuthorizationInfo {
             parameter_type: VersionSpecificParameterType::AuthorizationInfo,
-            length,
+            length: value.len() as u8,
             value,
         }
     }
@@ -186,13 +189,11 @@ mod success {
 
     #[test]
     fn packetize_group_sequence() {
-        let parameter_value = 0x01;
-        let parameter_length = 1;
+        let parameter_value = 0x01_u64;
+        let parameter_length = parameter_value.to_be_bytes().len() as u8;
 
-        let parameter = VersionSpecificParameter::GroupSequence(GroupSequence::new(
-            parameter_length,
-            parameter_value,
-        ));
+        let parameter =
+            VersionSpecificParameter::GroupSequence(GroupSequence::new(parameter_value));
 
         let mut buf = bytes::BytesMut::new();
         parameter.packetize(&mut buf);
@@ -210,13 +211,11 @@ mod success {
 
     #[test]
     fn packetize_object_sequence() {
-        let parameter_value = 0x01;
-        let parameter_length = 1;
+        let parameter_value = 0x01_u64;
+        let parameter_length = parameter_value.to_be_bytes().len() as u8;
 
-        let parameter = VersionSpecificParameter::ObjectSequence(ObjectSequence::new(
-            parameter_length,
-            parameter_value,
-        ));
+        let parameter =
+            VersionSpecificParameter::ObjectSequence(ObjectSequence::new(parameter_value));
 
         let mut buf = bytes::BytesMut::new();
         parameter.packetize(&mut buf);
@@ -238,7 +237,6 @@ mod success {
         let parameter_length = parameter_value.len() as u8;
 
         let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
-            parameter_length,
             parameter_value.clone(),
         ));
 
@@ -260,13 +258,11 @@ mod success {
 
     #[test]
     fn depacketize_group_sequence() {
-        let parameter_value = 0x01;
-        let parameter_length = 1;
+        let parameter_value = 0x01_u64;
+        let parameter_length = parameter_value.to_be_bytes().len() as u8;
 
-        let expected_parameter = VersionSpecificParameter::GroupSequence(GroupSequence::new(
-            parameter_length,
-            parameter_value,
-        ));
+        let expected_parameter =
+            VersionSpecificParameter::GroupSequence(GroupSequence::new(parameter_value));
 
         // Parameter Type
         let mut combined_bytes =
@@ -284,13 +280,11 @@ mod success {
 
     #[test]
     fn depacketize_object_sequence() {
-        let parameter_value = 0x01;
-        let parameter_length = 1;
+        let parameter_value = 0x01_u64;
+        let parameter_length = parameter_value.to_be_bytes().len() as u8;
 
-        let expected_parameter = VersionSpecificParameter::ObjectSequence(ObjectSequence::new(
-            parameter_length,
-            parameter_value,
-        ));
+        let expected_parameter =
+            VersionSpecificParameter::ObjectSequence(ObjectSequence::new(parameter_value));
 
         // Parameter Type
         let mut combined_bytes =
@@ -312,7 +306,7 @@ mod success {
         let parameter_length = parameter_value.len() as u8;
 
         let expected_parameter = VersionSpecificParameter::AuthorizationInfo(
-            AuthorizationInfo::new(parameter_length, parameter_value.clone()),
+            AuthorizationInfo::new(parameter_value.clone()),
         );
 
         // Parameter Type
