@@ -68,6 +68,13 @@ impl MOQTPayload for SubscribeRequestMessage {
             if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
                 tracing::info!("unknown track request parameter {}", code);
             } else {
+                // NOTE:
+                //   According to "6.1.1. Version Specific Parameters", the parameters used
+                //   in the SUBSCRIBE message are Version Specific Parameters. On the other hand,
+                //   according to "6.4.2. SUBSCRIBE REQUEST Format", it is the Track Request Parameters
+                //   that are included in the SUBSCRIBE REQUEST Message, and refers to 6.1.1 for details.
+                //   Therefore, version_specific_parameter is pushed to track_request_parameters.
+                //     (https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-01)
                 track_request_parameters.push(version_specific_parameter);
             }
         }
