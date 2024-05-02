@@ -150,9 +150,8 @@ impl MOQTClient {
         auth_info: String, // param[0]
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
-            let auth_info_parameter = VersionSpecificParameter::AuthorizationInfo(
-                AuthorizationInfo::new(auth_info.len() as u8, auth_info),
-            );
+            let auth_info_parameter =
+                VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
 
             let announce_message = AnnounceMessage::new(
                 track_name_space,
