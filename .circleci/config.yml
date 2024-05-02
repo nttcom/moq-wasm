@@ -138,7 +138,7 @@ jobs:
             [Coverage report details](${artifact_link})
             "
 
-            cargo llvm-cov --html
+            cargo llvm-cov report --html
 
             github_comment_verion=6.0.4
             github_apps_token=$(cat githubapps_token)
