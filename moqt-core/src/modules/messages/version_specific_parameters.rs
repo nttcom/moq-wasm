@@ -33,6 +33,9 @@ impl MOQTPayload for TrackRequestParameter {
             }
             _ => {
                 // unknown parameter
+                let _parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+                let _parameter_value = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
+
                 Ok(TrackRequestParameter::Unknown(parameter_key))
             }
         }
