@@ -1,8 +1,7 @@
 use crate::{
     modules::variable_integer::read_variable_integer_from_buffer,
     variable_bytes::{
-        convert_bytes_to_integer, read_fixed_length_bytes_from_buffer,
-        read_variable_bytes_from_buffer, write_fixed_length_bytes,
+        convert_bytes_to_integer, read_variable_bytes_from_buffer, write_fixed_length_bytes,
     },
     variable_integer::{calculate_variable_integer_length, write_variable_integer},
 };
@@ -28,6 +27,8 @@ impl MOQTPayload for VersionSpecificParameter {
         let parameter_type = VersionSpecificParameterType::try_from(u8::try_from(
             read_variable_integer_from_buffer(buf)?,
         )?);
+        let parameter_value = read_variable_bytes_from_buffer(buf)?;
+
         if let Err(err) = parameter_type {
             // If it appears in some other type of message, it MUST be ignored.
             tracing::info!("Unknown version specific parameter {:#04x}", err.number);
@@ -37,10 +38,7 @@ impl MOQTPayload for VersionSpecificParameter {
         match parameter_type? {
             VersionSpecificParameterType::GroupSequence => {
                 // The value is of type varint.
-                // (Use length parameter to determine the encoded length)
-                let parameter_bytes = read_variable_bytes_from_buffer(buf)?;
-                // convert Vec<u8> to u64
-                let parameter_value = convert_bytes_to_integer(parameter_bytes)?;
+                let parameter_value: u64 = convert_bytes_to_integer(parameter_value)?;
 
                 Ok(VersionSpecificParameter::GroupSequence(GroupSequence::new(
                     parameter_value,
@@ -48,22 +46,15 @@ impl MOQTPayload for VersionSpecificParameter {
             }
             VersionSpecificParameterType::ObjectSequence => {
                 // The value is of type varint.
-                // (Use length parameter to determine the encoded length)
-                let parameter_bytes = read_variable_bytes_from_buffer(buf)?;
-                // convert Vec<u8> to u64
-                let parameter_value = convert_bytes_to_integer(parameter_bytes)?;
+                let parameter_value: u64 = convert_bytes_to_integer(parameter_value)?;
 
                 Ok(VersionSpecificParameter::ObjectSequence(
                     ObjectSequence::new(parameter_value),
                 ))
             }
             VersionSpecificParameterType::AuthorizationInfo => {
-                let parameter_length = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
                 // The value is an ASCII string.
-                let parameter_value = String::from_utf8(read_fixed_length_bytes_from_buffer(
-                    buf,
-                    parameter_length as usize,
-                )?)?;
+                let parameter_value: String = String::from_utf8(parameter_value)?;
 
                 Ok(VersionSpecificParameter::AuthorizationInfo(
                     AuthorizationInfo::new(parameter_value),
@@ -322,8 +313,17 @@ mod success {
 
     #[test]
     fn depacketize_unknown() {
+        let parameter_value = "test".to_string();
+        let parameter_length = parameter_value.len() as u8;
+
         // Unknown
-        let combined_bytes = Vec::from(write_variable_integer(0x99));
+        let mut combined_bytes = Vec::from(write_variable_integer(0x99));
+        // Parameter Length
+        combined_bytes.extend(write_variable_integer(parameter_length as u64));
+        // Parameter Value
+        combined_bytes.extend(write_fixed_length_bytes(
+            &parameter_value.as_bytes().to_vec(),
+        ));
 
         let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
         let depacketized_version_specific_parameter =
