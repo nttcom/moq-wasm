@@ -22,7 +22,7 @@ pub fn read_variable_integer(buf: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
 
     let first_byte = buf.get_u8();
     let mut value: u64 = (first_byte % 64).into();
-    let rest_len = calculate_variable_integer_length(first_byte) - 1;
+    let rest_len = get_length_from_variable_integer_first_byte(first_byte) - 1;
 
     if buf.remaining() < rest_len.into() {
         bail!(
@@ -40,7 +40,7 @@ pub fn read_variable_integer(buf: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
     Ok(value)
 }
 
-pub fn calculate_variable_integer_length(first_byte: u8) -> u8 {
+pub fn get_length_from_variable_integer_first_byte(first_byte: u8) -> u8 {
     let msb2 = first_byte / 64;
 
     // 2MSB    Length
