@@ -121,9 +121,12 @@ pub struct GroupSequence {
 
 impl GroupSequence {
     pub fn new(value: u64) -> Self {
+        let first_byte = value & 0xFF; // 0xFF: Bit mask to get the first byte
+        let length = calculate_variable_integer_length(first_byte as u8);
+
         GroupSequence {
             parameter_type: VersionSpecificParameterType::GroupSequence,
-            length: calculate_variable_integer_length((value & 0xFF) as u8), // 0xFF: Bit mask to get the first byte
+            length,
             value,
         }
     }
@@ -138,9 +141,12 @@ pub struct ObjectSequence {
 
 impl ObjectSequence {
     pub fn new(value: u64) -> Self {
+        let first_byte = value & 0xFF; // 0xFF: Bit mask to get the first byte
+        let length = calculate_variable_integer_length(first_byte as u8);
+
         ObjectSequence {
             parameter_type: VersionSpecificParameterType::ObjectSequence,
-            length: calculate_variable_integer_length((value & 0xFF) as u8), // 0xFF: Bit mask to get the first byte
+            length,
             value,
         }
     }
