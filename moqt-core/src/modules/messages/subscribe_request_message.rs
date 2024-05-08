@@ -9,7 +9,7 @@ use crate::{
     variable_bytes::write_variable_bytes,
 };
 
-use super::{moqt_payload::MOQTPayload, version_specific_parameters::TrackRequestParameter};
+use super::{moqt_payload::MOQTPayload, version_specific_parameters::VersionSpecificParameter};
 
 pub struct SubscribeRequestMessage {
     track_namespace: String,
@@ -18,7 +18,7 @@ pub struct SubscribeRequestMessage {
     start_object: Location,
     end_group: Location,
     end_object: Location,
-    track_request_parameters: Vec<TrackRequestParameter>,
+    track_request_parameters: Vec<VersionSpecificParameter>,
 }
 
 impl SubscribeRequestMessage {
@@ -29,7 +29,7 @@ impl SubscribeRequestMessage {
         start_object: Location,
         end_group: Location,
         end_object: Location,
-        track_request_parameters: Vec<TrackRequestParameter>,
+        track_request_parameters: Vec<VersionSpecificParameter>,
     ) -> SubscribeRequestMessage {
         SubscribeRequestMessage {
             track_namespace,
@@ -64,11 +64,18 @@ impl MOQTPayload for SubscribeRequestMessage {
 
         let mut track_request_parameters = Vec::new();
         while !buf.is_empty() {
-            let track_request_parameter = TrackRequestParameter::depacketize(buf)?;
-            if let TrackRequestParameter::Unknown(code) = track_request_parameter {
+            let version_specific_parameter = VersionSpecificParameter::depacketize(buf)?;
+            if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
                 tracing::info!("unknown track request parameter {}", code);
             } else {
-                track_request_parameters.push(track_request_parameter);
+                // NOTE:
+                //   According to "6.1.1. Version Specific Parameters", the parameters used
+                //   in the SUBSCRIBE message are Version Specific Parameters. On the other hand,
+                //   according to "6.4.2. SUBSCRIBE REQUEST Format", it is the Track Request Parameters
+                //   that are included in the SUBSCRIBE REQUEST Message, and refers to 6.1.1 for details.
+                //   Therefore, version_specific_parameter is pushed to track_request_parameters.
+                //     (https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-01)
+                track_request_parameters.push(version_specific_parameter);
             }
         }
 
@@ -92,8 +99,8 @@ impl MOQTPayload for SubscribeRequestMessage {
         self.start_object.packetize(buf);
         self.end_group.packetize(buf);
         self.end_object.packetize(buf);
-        for track_request_parameter in &self.track_request_parameters {
-            track_request_parameter.packetize(buf);
+        for version_specific_parameter in &self.track_request_parameters {
+            version_specific_parameter.packetize(buf);
         }
     }
 }

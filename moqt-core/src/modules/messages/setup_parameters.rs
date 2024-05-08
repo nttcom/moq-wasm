@@ -164,6 +164,17 @@ mod success {
 
         assert_eq!(depacketized_setup_parameter, expected_setup_parameter);
     }
+
+    #[test]
+    fn depacketize_unknown() {
+        // Unknown
+        let combined_bytes = Vec::from(write_variable_integer(0x99));
+
+        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
+
+        assert!(depacketized_setup_parameter.is_ok());
+    }
 }
 
 #[cfg(test)]
@@ -233,16 +244,5 @@ mod failure {
 
         let mut buf = bytes::BytesMut::new();
         setup_parameter.packetize(&mut buf);
-    }
-
-    #[test]
-    fn depacketize_unknown() {
-        // Unknown
-        let combined_bytes = Vec::from((0x99_u8).to_be_bytes());
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
-        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
-
-        assert!(depacketized_setup_parameter.is_err());
     }
 }
