@@ -3,7 +3,7 @@ use crate::{
     variable_bytes::{
         convert_bytes_to_integer, read_variable_bytes_from_buffer, write_fixed_length_bytes,
     },
-    variable_integer::{calculate_variable_integer_length, write_variable_integer},
+    variable_integer::{get_length_from_variable_integer_first_byte, write_variable_integer},
 };
 use anyhow::Ok;
 use num_enum::TryFromPrimitive;
@@ -122,7 +122,7 @@ pub struct GroupSequence {
 impl GroupSequence {
     pub fn new(value: u64) -> Self {
         let first_byte = value & 0xFF; // 0xFF: Bit mask to get the first byte
-        let length = calculate_variable_integer_length(first_byte as u8);
+        let length = get_length_from_variable_integer_first_byte(first_byte as u8);
 
         GroupSequence {
             parameter_type: VersionSpecificParameterType::GroupSequence,
@@ -142,7 +142,7 @@ pub struct ObjectSequence {
 impl ObjectSequence {
     pub fn new(value: u64) -> Self {
         let first_byte = value & 0xFF; // 0xFF: Bit mask to get the first byte
-        let length = calculate_variable_integer_length(first_byte as u8);
+        let length = get_length_from_variable_integer_first_byte(first_byte as u8);
 
         ObjectSequence {
             parameter_type: VersionSpecificParameterType::ObjectSequence,
