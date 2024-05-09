@@ -1,11 +1,5 @@
 version: 2.1
 
-anchors:
-  working_directory: &working_directory
-    working_directory: ~/repo
-  resource_class: &resource_class
-    resource_class: medium
-
 commands:
   record_build_env:
     steps:
@@ -66,51 +60,7 @@ jobs:
       - run:
           name: Check Prettier Formatting
           command: npx prettier --check "js/**/*.{js,jsx,ts,tsx,json,css,md}"
-  github_apps_token:
-    <<: [*resource_class, *working_directory]
-    docker:
-      - image: cimg/base:2021.04
-    steps:
-      - run:
-          name: Get GitHub Apps Token
-          command: |
-            header="$(printf '{"alg":"RS256","typ":"JWT"}' | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
-
-            now="$(date '+%s')"
-            iat="$((now - 60))"
-            exp="$((now + (3 * 60)))"
-            template='{"iss":"%s","iat":%s,"exp":%s}'
-            github_app_id="877010" # App ID
-            payload="$(printf "${template}" "${github_app_id}" "${iat}" "${exp}" | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
-
-            key="$(echo ${GITHUB_APPS_PEM_BASE64} | base64 --decode)"
-            signature="$(printf '%s' "${header}.${payload}" | openssl dgst -binary -sha256 -sign <(printf '%s' "${key}") | openssl enc -base64 -A | tr '+/' '-_' | tr -d '=')"
-
-            jwt="${header}.${payload}.${signature}"
-
-            installation_id="$(curl --location --silent --request GET \
-              --url "https://api.github.com/repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/installation" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              --header "Authorization: Bearer ${jwt}" \
-              | jq -r '.id'
-            )"
-
-            token="$(curl --location --silent --request POST \
-              --url "https://api.github.com/app/installations/${installation_id}/access_tokens" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              --header "Authorization: Bearer ${jwt}" \
-              | jq -r '.token'
-            )"
-
-            echo ${token} > ./githubapps_token
-      - persist_to_workspace:
-          root: .
-          paths:
-            - .
   coverage_report:
-    <<: [*resource_class, *working_directory]
     docker:
       - image: rust:latest
     environment:
@@ -119,14 +69,16 @@ jobs:
       - checkout
       - record_build_env
       - restore_cache_
-      - attach_workspace:
-          at: .
+      - run:
+          name: Get GitHub Apps Token
+          command: |
+            github_apps_token="$(./get_token.sh)"
       - run:
           name: Post Coverage Report
           command: |
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
-            apt update && apt install -y jq
+            # apt update && apt install -y jq
 
             artifact_link="https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/${CIRCLE_NODE_INDEX}/coverage-report/index.html"
 
@@ -141,7 +93,6 @@ jobs:
             cargo llvm-cov report --html
 
             github_comment_verion=6.0.4
-            github_apps_token=$(cat githubapps_token)
             pr_number=$(basename ${CIRCLE_PULL_REQUEST})
 
             curl -L https://github.com/suzuki-shunsuke/github-comment/releases/download/v${github_comment_verion}/github-comment_${github_comment_verion}_linux_amd64.tar.gz -o linux_amd64.tar.gz
@@ -164,16 +115,10 @@ workflows:
           filters:
             branches:
               ignore: /main|master/
-      - github_apps_token:
+      - coverage_report:
           requires:
             - rust_linter_and_formatter_and_test
             - prettier
-          filters:
-            branches:
-              ignore: /main|master/
-      - coverage_report:
-          requires:
-            - github_apps_token
           filters:
             branches:
               ignore: /main|master/
