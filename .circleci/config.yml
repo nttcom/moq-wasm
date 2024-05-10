@@ -72,7 +72,7 @@ jobs:
       - run:
           name: Get GitHub Apps Token
           command: |
-            github_apps_token="$(./get_token.sh)"
+            github_apps_token="$(bash .circleci/get_token.sh)"
       - run:
           name: Post Coverage Report
           command: |
