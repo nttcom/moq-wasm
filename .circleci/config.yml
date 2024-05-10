@@ -72,13 +72,13 @@ jobs:
       - run:
           name: Get GitHub Apps Token
           command: |
+            apt update && apt install -y jq
             github_apps_token="$(bash .circleci/get_token.sh)"
       - run:
           name: Post Coverage Report
           command: |
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
-            # apt update && apt install -y jq
 
             artifact_link="https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/${CIRCLE_NODE_INDEX}/coverage-report/index.html"
 
