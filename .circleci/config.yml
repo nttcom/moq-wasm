@@ -72,11 +72,11 @@ jobs:
       - run:
           name: Get GitHub Apps Token
           command: |
-            apt update && apt install -y jq
-            export GITHUB_APPS_TOKEN="$(bash .circleci/get_token.sh)"
+            
       - run:
           name: Post Coverage Report
           command: |
+            apt update && apt install -y jq
             cargo install cargo-llvm-cov
             rustup component add llvm-tools-preview
 
@@ -95,7 +95,7 @@ jobs:
             github_comment_verion=6.0.4
             pr_number=$(basename ${CIRCLE_PULL_REQUEST})
 
-            echo $GITHUB_APPS_TOKEN
+            GITHUB_APPS_TOKEN="$(bash .circleci/get_token.sh)"
 
             curl -L https://github.com/suzuki-shunsuke/github-comment/releases/download/v${github_comment_verion}/github-comment_${github_comment_verion}_linux_amd64.tar.gz -o linux_amd64.tar.gz
             tar -zxvf linux_amd64.tar.gz
