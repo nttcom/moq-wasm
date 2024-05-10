@@ -74,6 +74,7 @@ jobs:
           command: |
             apt update && apt install -y jq
             github_apps_token="$(bash .circleci/get_token.sh)"
+            echo "${github_apps_token}"
       - run:
           name: Post Coverage Report
           command: |
@@ -89,6 +90,8 @@ jobs:
             
             [Coverage report details](${artifact_link})
             "
+
+            echo "${github_apps_token}"
 
             cargo llvm-cov report --html
 
