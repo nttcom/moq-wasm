@@ -70,12 +70,6 @@ jobs:
       - record_build_env
       - restore_cache_
       - run:
-          name: Get GitHub Apps Token
-          command: |
-            apt update && apt install -y jq
-            export GITHUB_APPS_TOKEN="$(bash .circleci/get_token.sh)"
-            echo $GITHUB_APPS_TOKEN
-      - run:
           name: Post Coverage Report
           command: |
             cargo install cargo-llvm-cov
@@ -93,6 +87,8 @@ jobs:
 
             cargo llvm-cov report --html
 
+            apt update && apt install -y jq
+            GITHUB_APPS_TOKEN="$(bash .circleci/get_token.sh)"
             echo $GITHUB_APPS_TOKEN
 
             github_comment_verion=6.0.4
@@ -102,9 +98,9 @@ jobs:
             tar -zxvf linux_amd64.tar.gz
             ./github-comment hide --token ${GITHUB_APPS_TOKEN} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --condition 'Comment.HasMeta && Comment.Meta.TemplateKey == "default"'
             ./github-comment post --token ${GITHUB_APPS_TOKEN} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --template "${comment}"
-      - store_artifacts:
-          path: target/llvm-cov/html
-          destination: coverage-report
+      # - store_artifacts:
+      #     path: target/llvm-cov/html
+      #     destination: coverage-report
       - save_cache_
 workflows:
   version: 2
