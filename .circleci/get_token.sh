@@ -5,7 +5,7 @@ base64url() {
 }
 
 sign() {
-    openssl dgst -binary -sha256 -sign <(printf '%s' "$1")
+    openssl dgst -binary -sha256 -sign <(printf '%s' "$(echo ${GITHUB_APPS_PEM_BASE64} | base64 --decode)")
 }
 
 header="$(printf '{"alg":"RS256","typ":"JWT"}' | base64url)"
@@ -15,8 +15,7 @@ exp="$((now + (3 * 60)))"
 template='{"iss":"%s","iat":%s,"exp":%s}'
 payload="$(printf "${template}" "${GITHUB_APPS_ID}" "${iat}" "${exp}" | base64url)"
 
-key="$(echo ${GITHUB_APPS_PEM_BASE64} | base64 --decode)"
-signature="$(printf '%s' "${header}.${payload}" | sign key | base64url)"
+signature="$(printf '%s' "${header}.${payload}" | sign | base64url)"
 jwt="${header}.${payload}.${signature}"
 
 installation_id="$(curl --location --silent --request GET \
