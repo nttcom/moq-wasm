@@ -34,4 +34,4 @@ token="$(curl --location --silent --request POST \
     | jq -r '.token'
 )"
 
-echo "${token"}
+echo "${token}"
