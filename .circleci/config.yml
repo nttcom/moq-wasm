@@ -73,8 +73,7 @@ jobs:
           name: Get GitHub Apps Token
           command: |
             apt update && apt install -y jq
-            github_apps_token="$(bash .circleci/get_token.sh)"
-            echo "${github_apps_token}"
+            export GITHUB_APPS_TOKEN="$(bash .circleci/get_token.sh)"
       - run:
           name: Post Coverage Report
           command: |
@@ -91,8 +90,6 @@ jobs:
             [Coverage report details](${artifact_link})
             "
 
-            echo "${github_apps_token}"
-
             cargo llvm-cov report --html
 
             github_comment_verion=6.0.4
@@ -100,8 +97,8 @@ jobs:
 
             curl -L https://github.com/suzuki-shunsuke/github-comment/releases/download/v${github_comment_verion}/github-comment_${github_comment_verion}_linux_amd64.tar.gz -o linux_amd64.tar.gz
             tar -zxvf linux_amd64.tar.gz
-            ./github-comment hide --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --condition 'Comment.HasMeta && Comment.Meta.TemplateKey == "default"'
-            ./github-comment post --token ${github_apps_token} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --template "${comment}"
+            ./github-comment hide --token ${GITHUB_APPS_TOKEN} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --condition 'Comment.HasMeta && Comment.Meta.TemplateKey == "default"'
+            ./github-comment post --token ${GITHUB_APPS_TOKEN} --org ${CIRCLE_PROJECT_USERNAME} --repo ${CIRCLE_PROJECT_REPONAME} --pr ${pr_number} --template "${comment}"
       - store_artifacts:
           path: target/llvm-cov/html
           destination: coverage-report
