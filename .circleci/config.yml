@@ -70,10 +70,6 @@ jobs:
       - record_build_env
       - restore_cache_
       - run:
-          name: Get GitHub Apps Token
-          command: |
-            
-      - run:
           name: Post Coverage Report
           command: |
             apt update && apt install -y jq
