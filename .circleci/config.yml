@@ -69,7 +69,7 @@ jobs:
       - checkout
       - record_build_env
       - restore_cache_
-      - run: .circleci/post_coverage.sh
+      - run: bash .circleci/post_coverage.sh
       - store_artifacts:
           path: target/llvm-cov/html
           destination: coverage-report
