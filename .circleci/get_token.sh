@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 
+private_key(){
+    echo ${GITHUB_APPS_PEM_BASE64} | base64 --decode
+}
+
 base64url() {
     openssl enc -base64 -A | tr '+/' '-_' | tr -d '='
 }
 
 sign() {
-    openssl dgst -binary -sha256 -sign <(printf '%s' "$(echo ${GITHUB_APPS_PEM_BASE64} | base64 --decode)")
+    openssl dgst -binary -sha256 -sign <(printf '%s' "$(private_key)")
 }
 
 header="$(printf '{"alg":"RS256","typ":"JWT"}' | base64url)"
