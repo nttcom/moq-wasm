@@ -1,7 +1,4 @@
-use crate::{
-    modules::variable_integer::read_variable_integer_from_buffer,
-    variable_bytes::write_variable_bytes,
-};
+use crate::modules::variable_integer::read_variable_integer_from_buffer;
 
 use super::moqt_payload::MOQTPayload;
 use anyhow::{bail, ensure, Context, Result};
@@ -46,18 +43,13 @@ impl MOQTPayload for SetupParameter {
 
                 Ok(SetupParameter::RoleParameter(RoleParameter::new(value?)))
             }
+
+            // Not implemented as only WebTransport is supported now.
             SetupParameterType::Path => {
-                // read_variable_bytes_from_bufferでも良い?
-                let value_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
-                    .context("path value length")?;
+                // let value = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
+                // Ok(SetupParameter::PathParameter(PathParameter::new(value)))
 
-                let value = String::from_utf8(buf.to_vec());
-
-                Ok(SetupParameter::PathParameter(PathParameter {
-                    key: SetupParameterType::Path,
-                    value_length,
-                    value: value?,
-                }))
+                unimplemented!("Not implemented as only WebTransport is supported.")
             }
         }
     }
@@ -69,9 +61,14 @@ impl MOQTPayload for SetupParameter {
                 buf.put_u8(0x01);
                 buf.put_u8(param.value.into());
             }
-            SetupParameter::PathParameter(param) => {
-                buf.put_u8(param.key.into());
-                buf.extend(write_variable_bytes(&param.value.as_bytes().to_vec()));
+
+            // Not implemented as only WebTransport is supported now.
+            SetupParameter::PathParameter(_param) => {
+                // buf.put_u8(param.key.into());
+                // buf.put_u8(param.value.len() as u8);
+                // buf.extend(write_variable_bytes(&param.value.as_bytes().to_vec()));
+
+                unimplemented!("Not implemented as only WebTransport is supported.")
             }
             SetupParameter::Unknown(_) => unimplemented!("Unknown SETUP parameter"),
         }
@@ -125,4 +122,127 @@ impl PathParameter {
 pub enum SetupParameterType {
     Role = 0x00,
     Path = 0x01,
+}
+
+#[cfg(test)]
+mod success {
+    use crate::messages::{moqt_payload::MOQTPayload, setup_parameters::SetupParameterType};
+    use crate::modules::messages::setup_parameters::{RoleCase, RoleParameter, SetupParameter};
+    use crate::modules::variable_integer::write_variable_integer;
+    #[test]
+    fn packetize_role() {
+        let role_parameter = RoleParameter::new(RoleCase::Injection);
+        let setup_parameter = SetupParameter::RoleParameter(role_parameter);
+
+        let mut buf = bytes::BytesMut::new();
+        setup_parameter.packetize(&mut buf);
+
+        // Role 0x00
+        let mut combined_bytes = Vec::from((SetupParameterType::Role as u8).to_be_bytes());
+        // parameter length
+        combined_bytes.extend(write_variable_integer(1));
+        // Injection 0x01
+        combined_bytes.extend((RoleCase::Injection as u8).to_be_bytes());
+
+        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+    }
+
+    #[test]
+    fn depacketize_role() {
+        let role_parameter = RoleParameter::new(RoleCase::Delivery);
+        let expected_setup_parameter = SetupParameter::RoleParameter(role_parameter);
+
+        // Role 0x00
+        let mut combined_bytes = Vec::from((SetupParameterType::Role as u8).to_be_bytes());
+        // parameter length
+        combined_bytes.extend(write_variable_integer(1));
+        // Delivery 0x02
+        combined_bytes.extend((RoleCase::Delivery as u8).to_be_bytes());
+
+        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf).unwrap();
+
+        assert_eq!(depacketized_setup_parameter, expected_setup_parameter);
+    }
+
+    #[test]
+    fn depacketize_unknown() {
+        // Unknown
+        let combined_bytes = Vec::from(write_variable_integer(0x99));
+
+        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
+
+        assert!(depacketized_setup_parameter.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod failure {
+    use crate::messages::{moqt_payload::MOQTPayload, setup_parameters::SetupParameterType};
+    use crate::modules::messages::setup_parameters::{PathParameter, RoleCase, SetupParameter};
+    use crate::modules::variable_integer::write_variable_integer;
+
+    #[test]
+    fn depacketize_role_invalid_value_length() {
+        // Role 0x00
+        let mut combined_bytes = Vec::from((SetupParameterType::Role as u8).to_be_bytes());
+        // wrong length
+        combined_bytes.extend(write_variable_integer(99));
+        // Injection 0x01
+        combined_bytes.extend((RoleCase::Injection as u8).to_be_bytes());
+
+        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
+
+        assert!(depacketized_setup_parameter.is_err());
+    }
+
+    #[test]
+    fn depacketize_role_invalid_value() {
+        // Role 0x00
+        let mut combined_bytes = Vec::from((SetupParameterType::Role as u8).to_be_bytes());
+        // parameter length
+        combined_bytes.extend(write_variable_integer(1));
+        // wrong value
+        combined_bytes.extend((0x99_u8).to_be_bytes());
+
+        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
+
+        assert!(depacketized_setup_parameter.is_err());
+    }
+
+    #[test]
+    #[should_panic]
+    fn packetize_path() {
+        let path_parameter = PathParameter::new(String::from("test"));
+        let setup_parameter = SetupParameter::PathParameter(path_parameter);
+
+        let mut buf = bytes::BytesMut::new();
+        setup_parameter.packetize(&mut buf);
+    }
+
+    #[test]
+    #[should_panic]
+    fn depacketize_path() {
+        // Path 0x01
+        let mut combined_bytes = Vec::from((SetupParameterType::Path as u8).to_be_bytes());
+        // parameter length
+        combined_bytes.extend(write_variable_integer("test".len() as u64));
+        // Path value
+        combined_bytes.extend("test".as_bytes());
+
+        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let _ = SetupParameter::depacketize(&mut buf).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn packetize_unknown() {
+        let setup_parameter = SetupParameter::Unknown(99);
+
+        let mut buf = bytes::BytesMut::new();
+        setup_parameter.packetize(&mut buf);
+    }
 }

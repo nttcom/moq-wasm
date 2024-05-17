@@ -113,7 +113,7 @@ mod success {
         let supported_versions = vec![MOQ_TRANSPORT_VERSION];
         let supported_versions_length = supported_versions.len() as u8;
 
-        let role_parameter = RoleParameter::new(RoleCase::Injection);
+        let role_parameter = RoleParameter::new(RoleCase::Delivery);
         let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
         let setup_parameters_length = setup_parameters.len() as u8;
 
@@ -142,7 +142,7 @@ mod success {
         let supported_versions = vec![MOQ_TRANSPORT_VERSION];
         let supported_versions_length = supported_versions.len() as u8;
 
-        let role_parameter = RoleParameter::new(RoleCase::Injection);
+        let role_parameter = RoleParameter::new(RoleCase::Delivery);
         let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
         let setup_parameters_length = setup_parameters.len() as u8;
 
@@ -167,6 +167,4 @@ mod success {
 
         assert_eq!(depacketized_client_setup, expected_client_setup);
     }
-
-    // TODO: Add tests for PathParameter when implementing QUIC Version
 }

@@ -21,11 +21,10 @@ pub fn read_variable_integer(buf: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
     }
 
     let first_byte = buf.get_u8();
-    let msb2 = first_byte / 64;
     let mut value: u64 = (first_byte % 64).into();
+    let rest_len = get_length_from_variable_integer_first_byte(first_byte) - 1;
 
-    let rest_len = 2usize.pow(msb2 as u32) - 1;
-    if buf.remaining() < rest_len {
+    if buf.remaining() < rest_len.into() {
         bail!(
             "buffer does not have enough length. actual: {}, expected: {}",
             buf.remaining() + 1,
@@ -39,6 +38,17 @@ pub fn read_variable_integer(buf: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
     }
 
     Ok(value)
+}
+
+pub fn get_length_from_variable_integer_first_byte(first_byte: u8) -> u8 {
+    let msb2 = first_byte / 64;
+
+    // 2MSB    Length
+    // 00  ->  1
+    // 01  ->  2
+    // 10  ->  4
+    // 11  ->  8
+    2usize.pow(msb2 as u32) as u8
 }
 
 pub fn write_variable_integer(value: u64) -> BytesMut {

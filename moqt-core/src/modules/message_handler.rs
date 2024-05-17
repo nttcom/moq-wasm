@@ -173,6 +173,7 @@ pub async fn message_handler(
             ) {
                 Ok(_) => MessageType::ServerSetup,
                 Err(err) => {
+                    // TODO: To ensure future extensibility of MOQT, the peers MUST ignore unknown setup parameters.
                     return MessageProcessResult::Failure(
                         TerminationErrorCode::GenericError,
                         err.to_string(),

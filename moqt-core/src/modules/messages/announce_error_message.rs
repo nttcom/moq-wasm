@@ -3,9 +3,7 @@ use serde::Serialize;
 
 use crate::{
     modules::{variable_bytes::write_variable_bytes, variable_integer::write_variable_integer},
-    variable_bytes::{
-        read_variable_bytes_from_buffer, read_variable_bytes_with_length_from_buffer,
-    },
+    variable_bytes::{read_fixed_length_bytes_from_buffer, read_variable_bytes_from_buffer},
     variable_integer::read_variable_integer_from_buffer,
 };
 
@@ -33,7 +31,7 @@ impl MOQTPayload for AnnounceError {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let track_namespace_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("track namespace length")?;
-        let track_namespace = String::from_utf8(read_variable_bytes_with_length_from_buffer(
+        let track_namespace = String::from_utf8(read_fixed_length_bytes_from_buffer(
             buf,
             track_namespace_length as usize,
         )?)
@@ -57,8 +55,6 @@ impl MOQTPayload for AnnounceError {
                 Reason Phrase (b),
             }
         */
-        // Track Namespace bytes Length
-        buf.extend(write_variable_integer(self.track_namespace.len() as u64));
         // Track Namespace
         buf.extend(write_variable_bytes(
             &self.track_namespace.as_bytes().to_vec(),
@@ -93,6 +89,7 @@ mod success {
         let mut combined_bytes = Vec::from(track_namespace_length.to_be_bytes());
         combined_bytes.extend_from_slice(track_namespace.as_bytes());
         combined_bytes.extend_from_slice(&(error_code as u8).to_be_bytes());
+        combined_bytes.extend_from_slice(&(reason_phrase.len() as u8).to_be_bytes());
         combined_bytes.extend_from_slice(reason_phrase.as_bytes());
 
         assert_eq!(buf.as_ref(), combined_bytes.as_slice());
@@ -110,6 +107,7 @@ mod success {
         let mut combined_bytes = Vec::from(track_namespace_length.to_be_bytes());
         combined_bytes.extend_from_slice(track_namespace.as_bytes());
         combined_bytes.extend_from_slice(&(error_code as u8).to_be_bytes());
+        combined_bytes.extend_from_slice(&(reason_phrase.len() as u8).to_be_bytes());
         combined_bytes.extend_from_slice(reason_phrase.as_bytes());
 
         let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());

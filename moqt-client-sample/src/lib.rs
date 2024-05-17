@@ -12,8 +12,8 @@ use moqt_core::{
         announce_message::AnnounceMessage,
         client_setup_message::ClientSetupMessage,
         moqt_payload::MOQTPayload,
-        parameter::{Parameter, ParameterType},
         setup_parameters::{RoleCase, RoleParameter, SetupParameter},
+        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     variable_bytes::write_variable_bytes,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
@@ -150,11 +150,8 @@ impl MOQTClient {
         auth_info: String, // param[0]
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
-            let auth_info_parameter = Parameter::new(
-                ParameterType::AuthorizationInfo,
-                auth_info.len() as u8,
-                auth_info,
-            );
+            let auth_info_parameter =
+                VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
 
             let announce_message = AnnounceMessage::new(
                 track_name_space,
