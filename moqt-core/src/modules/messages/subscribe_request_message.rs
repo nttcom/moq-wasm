@@ -63,8 +63,12 @@ impl MOQTPayload for SubscribeRequestMessage {
         let end_group = Location::depacketize(buf)?;
         let end_object = Location::depacketize(buf)?;
 
+        // NOTE:
+        //   number_of_parameters is not defined in draft-01, but defined in 03.
+        //   For interoperability testing with meta moq, it is implemented in accordance with draft-03.
+        let number_of_parameters = read_variable_integer_from_buffer(buf)?;
         let mut track_request_parameters = Vec::new();
-        while !buf.is_empty() {
+        for _ in 0..number_of_parameters {
             let version_specific_parameter = VersionSpecificParameter::depacketize(buf)?;
             if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
                 tracing::info!("unknown track request parameter {}", code);
@@ -100,6 +104,12 @@ impl MOQTPayload for SubscribeRequestMessage {
         self.start_object.packetize(buf);
         self.end_group.packetize(buf);
         self.end_object.packetize(buf);
+        // NOTE:
+        //   number_of_parameters is not defined in draft-01, but defined in 03.
+        //   For interoperability testing with meta moq, it is implemented in accordance with draft-03.
+        buf.extend(write_variable_integer(
+            self.track_request_parameters.len() as u64
+        ));
         for version_specific_parameter in &self.track_request_parameters {
             version_specific_parameter.packetize(buf);
         }

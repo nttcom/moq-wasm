@@ -13,7 +13,7 @@ pub(crate) async fn process_subscribe_message(
     client: &mut MOQTClient,
     write_buf: &mut BytesMut,
     track_manager_repository: &mut dyn TrackManagerRepository,
-) -> Result<(SubscribeResponse)> {
+) -> Result<SubscribeResponse> {
     if client.status() != MOQTClientStatus::SetUp {
         let message = String::from("Invalid timing");
         tracing::error!(message);
