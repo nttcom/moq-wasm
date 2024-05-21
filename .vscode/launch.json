@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug executable 'moqt-server-sample'",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=moqt-server-sample",
+          "--package=moqt-server-sample"
+        ],
+        "filter": {
+          "name": "moqt-server-sample",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}
