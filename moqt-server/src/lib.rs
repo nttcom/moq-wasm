@@ -1,6 +1,9 @@
 mod modules;
 use bytes::BytesMut;
 use modules::buffer_manager;
+use moqt_core::message_type::MessageType;
+use moqt_core::messages::moqt_payload::MOQTPayload;
+use moqt_core::variable_integer::write_variable_integer;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
@@ -15,9 +18,9 @@ use tracing::{self, Instrument};
 use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
 use wtransport::{endpoint::IncomingSession, Endpoint, Identity, ServerConfig};
 
-use crate::modules::buffer_manager::buffer_manager;
-use crate::modules::buffer_manager::BufferCommand;
-use crate::modules::track_manager::TrackCommand;
+use crate::modules::buffer_manager::{buffer_manager, BufferCommand};
+use crate::modules::stream_manager::{stream_manager, StreamCommand};
+use crate::modules::track_manager::{track_manager, TrackCommand};
 
 pub use moqt_core::constants;
 
@@ -92,6 +95,8 @@ impl MOQT {
         let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
         // For track management but this is meaningless for now because transferring Object message is not implemented yet
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        // For stream management
+        let (stream_tx, mut stream_rx) = mpsc::channel::<StreamCommand>(1024);
 
         if self.underlay != UnderlayType::WebTransport {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
@@ -101,7 +106,12 @@ impl MOQT {
         tokio::spawn(async move { buffer_manager(&mut buffer_rx).await });
 
         // Start track management thread
-        tokio::spawn(async move { modules::track_manager::track_manager(&mut track_rx).await });
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        // Start stream management thread
+        // このスレッドはStreamの管理を行う。
+        // stream_txを経由して、Streamの追加、メッセージの中継を行う。
+        tokio::spawn(async move { stream_manager(&mut stream_rx).await });
 
         // 以下はWebTransportの場合
         // Start wtransport server
@@ -130,7 +140,7 @@ impl MOQT {
             let incoming_session = server.accept().await;
             // Create a thread for each session
             tokio::spawn(
-                handle_connection(buffer_tx, track_tx, incoming_session)
+                handle_connection(buffer_tx, track_tx, stream_tx.clone(), incoming_session)
                     .instrument(tracing::info_span!("Connection", id)),
             );
         }
@@ -142,15 +152,17 @@ impl MOQT {
 async fn handle_connection(
     buffer_tx: mpsc::Sender<BufferCommand>,
     track_tx: mpsc::Sender<TrackCommand>,
+    stream_tx: mpsc::Sender<StreamCommand>,
     incoming_session: IncomingSession,
 ) {
-    let result = handle_connection_impl(buffer_tx, track_tx, incoming_session).await;
+    let result = handle_connection_impl(buffer_tx, track_tx, stream_tx, incoming_session).await;
     tracing::error!("{:?}", result);
 }
 
 async fn handle_connection_impl(
     buffer_tx: mpsc::Sender<BufferCommand>,
     track_tx: mpsc::Sender<TrackCommand>,
+    stream_tx: mpsc::Sender<StreamCommand>,
     incoming_session: IncomingSession,
 ) -> Result<()> {
     tracing::info!("Waiting for session request...");
@@ -198,23 +210,56 @@ async fn handle_connection_impl(
                     tracing::info!("Accepted BI stream");
                 });
 
+                // write_steamはMessageの中継のため、別スレッドから呼び出されることがあるためMutexでラップする
                 let (write_stream, read_stream) = stream;
+                let shread_write_stream = Arc::new(Mutex::new(write_stream));
+
+
                 let stream_id = read_stream.id().into_u64();
 
                 let buffer_tx = buffer_tx.clone();
                 let track_tx = track_tx.clone();
                 let close_tx = close_tx.clone();
                 let client = client.clone();
+
+                let (message_tx, mut message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+                let stream_tx_clone = stream_tx.clone();
+                stream_tx_clone.send(StreamCommand::Set {
+                    session_id: stable_id,
+                    stream_type: "bidirectional_stream".to_string(),
+                    sender: message_tx,
+                }).await?;
+
+                let write_stream_clone = Arc::clone(&shread_write_stream);
                 tokio::spawn(async move {
                     let mut stream = Stream {
                         stream_type: StreamType::Bi,
                         stable_id,
                         stream_id,
                         read_stream,
-                        write_stream,
+                        shread_write_stream: write_stream_clone,
                     };
-                    handle_stream(&mut stream, client, buffer_tx, track_tx, close_tx).await
+                    handle_stream(&mut stream, client, buffer_tx, track_tx, close_tx, stream_tx_clone).await
                 });
+                let write_stream_clone = Arc::clone(&shread_write_stream);
+                tokio::spawn(async move {
+                    // ANNOUNCE SUBSCRIBE OBJECTなどのメッセージを受け取って中継する
+                    while let Some(message) = message_rx.recv().await {
+                        tracing::info!("message received");
+                        let mut write_buf = BytesMut::new();
+                        message.packetize(&mut write_buf);
+                        let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
+                        message_buf.extend(write_variable_integer(u8::from(MessageType::Announce) as u64));
+                        message_buf.extend(write_buf);
+
+                        let mut shread_write_stream = write_stream_clone.lock().await;
+                        if let Err(e) = shread_write_stream.write_all(&message_buf).await {
+                            tracing::error!("Failed to write to stream: {:?}", e);
+                            break;
+                        }
+                    }
+                });
+
             },
             stream = connection.accept_uni() => {
                 let _span = tracing::info_span!("sid", stable_id); // TODO: 未実装
@@ -224,21 +269,23 @@ async fn handle_connection_impl(
 
                 let read_stream = stream;
                 let write_stream = connection.open_uni().await?.await?;
+                let shread_write_stream = Arc::new(Mutex::new(write_stream));
                 let stream_id = read_stream.id().into_u64();
 
                 let buffer_tx = buffer_tx.clone();
                 let track_tx = track_tx.clone();
                 let close_tx = close_tx.clone();
                 let client = client.clone();
+                let stream_tx_clone = stream_tx.clone();
                 tokio::spawn(async move {
                     let mut stream = Stream {
                         stream_type: StreamType::Uni,
                         stable_id,
                         stream_id,
                         read_stream,
-                        write_stream,
+                        shread_write_stream,
                     };
-                    handle_stream(&mut stream, client, buffer_tx, track_tx, close_tx).await
+                    handle_stream(&mut stream, client, buffer_tx, track_tx, close_tx, stream_tx_clone).await
                 });
             },
             _ = connection.closed() => {
@@ -271,7 +318,7 @@ struct Stream {
     stable_id: usize,
     stream_id: u64,
     read_stream: RecvStream,
-    write_stream: SendStream,
+    shread_write_stream: Arc<Mutex<SendStream>>,
 }
 
 async fn handle_stream(
@@ -280,6 +327,7 @@ async fn handle_stream(
     buffer_tx: Sender<BufferCommand>,
     track_tx: Sender<TrackCommand>,
     close_tx: Sender<(u64, String)>,
+    stream_tx: Sender<StreamCommand>,
 ) -> Result<()> {
     let mut buffer = vec![0; 65536].into_boxed_slice();
 
@@ -287,9 +335,10 @@ async fn handle_stream(
     let stable_id = stream.stable_id;
     let stream_id = stream.stream_id;
     let read_stream = &mut stream.read_stream;
-    let write_stream = &mut stream.write_stream;
+    let shread_write_stream = &mut stream.shread_write_stream;
 
     let mut track_manager = modules::track_manager::TrackManager::new(track_tx.clone());
+    let mut stream_manager = modules::stream_manager::StreamManager::new(stream_tx.clone());
 
     loop {
         let span = tracing::info_span!("sid", stable_id);
@@ -314,12 +363,14 @@ async fn handle_stream(
             UnderlayType::WebTransport,
             &mut client,
             &mut track_manager,
+            &mut stream_manager,
         )
         .await;
 
         match message_result {
             MessageProcessResult::Success(buf) => {
-                write_stream.write_all(&buf).await?;
+                let mut shread_write_stream = shread_write_stream.lock().await;
+                shread_write_stream.write_all(&buf).await?;
                 tracing::info!("sent {:x?}", buf.to_vec());
             }
             MessageProcessResult::Failure(code, message) => {

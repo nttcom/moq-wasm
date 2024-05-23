@@ -6,7 +6,7 @@ use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_
 
 use super::{moqt_payload::MOQTPayload, setup_parameters::SetupParameter};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClientSetupMessage {
     pub(crate) number_of_supported_versions: u8,
     pub(crate) supported_versions: Vec<u32>,

@@ -11,7 +11,7 @@ use crate::{
 
 use super::moqt_payload::MOQTPayload;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ObjectMessageWithPayloadLength {
     track_id: u64,
     group_sequence: u64,
@@ -74,7 +74,7 @@ impl MOQTPayload for ObjectMessageWithPayloadLength {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ObjectMessageWithoutPayloadLength {
     track_id: u64,
     group_sequence: u64,
