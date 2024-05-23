@@ -20,7 +20,7 @@ pub(crate) enum AnnounceResponse {
 
 pub(crate) async fn announce_handler(
     announce_message: AnnounceMessage,
-    client: &mut MOQTClient, // TODO: 未実装のため_をつけている
+    client: &mut MOQTClient,
     track_manager_repository: &mut dyn TrackManagerRepository,
     stream_manager_repository: &mut dyn StreamManagerRepository,
 ) -> Result<AnnounceResponse> {
@@ -37,13 +37,14 @@ pub(crate) async fn announce_handler(
         .await;
 
     match set_result {
-        // TODO: 接続しているクライアントに対して、announceされたことを通知する
         Ok(_) => {
-            let track_namespace = announce_message.track_namespace().to_string();
+            // announceされたことをクライアントに通知
             let message: Box<dyn MOQTPayload> = Box::new(announce_message.clone());
             stream_manager_repository
                 .broadcast_message(Some(client.id), message)
                 .await?;
+
+            let track_namespace = announce_message.track_namespace().to_string();
             Ok(AnnounceResponse::Success(AnnounceOk::new(
                 track_namespace.to_string(),
             )))
