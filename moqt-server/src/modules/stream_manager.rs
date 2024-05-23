@@ -28,7 +28,7 @@ pub(crate) async fn stream_manager(rx: &mut mpsc::Receiver<StreamCommand>) {
                 stream_type,
                 sender,
             } => {
-                let inner_map = streams.entry(session_id).or_insert(HashMap::new());
+                let inner_map = streams.entry(session_id).or_default();
                 inner_map.insert(stream_type.to_string(), sender);
             }
             List {
@@ -104,26 +104,3 @@ impl StreamManagerRepository for StreamManager {
         Ok(())
     }
 }
-
-// pub(crate) async fn broadcast_message(
-//     session_id: usize,
-//     message: Box<dyn MOQTPayload + Send>,
-//     stream_manager: &mut mpsc::Sender<StreamCommand>,
-// ) -> Result<()> {
-//     let streams = stream_manager.clone();
-//     let (resp_tx, resp_rx) = oneshot::channel::<Vec<MoqtMessageForwarder>>();
-//     streams
-//         .send(StreamCommand::List {
-//             stream_type: "bidirectional_stream".to_string(),
-//             exclude_session_id: Some(session_id),
-//             resp: resp_tx,
-//         })
-//         .await?;
-//     let senders = resp_rx.await?;
-//     let payload: Arc<dyn MOQTPayload> = Arc::new(message);
-//     let cloned_payload = Arc::clone(&payload);
-//     for sender in senders {
-//         sender.send(cloned_payload).await;
-//     }
-//     Ok(())
-// }
