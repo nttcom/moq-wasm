@@ -208,9 +208,13 @@ impl MOQTClient {
         // start_object: Option<String>,
         // end_group: Option<String>,
         // end_object: Option<String>,
+        auth_info: String,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
             // This is equal to `Now example`
+            let auth_info =
+                VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
+            let version_specific_parameters = vec![auth_info];
             let subscribe_message =
                 moqt_core::messages::subscribe_request_message::SubscribeRequestMessage::new(
                     track_name_space,
@@ -219,7 +223,7 @@ impl MOQTClient {
                     moqt_core::messages::subscribe_request_message::Location::Absolute(0),
                     moqt_core::messages::subscribe_request_message::Location::None,
                     moqt_core::messages::subscribe_request_message::Location::None,
-                    Vec::new(),
+                    version_specific_parameters,
                 );
             let mut subscribe_message_buf = BytesMut::new();
             subscribe_message.packetize(&mut subscribe_message_buf);

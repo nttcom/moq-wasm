@@ -2,15 +2,15 @@ use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
 use crate::handlers::announce_handler::AnnounceResponse;
+use crate::handlers::subscribe_handler::SubscribeResponse;
 use crate::messages::object_message::{
     ObjectMessageWithPayloadLength, ObjectMessageWithoutPayloadLength,
 };
-use crate::modules::handlers::subscribe_handler::subscribe_handler;
 use crate::modules::handlers::unannounce_handler::unannounce_handler;
-use crate::modules::messages::subscribe_request_message::SubscribeRequestMessage;
 use crate::modules::messages::unannounce_message::UnAnnounceMessage;
 use crate::server_processes::announce_message::process_announce_message;
 use crate::server_processes::client_setup_message::process_client_setup_message;
+use crate::server_processes::subscribe_message::process_subscribe_message;
 
 use super::constants::UnderlayType;
 use super::message_type::MessageType;
@@ -184,49 +184,19 @@ pub async fn message_handler(
             }
         }
         MessageType::Subscribe => {
-            // TODO: server_processesフォルダに移管する
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
-            }
-
-            let subscribe_request_message = SubscribeRequestMessage::depacketize(&mut payload_buf);
-
-            if let Err(err) = subscribe_request_message {
-                // fix
-                tracing::info!("{:#?}", err);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::GenericError,
-                    err.to_string(),
-                );
-            }
-
-            let subscribe_result = subscribe_handler(
-                subscribe_request_message.unwrap(),
+            match process_subscribe_message(
+                &mut payload_buf,
                 client,
+                &mut write_buf,
                 track_manager_repository,
             )
-            .await;
-
-            match subscribe_result {
+            .await
+            {
                 Ok(subscribe_response) => match subscribe_response {
-                    crate::modules::handlers::subscribe_handler::SubscribeResponse::Success(
-                        subscribe_ok,
-                    ) => {
-                        subscribe_ok.packetize(&mut write_buf);
-                        MessageType::SubscribeOk
-                    }
-                    crate::modules::handlers::subscribe_handler::SubscribeResponse::Failure(
-                        subscribe_error,
-                    ) => {
-                        subscribe_error.packetize(&mut write_buf);
-                        MessageType::SubscribeError
-                    }
+                    SubscribeResponse::Success(_) => MessageType::SubscribeOk,
+                    SubscribeResponse::Failure(_) => MessageType::SubscribeError,
                 },
                 Err(err) => {
-                    // fix
-                    tracing::info!("{:#?}", err);
                     return MessageProcessResult::Failure(
                         TerminationErrorCode::GenericError,
                         err.to_string(),
@@ -275,17 +245,16 @@ pub async fn message_handler(
             return MessageProcessResult::Success(BytesMut::with_capacity(0));
         }
         MessageType::Announce => {
-            let announce_result = process_announce_message(
+            match process_announce_message(
                 &mut payload_buf,
                 client,
                 &mut write_buf,
                 track_manager_repository,
                 stream_manager_repository,
             )
-            .await;
-
-            match announce_result {
-                Ok(announce_response) => match announce_response {
+            .await
+            {
+                Ok(announce_result) => match announce_result {
                     AnnounceResponse::Success(_) => MessageType::AnnounceOk,
                     AnnounceResponse::Failure(_) => MessageType::AnnounceError,
                 },
