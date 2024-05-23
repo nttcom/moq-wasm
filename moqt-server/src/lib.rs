@@ -109,8 +109,6 @@ impl MOQT {
         tokio::spawn(async move { track_manager(&mut track_rx).await });
 
         // Start stream management thread
-        // このスレッドはStreamの管理を行う。
-        // stream_txを経由して、Streamの追加、メッセージの中継を行う。
         tokio::spawn(async move { stream_manager(&mut stream_rx).await });
 
         // 以下はWebTransportの場合
