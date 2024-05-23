@@ -44,14 +44,13 @@ init().then(async () => {
       const streamDatagram = Array.from(form['stream-datagram']).filter((elem) => elem.checked)[0].value
       const messageType = form['message-type'].value
       const trackNamespace = form['track-namespace'].value
+      const trackName = form['track-name'].value
+      const authInfo = form['auth-info'].value
       const versions = form['versions'].value.split(',').map(BigInt)
       const role = Array.from(form['role']).filter((elem) => elem.checked)[0].value
       const isAddPath = !!form['add-path'].checked
 
       console.log({ streamDatagram, messageType, versions, role, isAddPath })
-
-      // FIXME: Set these values from form
-      const trackName = 'this is track name'
 
       switch (messageType) {
         case 'setup':
@@ -66,14 +65,13 @@ init().then(async () => {
           await client.sendObjectMessageWithoutLength(1n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
           break
         case 'announce':
-          // FIXME: Set AuthInfo from form
-          await client.sendAnnounceMessage(trackNamespace, 1, 'secret')
+          await client.sendAnnounceMessage(trackNamespace, 1, authInfo)
           break
         case 'unannounce':
           await client.sendUnannounceMessage(trackNamespace)
           break
         case 'subscribe':
-          await client.sendSubscribeMessage(trackNamespace, trackName)
+          await client.sendSubscribeMessage(trackNamespace, trackName, authInfo)
           break
         case 'unsubscribe':
           await client.sendUnsubscribeMessage(trackNamespace, trackName)
