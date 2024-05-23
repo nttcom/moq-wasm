@@ -6,6 +6,7 @@ use crate::{
 
 use super::moqt_payload::MOQTPayload;
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct UnAnnounceMessage {
     track_namespace: String,
 }

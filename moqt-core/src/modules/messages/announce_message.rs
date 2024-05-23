@@ -13,7 +13,7 @@ use crate::{
 
 use super::moqt_payload::MOQTPayload;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AnnounceMessage {
     pub(crate) track_namespace: String,
     pub(crate) number_of_parameters: u8,
