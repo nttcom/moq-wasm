@@ -5,7 +5,7 @@ use moqt_core::message_type::MessageType;
 use moqt_core::messages::moqt_payload::MOQTPayload;
 use moqt_core::variable_integer::write_variable_integer;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use wtransport::RecvStream;
 use wtransport::SendStream;
@@ -222,7 +222,7 @@ async fn handle_connection_impl(
                 let close_tx = close_tx.clone();
                 let client = client.clone();
 
-                let (message_tx, mut message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+                let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
                 let stream_tx_clone = stream_tx.clone();
                 stream_tx_clone.send(StreamCommand::Set {
                     session_id: stable_id,
@@ -230,6 +230,7 @@ async fn handle_connection_impl(
                     sender: message_tx,
                 }).await?;
 
+                // WebTrasnportのメッセージを待ち受けるスレッド
                 let write_stream_clone = Arc::clone(&shread_write_stream);
                 tokio::spawn(async move {
                     let mut stream = Stream {
@@ -239,25 +240,13 @@ async fn handle_connection_impl(
                         read_stream,
                         shread_write_stream: write_stream_clone,
                     };
-                    handle_stream(&mut stream, client, buffer_tx, track_tx, close_tx, stream_tx_clone).await
+                    handle_read_stream(&mut stream, client, buffer_tx, track_tx, close_tx, stream_tx_clone).await
                 });
+
+                // サーバーが中継するメッセージ(ANNOUNCE SUBSCRIBE OBJECT)を送信するスレッド
                 let write_stream_clone = Arc::clone(&shread_write_stream);
                 tokio::spawn(async move {
-                    // ANNOUNCE SUBSCRIBE OBJECTなどのメッセージを受け取って中継する
-                    while let Some(message) = message_rx.recv().await {
-                        tracing::info!("message received");
-                        let mut write_buf = BytesMut::new();
-                        message.packetize(&mut write_buf);
-                        let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
-                        message_buf.extend(write_variable_integer(u8::from(MessageType::Announce) as u64));
-                        message_buf.extend(write_buf);
-
-                        let mut shread_write_stream = write_stream_clone.lock().await;
-                        if let Err(e) = shread_write_stream.write_all(&message_buf).await {
-                            tracing::error!("Failed to write to stream: {:?}", e);
-                            break;
-                        }
-                    }
+                    handle_relayed_message(write_stream_clone, message_rx).await;
                 });
 
             },
@@ -285,7 +274,7 @@ async fn handle_connection_impl(
                         read_stream,
                         shread_write_stream,
                     };
-                    handle_stream(&mut stream, client, buffer_tx, track_tx, close_tx, stream_tx_clone).await
+                    handle_read_stream(&mut stream, client, buffer_tx, track_tx, close_tx, stream_tx_clone).await
                 });
             },
             _ = connection.closed() => {
@@ -321,7 +310,7 @@ struct Stream {
     shread_write_stream: Arc<Mutex<SendStream>>,
 }
 
-async fn handle_stream(
+async fn handle_read_stream(
     stream: &mut Stream,
     client: Arc<Mutex<MOQTClient>>,
     buffer_tx: Sender<BufferCommand>,
@@ -390,6 +379,28 @@ async fn handle_stream(
         .await?;
 
     Ok::<()>(())
+}
+
+async fn handle_relayed_message(
+    write_stream_clone: Arc<Mutex<SendStream>>,
+    mut message_rx: Receiver<Arc<Box<dyn MOQTPayload>>>,
+) {
+    while let Some(message) = message_rx.recv().await {
+        tracing::info!("message received");
+        let mut write_buf = BytesMut::new();
+        message.packetize(&mut write_buf);
+        let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
+        message_buf.extend(write_variable_integer(
+            u8::from(MessageType::Announce) as u64
+        ));
+        message_buf.extend(write_buf);
+
+        let mut shread_write_stream = write_stream_clone.lock().await;
+        if let Err(e) = shread_write_stream.write_all(&message_buf).await {
+            tracing::error!("Failed to write to stream: {:?}", e);
+            break;
+        }
+    }
 }
 
 fn init_logging(log_level: String) {
