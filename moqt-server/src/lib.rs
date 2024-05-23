@@ -208,7 +208,7 @@ async fn handle_connection_impl(
                     tracing::info!("Accepted BI stream");
                 });
 
-                // write_steamはMessageの中継のため、別スレッドから呼び出されることがあるためMutexでラップする
+                // write_steamはMessageの返却・中継のため、複数スレッドから呼び出されることがあるためMutexでラップしてスレッドセーフにする
                 let (write_stream, read_stream) = stream;
                 let shread_write_stream = Arc::new(Mutex::new(write_stream));
 
