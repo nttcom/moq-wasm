@@ -76,9 +76,6 @@ impl StreamManager {
         Self { tx }
     }
 }
-// StreamManagerを用いて、関数を定義する。
-// 1. 特定のsession_idに対してメッセージをForwardingする
-// 2. session_idのリストを取得する
 
 #[async_trait]
 impl StreamManagerRepository for StreamManager {
