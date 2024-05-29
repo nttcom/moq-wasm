@@ -4,6 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use moqt_core::TrackManagerRepository;
 use tokio::sync::{mpsc, oneshot};
+use TrackCommand::*;
 
 // Called as a separate thread
 pub(crate) async fn track_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
@@ -11,7 +12,6 @@ pub(crate) async fn track_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
 
     let mut tracks = HashSet::<String>::new();
 
-    use TrackCommand::*;
     while let Some(cmd) = rx.recv().await {
         tracing::info!("command received");
         match cmd {

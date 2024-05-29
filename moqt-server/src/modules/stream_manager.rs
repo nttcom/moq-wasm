@@ -8,6 +8,7 @@ use tokio::sync::{mpsc, oneshot};
 
 type MoqtMessageForwarder = mpsc::Sender<Arc<Box<dyn MOQTPayload>>>;
 
+use StreamCommand::*;
 // Called as a separate thread
 pub(crate) async fn stream_manager(rx: &mut mpsc::Receiver<StreamCommand>) {
     tracing::info!("stream_manager start");
@@ -19,7 +20,6 @@ pub(crate) async fn stream_manager(rx: &mut mpsc::Receiver<StreamCommand>) {
     // }
     let mut streams = HashMap::<usize, HashMap<String, MoqtMessageForwarder>>::new();
 
-    use StreamCommand::*;
     while let Some(cmd) = rx.recv().await {
         tracing::info!("command received");
         match cmd {
@@ -62,7 +62,7 @@ pub(crate) enum StreamCommand {
     },
     List {
         stream_type: String,
-        exclude_session_id: Option<usize>,
+        exclude_session_id: Option<usize>, // 現在はListはbroadcastにしか利用されないため、exclude_session_idを指定する
         resp: oneshot::Sender<Vec<MoqtMessageForwarder>>,
     },
 }

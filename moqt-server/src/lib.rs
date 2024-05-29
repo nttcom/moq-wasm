@@ -93,7 +93,7 @@ impl MOQT {
 
         // For buffer management for each stream
         let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
-        // For track management but this is meaningless for now because transferring Object message is not implemented yet
+        // For track management
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
         // For stream management
         let (stream_tx, mut stream_rx) = mpsc::channel::<StreamCommand>(1024);
@@ -135,10 +135,11 @@ impl MOQT {
         for id in 0.. {
             let buffer_tx = buffer_tx.clone();
             let track_tx = track_tx.clone();
+            let stream_tx = stream_tx.clone();
             let incoming_session = server.accept().await;
             // Create a thread for each session
             tokio::spawn(
-                handle_connection(buffer_tx, track_tx, stream_tx.clone(), incoming_session)
+                handle_connection(buffer_tx, track_tx, stream_tx, incoming_session)
                     .instrument(tracing::info_span!("Connection", id)),
             );
         }
@@ -217,12 +218,12 @@ async fn handle_connection_impl(
 
                 let buffer_tx = buffer_tx.clone();
                 let track_tx = track_tx.clone();
+                let stream_tx = stream_tx.clone();
                 let close_tx = close_tx.clone();
                 let client = client.clone();
 
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-                let stream_tx_clone = stream_tx.clone();
-                stream_tx_clone.send(StreamCommand::Set {
+                stream_tx.send(StreamCommand::Set {
                     session_id: stable_id,
                     stream_type: "bidirectional_stream".to_string(),
                     sender: message_tx,
@@ -238,7 +239,7 @@ async fn handle_connection_impl(
                         read_stream,
                         shread_write_stream: write_stream_clone,
                     };
-                    handle_read_stream(&mut stream, client, buffer_tx, track_tx, close_tx, stream_tx_clone).await
+                    handle_read_stream(&mut stream, client, buffer_tx, track_tx, close_tx, stream_tx).await
                 });
 
                 // サーバーが中継するメッセージ(ANNOUNCE SUBSCRIBE OBJECT)を送信するスレッド
