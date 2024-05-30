@@ -2,14 +2,19 @@ use std::{collections::HashMap, sync::Arc};
 
 use bytes::BytesMut;
 use tokio::sync::{mpsc, oneshot, Mutex};
+use BufferCommand::*;
 
 // Called as a separate thread
 pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
     tracing::info!("buffer_manager start");
 
+    // {
+    //   "${session_id}" : {
+    //     "${stream_id}" : buffer
+    //   }
+    // }
     let mut buffers = HashMap::<usize, HashMap<u64, BufferType>>::new();
 
-    use BufferCommand::*;
     while let Some(cmd) = rx.recv().await {
         tracing::info!("command received");
         match cmd {

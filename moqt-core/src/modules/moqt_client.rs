@@ -10,9 +10,9 @@ pub enum MOQTClientStatus {
 
 #[derive(Debug)]
 pub struct MOQTClient {
-    id: usize,
-    status: MOQTClientStatus,
-    role: Option<RoleCase>,
+    pub id: usize,
+    pub status: MOQTClientStatus,
+    pub role: Option<RoleCase>,
 }
 
 impl MOQTClient {

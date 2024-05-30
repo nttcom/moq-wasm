@@ -14,7 +14,7 @@ use super::moqt_payload::MOQTPayload;
 /// which uses a namespace that is constant across all MoQ Transport versions.
 ///
 /// This structure is referred by messages using parameters other than Setup parameters.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum VersionSpecificParameter {
     GroupSequence(GroupSequence),
     ObjectSequence(ObjectSequence),
@@ -112,7 +112,7 @@ impl From<VersionSpecificParameterType> for u64 {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GroupSequence {
     parameter_type: VersionSpecificParameterType,
     length: u8,
@@ -132,7 +132,7 @@ impl GroupSequence {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ObjectSequence {
     parameter_type: VersionSpecificParameterType,
     length: u8,
@@ -152,7 +152,7 @@ impl ObjectSequence {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AuthorizationInfo {
     parameter_type: VersionSpecificParameterType,
     length: u8,
