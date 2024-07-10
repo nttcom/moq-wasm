@@ -4,7 +4,7 @@ use serde::Serialize;
 use crate::{
     variable_bytes::{
         read_variable_bytes_from_buffer, read_variable_bytes_to_end_from_buffer,
-        write_variable_bytes,
+        write_fixed_length_bytes, write_variable_bytes,
     },
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
@@ -128,6 +128,6 @@ impl MOQTPayload for ObjectMessageWithoutPayloadLength {
         buf.extend(write_variable_integer(self.group_sequence));
         buf.extend(write_variable_integer(self.object_sequence));
         buf.extend(write_variable_integer(self.object_send_order));
-        buf.extend(write_variable_bytes(&self.object_payload));
+        buf.extend(write_fixed_length_bytes(&self.object_payload));
     }
 }
