@@ -3,8 +3,8 @@ use serde::Serialize;
 
 use crate::{
     variable_bytes::{
-        read_variable_bytes_from_buffer, read_variable_bytes_to_end_from_buffer,
-        write_fixed_length_bytes, write_variable_bytes,
+        read_fixed_length_bytes_from_buffer, read_variable_bytes_to_end_from_buffer,
+        write_variable_bytes,
     },
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
@@ -52,8 +52,15 @@ impl MOQTPayload for ObjectMessageWithPayloadLength {
         let object_sequence = read_variable_integer_from_buffer(buf).context("object sequence")?;
         let object_send_order =
             read_variable_integer_from_buffer(buf).context("object send order")?;
-        let object_payload = read_variable_bytes_from_buffer(buf).context("object payload")?;
-        let object_payload_length = object_payload.len() as u64;
+        let object_payload_length =
+            read_variable_integer_from_buffer(buf).context("object payload length")?;
+
+        // Payloadの長さを示すvarint部分を読み飛ばす
+        let _ = read_variable_integer_from_buffer(buf)?;
+        // Payload Lengthがある場合は指定された長さだけ読む
+        let object_payload =
+            read_fixed_length_bytes_from_buffer(buf, object_payload_length as usize)
+                .context("object payload")?;
 
         Ok(ObjectMessageWithPayloadLength {
             track_id,
@@ -70,6 +77,7 @@ impl MOQTPayload for ObjectMessageWithPayloadLength {
         buf.extend(write_variable_integer(self.group_sequence));
         buf.extend(write_variable_integer(self.object_sequence));
         buf.extend(write_variable_integer(self.object_send_order));
+        buf.extend(write_variable_integer(self.object_payload_length));
         buf.extend(write_variable_bytes(&self.object_payload));
     }
 }
@@ -111,6 +119,10 @@ impl MOQTPayload for ObjectMessageWithoutPayloadLength {
         let object_sequence = read_variable_integer_from_buffer(buf).context("object sequence")?;
         let object_send_order =
             read_variable_integer_from_buffer(buf).context("object send order")?;
+
+        // Payloadの長さを示すvarint部分を読み飛ばす
+        let _ = read_variable_integer_from_buffer(buf)?;
+        // Payload Lengthがない場合はバッファの最後まで読む
         let object_payload =
             read_variable_bytes_to_end_from_buffer(buf).context("object payload")?;
 
@@ -128,7 +140,7 @@ impl MOQTPayload for ObjectMessageWithoutPayloadLength {
         buf.extend(write_variable_integer(self.group_sequence));
         buf.extend(write_variable_integer(self.object_sequence));
         buf.extend(write_variable_integer(self.object_send_order));
-        buf.extend(write_fixed_length_bytes(&self.object_payload));
+        buf.extend(write_variable_bytes(&self.object_payload));
     }
 }
 
@@ -139,8 +151,7 @@ mod success {
         ObjectMessageWithPayloadLength, ObjectMessageWithoutPayloadLength,
     };
     use crate::modules::{
-        variable_bytes::{write_fixed_length_bytes, write_variable_bytes},
-        variable_integer::write_variable_integer,
+        variable_bytes::write_variable_bytes, variable_integer::write_variable_integer,
     };
     #[test]
     fn packetize_object_with_payload_length() {
@@ -170,6 +181,7 @@ mod success {
         // Object Send Order (i)
         combined_bytes.extend(write_variable_integer(object_send_order));
         // [Object Payload Length (i)]
+        combined_bytes.extend(write_variable_integer(object_payload.len() as u64));
         // Object Payload (b)
         combined_bytes.extend(write_variable_bytes(object_payload.as_ref()));
 
@@ -201,6 +213,7 @@ mod success {
         // Object Send Order (i)
         combined_bytes.extend(write_variable_integer(object_send_order));
         // [Object Payload Length (i)]
+        combined_bytes.extend(write_variable_integer(object_payload.len() as u64));
         // Object Payload (b)
         combined_bytes.extend(write_variable_bytes(object_payload.as_ref()));
 
@@ -242,7 +255,7 @@ mod success {
         // Object Send Order (i)
         combined_bytes.extend(write_variable_integer(object_send_order));
         // Object Payload (b)
-        combined_bytes.extend(write_fixed_length_bytes(object_payload.as_ref()));
+        combined_bytes.extend(write_variable_bytes(object_payload.as_ref()));
 
         assert_eq!(buf.as_ref(), combined_bytes.as_slice());
     }
@@ -272,7 +285,7 @@ mod success {
         // Object Send Order (i)
         combined_bytes.extend(write_variable_integer(object_send_order));
         // Object Payload (b)
-        combined_bytes.extend(write_fixed_length_bytes(object_payload.as_ref()));
+        combined_bytes.extend(write_variable_bytes(object_payload.as_ref()));
 
         let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
         let depacketized_object_with_payload_length =
