@@ -27,8 +27,7 @@ pub(crate) async fn process_announce_message(
         }
     };
 
-    let announce_response =
-        announce_handler(announce_message, client, track_manager_repository).await;
+    let announce_response = announce_handler(announce_message, track_manager_repository).await;
 
     match announce_response {
         Ok(announce_response_message) => match announce_response_message {
