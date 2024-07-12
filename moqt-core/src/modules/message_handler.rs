@@ -58,7 +58,7 @@ pub async fn message_handler(
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
     track_manager_repository: &mut dyn TrackManagerRepository,
-    stream_manager_repository: &mut dyn StreamManagerRepository,
+    _stream_manager_repository: &mut dyn StreamManagerRepository,
 ) -> MessageProcessResult {
     tracing::info!("message_handler! {}", read_buf.len());
 
@@ -250,7 +250,6 @@ pub async fn message_handler(
                 client,
                 &mut write_buf,
                 track_manager_repository,
-                stream_manager_repository,
             )
             .await
             {

@@ -1,8 +1,5 @@
 {
   "editor.formatOnSave": true,
-  "rust-analyzer.cargo.cfgs": {
-    "web_sys_unstable_apis": ""
-  },
   "[javascript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
@@ -10,6 +7,13 @@
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
     "editor.inlayHints.enabled": "off"
   },
+  "rust-analyzer.cargo.cfgs": {
+    "web_sys_unstable_apis": ""
+  },
   "rust-analyzer.checkOnSave": true,
-  "rust-analyzer.check.command": "clippy"
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.cargo.features": "all",
+  "rust-analyzer.linkedProjects": [
+    "/Users/uchidayuki/skyway/Research/moqt-skyway/moqt/moqt-client-sample/Cargo.toml"
+  ]
 }

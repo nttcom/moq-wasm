@@ -79,6 +79,7 @@ impl StreamManager {
 
 #[async_trait]
 impl StreamManagerRepository for StreamManager {
+    // TODO: SUBSCRIBE・OBJECTメッセージの際に関数名を修正する
     async fn broadcast_message(
         &self,
         session_id: Option<usize>,
