@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::{any::Any, io::Cursor};
 
 use anyhow::{Context, Result};
 
@@ -80,6 +80,10 @@ impl MOQTPayload for AnnounceMessage {
         for param in &self.parameters {
             param.packetize(buf);
         }
+    }
+    /// MOQTPayloadからAnnounceMessageへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

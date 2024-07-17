@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
+use std::any::Any;
 
 use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 
@@ -55,6 +56,10 @@ impl MOQTPayload for ServerSetupMessage {
         for setup_parameter in self.setup_parameters.iter() {
             setup_parameter.packetize(buf);
         }
+    }
+    /// MOQTPayloadからServerSetupMessageへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

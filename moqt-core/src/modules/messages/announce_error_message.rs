@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
+use std::any::Any;
 
 use crate::{
     modules::{variable_bytes::write_variable_bytes, variable_integer::write_variable_integer},
@@ -65,6 +66,10 @@ impl MOQTPayload for AnnounceError {
         buf.extend(write_variable_bytes(
             &self.reason_phrase.as_bytes().to_vec(),
         ));
+    }
+    /// MOQTPayloadからAnnounceErrorへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
