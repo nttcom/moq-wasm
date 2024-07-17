@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use anyhow::Context;
 use serde::Serialize;
 
@@ -14,6 +16,22 @@ pub struct SubscribeError {
     track_name: String,
     error_code: u64,
     reason_phrase: String,
+}
+
+impl SubscribeError {
+    pub fn new(
+        track_namespace: String,
+        track_name: String,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> SubscribeError {
+        SubscribeError {
+            track_namespace,
+            track_name,
+            error_code,
+            reason_phrase,
+        }
+    }
 }
 
 impl MOQTPayload for SubscribeError {
@@ -46,5 +64,9 @@ impl MOQTPayload for SubscribeError {
         buf.extend(write_variable_bytes(
             &self.reason_phrase.as_bytes().to_vec(),
         ));
+    }
+    /// MOQTPayloadからSubscribeErrorへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

@@ -189,6 +189,7 @@ pub async fn message_handler(
                 client,
                 &mut write_buf,
                 track_manager_repository,
+                stream_manager_repository,
             )
             .await
             {
@@ -250,7 +251,6 @@ pub async fn message_handler(
                 client,
                 &mut write_buf,
                 track_manager_repository,
-                stream_manager_repository,
             )
             .await
             {

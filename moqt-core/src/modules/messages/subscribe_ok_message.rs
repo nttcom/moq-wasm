@@ -1,5 +1,6 @@
 use anyhow::Context;
 use serde::Serialize;
+use std::any::Any;
 
 use crate::modules::{
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
@@ -59,5 +60,9 @@ impl MOQTPayload for SubscribeOk {
         buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
         buf.extend(write_variable_integer(self.track_id));
         buf.extend(write_variable_integer(self.expires));
+    }
+    /// MOQTPayloadからSubscribeOkへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

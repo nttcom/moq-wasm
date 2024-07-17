@@ -1,10 +1,7 @@
-use std::vec;
-
-use anyhow::{Context, Result};
-
-use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
-
 use super::{moqt_payload::MOQTPayload, setup_parameters::SetupParameter};
+use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
+use anyhow::{Context, Result};
+use std::{any::Any, vec};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientSetupMessage {
@@ -94,6 +91,10 @@ impl MOQTPayload for ClientSetupMessage {
         for setup_parameter in &self.setup_parameters {
             setup_parameter.packetize(buf);
         }
+    }
+    /// MOQTPayloadからClientSetupMessageへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

@@ -1,4 +1,5 @@
 use anyhow::{bail, Context};
+use std::any::Any;
 use tracing;
 
 use crate::{
@@ -114,6 +115,10 @@ impl MOQTPayload for SubscribeRequestMessage {
             version_specific_parameter.packetize(buf);
         }
     }
+    /// MOQTPayloadからSubscribeRequestMessageへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -162,5 +167,9 @@ impl MOQTPayload for Location {
                 buf.extend(write_variable_integer(*value));
             }
         }
+    }
+    /// MOQTPayloadからLocationへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
