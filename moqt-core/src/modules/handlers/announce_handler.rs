@@ -18,6 +18,7 @@ pub(crate) enum AnnounceResponse {
 
 pub(crate) async fn announce_handler(
     announce_message: AnnounceMessage,
+    client: &mut MOQTClient,
     track_manager_repository: &mut dyn TrackManagerRepository,
 ) -> Result<AnnounceResponse> {
     tracing::info!("announce_handler!");
