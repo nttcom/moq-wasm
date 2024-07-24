@@ -20,13 +20,13 @@ pub(crate) async fn track_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
                 resp,
             } => {
                 // 既存の値があると更新されないでfalseが返る
-                let result = if let Entry::Vacant(track) = tracks.entry(track_namespace) {
-                    track.insert(session_id);
-                    true
-                } else {
-                    false
+                match tracks.entry(track_namespace) {
+                    Entry::Vacant(track) => {
+                        track.insert(session_id);
+                        resp.send(true).unwrap();
+                    }
+                    Entry::Occupied(_) => resp.send(false).unwrap(),
                 };
-                resp.send(result).unwrap();
             }
             Delete {
                 track_namespace,
@@ -52,8 +52,8 @@ pub(crate) async fn track_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
                 track_namespace,
                 resp,
             } => {
-                let session = tracks.get(&track_namespace).copied();
-                resp.send(session).unwrap();
+                let session_id = tracks.get(&track_namespace).copied();
+                resp.send(session_id).unwrap();
             }
         }
     }
