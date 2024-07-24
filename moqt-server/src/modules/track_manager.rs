@@ -155,7 +155,8 @@ impl TrackManagerRepository for TrackManager {
         };
         self.tx.send(cmd).await.unwrap();
 
-        let result = resp_rx.await.unwrap();
-        return result;
+        let session_id = resp_rx.await.unwrap();
+
+        return session_id;
     }
 }
