@@ -1,5 +1,3 @@
-use bytes::BytesMut;
-
 use crate::{
     handlers::announce_handler::{announce_handler, AnnounceResponse},
     messages::{announce_message::AnnounceMessage, moqt_payload::MOQTPayload},
@@ -7,6 +5,7 @@ use crate::{
     MOQTClient, TrackManagerRepository,
 };
 use anyhow::{bail, Result};
+use bytes::BytesMut;
 
 pub(crate) async fn process_announce_message(
     payload_buf: &mut BytesMut,
@@ -28,7 +27,8 @@ pub(crate) async fn process_announce_message(
         }
     };
 
-    let announce_response = announce_handler(announce_message, track_manager_repository).await;
+    let announce_response =
+        announce_handler(announce_message, client, track_manager_repository).await;
 
     match announce_response {
         Ok(announce_response_message) => match announce_response_message {

@@ -1,3 +1,4 @@
+use super::moqt_payload::MOQTPayload;
 use crate::{
     modules::variable_integer::read_variable_integer_from_buffer,
     variable_bytes::{
@@ -7,8 +8,7 @@ use crate::{
 };
 use anyhow::Ok;
 use num_enum::TryFromPrimitive;
-
-use super::moqt_payload::MOQTPayload;
+use std::any::Any;
 
 /// This structure is a parameter that uses a version-specific namespace, unlike Setup parameters,
 /// which uses a namespace that is constant across all MoQ Transport versions.
@@ -95,6 +95,10 @@ impl MOQTPayload for VersionSpecificParameter {
                 unimplemented!("Unknown version specific parameter")
             }
         }
+    }
+    /// MOQTPayloadからVersionSpecificParameterへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

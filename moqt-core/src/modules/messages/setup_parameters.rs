@@ -1,4 +1,5 @@
 use crate::modules::variable_integer::read_variable_integer_from_buffer;
+use std::any::Any;
 
 use super::moqt_payload::MOQTPayload;
 use anyhow::{bail, ensure, Context, Result};
@@ -72,6 +73,10 @@ impl MOQTPayload for SetupParameter {
             }
             SetupParameter::Unknown(_) => unimplemented!("Unknown SETUP parameter"),
         }
+    }
+    /// MOQTPayloadからSetupParameterへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

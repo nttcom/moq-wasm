@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
+use std::any::Any;
 
 use crate::{
     variable_bytes::{
@@ -80,6 +81,10 @@ impl MOQTPayload for ObjectMessageWithPayloadLength {
         buf.extend(write_variable_integer(self.object_payload_length));
         buf.extend(write_variable_bytes(&self.object_payload));
     }
+    /// MOQTPayloadからObjectMessageWithPayloadLengthへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -141,6 +146,10 @@ impl MOQTPayload for ObjectMessageWithoutPayloadLength {
         buf.extend(write_variable_integer(self.object_sequence));
         buf.extend(write_variable_integer(self.object_send_order));
         buf.extend(write_variable_bytes(&self.object_payload));
+    }
+    /// MOQTPayloadからObjectMessageWithoutPayloadLengthへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

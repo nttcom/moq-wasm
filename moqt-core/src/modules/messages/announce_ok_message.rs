@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
+use std::any::Any;
 
 use crate::{
     modules::variable_bytes::write_variable_bytes, variable_bytes::read_variable_bytes_from_buffer,
@@ -31,6 +32,10 @@ impl MOQTPayload for AnnounceOk {
         buf.extend(write_variable_bytes(
             &self.track_namespace.as_bytes().to_vec(),
         ));
+    }
+    /// MOQTPayloadからAnnounceOkへのダウンキャストを可能にするためのメソッド
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

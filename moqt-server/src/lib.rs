@@ -1,30 +1,28 @@
 mod modules;
-use bytes::BytesMut;
-use modules::buffer_manager;
-use moqt_core::message_type::MessageType;
-use moqt_core::messages::moqt_payload::MOQTPayload;
-use moqt_core::variable_integer::write_variable_integer;
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::Mutex;
-use wtransport::RecvStream;
-use wtransport::SendStream;
-
-use std::sync::Arc;
-use std::time::Duration;
-
-use anyhow::{bail, Context, Ok, Result};
-use tracing::{self, Instrument};
-use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
-use wtransport::{endpoint::IncomingSession, Endpoint, Identity, ServerConfig};
-
 use crate::modules::buffer_manager::{buffer_manager, BufferCommand};
 use crate::modules::stream_manager::{stream_manager, StreamCommand};
 use crate::modules::track_manager::{track_manager, TrackCommand};
-
+use anyhow::{bail, Context, Ok, Result};
+use bytes::BytesMut;
+use modules::buffer_manager;
 pub use moqt_core::constants;
-
+use moqt_core::message_type::MessageType;
+use moqt_core::messages::moqt_payload::MOQTPayload;
+use moqt_core::messages::subscribe_error_message::SubscribeError;
+use moqt_core::messages::subscribe_ok_message::SubscribeOk;
+use moqt_core::messages::subscribe_request_message::SubscribeRequestMessage;
+use moqt_core::variable_integer::write_variable_integer;
 use moqt_core::{constants::UnderlayType, message_handler::*, MOQTClient};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::Mutex;
+use tracing::{self, Instrument};
+use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
+use wtransport::RecvStream;
+use wtransport::SendStream;
+use wtransport::{endpoint::IncomingSession, Endpoint, Identity, ServerConfig};
 
 // Auth paramを検証するためのcallback
 pub enum AuthCallbackType {
@@ -385,14 +383,34 @@ async fn handle_relayed_message(
     mut message_rx: Receiver<Arc<Box<dyn MOQTPayload>>>,
 ) {
     while let Some(message) = message_rx.recv().await {
-        tracing::info!("message received");
         let mut write_buf = BytesMut::new();
         message.packetize(&mut write_buf);
         let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
-        message_buf.extend(write_variable_integer(
-            u8::from(MessageType::Announce) as u64
-        ));
+
+        if message
+            .as_any()
+            .downcast_ref::<SubscribeRequestMessage>()
+            .is_some()
+        {
+            message_buf.extend(write_variable_integer(
+                u8::from(MessageType::Subscribe) as u64
+            ));
+        } else if message.as_any().downcast_ref::<SubscribeOk>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(MessageType::SubscribeOk) as u64
+            ));
+        } else if message.as_any().downcast_ref::<SubscribeError>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(MessageType::SubscribeError) as u64,
+            ));
+        } else {
+            message_buf.extend(write_variable_integer(
+                u8::from(MessageType::Announce) as u64
+            ));
+        }
+
         message_buf.extend(write_buf);
+        tracing::info!("message relayed: {:?}", message_buf);
 
         let mut shread_write_stream = write_stream_clone.lock().await;
         if let Err(e) = shread_write_stream.write_all(&message_buf).await {

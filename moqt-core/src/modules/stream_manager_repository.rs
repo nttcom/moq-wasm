@@ -11,4 +11,5 @@ pub trait StreamManagerRepository: Send + Sync {
         session_id: Option<usize>,
         message: Box<dyn MOQTPayload>,
     ) -> Result<()>;
+    async fn relay_message(&self, session_id: usize, message: Box<dyn MOQTPayload>) -> Result<()>;
 }

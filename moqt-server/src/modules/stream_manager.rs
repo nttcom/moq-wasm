@@ -49,6 +49,17 @@ pub(crate) async fn stream_manager(rx: &mut mpsc::Receiver<StreamCommand>) {
                 }
                 let _ = resp.send(senders);
             }
+            Get {
+                session_id,
+                stream_type,
+                resp,
+            } => {
+                let sender = streams
+                    .get(&session_id)
+                    .and_then(|inner_map| inner_map.get(&stream_type))
+                    .cloned();
+                let _ = resp.send(sender);
+            }
         }
     }
 }
@@ -64,6 +75,11 @@ pub(crate) enum StreamCommand {
         stream_type: String,
         exclude_session_id: Option<usize>, // 現在はListはbroadcastにしか利用されないため、exclude_session_idを指定する
         resp: oneshot::Sender<Vec<MoqtMessageForwarder>>,
+    },
+    Get {
+        session_id: usize,
+        stream_type: String,
+        resp: oneshot::Sender<Option<MoqtMessageForwarder>>,
     },
 }
 
@@ -99,6 +115,22 @@ impl StreamManagerRepository for StreamManager {
             let message_arc_clone = Arc::clone(&message_arc);
             let _ = sender.send(message_arc_clone).await;
         }
+        Ok(())
+    }
+    async fn relay_message(&self, session_id: usize, message: Box<dyn MOQTPayload>) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Option<MoqtMessageForwarder>>();
+        let cmd = StreamCommand::Get {
+            session_id,
+            stream_type: "bidirectional_stream".to_string(),
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let sender = resp_rx
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("sender not found"))?;
+        let message_arc = Arc::new(message);
+        let _ = sender.send(message_arc).await;
         Ok(())
     }
 }

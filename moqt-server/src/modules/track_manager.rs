@@ -1,8 +1,7 @@
-use std::collections::HashSet;
-
 use anyhow::Result;
 use async_trait::async_trait;
 use moqt_core::TrackManagerRepository;
+use std::collections::{hash_map::Entry, HashMap};
 use tokio::sync::{mpsc, oneshot};
 use TrackCommand::*;
 
@@ -10,23 +9,51 @@ use TrackCommand::*;
 pub(crate) async fn track_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
     tracing::info!("track_manager start");
 
-    let mut tracks = HashSet::<String>::new();
+    let mut tracks = HashMap::<String, usize>::new();
 
     while let Some(cmd) = rx.recv().await {
         tracing::info!("command received");
         match cmd {
-            Set { track_name, resp } => {
+            Set {
+                track_namespace,
+                session_id,
+                resp,
+            } => {
                 // 既存の値があると更新されないでfalseが返る
-                let result = tracks.insert(track_name);
-                resp.send(result).unwrap();
+                match tracks.entry(track_namespace) {
+                    Entry::Vacant(track) => {
+                        track.insert(session_id);
+                        resp.send(true).unwrap();
+                    }
+                    Entry::Occupied(_) => resp.send(false).unwrap(),
+                };
             }
-            Delete { track_name, resp } => {
-                let result = tracks.remove(&track_name);
-                resp.send(result).unwrap();
+            Delete {
+                track_namespace,
+                resp,
+            } => {
+                let removed_value = tracks.remove(&track_namespace);
+                match removed_value {
+                    Some(_) => resp.send(true).unwrap(),
+                    None => resp.send(false).unwrap(),
+                }
             }
-            Has { track_name, resp } => {
-                let result = tracks.contains(&track_name);
-                resp.send(result).unwrap();
+            Has {
+                track_namespace,
+                resp,
+            } => {
+                let result = tracks.get(&track_namespace);
+                match result {
+                    Some(_) => resp.send(true).unwrap(),
+                    None => resp.send(false).unwrap(),
+                }
+            }
+            GetPublisherSessionId {
+                track_namespace,
+                resp,
+            } => {
+                let session_id = tracks.get(&track_namespace).copied();
+                resp.send(session_id).unwrap();
             }
         }
     }
@@ -37,16 +64,21 @@ pub(crate) async fn track_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
 #[derive(Debug)]
 pub(crate) enum TrackCommand {
     Set {
-        track_name: String,
+        track_namespace: String,
+        session_id: usize,
         resp: oneshot::Sender<bool>,
     },
     Delete {
-        track_name: String,
+        track_namespace: String,
         resp: oneshot::Sender<bool>,
     },
     Has {
-        track_name: String,
+        track_namespace: String,
         resp: oneshot::Sender<bool>,
+    },
+    GetPublisherSessionId {
+        track_namespace: String,
+        resp: oneshot::Sender<Option<usize>>,
     },
 }
 
@@ -63,11 +95,12 @@ impl TrackManager {
 
 #[async_trait]
 impl TrackManagerRepository for TrackManager {
-    async fn set(&self, track_name: &str) -> Result<()> {
+    async fn set(&self, track_namespace: &str, session_id: usize) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::Set {
-            track_name: track_name.to_string(),
+            track_namespace: track_namespace.to_string(),
+            session_id,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -80,11 +113,11 @@ impl TrackManagerRepository for TrackManager {
             Err(anyhow::anyhow!("already exist"))
         }
     }
-    async fn delete(&self, track_name: &str) -> Result<()> {
+    async fn delete(&self, track_namespace: &str) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::Delete {
-            track_name: track_name.to_string(),
+            track_namespace: track_namespace.to_string(),
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -97,15 +130,33 @@ impl TrackManagerRepository for TrackManager {
             Err(anyhow::anyhow!("not found"))
         }
     }
-    async fn has(&self, track_name: &str) -> bool {
+    async fn has(&self, track_namespace: &str) -> bool {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::Has {
-            track_name: track_name.to_string(),
+            track_namespace: track_namespace.to_string(),
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
 
-        resp_rx.await.unwrap()
+        let result = resp_rx.await.unwrap();
+        return result;
+    }
+
+    // track_namespaceからpublisherのsession_idを取得する
+    async fn get_publisher_session_id_by_track_namespace(
+        &self,
+        track_namespace: &str,
+    ) -> Option<usize> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Option<usize>>();
+        let cmd = TrackCommand::GetPublisherSessionId {
+            track_namespace: track_namespace.to_string(),
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let session_id = resp_rx.await.unwrap();
+
+        return session_id;
     }
 }
