@@ -397,6 +397,7 @@ impl TrackManagerRepository for TrackManager {
         }
     }
 
+    // track_idからsubscriberのsession_idを取得する
     async fn get_subscriber_session_id_by_track_id(&self, track_id: usize) -> Option<usize> {
         let (resp_tx, resp_rx) = oneshot::channel::<Option<usize>>();
 
