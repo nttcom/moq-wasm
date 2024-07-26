@@ -27,7 +27,7 @@ pub(crate) async fn announce_handler(
 
     // announceされたTrack Namespaceを記録
     let set_result = track_manager_repository
-        .set(announce_message.track_namespace())
+        .set_publisher(announce_message.track_namespace(), client.id)
         .await;
 
     match set_result {

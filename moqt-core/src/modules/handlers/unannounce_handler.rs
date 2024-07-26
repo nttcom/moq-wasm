@@ -22,7 +22,7 @@ pub(crate) async fn unannounce_handler(
 
     // announceされたTrack Namespaceを削除
     let delete_result = track_manager_repository
-        .delete(unannounce_message.track_namespace())
+        .delete_publisher(unannounce_message.track_namespace())
         .await;
 
     match delete_result {
