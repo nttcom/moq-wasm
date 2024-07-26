@@ -1,59 +1,221 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use moqt_core::TrackManagerRepository;
-use std::collections::{hash_map::Entry, HashMap};
 use tokio::sync::{mpsc, oneshot};
 use TrackCommand::*;
+
+#[derive(Clone)]
+struct Publisher {
+    track_namespace: String,
+    publisher_session_id: usize,
+    tracks: Vec<Track>,
+}
+
+#[derive(Clone)]
+struct Track {
+    track_id: usize,
+    track_name: String,
+    subscribers: Vec<Subscriber>,
+}
+
+#[derive(Clone)]
+struct Subscriber {
+    subscriber_session_id: usize,
+}
+
+fn is_exist_track_namespace(publishers: Vec<Publisher>, track_namespace: String) -> bool {
+    publishers
+        .iter()
+        .any(|p| p.track_namespace == track_namespace)
+}
+
+fn is_exist_track_name(tracks: Vec<Track>, track_names: String) -> bool {
+    tracks.iter().any(|t| t.track_name == track_names)
+}
+
+fn is_exist_subscriber(subscribers: Vec<Subscriber>, subscriber_session_id: usize) -> bool {
+    subscribers
+        .iter()
+        .any(|s| s.subscriber_session_id == subscriber_session_id)
+}
 
 // Called as a separate thread
 pub(crate) async fn track_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
     tracing::info!("track_manager start");
 
-    let mut tracks = HashMap::<String, usize>::new();
+    let mut publishers: Vec<Publisher> = Vec::new();
 
     while let Some(cmd) = rx.recv().await {
         tracing::info!("command received");
         match cmd {
-            Set {
+            SetPublisher {
                 track_namespace,
-                session_id,
+                publisher_session_id,
                 resp,
             } => {
-                // 既存の値があると更新されないでfalseが返る
-                match tracks.entry(track_namespace) {
-                    Entry::Vacant(track) => {
-                        track.insert(session_id);
-                        resp.send(true).unwrap();
-                    }
-                    Entry::Occupied(_) => resp.send(false).unwrap(),
+                let publisher = Publisher {
+                    track_namespace: track_namespace.clone(),
+                    publisher_session_id,
+                    tracks: Vec::new(),
                 };
+
+                if !is_exist_track_namespace(publishers.clone(), publisher.track_namespace.clone())
+                {
+                    // track_namespaceが存在しない場合は追加する
+                    publishers.push(publisher);
+
+                    resp.send(true).unwrap();
+                } else {
+                    resp.send(false).unwrap();
+                }
             }
-            Delete {
+            DeletePublisher {
                 track_namespace,
                 resp,
             } => {
-                let removed_value = tracks.remove(&track_namespace);
-                match removed_value {
-                    Some(_) => resp.send(true).unwrap(),
-                    None => resp.send(false).unwrap(),
+                if let Some(pub_pos) = publishers
+                    .iter()
+                    .position(|p| p.track_namespace == track_namespace)
+                {
+                    publishers.remove(pub_pos);
+
+                    resp.send(true).unwrap();
+                } else {
+                    resp.send(false).unwrap();
                 }
             }
-            Has {
+            HasNamespace {
                 track_namespace,
                 resp,
             } => {
-                let result = tracks.get(&track_namespace);
-                match result {
-                    Some(_) => resp.send(true).unwrap(),
-                    None => resp.send(false).unwrap(),
-                }
+                let result = is_exist_track_namespace(publishers.clone(), track_namespace);
+
+                resp.send(result).unwrap();
             }
             GetPublisherSessionId {
                 track_namespace,
                 resp,
             } => {
-                let session_id = tracks.get(&track_namespace).copied();
-                resp.send(session_id).unwrap();
+                let result = publishers
+                    .iter()
+                    .position(|p| p.track_namespace == track_namespace)
+                    .map(|pub_pos| publishers[pub_pos].publisher_session_id);
+
+                resp.send(result).unwrap();
+            }
+            SetSubscliber {
+                track_namespace,
+                subscriber_session_id,
+                track_id,
+                track_name,
+                resp,
+            } => {
+                // track_namespaceが存在するか確認する
+                if let Some(pub_pos) = publishers
+                    .iter()
+                    .position(|p| p.track_namespace == track_namespace)
+                {
+                    // track_namespaceが存在する場合はtrack_nameが存在するか確認する
+                    if !is_exist_track_name(publishers[pub_pos].tracks.clone(), track_name.clone())
+                    {
+                        // track_nameが存在しない場合は追加する
+                        let track = Track {
+                            track_id,
+                            track_name,
+                            subscribers: vec![Subscriber {
+                                subscriber_session_id,
+                            }],
+                        };
+                        publishers[pub_pos].tracks.push(track);
+
+                        resp.send(true).unwrap();
+                    } else {
+                        // track_nameが存在する場合はsubscriberが存在するか確認する
+                        if let Some(track_pos) = publishers[pub_pos]
+                            .tracks
+                            .iter()
+                            .position(|t| t.track_name == track_name)
+                        {
+                            if !is_exist_subscriber(
+                                publishers[pub_pos].tracks[track_pos].subscribers.clone(),
+                                subscriber_session_id,
+                            ) {
+                                // subscriberが存在しない場合は追加する
+                                let subscrber = Subscriber {
+                                    subscriber_session_id,
+                                };
+                                publishers[pub_pos].tracks[track_pos]
+                                    .subscribers
+                                    .push(subscrber);
+
+                                resp.send(true).unwrap();
+                            } else {
+                                // subscriberが存在する場合はfalseを返す
+                                resp.send(false).unwrap();
+                            }
+                        }
+                    }
+                } else {
+                    // track_namespaceが存在しない場合はfalseを返す
+                    resp.send(false).unwrap();
+                }
+            }
+            DeleteSubscliber {
+                track_namespace,
+                track_name,
+                subscriber_session_id,
+                resp,
+            } => {
+                // track_namespaceとtrack_nameに当てはまるsubscriberを削除する
+                if let Some(pub_pos) = publishers
+                    .iter()
+                    .position(|p| p.track_namespace == track_namespace)
+                {
+                    if let Some(track_pos) = publishers[pub_pos]
+                        .tracks
+                        .iter()
+                        .position(|t| t.track_name == track_name)
+                    {
+                        if let Some(sub_pos) = publishers[pub_pos].tracks[track_pos]
+                            .subscribers
+                            .iter()
+                            .position(|s| s.subscriber_session_id == subscriber_session_id)
+                        {
+                            publishers[pub_pos].tracks[track_pos]
+                                .subscribers
+                                .remove(sub_pos);
+
+                            // subscriberが他に存在しない場合はtrackも削除する
+                            if publishers[pub_pos].tracks[track_pos].subscribers.is_empty() {
+                                publishers[pub_pos].tracks.remove(track_pos);
+                            }
+
+                            resp.send(true).unwrap();
+                        } else {
+                            // subscriberが存在しない場合はfalseを返す
+                            resp.send(false).unwrap();
+                        }
+                    } else {
+                        // track_nameが存在しない場合はfalseを返す
+                        resp.send(false).unwrap();
+                    }
+                } else {
+                    // track_namespaceが存在しない場合はfalseを返す
+                    resp.send(false).unwrap();
+                }
+            }
+            GetSubscliberSessionId { track_id, resp } => {
+                let result = publishers.iter().find_map(|p| {
+                    p.tracks.iter().find_map(|t| {
+                        if t.track_id == track_id {
+                            Some(t.subscribers[0].subscriber_session_id)
+                        } else {
+                            None
+                        }
+                    })
+                });
+
+                resp.send(result).unwrap();
             }
         }
     }
@@ -63,21 +225,38 @@ pub(crate) async fn track_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
 
 #[derive(Debug)]
 pub(crate) enum TrackCommand {
-    Set {
+    SetPublisher {
         track_namespace: String,
-        session_id: usize,
+        publisher_session_id: usize,
         resp: oneshot::Sender<bool>,
     },
-    Delete {
+    DeletePublisher {
         track_namespace: String,
         resp: oneshot::Sender<bool>,
     },
-    Has {
+    HasNamespace {
         track_namespace: String,
         resp: oneshot::Sender<bool>,
     },
     GetPublisherSessionId {
         track_namespace: String,
+        resp: oneshot::Sender<Option<usize>>,
+    },
+    SetSubscliber {
+        track_namespace: String,
+        subscriber_session_id: usize,
+        track_id: usize,
+        track_name: String,
+        resp: oneshot::Sender<bool>,
+    },
+    DeleteSubscliber {
+        track_namespace: String,
+        track_name: String,
+        subscriber_session_id: usize,
+        resp: oneshot::Sender<bool>,
+    },
+    GetSubscliberSessionId {
+        track_id: usize,
         resp: oneshot::Sender<Option<usize>>,
     },
 }
@@ -95,12 +274,16 @@ impl TrackManager {
 
 #[async_trait]
 impl TrackManagerRepository for TrackManager {
-    async fn set(&self, track_namespace: &str, session_id: usize) -> Result<()> {
+    async fn set_publisher(
+        &self,
+        track_namespace: &str,
+        publisher_session_id: usize,
+    ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
-        let cmd = TrackCommand::Set {
+        let cmd = TrackCommand::SetPublisher {
             track_namespace: track_namespace.to_string(),
-            session_id,
+            publisher_session_id,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -113,10 +296,11 @@ impl TrackManagerRepository for TrackManager {
             Err(anyhow::anyhow!("already exist"))
         }
     }
-    async fn delete(&self, track_namespace: &str) -> Result<()> {
+
+    async fn delete_publisher(&self, track_namespace: &str) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
-        let cmd = TrackCommand::Delete {
+        let cmd = TrackCommand::DeletePublisher {
             track_namespace: track_namespace.to_string(),
             resp: resp_tx,
         };
@@ -130,10 +314,11 @@ impl TrackManagerRepository for TrackManager {
             Err(anyhow::anyhow!("not found"))
         }
     }
-    async fn has(&self, track_namespace: &str) -> bool {
+
+    async fn has_namespace(&self, track_namespace: &str) -> bool {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
-        let cmd = TrackCommand::Has {
+        let cmd = TrackCommand::HasNamespace {
             track_namespace: track_namespace.to_string(),
             resp: resp_tx,
         };
@@ -151,6 +336,72 @@ impl TrackManagerRepository for TrackManager {
         let (resp_tx, resp_rx) = oneshot::channel::<Option<usize>>();
         let cmd = TrackCommand::GetPublisherSessionId {
             track_namespace: track_namespace.to_string(),
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let session_id = resp_rx.await.unwrap();
+
+        return session_id;
+    }
+
+    async fn set_subscriber(
+        &self,
+        track_namespace: &str,
+        subscriber_session_id: usize,
+        track_id: usize,
+        track_name: &str,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
+
+        let cmd = TrackCommand::SetSubscliber {
+            track_namespace: track_namespace.to_string(),
+            subscriber_session_id,
+            track_id,
+            track_name: track_name.to_string(),
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        if result {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("already exist"))
+        }
+    }
+
+    async fn delete_subscriber(
+        &self,
+        track_namespace: &str,
+        track_name: &str,
+        subscriber_session_id: usize,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
+
+        let cmd = TrackCommand::DeleteSubscliber {
+            track_namespace: track_namespace.to_string(),
+            track_name: track_name.to_string(),
+            subscriber_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        if result {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("not found"))
+        }
+    }
+
+    async fn get_subscriber_session_id_by_track_id(&self, track_id: usize) -> Option<usize> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Option<usize>>();
+
+        let cmd = TrackCommand::GetSubscliberSessionId {
+            track_id,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
