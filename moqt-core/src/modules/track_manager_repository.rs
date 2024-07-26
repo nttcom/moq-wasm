@@ -3,11 +3,25 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub trait TrackManagerRepository: Send + Sync {
-    async fn set(&self, track_namespace: &str, session_id: usize) -> Result<()>;
-    async fn delete(&self, track_namespace: &str) -> Result<()>;
-    async fn has(&self, track_namespace: &str) -> bool;
+    async fn set_publisher(&self, track_namespace: &str, session_id: usize) -> Result<()>;
+    async fn delete_publisher(&self, track_namespace: &str) -> Result<()>;
+    async fn has_namespace(&self, track_namespace: &str) -> bool;
     async fn get_publisher_session_id_by_track_namespace(
         &self,
         track_namespace: &str,
     ) -> Option<usize>;
+    async fn set_subscriber(
+        &self,
+        track_namespace: &str,
+        subscriber_session_id: usize,
+        track_id: usize,
+        track_name: &str,
+    ) -> Result<()>;
+    async fn delete_subscriber(
+        &self,
+        track_namespace: &str,
+        track_name: &str,
+        subscriber_session_id: usize,
+    ) -> Result<()>;
+    async fn get_subscriber_session_id_by_track_id(&self, track_id: usize) -> Option<usize>;
 }
