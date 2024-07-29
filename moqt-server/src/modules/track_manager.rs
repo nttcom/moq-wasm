@@ -412,3 +412,330 @@ impl TrackManagerRepository for TrackManager {
         return session_id;
     }
 }
+
+#[cfg(test)]
+mod success {
+    use crate::modules::track_manager::{track_manager, TrackManager, TrackManagerRepository};
+    use crate::TrackCommand;
+    use tokio::sync::mpsc;
+    #[tokio::test]
+    async fn set_publisher() {
+        let track_namespace = "test";
+        let publisher_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+        let result = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn delete_publisher() {
+        let track_namespace = "test";
+        let publisher_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+        let _ = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+
+        let result = track_manager.delete_publisher(track_namespace).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn has_namespace() {
+        let track_namespace = "test";
+        let publisher_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+        let _ = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+
+        let result = track_manager.has_namespace(track_namespace).await;
+
+        assert!(result);
+    }
+
+    #[tokio::test]
+    async fn get_publisher_session_id_by_track_namespace() {
+        let track_namespace = "test";
+        let publisher_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+        let _ = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+
+        let result = track_manager
+            .get_publisher_session_id_by_track_namespace(track_namespace)
+            .await;
+
+        assert_eq!(result, Some(publisher_session_id));
+    }
+
+    #[tokio::test]
+    async fn set_subscriber_track_not_existed() {
+        let track_namespace = "test_namespace";
+        let publisher_session_id = 1;
+        let subscriber_session_id = 2;
+        let track_id = 3;
+        let track_name = "test_name";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+        let _ = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+
+        // Register a new subscriber with a new track
+        let result = track_manager
+            .set_subscriber(track_namespace, subscriber_session_id, track_id, track_name)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn set_subscriber_track_already_existed() {
+        let track_namespace = "test_namespace";
+        let publisher_session_id = 1;
+        let subscriber_session_id_1 = 1;
+        let subscriber_session_id_2 = 2;
+        let track_id = 3;
+        let track_name = "test_name";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+        let _ = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+        let _ = track_manager
+            .set_subscriber(
+                track_namespace,
+                subscriber_session_id_1,
+                track_id,
+                track_name,
+            )
+            .await;
+
+        // Register a new subscriber with the same track
+        let result = track_manager
+            .set_subscriber(
+                track_namespace,
+                subscriber_session_id_2,
+                track_id,
+                track_name,
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn delete_subscriber() {
+        let track_namespace = "test_namespace";
+        let publisher_session_id = 1;
+        let subscriber_session_id = 2;
+        let track_id = 3;
+        let track_name = "test_name";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+        let _ = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+        let _ = track_manager
+            .set_subscriber(track_namespace, subscriber_session_id, track_id, track_name)
+            .await;
+
+        let result = track_manager
+            .delete_subscriber(track_namespace, track_name, subscriber_session_id)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn get_subscriber_session_id_by_track_id() {
+        let track_namespace = "test_namespace";
+        let publisher_session_id = 1;
+        let subscriber_session_id = 2;
+        let track_id = 3;
+        let track_name = "test_name";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+        let _ = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+        let _ = track_manager
+            .set_subscriber(track_namespace, subscriber_session_id, track_id, track_name)
+            .await;
+
+        let result = track_manager
+            .get_subscriber_session_id_by_track_id(track_id)
+            .await;
+
+        assert_eq!(result, Some(subscriber_session_id));
+    }
+}
+
+#[cfg(test)]
+mod failure {
+    use crate::modules::track_manager::{track_manager, TrackManager, TrackManagerRepository};
+    use crate::TrackCommand;
+    use tokio::sync::mpsc;
+    #[tokio::test]
+    async fn set_publisher_already_exist() {
+        let track_namespace = "test";
+        let publisher_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+        let _ = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+
+        let result = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_publisher_not_found() {
+        let track_namespace = "test";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+
+        let result = track_manager.delete_publisher(track_namespace).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_publisher_session_id_by_track_namespace_not_found() {
+        let track_namespace = "test";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+
+        let result = track_manager
+            .get_publisher_session_id_by_track_namespace(track_namespace)
+            .await;
+
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn set_subscriber_already_exist() {
+        let track_namespace = "test_namespace";
+        let publisher_session_id = 1;
+        let subscriber_session_id = 2;
+        let track_id = 3;
+        let track_name = "test_name";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+        let _ = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+        let _ = track_manager
+            .set_subscriber(track_namespace, subscriber_session_id, track_id, track_name)
+            .await;
+
+        // Register the same subscriber
+        let result = track_manager
+            .set_subscriber(track_namespace, subscriber_session_id, track_id, track_name)
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_subscriber_not_found() {
+        let track_namespace = "test_namespace";
+        let publisher_session_id = 1;
+        let subscriber_session_id = 2;
+        let track_name = "test_name";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+        let _ = track_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+
+        let result = track_manager
+            .delete_subscriber(track_namespace, track_name, subscriber_session_id)
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_subscriber_session_id_by_track_id_not_found() {
+        let track_id = 3;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_manager(&mut track_rx).await });
+
+        let track_manager = TrackManager::new(track_tx.clone());
+
+        let result = track_manager
+            .get_subscriber_session_id_by_track_id(track_id)
+            .await;
+
+        assert_eq!(result, None);
+    }
+}
