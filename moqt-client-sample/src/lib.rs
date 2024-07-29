@@ -613,6 +613,7 @@ async fn message_handler(
 
                     if let Some(callback) = callbacks.borrow().subscribe_callback() {
                         callback.call1(&JsValue::null(), &(v)).unwrap();
+                        
                     }
                 }
                 MessageType::SubscribeOk => {
@@ -736,125 +737,5 @@ impl MOQTCallbacks {
 
     pub fn set_object_callback(&mut self, callback: js_sys::Function) {
         self.object_callback = Some(callback);
-    }
-}
-
-#[cfg(web_sys_unstable_apis)]
-struct AnnouncedNamespaces {
-    name_spaces: Vec<AnnouncedNamespace>,
-}
-
-#[cfg(web_sys_unstable_apis)]
-impl AnnouncedNamespaces {
-    fn new() -> Self {
-        AnnouncedNamespaces {
-            name_spaces: Vec::new(),
-        }
-    }
-
-    fn add_namespace(&mut self, name_space: AnnouncedNamespace) {
-        self.name_spaces.push(name_space);
-    }
-
-    fn delete_namespace(&mut self, name_space: &str) {
-        self.name_spaces.retain(|ns| ns.track_namespace != name_space);
-    }
-
-    fn get(&self, name_space: &str) -> Option<&AnnouncedNamespace> {
-        self.name_spaces.iter().find(|ns| ns.track_namespace == name_space)
-    }
-    
-}
-
-#[cfg(web_sys_unstable_apis)]
-struct AnnouncedNamespace {
-    track_namespace: String,
-    tracks: Vec<AnnouncedTrack>,
-}
-
-#[cfg(web_sys_unstable_apis)]
-impl AnnouncedNamespace {
-    fn new(track_namespace: String) -> Self {
-        AnnouncedNamespace {
-            track_namespace,
-            tracks: Vec::new(),
-        }
-    }
-
-    fn add_track(&mut self, track_id: u64, track_name: String) {
-        let track = AnnouncedTrack::new(track_id, track_name);
-        self.tracks.push(track);
-    }
-
-    fn delete_track(&mut self, track_id: u64) {
-        self.tracks.retain(|t| t.track_id != track_id);
-    }
-
-    fn get(&self, track_id: u64) -> Option<&AnnouncedTrack> {
-        self.tracks.iter().find(|t| t.track_id == track_id)
-    }
-}
-
-#[cfg(web_sys_unstable_apis)]
-struct AnnouncedTrack {
-    track_id: u64,
-    track_name: String,
-    // todo: Expires
-}
-
-#[cfg(web_sys_unstable_apis)]
-impl AnnouncedTrack {
-    fn new(track_id: u64, track_name: String) -> Self {
-        AnnouncedTrack {
-            track_id,
-            track_name,
-        }
-    }
-}
-
-
-#[cfg(web_sys_unstable_apis)]
-struct SubscribedTracks {
-    tracks: Vec<SubscribedTrack>,
-}
-
-#[cfg(web_sys_unstable_apis)]
-impl SubscribedTracks {
-    fn new() -> Self {
-        SubscribedTracks {
-            tracks: Vec::new(),
-        }
-    }
-
-    fn add_track(&mut self, track_name: String, track_namespace: String, track_id: u64) {
-        let track = SubscribedTrack::new(track_name, track_namespace, track_id);
-        self.tracks.push(track);
-    }
-
-    fn delete_track(&mut self, track_id: u64) {
-        self.tracks.retain(|t| t.track_id != track_id);
-    }
-
-    fn get(&self, track_id: u64) -> Option<&SubscribedTrack> {
-        self.tracks.iter().find(|t| t.track_id == track_id)
-    }
-}
-
-#[cfg(web_sys_unstable_apis)]
-struct SubscribedTrack {
-    track_name: String,
-    track_namespace: String,
-    track_id: u64,
-    // todo: Expires
-}
-
-#[cfg(web_sys_unstable_apis)]
-impl SubscribedTrack {
-    fn new(track_name: String, track_namespace: String, track_id: u64) -> Self {
-        SubscribedTrack {
-            track_name,
-            track_namespace,
-            track_id,
-        }
     }
 }
