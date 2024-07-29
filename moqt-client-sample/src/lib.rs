@@ -252,13 +252,12 @@ impl MOQTClient {
         expires: u64,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
-            let subscribe_ok_message =
-                moqt_core::messages::subscribe_ok_message::SubscribeOk::new(
-                    track_namespace,
-                    track_name,
-                    track_id,
-                    expires,
-                );
+            let subscribe_ok_message = moqt_core::messages::subscribe_ok_message::SubscribeOk::new(
+                track_namespace,
+                track_name,
+                track_id,
+                expires,
+            );
             let mut subscribe_ok_message_buf = BytesMut::new();
             subscribe_ok_message.packetize(&mut subscribe_ok_message_buf);
 
@@ -604,7 +603,7 @@ async fn message_handler(
                     }
                 }
                 MessageType::Subscribe => {
-                    let subscribe_message = 
+                    let subscribe_message =
                         moqt_core::messages::subscribe_request_message::SubscribeRequestMessage::depacketize(
                             &mut buf,
                         )?;
@@ -613,7 +612,6 @@ async fn message_handler(
 
                     if let Some(callback) = callbacks.borrow().subscribe_callback() {
                         callback.call1(&JsValue::null(), &(v)).unwrap();
-                        
                     }
                 }
                 MessageType::SubscribeOk => {
