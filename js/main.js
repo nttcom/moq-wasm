@@ -27,6 +27,8 @@ init().then(async () => {
     client.onSubscribe(async (subscribeResponse) => {
       console.log('relay will want to subscribe')
       console.log({ subscribeResponse })
+
+      client.sendSubscribeOkMessage(subscribeResponse.track_namespace, subscribeResponse.track_name, 0n, 0n)
     })
 
     client.onSubscribeResponse(async (subscribeResponse) => {

@@ -8,13 +8,14 @@ use crate::{
 };
 use anyhow::Ok;
 use num_enum::TryFromPrimitive;
+use serde::Serialize;
 use std::any::Any;
 
 /// This structure is a parameter that uses a version-specific namespace, unlike Setup parameters,
 /// which uses a namespace that is constant across all MoQ Transport versions.
 ///
 /// This structure is referred by messages using parameters other than Setup parameters.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub enum VersionSpecificParameter {
     GroupSequence(GroupSequence),
     ObjectSequence(ObjectSequence),
@@ -102,7 +103,7 @@ impl MOQTPayload for VersionSpecificParameter {
     }
 }
 
-#[derive(Debug, Clone, Copy, TryFromPrimitive, PartialEq)]
+#[derive(Debug, Serialize, Clone, Copy, TryFromPrimitive, PartialEq)]
 #[repr(u8)]
 pub enum VersionSpecificParameterType {
     GroupSequence = 0x00,
@@ -116,7 +117,7 @@ impl From<VersionSpecificParameterType> for u64 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct GroupSequence {
     parameter_type: VersionSpecificParameterType,
     length: u8,
@@ -136,7 +137,7 @@ impl GroupSequence {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ObjectSequence {
     parameter_type: VersionSpecificParameterType,
     length: u8,
@@ -156,7 +157,7 @@ impl ObjectSequence {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct AuthorizationInfo {
     parameter_type: VersionSpecificParameterType,
     length: u8,
