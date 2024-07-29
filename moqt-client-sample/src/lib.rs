@@ -145,7 +145,7 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendAnnounceMessage)]
     pub async fn send_announce_message(
         &self,
-        track_name_space: String,
+        track_namespace: String,
         number_of_parameters: u8,
         auth_info: String, // param[0]
     ) -> Result<JsValue, JsValue> {
@@ -154,7 +154,7 @@ impl MOQTClient {
                 VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
 
             let announce_message = AnnounceMessage::new(
-                track_name_space,
+                track_namespace,
                 number_of_parameters,
                 vec![auth_info_parameter],
             );
@@ -181,13 +181,13 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendUnannounceMessage)]
     pub async fn send_unannounce_message(
         &self,
-        track_name_space: String,
+        track_namespace: String,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
             // TODO: construct UnAnnounce Message
             let mut buf = Vec::new();
             buf.put_u8(0x09); // unannounce
-            buf.extend(write_variable_bytes(&track_name_space.as_bytes().to_vec()));
+            buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
@@ -202,7 +202,7 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendSubscribeMessage)]
     pub async fn send_subscribe_message(
         &self,
-        track_name_space: String,
+        track_namespace: String,
         track_name: String,
         // start_group: Option<String>,
         // start_object: Option<String>,
@@ -217,7 +217,7 @@ impl MOQTClient {
             let version_specific_parameters = vec![auth_info];
             let subscribe_message =
                 moqt_core::messages::subscribe_request_message::SubscribeRequestMessage::new(
-                    track_name_space,
+                    track_namespace,
                     track_name,
                     moqt_core::messages::subscribe_request_message::Location::RelativePrevious(0),
                     moqt_core::messages::subscribe_request_message::Location::Absolute(0),
@@ -246,7 +246,7 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendSubscribeOkMessage)]
     pub async fn send_subscribe_ok_message(
         &self,
-        track_name_space: String,
+        track_namespace: String,
         track_name: String,
         track_id: u64,
         expires: u64,
@@ -254,7 +254,7 @@ impl MOQTClient {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
             let subscribe_ok_message =
                 moqt_core::messages::subscribe_ok_message::SubscribeOk::new(
-                    track_name_space,
+                    track_namespace,
                     track_name,
                     track_id,
                     expires,
@@ -280,13 +280,13 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendUnsubscribeMessage)]
     pub async fn send_unsubscribe_message(
         &self,
-        track_name_space: String,
+        track_namespace: String,
         track_name: String,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
             let unsubscribe_message =
                 moqt_core::messages::unsubscribe_message::UnsubscribeMessage::new(
-                    track_name_space,
+                    track_namespace,
                     track_name,
                 );
             let mut unsubscribe_message_buf = BytesMut::new();
@@ -757,26 +757,26 @@ impl AnnouncedNamespaces {
     }
 
     fn delete_namespace(&mut self, name_space: &str) {
-        self.name_spaces.retain(|ns| ns.track_name_space != name_space);
+        self.name_spaces.retain(|ns| ns.track_namespace != name_space);
     }
 
     fn get(&self, name_space: &str) -> Option<&AnnouncedNamespace> {
-        self.name_spaces.iter().find(|ns| ns.track_name_space == name_space)
+        self.name_spaces.iter().find(|ns| ns.track_namespace == name_space)
     }
     
 }
 
 #[cfg(web_sys_unstable_apis)]
 struct AnnouncedNamespace {
-    track_name_space: String,
+    track_namespace: String,
     tracks: Vec<AnnouncedTrack>,
 }
 
 #[cfg(web_sys_unstable_apis)]
 impl AnnouncedNamespace {
-    fn new(track_name_space: String) -> Self {
+    fn new(track_namespace: String) -> Self {
         AnnouncedNamespace {
-            track_name_space,
+            track_namespace,
             tracks: Vec::new(),
         }
     }
@@ -826,8 +826,8 @@ impl SubscribedTracks {
         }
     }
 
-    fn add_track(&mut self, track_name: String, track_name_space: String, track_id: u64) {
-        let track = SubscribedTrack::new(track_name, track_name_space, track_id);
+    fn add_track(&mut self, track_name: String, track_namespace: String, track_id: u64) {
+        let track = SubscribedTrack::new(track_name, track_namespace, track_id);
         self.tracks.push(track);
     }
 
@@ -843,17 +843,17 @@ impl SubscribedTracks {
 #[cfg(web_sys_unstable_apis)]
 struct SubscribedTrack {
     track_name: String,
-    track_name_space: String,
+    track_namespace: String,
     track_id: u64,
     // todo: Expires
 }
 
 #[cfg(web_sys_unstable_apis)]
 impl SubscribedTrack {
-    fn new(track_name: String, track_name_space: String, track_id: u64) -> Self {
+    fn new(track_name: String, track_namespace: String, track_id: u64) -> Self {
         SubscribedTrack {
             track_name,
-            track_name_space,
+            track_namespace,
             track_id,
         }
     }
