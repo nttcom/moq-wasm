@@ -392,18 +392,22 @@ async fn handle_relayed_message(
             .downcast_ref::<SubscribeRequestMessage>()
             .is_some()
         {
+            tracing::info!("message is SubscribeRequestMessage");
             message_buf.extend(write_variable_integer(
                 u8::from(MessageType::Subscribe) as u64
             ));
         } else if message.as_any().downcast_ref::<SubscribeOk>().is_some() {
+            tracing::info!("message is SubscribeOkMessage");
             message_buf.extend(write_variable_integer(
                 u8::from(MessageType::SubscribeOk) as u64
             ));
         } else if message.as_any().downcast_ref::<SubscribeError>().is_some() {
+            tracing::info!("message is SubscribeErrorMessage");
             message_buf.extend(write_variable_integer(
                 u8::from(MessageType::SubscribeError) as u64,
             ));
         } else {
+            tracing::info!("message is UNKOWN Message");
             message_buf.extend(write_variable_integer(
                 u8::from(MessageType::Announce) as u64
             ));

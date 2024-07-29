@@ -243,6 +243,40 @@ impl MOQTClient {
         }
     }
 
+    #[wasm_bindgen(js_name = sendSubscribeOkMessage)]
+    pub async fn send_subscribe_ok_message(
+        &self,
+        track_name_space: String,
+        track_name: String,
+        track_id: u64,
+        expires: u64,
+    ) -> Result<JsValue, JsValue> {
+        if let Some(writer) = &*self.control_stream_writer.borrow() {
+            let subscribe_ok_message =
+                moqt_core::messages::subscribe_ok_message::SubscribeOk::new(
+                    track_name_space,
+                    track_name,
+                    track_id,
+                    expires,
+                );
+            let mut subscribe_ok_message_buf = BytesMut::new();
+            subscribe_ok_message.packetize(&mut subscribe_ok_message_buf);
+
+            let mut buf = Vec::new();
+            buf.extend(write_variable_integer(
+                u8::from(MessageType::SubscribeOk) as u64
+            )); // subscribe ok
+            buf.extend(subscribe_ok_message_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+
+            JsFuture::from(writer.write_with_chunk(&buffer)).await
+        } else {
+            Err(JsValue::from_str("control_stream_writer is None"))
+        }
+    }
+
     #[wasm_bindgen(js_name = sendUnsubscribeMessage)]
     pub async fn send_unsubscribe_message(
         &self,
@@ -569,6 +603,18 @@ async fn message_handler(
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
+                MessageType::Subscribe => {
+                    let subscribe_message = 
+                        moqt_core::messages::subscribe_request_message::SubscribeRequestMessage::depacketize(
+                            &mut buf,
+                        )?;
+
+                    let v = serde_wasm_bindgen::to_value(&subscribe_message).unwrap();
+
+                    if let Some(callback) = callbacks.borrow().subscribe_callback() {
+                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                    }
+                }
                 MessageType::SubscribeOk => {
                     let subscribe_ok_message =
                         moqt_core::messages::subscribe_ok_message::SubscribeOk::depacketize(
@@ -668,8 +714,6 @@ impl MOQTCallbacks {
         self.announce_callback = Some(callback);
     }
 
-    // 未実装のためallow dead codeをつけている
-    #[allow(dead_code)]
     pub fn subscribe_callback(&self) -> Option<js_sys::Function> {
         self.subscribe_callback.clone()
     }
@@ -692,5 +736,125 @@ impl MOQTCallbacks {
 
     pub fn set_object_callback(&mut self, callback: js_sys::Function) {
         self.object_callback = Some(callback);
+    }
+}
+
+#[cfg(web_sys_unstable_apis)]
+struct AnnouncedNamespaces {
+    name_spaces: Vec<AnnouncedNamespace>,
+}
+
+#[cfg(web_sys_unstable_apis)]
+impl AnnouncedNamespaces {
+    fn new() -> Self {
+        AnnouncedNamespaces {
+            name_spaces: Vec::new(),
+        }
+    }
+
+    fn add_namespace(&mut self, name_space: AnnouncedNamespace) {
+        self.name_spaces.push(name_space);
+    }
+
+    fn delete_namespace(&mut self, name_space: &str) {
+        self.name_spaces.retain(|ns| ns.track_name_space != name_space);
+    }
+
+    fn get(&self, name_space: &str) -> Option<&AnnouncedNamespace> {
+        self.name_spaces.iter().find(|ns| ns.track_name_space == name_space)
+    }
+    
+}
+
+#[cfg(web_sys_unstable_apis)]
+struct AnnouncedNamespace {
+    track_name_space: String,
+    tracks: Vec<AnnouncedTrack>,
+}
+
+#[cfg(web_sys_unstable_apis)]
+impl AnnouncedNamespace {
+    fn new(track_name_space: String) -> Self {
+        AnnouncedNamespace {
+            track_name_space,
+            tracks: Vec::new(),
+        }
+    }
+
+    fn add_track(&mut self, track_id: u64, track_name: String) {
+        let track = AnnouncedTrack::new(track_id, track_name);
+        self.tracks.push(track);
+    }
+
+    fn delete_track(&mut self, track_id: u64) {
+        self.tracks.retain(|t| t.track_id != track_id);
+    }
+
+    fn get(&self, track_id: u64) -> Option<&AnnouncedTrack> {
+        self.tracks.iter().find(|t| t.track_id == track_id)
+    }
+}
+
+#[cfg(web_sys_unstable_apis)]
+struct AnnouncedTrack {
+    track_id: u64,
+    track_name: String,
+    // todo: Expires
+}
+
+#[cfg(web_sys_unstable_apis)]
+impl AnnouncedTrack {
+    fn new(track_id: u64, track_name: String) -> Self {
+        AnnouncedTrack {
+            track_id,
+            track_name,
+        }
+    }
+}
+
+
+#[cfg(web_sys_unstable_apis)]
+struct SubscribedTracks {
+    tracks: Vec<SubscribedTrack>,
+}
+
+#[cfg(web_sys_unstable_apis)]
+impl SubscribedTracks {
+    fn new() -> Self {
+        SubscribedTracks {
+            tracks: Vec::new(),
+        }
+    }
+
+    fn add_track(&mut self, track_name: String, track_name_space: String, track_id: u64) {
+        let track = SubscribedTrack::new(track_name, track_name_space, track_id);
+        self.tracks.push(track);
+    }
+
+    fn delete_track(&mut self, track_id: u64) {
+        self.tracks.retain(|t| t.track_id != track_id);
+    }
+
+    fn get(&self, track_id: u64) -> Option<&SubscribedTrack> {
+        self.tracks.iter().find(|t| t.track_id == track_id)
+    }
+}
+
+#[cfg(web_sys_unstable_apis)]
+struct SubscribedTrack {
+    track_name: String,
+    track_name_space: String,
+    track_id: u64,
+    // todo: Expires
+}
+
+#[cfg(web_sys_unstable_apis)]
+impl SubscribedTrack {
+    fn new(track_name: String, track_name_space: String, track_id: u64) -> Self {
+        SubscribedTrack {
+            track_name,
+            track_name_space,
+            track_id,
+        }
     }
 }

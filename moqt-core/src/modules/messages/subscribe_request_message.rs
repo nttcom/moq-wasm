@@ -1,4 +1,5 @@
 use anyhow::{bail, Context};
+use serde::Serialize;
 use std::any::Any;
 use tracing;
 
@@ -12,7 +13,7 @@ use crate::{
 
 use super::{moqt_payload::MOQTPayload, version_specific_parameters::VersionSpecificParameter};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeRequestMessage {
     track_namespace: String,
     track_name: String,
@@ -121,7 +122,7 @@ impl MOQTPayload for SubscribeRequestMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub enum Location {
     None,                  // 0x00
     Absolute(u64),         // 0x01
