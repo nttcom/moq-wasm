@@ -1,9 +1,12 @@
 use anyhow::Result;
 
-use crate::modules::{
-    messages::{
-        announce_error_message::AnnounceError, announce_message::AnnounceMessage,
-        announce_ok_message::AnnounceOk,
+use crate::{
+    modules::{
+        messages::{
+            announce_error_message::AnnounceError, announce_message::AnnounceMessage,
+            announce_ok_message::AnnounceOk,
+        },
+        track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
     track_manager_repository::TrackManagerRepository,
 };
@@ -16,7 +19,7 @@ pub(crate) enum AnnounceResponse {
 pub(crate) async fn announce_handler(
     announce_message: AnnounceMessage,
     client: &mut MOQTClient,
-    track_manager_repository: &mut dyn TrackManagerRepository,
+    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<AnnounceResponse> {
     tracing::info!("announce_handler!");
 
