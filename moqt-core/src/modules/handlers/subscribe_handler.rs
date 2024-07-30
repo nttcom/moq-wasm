@@ -7,7 +7,7 @@ use crate::{
             subscribe_error_message::SubscribeError, subscribe_ok_message::SubscribeOk,
             subscribe_request_message::SubscribeRequestMessage,
         },
-        track_manager_repository::TrackManagerRepository,
+        track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
     MOQTClient, StreamManagerRepository,
 };
@@ -22,7 +22,7 @@ pub(crate) enum SubscribeResponse {
 pub(crate) async fn subscribe_handler(
     subscribe_message: SubscribeRequestMessage,
     _client: &mut MOQTClient, // TODO: 未実装のため_をつけている
-    track_manager_repository: &mut dyn TrackManagerRepository,
+    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     stream_manager_repository: &mut dyn StreamManagerRepository,
 ) -> Result<SubscribeResponse> {
     tracing::info!("subscribe_handler!");

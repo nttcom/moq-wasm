@@ -2,7 +2,7 @@ use crate::{
     handlers::subscribe_handler::{subscribe_handler, SubscribeResponse},
     messages::{moqt_payload::MOQTPayload, subscribe_request_message::SubscribeRequestMessage},
     moqt_client::MOQTClientStatus,
-    MOQTClient, StreamManagerRepository, TrackManagerRepository,
+    MOQTClient, StreamManagerRepository, TrackNamespaceManagerRepository,
 };
 use anyhow::{bail, Result};
 use bytes::BytesMut;
@@ -11,7 +11,7 @@ pub(crate) async fn process_subscribe_message(
     payload_buf: &mut BytesMut,
     client: &mut MOQTClient,
     write_buf: &mut BytesMut,
-    track_manager_repository: &mut dyn TrackManagerRepository,
+    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     stream_manager_repository: &mut dyn StreamManagerRepository,
 ) -> Result<SubscribeResponse> {
     if client.status() != MOQTClientStatus::SetUp {
