@@ -2,7 +2,7 @@ use crate::{
     handlers::announce_handler::{announce_handler, AnnounceResponse},
     messages::{announce_message::AnnounceMessage, moqt_payload::MOQTPayload},
     moqt_client::MOQTClientStatus,
-    MOQTClient, TrackManagerRepository,
+    MOQTClient, TrackNamespaceManagerRepository,
 };
 use anyhow::{bail, Result};
 use bytes::BytesMut;
@@ -11,7 +11,7 @@ pub(crate) async fn process_announce_message(
     payload_buf: &mut BytesMut,
     client: &mut MOQTClient,
     write_buf: &mut BytesMut,
-    track_manager_repository: &mut dyn TrackManagerRepository,
+    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<AnnounceResponse> {
     if client.status() != MOQTClientStatus::SetUp {
         let message = String::from("Invalid timing");

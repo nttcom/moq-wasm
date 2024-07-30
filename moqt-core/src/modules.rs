@@ -6,6 +6,6 @@ pub mod messages;
 pub mod moqt_client;
 pub(crate) mod server_processes;
 pub mod stream_manager_repository;
-pub mod track_manager_repository;
+pub mod track_namespace_manager_repository;
 pub mod variable_bytes;
 pub mod variable_integer;

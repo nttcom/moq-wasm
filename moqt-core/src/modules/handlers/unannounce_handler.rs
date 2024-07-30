@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::{
     modules::{
         messages::unannounce_message::UnAnnounceMessage,
-        track_manager_repository::TrackManagerRepository,
+        track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
     MOQTClient,
 };
@@ -11,7 +11,7 @@ use crate::{
 pub(crate) async fn unannounce_handler(
     unannounce_message: UnAnnounceMessage,
     _client: &mut MOQTClient, // 未実装のため_をつけている
-    track_manager_repository: &mut dyn TrackManagerRepository,
+    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<()> {
     tracing::info!("unannounce_handler!");
 

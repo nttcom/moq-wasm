@@ -1,7 +1,7 @@
 mod modules;
 use crate::modules::buffer_manager::{buffer_manager, BufferCommand};
 use crate::modules::stream_manager::{stream_manager, StreamCommand};
-use crate::modules::track_manager::{track_manager, TrackCommand};
+use crate::modules::track_namespace_manager::{track_namespace_manager, TrackCommand};
 use anyhow::{bail, Context, Ok, Result};
 use bytes::BytesMut;
 use modules::buffer_manager;
@@ -104,7 +104,7 @@ impl MOQT {
         tokio::spawn(async move { buffer_manager(&mut buffer_rx).await });
 
         // Start track management thread
-        tokio::spawn(async move { track_manager(&mut track_rx).await });
+        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
 
         // Start stream management thread
         tokio::spawn(async move { stream_manager(&mut stream_rx).await });
@@ -323,7 +323,8 @@ async fn handle_read_stream(
     let read_stream = &mut stream.read_stream;
     let shread_write_stream = &mut stream.shread_write_stream;
 
-    let mut track_manager = modules::track_manager::TrackManager::new(track_tx.clone());
+    let mut track_manager =
+        modules::track_namespace_manager::TrackNamespaceManager::new(track_tx.clone());
     let mut stream_manager = modules::stream_manager::StreamManager::new(stream_tx.clone());
 
     loop {
