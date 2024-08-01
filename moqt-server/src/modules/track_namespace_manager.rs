@@ -35,6 +35,10 @@ impl SubscriberObject {
     fn is_active(&self) -> bool {
         self.state == SubscriberStatus::Activate
     }
+
+    fn is_waiting(&self) -> bool {
+        self.state == "waiting"
+    }
 }
 
 #[derive(Debug)]
@@ -211,6 +215,36 @@ impl TrackNamespaces {
         }
 
         Ok(())
+    }
+
+    fn get_subscriber_session_ids_by_track_namespace_and_track_name(
+        &self,
+        track_namespace: String,
+        track_name: String,
+    ) -> Option<Vec<usize>> {
+        if !self.is_exist_track_namespace(track_namespace.clone()) {
+            return None;
+        }
+
+        if !self.publishers[&track_namespace].is_exist_track_name(track_name.clone()) {
+            return None;
+        }
+
+        let mut session_ids = Vec::new();
+
+        for (session_id, status) in
+            &self.publishers[&track_namespace].tracks[&track_name].subscribers
+        {
+            if status.is_waiting() {
+                session_ids.push(*session_id);
+            }
+        }
+
+        if session_ids.is_empty() {
+            return None;
+        }
+
+        Some(session_ids)
     }
 
     fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>> {
@@ -402,7 +436,19 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
                     resp.send(false).unwrap();
                 }
             },
-            GetSubscliberSessionId { track_id, resp } => {
+            GetSubscliberSessionIdsByNamespaceAndName {
+                track_namespace,
+                track_name,
+                resp,
+            } => {
+                let result = namespaces
+                    .get_subscriber_session_ids_by_track_namespace_and_track_name(
+                        track_namespace,
+                        track_name,
+                    );
+                resp.send(result).unwrap();
+            }
+            GetSubscliberSessionIdsByTrackId { track_id, resp } => {
                 let result = namespaces.get_subscriber_session_ids_by_track_id(track_id);
                 resp.send(result).unwrap();
             }
@@ -455,7 +501,12 @@ pub(crate) enum TrackCommand {
         status: SubscriberStatus,
         resp: oneshot::Sender<bool>,
     },
-    GetSubscliberSessionId {
+    GetSubscliberSessionIdsByNamespaceAndName {
+        track_namespace: String,
+        track_name: String,
+        resp: oneshot::Sender<Option<Vec<usize>>>,
+    },
+    GetSubscliberSessionIdsByTrackId {
         track_id: u64,
         resp: oneshot::Sender<Option<Vec<usize>>>,
     },
@@ -621,10 +672,32 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
     }
 
     // track_idからsubscriberのsession_idを取得する
+    async fn get_subscriber_session_ids_by_track_namespace_and_track_name(
+        &self,
+        track_namespace: &str,
+        track_name: &str,
+        track_id: u64,
+    ) -> Option<Vec<usize>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Option<Vec<usize>>>();
+
+        let cmd = TrackCommand::GetSubscliberSessionIdsByNamespaceAndName {
+            track_namespace: track_namespace.to_string(),
+            track_name: track_name.to_string(),
+            track_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let session_ids = resp_rx.await.unwrap();
+
+        return session_ids;
+    }
+
+    // track_idからsubscriberのsession_idを取得する
     async fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Option<Vec<usize>>>();
 
-        let cmd = TrackCommand::GetSubscliberSessionId {
+        let cmd = TrackCommand::GetSubscliberSessionIdsByTrackId {
             track_id,
             resp: resp_tx,
         };
