@@ -3,28 +3,18 @@ use anyhow::Result;
 use crate::{
     messages::moqt_payload::MOQTPayload,
     modules::{
-        messages::{
-            subscribe_error_message::SubscribeError, subscribe_ok_message::SubscribeOk,
-            subscribe_request_message::SubscribeRequestMessage,
-        },
+        messages::subscribe_request_message::SubscribeRequestMessage,
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
     MOQTClient, StreamManagerRepository,
 };
 
-// Failureの場合は未実装のため、allow dead_codeをつけている
-#[allow(dead_code)]
-pub(crate) enum SubscribeResponse {
-    Success(SubscribeOk),
-    Failure(SubscribeError), // TODO: 未実装
-}
-
 pub(crate) async fn subscribe_handler(
     subscribe_message: SubscribeRequestMessage,
-    _client: &mut MOQTClient, // TODO: 未実装のため_をつけている
-    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    client: &mut MOQTClient,
+    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     stream_manager_repository: &mut dyn StreamManagerRepository,
-) -> Result<SubscribeResponse> {
+) -> Result<()> {
     tracing::info!("subscribe_handler!");
 
     tracing::info!(
@@ -41,7 +31,20 @@ pub(crate) async fn subscribe_handler(
         .await;
     match publisher_session_id {
         Some(session_id) => {
-            // TODO: SUBSCRIBEメッセージを送ったSUBSCRIBERを記録する
+            // SUBSCRIBEメッセージを送ったSUBSCRIBERを記録する
+            match track_manager_repository
+                .set_subscriber(
+                    subscribe_message.track_namespace(),
+                    client.id,
+                    subscribe_message.track_name(),
+                )
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(anyhow::anyhow!("cannot register subscriber: {:?}", e));
+                }
+            }
             // SUBSCRIBEメッセージをpublisherに通知する
             let message: Box<dyn MOQTPayload> = Box::new(subscribe_message.clone());
             tracing::info!(
@@ -49,20 +52,15 @@ pub(crate) async fn subscribe_handler(
                 subscribe_message,
                 session_id
             );
-            let _ = stream_manager_repository
-                .relay_message(session_id, message)
-                .await;
-        }
-        None => {
-            // SUBSCRIBE_ERRORを返す
-        }
-    }
 
-    // FIXME: tmp
-    Ok(SubscribeResponse::Success(SubscribeOk::new(
-        subscribe_message.track_namespace().to_string(),
-        subscribe_message.track_name().to_string(),
-        1, // tmp
-        0, // unlimited
-    )))
+            match stream_manager_repository
+                .relay_message(session_id, message)
+                .await
+            {
+                Ok(_) => Ok(()),
+                Err(e) => Err(anyhow::anyhow!("relay subscribe failed: {:?}", e)),
+            }
+        }
+        None => Err(anyhow::anyhow!("publisher_session_id not found")),
+    }
 }
