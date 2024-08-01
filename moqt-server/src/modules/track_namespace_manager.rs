@@ -323,6 +323,7 @@ impl TrackNamespaces {
         &mut self,
         track_namespace: String,
         track_name: String,
+        subscriber_session_id: usize,
         status: String,
     ) -> Result<()> {
         // track_namespaceが存在するか確認する
@@ -335,7 +336,14 @@ impl TrackNamespaces {
             return Err(anyhow::anyhow!("track_name not found"));
         }
 
-        // track_idが一致するsubscriberのstatusを変更する
+        // subscriberが存在するか確認する
+        if !self.publishers[&track_namespace].tracks[&track_name]
+            .is_exist_subscriber(subscriber_session_id)
+        {
+            return Err(anyhow::anyhow!("subscriber not found"));
+        }
+
+        // subscriber_session_idが一致するsubscriberのstatusを変更する
         self.publishers
             .get_mut(&track_namespace)
             .unwrap()
@@ -343,10 +351,9 @@ impl TrackNamespaces {
             .get_mut(&track_name)
             .unwrap()
             .subscribers
-            .iter_mut()
-            .for_each(|(_, subscriber)| {
-                subscriber.set_state(status.clone());
-            });
+            .get_mut(&subscriber_session_id)
+            .unwrap()
+            .set_state(status);
 
         Ok(())
     }
@@ -455,9 +462,15 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             SetStatus {
                 track_namespace,
                 track_name,
+                subscriber_session_id,
                 status,
                 resp,
-            } => match namespaces.set_status(track_namespace, track_name, status) {
+            } => match namespaces.set_status(
+                track_namespace,
+                track_name,
+                subscriber_session_id,
+                status,
+            ) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
                     tracing::info!("set_status: err: {:?}", err.to_string());
@@ -526,6 +539,7 @@ pub(crate) enum TrackCommand {
     SetStatus {
         track_namespace: String,
         track_name: String,
+        subscriber_session_id: usize,
         status: String,
         resp: oneshot::Sender<bool>,
     },
@@ -704,14 +718,12 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
         &self,
         track_namespace: &str,
         track_name: &str,
-        track_id: u64,
     ) -> Option<Vec<usize>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Option<Vec<usize>>>();
 
         let cmd = TrackCommand::GetSubscliberSessionIdsByNamespaceAndName {
             track_namespace: track_namespace.to_string(),
             track_name: track_name.to_string(),
-            track_id,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -736,12 +748,18 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
         return session_ids;
     }
 
-    async fn activate_subscriber(&self, track_namespace: &str, track_name: &str) -> Result<()> {
+    async fn activate_subscriber(
+        &self,
+        track_namespace: &str,
+        track_name: &str,
+        subscriber_session_id: usize,
+    ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::SetStatus {
             track_namespace: track_namespace.to_string(),
             track_name: track_name.to_string(),
+            subscriber_session_id,
             status: "active".to_string(),
             resp: resp_tx,
         };
@@ -946,7 +964,10 @@ mod success {
             .set_track_id(track_namespace, track_name, track_id)
             .await;
         let _ = track_namespace_manager
-            .activate_subscriber(track_namespace, track_name)
+            .activate_subscriber(track_namespace, track_name, subscriber_session_ids[0])
+            .await;
+        let _ = track_namespace_manager
+            .activate_subscriber(track_namespace, track_name, subscriber_session_ids[1])
             .await;
 
         let mut result = track_namespace_manager
