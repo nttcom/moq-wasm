@@ -276,6 +276,40 @@ impl MOQTClient {
         }
     }
 
+    #[wasm_bindgen(js_name = sendSubscribeErrorMessage)]
+    pub async fn send_subscribe_error_message(
+        &self,
+        track_namespace: String,
+        track_name: String,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Result<JsValue, JsValue> {
+        if let Some(writer) = &*self.control_stream_writer.borrow() {
+            let subscribe_error_message =
+                moqt_core::messages::subscribe_error_message::SubscribeError::new(
+                    track_namespace,
+                    track_name,
+                    error_code,
+                    reason_phrase,
+                );
+            let mut subscribe_error_message_buf = BytesMut::new();
+            subscribe_error_message.packetize(&mut subscribe_error_message_buf);
+
+            let mut buf = Vec::new();
+            buf.extend(write_variable_integer(
+                u8::from(MessageType::SubscribeError) as u64,
+            )); // subscribe error
+            buf.extend(subscribe_error_message_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+
+            JsFuture::from(writer.write_with_chunk(&buffer)).await
+        } else {
+            Err(JsValue::from_str("control_stream_writer is None"))
+        }
+    }
+
     #[wasm_bindgen(js_name = sendUnsubscribeMessage)]
     pub async fn send_unsubscribe_message(
         &self,
