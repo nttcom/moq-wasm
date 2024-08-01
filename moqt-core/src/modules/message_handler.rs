@@ -2,7 +2,6 @@ use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
 use crate::handlers::announce_handler::AnnounceResponse;
-use crate::handlers::subscribe_handler::SubscribeResponse;
 use crate::messages::object_message::{
     ObjectMessageWithPayloadLength, ObjectMessageWithoutPayloadLength,
 };
@@ -30,6 +29,7 @@ pub enum StreamType {
 
 pub enum MessageProcessResult {
     Success(BytesMut),
+    SuccessWithoutResponse,
     Failure(TerminationErrorCode, String),
     Fragment,
 }
@@ -187,16 +187,14 @@ pub async fn message_handler(
             match process_subscribe_message(
                 &mut payload_buf,
                 client,
-                &mut write_buf,
                 track_manager_repository,
                 stream_manager_repository,
             )
             .await
             {
-                Ok(subscribe_response) => match subscribe_response {
-                    SubscribeResponse::Success(_) => MessageType::SubscribeOk,
-                    SubscribeResponse::Failure(_) => MessageType::SubscribeError,
-                },
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
+                }
                 Err(err) => {
                     return MessageProcessResult::Failure(
                         TerminationErrorCode::GenericError,

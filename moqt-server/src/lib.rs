@@ -360,6 +360,9 @@ async fn handle_read_stream(
                 shread_write_stream.write_all(&buf).await?;
                 tracing::info!("sent {:x?}", buf.to_vec());
             }
+            MessageProcessResult::SuccessWithoutResponse => {
+                tracing::info!("SuccessWithoutResponse");
+            }
             MessageProcessResult::Failure(code, message) => {
                 close_tx.send((u8::from(code) as u64, message)).await?;
                 break;
