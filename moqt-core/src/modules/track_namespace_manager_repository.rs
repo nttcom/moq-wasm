@@ -29,5 +29,10 @@ pub trait TrackNamespaceManagerRepository: Send + Sync {
         track_id: u64,
     ) -> Result<()>;
     async fn activate_subscriber(&self, track_namespace: &str, track_name: &str) -> Result<()>;
+    async fn get_subscriber_session_ids_by_track_namespace_and_track_name(
+        &self,
+        track_namespace: &str,
+        track_name: &str,
+    ) -> Option<Vec<usize>>;
     async fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>>;
 }
