@@ -1,5 +1,5 @@
 use crate::{
-    handlers::subscribe_handler::subscribe_handler,
+    handlers::subscribe_request_handler::subscribe_handler,
     messages::{moqt_payload::MOQTPayload, subscribe_request_message::SubscribeRequestMessage},
     moqt_client::MOQTClientStatus,
     MOQTClient, StreamManagerRepository, TrackNamespaceManagerRepository,
