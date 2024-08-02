@@ -12,10 +12,10 @@ Both server and browser client are written in Rust.
 - [x] Echo back OBJECT message
 - [ ] Send/Recv GOAWAY message
 - [ ] Send/Recv SUBSCRIBE_FIN/SUBSCRIBE_RST message
-- [ ] Transfer SUBSCRIBE message
-  - [ ] Manage stream of publishers
+- [x] Transfer SUBSCRIBE message
+  - [x] Manage stream of publishers
 - [ ] Transfer OBJECT message
-  - [ ] Manage subscriptions
+  - [x] Manage subscriptions
 
 ## Modules
 
