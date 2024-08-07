@@ -32,17 +32,11 @@ init().then(async () => {
       console.log({ subscribeResponse })
 
       // TODO: Move error handling to lib.rs
-      for (announced of announcedTrackNamespace) {
-        if (announced === subscribeResponse.track_namespace) {
-          client.sendSubscribeOkMessage(
-            subscribeResponse.track_namespace,
-            subscribeResponse.track_name,
-            0n,
-            'not found'
-          )
-          console.log('send subscribe ok')
-          return
-        }
+      if (announcedTrackNamespace.includes(subscribeResponse.track_namespace)) {
+        client.sendSubscribeOkMessage(subscribeResponse.track_namespace, subscribeResponse.track_name, 0n, 0n)
+        console.log('send subscribe ok')
+      } else {
+        // TODO: Send subscribe error message
       }
 
       client.sendSubscribeErrorMessage(subscribeResponse.track_namespace, subscribeResponse.track_name)
