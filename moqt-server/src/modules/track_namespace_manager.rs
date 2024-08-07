@@ -234,21 +234,23 @@ impl TrackNamespaces {
     }
 
     fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>> {
-        let mut session_ids = Vec::new();
-
-        for publisher in self.publishers.values() {
-            for track in publisher.tracks.values() {
-                if let Some(id) = track.track_id {
-                    if id == track_id {
-                        for (session_id, status) in &track.subscribers {
-                            if status.is_active() {
-                                session_ids.push(*session_id);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let session_ids: Vec<usize> = self
+            .publishers
+            .values()
+            .flat_map(|publisher| {
+                publisher
+                    .tracks
+                    .values()
+                    .filter(|track| track.track_id == Some(track_id))
+                    .flat_map(|track| {
+                        track
+                            .subscribers
+                            .iter()
+                            .filter(|(_, status)| status.is_active())
+                            .map(|(session_id, _)| *session_id)
+                    })
+            })
+            .collect();
 
         if session_ids.is_empty() {
             return None;
