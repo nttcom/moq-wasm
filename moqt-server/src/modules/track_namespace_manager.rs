@@ -251,18 +251,18 @@ impl TrackNamespaces {
             return None;
         }
 
-        let session_ids: Vec<usize> = self.publishers[&track_namespace].tracks[&track_name]
+        let waiting_session_ids: Vec<usize> = self.publishers[&track_namespace].tracks[&track_name]
             .subscribers
             .iter()
             .filter(|(_, status)| status.is_waiting())
             .map(|(session_id, _)| *session_id)
             .collect();
 
-        if session_ids.is_empty() {
+        if waiting_session_ids.is_empty() {
             return None;
         }
 
-        Some(session_ids)
+        Some(waiting_session_ids)
     }
 
     fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>> {
