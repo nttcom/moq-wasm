@@ -31,14 +31,13 @@ init().then(async () => {
       console.log('relay will want to subscribe')
       console.log({ subscribeResponse })
 
-      // TODO: sendSubscribeErrorMessage
       // TODO: Move error handling to lib.rs
-      announcedTrackNamespaces.forEach((announced) => {
-        if (announced === subscribeResponse.track_namespace) {
-          client.sendSubscribeOkMessage(subscribeResponse.track_namespace, subscribeResponse.track_name, 0n, 0n)
-          console.log('send subscribe ok')
-        }
-      })
+      if (announcedTrackNamespace.includes(subscribeResponse.track_namespace)) {
+        client.sendSubscribeOkMessage(subscribeResponse.track_namespace, subscribeResponse.track_name, 0n, 0n)
+        console.log('send subscribe ok')
+      } else {
+        // TODO: Send subscribe error message
+      }
     })
 
     client.onSubscribeResponse(async (subscribeResponse) => {
