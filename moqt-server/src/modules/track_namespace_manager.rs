@@ -230,15 +230,12 @@ impl TrackNamespaces {
             return None;
         }
 
-        let mut session_ids = Vec::new();
-
-        for (session_id, status) in
-            &self.publishers[&track_namespace].tracks[&track_name].subscribers
-        {
-            if status.is_waiting() {
-                session_ids.push(*session_id);
-            }
-        }
+        let session_ids: Vec<usize> = self.publishers[&track_namespace].tracks[&track_name]
+            .subscribers
+            .iter()
+            .filter(|(_, status)| status.is_waiting())
+            .map(|(session_id, _)| *session_id)
+            .collect();
 
         if session_ids.is_empty() {
             return None;
