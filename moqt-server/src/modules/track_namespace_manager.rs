@@ -163,30 +163,30 @@ impl TrackNamespaces {
             }
 
             // subscriberが存在しない場合は追加する
-            self.publishers
+            let track_name_object = self
+                .publishers
                 .get_mut(&track_namespace)
                 .unwrap()
                 .tracks
                 .get_mut(&track_name)
-                .unwrap()
-                .set_subscriber(subscriber_session_id);
+                .unwrap();
+            track_name_object.set_subscriber(subscriber_session_id);
 
             return Ok(());
         }
 
         // track_nameが存在しない場合は新規作成してからsubscriberを追加する
-        self.publishers
-            .get_mut(&track_namespace)
-            .unwrap()
-            .set_track(track_name.clone());
+        let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
+        track_namespace_object.set_track(track_name.clone());
 
-        self.publishers
+        let track_name_object = self
+            .publishers
             .get_mut(&track_namespace)
             .unwrap()
             .tracks
             .get_mut(&track_name)
-            .unwrap()
-            .set_subscriber(subscriber_session_id);
+            .unwrap();
+        track_name_object.set_subscriber(subscriber_session_id);
 
         Ok(())
     }
@@ -215,20 +215,19 @@ impl TrackNamespaces {
         }
 
         // subscriberが存在する場合は削除する
-        self.publishers
+        let track_name_object = self
+            .publishers
             .get_mut(&track_namespace)
             .unwrap()
             .tracks
             .get_mut(&track_name)
-            .unwrap()
-            .delete_subscriber(subscriber_session_id);
+            .unwrap();
+        track_name_object.delete_subscriber(subscriber_session_id);
 
         // subscriberが一つも存在しない場合はtrackも削除する
         if self.publishers[&track_namespace].is_track_empty() {
-            self.publishers
-                .get_mut(&track_namespace)
-                .unwrap()
-                .delete_track(track_name);
+            let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
+            track_namespace_object.delete_track(track_name);
         }
 
         Ok(())
