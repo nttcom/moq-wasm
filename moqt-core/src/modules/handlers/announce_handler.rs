@@ -19,7 +19,7 @@ pub(crate) enum AnnounceResponse {
 pub(crate) async fn announce_handler(
     announce_message: AnnounceMessage,
     client: &mut MOQTClient,
-    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<AnnounceResponse> {
     tracing::info!("announce_handler!");
 
@@ -29,7 +29,7 @@ pub(crate) async fn announce_handler(
     );
 
     // announceされたTrack Namespaceを記録
-    let set_result = track_manager_repository
+    let set_result = track_namespace_manager_repository
         .set_publisher(announce_message.track_namespace(), client.id)
         .await;
 

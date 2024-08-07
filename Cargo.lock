@@ -580,7 +580,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "moqt-core",
- "time",
  "tokio",
  "tracing",
  "tracing-subscriber",

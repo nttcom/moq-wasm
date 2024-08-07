@@ -11,7 +11,7 @@ pub(crate) async fn process_announce_message(
     payload_buf: &mut BytesMut,
     client: &mut MOQTClient,
     write_buf: &mut BytesMut,
-    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<AnnounceResponse> {
     if client.status() != MOQTClientStatus::SetUp {
         let message = String::from("Invalid timing");
@@ -27,7 +27,8 @@ pub(crate) async fn process_announce_message(
         }
     };
 
-    let announce_response = announce_handler(announce_message, track_manager_repository).await;
+    let announce_response =
+        announce_handler(announce_message, client, track_namespace_manager_repository).await;
 
     match announce_response {
         Ok(announce_response_message) => match announce_response_message {
