@@ -38,9 +38,6 @@ init().then(async () => {
       } else {
         // TODO: Send subscribe error message
       }
-
-      client.sendSubscribeErrorMessage(subscribeResponse.track_namespace, subscribeResponse.track_name)
-      console.log('send subscribe error')
     })
 
     client.onSubscribeResponse(async (subscribeResponse) => {
