@@ -13,7 +13,7 @@ init().then(async () => {
     console.log('URL:', client.url())
 
     // TODO: Move track management to lib.rs
-    const announcedTrackNamespace = []
+    const announcedTrackNamespaces = []
 
     const ary = new Uint8Array([1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233])
     client.array_buffer_sample_method(ary)
@@ -32,21 +32,12 @@ init().then(async () => {
       console.log({ subscribeResponse })
 
       // TODO: Move error handling to lib.rs
-      for (announced of announcedTrackNamespace) {
-        if (announced === subscribeResponse.track_namespace) {
-          client.sendSubscribeOkMessage(
-            subscribeResponse.track_namespace,
-            subscribeResponse.track_name,
-            0n,
-            'not found'
-          )
-          console.log('send subscribe ok')
-          return
-        }
+      if (announcedTrackNamespace.includes(subscribeResponse.track_namespace)) {
+        client.sendSubscribeOkMessage(subscribeResponse.track_namespace, subscribeResponse.track_name, 0n, 0n)
+        console.log('send subscribe ok')
+      } else {
+        // TODO: Send subscribe error message
       }
-
-      client.sendSubscribeErrorMessage(subscribeResponse.track_namespace, subscribeResponse.track_name)
-      console.log('send subscribe error')
     })
 
     client.onSubscribeResponse(async (subscribeResponse) => {
@@ -87,7 +78,7 @@ init().then(async () => {
         case 'announce':
           await client.sendAnnounceMessage(trackNamespace, 1, authInfo)
           // TODO: Move track management to lib.rs
-          announcedTrackNamespace.push(trackNamespace)
+          announcedTrackNamespaces.push(trackNamespace)
           break
         case 'unannounce':
           await client.sendUnannounceMessage(trackNamespace)

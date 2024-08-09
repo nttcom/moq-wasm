@@ -13,6 +13,7 @@ pub(crate) async fn subscribe_handler(
     subscribe_message: SubscribeRequestMessage,
     client: &mut MOQTClient,
     track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     stream_manager_repository: &mut dyn StreamManagerRepository,
 ) -> Result<()> {
     tracing::info!("subscribe_handler!");
@@ -26,7 +27,7 @@ pub(crate) async fn subscribe_handler(
         subscribe_message.track_name()
     );
     // ANNOUNCEではtrack_namespaceのみを記録しているので、track_namespaceを使ってpublisherを判断する
-    let publisher_session_id = track_manager_repository
+    let publisher_session_id = track_namespace_manager_repository
         .get_publisher_session_id_by_track_namespace(subscribe_message.track_namespace())
         .await;
     match publisher_session_id {

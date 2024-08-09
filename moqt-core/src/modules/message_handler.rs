@@ -58,7 +58,7 @@ pub async fn message_handler(
     stream_type: StreamType,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
-    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     stream_manager_repository: &mut dyn StreamManagerRepository,
 ) -> MessageProcessResult {
     tracing::info!("message_handler! {}", read_buf.len());
@@ -189,6 +189,7 @@ pub async fn message_handler(
                 &mut payload_buf,
                 client,
                 track_manager_repository,
+                track_namespace_manager_repository,
                 stream_manager_repository,
             )
             .await
@@ -253,7 +254,7 @@ pub async fn message_handler(
             let _unsubscribe_result = unannounce_handler(
                 unsubscribe_message.unwrap(),
                 client,
-                track_manager_repository,
+                track_namespace_manager_repository,
             );
 
             return MessageProcessResult::Success(BytesMut::with_capacity(0));
@@ -263,7 +264,7 @@ pub async fn message_handler(
                 &mut payload_buf,
                 client,
                 &mut write_buf,
-                track_manager_repository,
+                track_namespace_manager_repository,
             )
             .await
             {
@@ -314,7 +315,7 @@ pub async fn message_handler(
             let _unannounce_result = unannounce_handler(
                 unannounce_message.unwrap(),
                 client,
-                track_manager_repository,
+                track_namespace_manager_repository,
             )
             .await;
 

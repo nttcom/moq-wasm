@@ -10,7 +10,7 @@ use bytes::BytesMut;
 pub(crate) async fn process_subscribe_message(
     payload_buf: &mut BytesMut,
     client: &mut MOQTClient,
-    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     stream_manager_repository: &mut dyn StreamManagerRepository,
 ) -> Result<()> {
     if client.status() != MOQTClientStatus::SetUp {
@@ -30,7 +30,7 @@ pub(crate) async fn process_subscribe_message(
     subscribe_handler(
         subscribe_request_message,
         client,
-        track_manager_repository,
+        track_namespace_manager_repository,
         stream_manager_repository,
     )
     .await
