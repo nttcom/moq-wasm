@@ -9,8 +9,8 @@ use crate::modules::handlers::unannounce_handler::unannounce_handler;
 use crate::modules::messages::unannounce_message::UnAnnounceMessage;
 use crate::server_processes::announce_message::process_announce_message;
 use crate::server_processes::client_setup_message::process_client_setup_message;
+use crate::server_processes::subscribe_ok_message::process_subscribe_ok_message;
 use crate::server_processes::subscribe_request_message::process_subscribe_message;
-use crate::server_processes::subscribe_response_message::process_subscribe_ok_message;
 
 use super::constants::UnderlayType;
 use super::message_type::MessageType;
@@ -188,7 +188,7 @@ pub async fn message_handler(
             match process_subscribe_message(
                 &mut payload_buf,
                 client,
-                track_manager_repository,
+                track_namespace_manager_repository,
                 stream_manager_repository,
             )
             .await
@@ -208,7 +208,7 @@ pub async fn message_handler(
             match process_subscribe_ok_message(
                 &mut payload_buf,
                 client,
-                track_manager_repository,
+                track_namespace_manager_repository,
                 stream_manager_repository,
             )
             .await
