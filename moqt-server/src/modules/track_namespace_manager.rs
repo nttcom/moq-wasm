@@ -288,18 +288,24 @@ impl TrackNamespaces {
 pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
     tracing::info!("track_namespace_manager start");
 
+    // TrackNamespaces
     // {
-    //   "${track_namespace}" : {
-    //     "publisher_session_id" : usize,
-    //     "${track_name}" : {
-    //       "track_id" : Option<u64>,
-    //       "${subscriber_session_id}" : {
-    //         "state" : String
+    //     "publishers": {
+    //       "${track_namespace}": {
+    //         "publisher_session_id": "usize",
+    //         "tracks": {
+    //           "${track_name}": {
+    //             "track_id": "Option<u64>",
+    //             "subscribers": {
+    //               "${subscriber_session_id}": {
+    //                 "state": "SubscriberStatus"
+    //               }
+    //             }
+    //           }
+    //         }
     //       }
     //     }
     //   }
-    // }
-
     let mut namespaces: TrackNamespaces = TrackNamespaces::new();
 
     while let Some(cmd) = rx.recv().await {
