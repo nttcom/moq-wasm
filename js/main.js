@@ -13,7 +13,7 @@ init().then(async () => {
     console.log('URL:', client.url())
 
     // TODO: Move track management to lib.rs
-    const announcedTrackNamespace = []
+    const announcedTrackNamespaces = []
 
     const ary = new Uint8Array([1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233])
     client.array_buffer_sample_method(ary)
@@ -78,7 +78,7 @@ init().then(async () => {
         case 'announce':
           await client.sendAnnounceMessage(trackNamespace, 1, authInfo)
           // TODO: Move track management to lib.rs
-          announcedTrackNamespace.push(trackNamespace)
+          announcedTrackNamespaces.push(trackNamespace)
           break
         case 'unannounce':
           await client.sendUnannounceMessage(trackNamespace)
