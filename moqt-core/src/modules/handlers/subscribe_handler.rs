@@ -12,7 +12,7 @@ use crate::{
 pub(crate) async fn subscribe_handler(
     subscribe_message: SubscribeRequestMessage,
     client: &mut MOQTClient,
-    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     stream_manager_repository: &mut dyn StreamManagerRepository,
 ) -> Result<()> {
     tracing::info!("subscribe_handler!");
@@ -32,7 +32,7 @@ pub(crate) async fn subscribe_handler(
     match publisher_session_id {
         Some(session_id) => {
             // SUBSCRIBEメッセージを送ったSUBSCRIBERを記録する
-            match track_manager_repository
+            match track_namespace_manager_repository
                 .set_subscriber(
                     subscribe_message.track_namespace(),
                     client.id,
