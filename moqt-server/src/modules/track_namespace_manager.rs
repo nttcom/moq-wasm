@@ -163,30 +163,30 @@ impl TrackNamespaces {
             }
 
             // subscriberが存在しない場合は追加する
-            self.publishers
+            let track_name_object = self
+                .publishers
                 .get_mut(&track_namespace)
                 .unwrap()
                 .tracks
                 .get_mut(&track_name)
-                .unwrap()
-                .set_subscriber(subscriber_session_id);
+                .unwrap();
+            track_name_object.set_subscriber(subscriber_session_id);
 
             return Ok(());
         }
 
         // track_nameが存在しない場合は新規作成してからsubscriberを追加する
-        self.publishers
-            .get_mut(&track_namespace)
-            .unwrap()
-            .set_track(track_name.clone());
+        let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
+        track_namespace_object.set_track(track_name.clone());
 
-        self.publishers
+        let track_name_object = self
+            .publishers
             .get_mut(&track_namespace)
             .unwrap()
             .tracks
             .get_mut(&track_name)
-            .unwrap()
-            .set_subscriber(subscriber_session_id);
+            .unwrap();
+        track_name_object.set_subscriber(subscriber_session_id);
 
         Ok(())
     }
@@ -215,41 +215,42 @@ impl TrackNamespaces {
         }
 
         // subscriberが存在する場合は削除する
-        self.publishers
+        let track_name_object = self
+            .publishers
             .get_mut(&track_namespace)
             .unwrap()
             .tracks
             .get_mut(&track_name)
-            .unwrap()
-            .delete_subscriber(subscriber_session_id);
+            .unwrap();
+        track_name_object.delete_subscriber(subscriber_session_id);
 
         // subscriberが一つも存在しない場合はtrackも削除する
         if self.publishers[&track_namespace].is_track_empty() {
-            self.publishers
-                .get_mut(&track_namespace)
-                .unwrap()
-                .delete_track(track_name);
+            let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
+            track_namespace_object.delete_track(track_name);
         }
 
         Ok(())
     }
 
     fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>> {
-        let mut session_ids = Vec::new();
-
-        for publisher in self.publishers.values() {
-            for track in publisher.tracks.values() {
-                if let Some(id) = track.track_id {
-                    if id == track_id {
-                        for (session_id, status) in &track.subscribers {
-                            if status.is_active() {
-                                session_ids.push(*session_id);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let session_ids: Vec<usize> = self
+            .publishers
+            .values()
+            .flat_map(|publisher| {
+                publisher
+                    .tracks
+                    .values()
+                    .filter(|track| track.track_id == Some(track_id))
+                    .flat_map(|track| {
+                        track
+                            .subscribers
+                            .iter()
+                            .filter(|(_, status)| status.is_active())
+                            .map(|(session_id, _)| *session_id)
+                    })
+            })
+            .collect();
 
         if session_ids.is_empty() {
             return None;

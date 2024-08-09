@@ -14,4 +14,3 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 wtransport = "0.1.12"
 bytes = "1"
 async-trait = "0.1.74"
-time = "0.3.36"
