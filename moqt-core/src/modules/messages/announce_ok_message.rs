@@ -33,7 +33,7 @@ impl MOQTPayload for AnnounceOk {
             &self.track_namespace.as_bytes().to_vec(),
         ));
     }
-    /// MOQTPayloadからAnnounceOkへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to AnnounceOk
     fn as_any(&self) -> &dyn Any {
         self
     }

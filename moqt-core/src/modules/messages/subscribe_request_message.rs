@@ -116,7 +116,7 @@ impl MOQTPayload for SubscribeRequestMessage {
             version_specific_parameter.packetize(buf);
         }
     }
-    /// MOQTPayloadからSubscribeRequestMessageへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to SubscribeRequestMessage
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -169,7 +169,7 @@ impl MOQTPayload for Location {
             }
         }
     }
-    /// MOQTPayloadからLocationへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to Location
     fn as_any(&self) -> &dyn Any {
         self
     }

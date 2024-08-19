@@ -5,7 +5,7 @@ use crate::messages::moqt_payload::MOQTPayload;
 
 #[async_trait]
 pub trait StreamManagerRepository: Send + Sync {
-    // TODO: SUBSCRIBE・OBJECTメッセージの際に関数名を修正する
+    // TODO: Modify function names when handling SUBSCRIBE and OBJECT messages
     async fn broadcast_message(
         &self,
         session_id: Option<usize>,

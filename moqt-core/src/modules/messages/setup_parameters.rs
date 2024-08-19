@@ -7,7 +7,6 @@ use bytes::BufMut;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
 
-// TODO: FIXME: そもそもvalueだけ持たせれば後ろの個別のstructはいらないのでは?
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub enum SetupParameter {
     RoleParameter(RoleParameter),
@@ -74,7 +73,7 @@ impl MOQTPayload for SetupParameter {
             SetupParameter::Unknown(_) => unimplemented!("Unknown SETUP parameter"),
         }
     }
-    /// MOQTPayloadからSetupParameterへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to SetupParameter
     fn as_any(&self) -> &dyn Any {
         self
     }

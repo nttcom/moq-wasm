@@ -67,7 +67,7 @@ impl MOQTPayload for AnnounceError {
             &self.reason_phrase.as_bytes().to_vec(),
         ));
     }
-    /// MOQTPayloadからAnnounceErrorへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to AnnounceError
     fn as_any(&self) -> &dyn Any {
         self
     }

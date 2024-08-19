@@ -80,7 +80,7 @@ impl MOQTPayload for ObjectMessageWithPayloadLength {
         buf.extend(write_variable_integer(self.object_payload_length));
         buf.extend(write_variable_bytes(&self.object_payload));
     }
-    /// MOQTPayloadからObjectMessageWithPayloadLengthへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to ObjectMessageWithPayloadLength
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -145,7 +145,7 @@ impl MOQTPayload for ObjectMessageWithoutPayloadLength {
         buf.extend(write_variable_integer(self.object_send_order));
         buf.extend(write_variable_bytes(&self.object_payload));
     }
-    /// MOQTPayloadからObjectMessageWithoutPayloadLengthへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to ObjectMessageWithoutPayloadLength
     fn as_any(&self) -> &dyn Any {
         self
     }

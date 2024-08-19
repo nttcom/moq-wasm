@@ -6,7 +6,3 @@
 | SkyWay Client <- Meta Server | -            | ✅           | ❌     | -         | ✅           | ❌              | -           | ❌            | ❌            | -        | ✅          | ⏹️             | -          | ❌     |
 | Meta Client -> SkyWay Server | ✅           | -            | ❌     | ✅        | -            | -               | ❌          | ❌            | ❌            | ✅       | -           | -              | ❌         | ❌     |
 | Meta Client <- SkyWay Server | -            | ✅           | ❌     | -         | ✅           | ❌              | -           | ❌            | ❌            | -        | ✅          | ⏹️             | -          | ❌     |
-
-## ANNOUNCE_ERROR
-
-- Meta Client に ANNOUNCE_ERROR の実装がないため後回しとする

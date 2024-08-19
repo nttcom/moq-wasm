@@ -24,7 +24,7 @@ use wtransport::RecvStream;
 use wtransport::SendStream;
 use wtransport::{endpoint::IncomingSession, Endpoint, Identity, ServerConfig};
 
-// Auth paramを検証するためのcallback
+// Callback to validate the Auth parameter
 pub enum AuthCallbackType {
     Announce,
     Subscribe,
@@ -109,7 +109,6 @@ impl MOQT {
         // Start stream management thread
         tokio::spawn(async move { stream_manager(&mut stream_rx).await });
 
-        // 以下はWebTransportの場合
         // Start wtransport server
         let config = ServerConfig::builder()
             .with_bind_default(self.port)
@@ -183,10 +182,9 @@ async fn handle_connection_impl(
 
     tracing::info!("Waiting for data from client...");
 
-    // Close処理をまとめるためにチャネルで処理を送る
     let (close_tx, mut close_rx) = mpsc::channel::<(u64, String)>(32);
 
-    // TODO: FIXME: QUICレベルの再接続対応のためにはスレッド間で記憶する必要がある
+    // TODO: FIXME: Need to store information between threads for QUIC-level reconnection support
     let mut is_control_stream_opened = false;
     loop {
         tokio::select! {
@@ -207,7 +205,7 @@ async fn handle_connection_impl(
                     tracing::info!("Accepted BI stream");
                 });
 
-                // write_steamはMessageの返却・中継のため、複数スレッドから呼び出されることがあるためMutexでラップしてスレッドセーフにする
+                // The write_stream is wrapped with a Mutex to make it thread-safe since it can be called from multiple threads for returning and relaying messages.
                 let (write_stream, read_stream) = stream;
                 let shread_write_stream = Arc::new(Mutex::new(write_stream));
 
@@ -227,7 +225,7 @@ async fn handle_connection_impl(
                     sender: message_tx,
                 }).await?;
 
-                // WebTrasnportのメッセージを待ち受けるスレッド
+                // Thread that listens for WebTransport messages
                 let write_stream_clone = Arc::clone(&shread_write_stream);
                 tokio::spawn(async move {
                     let mut stream = Stream {
@@ -240,7 +238,7 @@ async fn handle_connection_impl(
                     handle_read_stream(&mut stream, client, buffer_tx, track_tx, close_tx, stream_tx).await
                 });
 
-                // サーバーが中継するメッセージ(ANNOUNCE SUBSCRIBE OBJECT)を送信するスレッド
+                // Thread to send relayed messages (ANNOUNCE SUBSCRIBE OBJECT) from the server
                 let write_stream_clone = Arc::clone(&shread_write_stream);
                 tokio::spawn(async move {
                     handle_relayed_message(write_stream_clone, message_rx).await;
@@ -248,7 +246,7 @@ async fn handle_connection_impl(
 
             },
             stream = connection.accept_uni() => {
-                let _span = tracing::info_span!("sid", stable_id); // TODO: 未実装
+                let _span = tracing::info_span!("sid", stable_id); // TODO: Not implemented yet
 
                 let stream = stream?;
                 tracing::info!("Accepted UNI stream");
@@ -278,18 +276,18 @@ async fn handle_connection_impl(
                 tracing::info!("Connection closed, rtt={:?}", connection.rtt());
                 break;
             },
-            // TODO: 未実装のため＿をつけている
+            // TODO: Not implemented yet
             Some((_code, _reason)) = close_rx.recv() => {
                 tracing::info!("close channel received");
-                // FIXME: closeしたいけどVarIntがexportされていないのでお茶を濁す
-                // wtransport-protoにあるかも?
+                // FIXME: I want to close the connection, but VarInt is not exported, so I'll leave it as is
+                // Maybe it's in wtransport-proto?
                 // connection.close(VarInt)
                 break;
             }
         }
     }
 
-    // FIXME: QUICレベルのsessionを保持する場合は消してはいけない
+    // FIXME: Do not remove if storing QUIC-level sessions
     buffer_tx
         .send(BufferCommand::ReleaseSession {
             session_id: stable_id,
@@ -343,7 +341,7 @@ async fn handle_read_stream(
         buf.extend_from_slice(&read_buf);
 
         let mut client = client.lock().await;
-        // TODO: message_handlerはserverでしか使わないのでserver側に実装を移動する
+        // TODO: Move the implementation of message_handler to the server side since it is only used by the server
         let message_result = message_handler(
             &mut buf,
             stream_type,
@@ -371,7 +369,6 @@ async fn handle_read_stream(
         };
     }
 
-    // TODO: FIXME: QUICレベルの再接続時をサポートする時に呼んで良いか確認
     buffer_tx
         .send(BufferCommand::ReleaseStream {
             session_id: stable_id,

@@ -71,7 +71,7 @@ impl MOQTPayload for SubscribeOk {
         buf.extend(write_variable_integer(self.track_id));
         buf.extend(write_variable_integer(self.expires));
     }
-    /// MOQTPayloadからSubscribeOkへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to SubscribeOk
     fn as_any(&self) -> &dyn Any {
         self
     }

@@ -97,7 +97,7 @@ impl MOQTPayload for VersionSpecificParameter {
             }
         }
     }
-    /// MOQTPayloadからVersionSpecificParameterへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to VersionSpecificParameter
     fn as_any(&self) -> &dyn Any {
         self
     }
