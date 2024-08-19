@@ -11,7 +11,7 @@ use crate::{
 
 pub(crate) async fn subscribe_ok_handler(
     subscribe_ok_message: SubscribeOk,
-    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     stream_manager_repository: &mut dyn StreamManagerRepository,
 ) -> Result<()> {
     tracing::info!("subscribe_ok_handler!");
@@ -29,7 +29,7 @@ pub(crate) async fn subscribe_ok_handler(
         subscribe_ok_message.track_id()
     );
     // track_namespaceとtrack_nameを使ってSUBSCRIBEを送信したSUBSCRIBERを判断する
-    let subscriber_session_ids = track_manager_repository
+    let subscriber_session_ids = track_namespace_manager_repository
         .get_subscriber_session_ids_by_track_namespace_and_track_name(
             subscribe_ok_message.track_namespace(),
             subscribe_ok_message.track_name(),
@@ -53,14 +53,14 @@ pub(crate) async fn subscribe_ok_handler(
                 {
                     Ok(_) => {
                         // 成功したらtrack_idを記録してsubscriberをactivateする
-                        let _ = track_manager_repository
+                        let _ = track_namespace_manager_repository
                             .set_track_id(
                                 subscribe_ok_message.track_namespace(),
                                 subscribe_ok_message.track_name(),
                                 subscribe_ok_message.track_id(),
                             )
                             .await;
-                        let _ = track_manager_repository
+                        let _ = track_namespace_manager_repository
                             .activate_subscriber(
                                 subscribe_ok_message.track_namespace(),
                                 subscribe_ok_message.track_name(),
