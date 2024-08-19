@@ -32,7 +32,7 @@ impl MOQTPayload for UnAnnounceMessage {
             &self.track_namespace.as_bytes().to_vec(),
         ))
     }
-    /// MOQTPayloadからUnAnnounceMessageへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to UnAnnounceMessage
     fn as_any(&self) -> &dyn Any {
         self
     }

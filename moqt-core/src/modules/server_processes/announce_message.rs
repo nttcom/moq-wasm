@@ -42,7 +42,6 @@ pub(crate) async fn process_announce_message(
             }
         },
         Err(err) => {
-            // fix
             tracing::error!("{:#?}", err);
             bail!(err.to_string());
         }

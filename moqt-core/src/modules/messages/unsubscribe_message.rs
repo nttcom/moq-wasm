@@ -19,13 +19,13 @@ impl UnsubscribeMessage {
         }
     }
 
-    // TODO: 未実装のためallow dead codeをつけている
+    // TODO: Not implemented yet
     #[allow(dead_code)]
     pub(crate) fn track_namespace(&self) -> &str {
         &self.track_namespace
     }
 
-    // TODO: 未実装のためallow dead codeをつけている
+    // TODO: Not implemented yet
     #[allow(dead_code)]
     pub(crate) fn track_name(&self) -> &str {
         &self.track_name
@@ -51,7 +51,7 @@ impl MOQTPayload for UnsubscribeMessage {
         ));
         buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
     }
-    /// MOQTPayloadからUnsubscribeMessageへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to UnsubscribeMessage
     fn as_any(&self) -> &dyn Any {
         self
     }

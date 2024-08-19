@@ -79,7 +79,7 @@ pub(crate) enum BufferCommand {
 
 type BufferType = Arc<Mutex<BytesMut>>;
 
-// buffer要求時のchannel周りの処理を隠蔽するためのラッパー
+// Wrapper to encapsulate the channel handling for buffer requests
 pub(crate) async fn request_buffer(
     tx: mpsc::Sender<BufferCommand>,
     session_id: usize,

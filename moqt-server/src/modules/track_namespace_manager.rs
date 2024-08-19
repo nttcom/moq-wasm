@@ -161,22 +161,17 @@ impl TrackNamespaces {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
             return Err(anyhow::anyhow!("track_namespace not found"));
         }
-        // track_namespaceが存在する場合はobjectを取得する
         let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
 
         if track_namespace_object.is_exist_track_name(track_name.clone()) {
-            // trackが存在する場合はobjectを取得する
             let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
-
             if track_name_object.is_exist_subscriber(subscriber_session_id) {
                 return Err(anyhow::anyhow!("already exist"));
             }
-            // subscriberが存在しない場合は追加する
             track_name_object.set_subscriber(subscriber_session_id);
 
             Ok(())
         } else {
-            // track_nameが存在しない場合はtrackを新規作成してからsubscriberを追加する
             track_namespace_object.set_track(track_name.clone());
             let new_track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
             new_track_name_object.set_subscriber(subscriber_session_id);
@@ -194,22 +189,17 @@ impl TrackNamespaces {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
             return Err(anyhow::anyhow!("track_namespace not found"));
         }
-        // track_namespaceが存在する場合はobjectを取得する
         let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
 
         if !track_namespace_object.is_exist_track_name(track_name.clone()) {
             return Err(anyhow::anyhow!("track_name not found"));
         }
-        // trackが存在する場合はobjectを取得する
         let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
 
         if !track_name_object.is_exist_subscriber(subscriber_session_id) {
             return Err(anyhow::anyhow!("subscriber not found"));
         }
-        // subscriberが存在する場合は削除する
         track_name_object.delete_subscriber(subscriber_session_id);
-
-        // subscriberが一つも存在しない場合はtrackも削除する
         if track_name_object.is_subscriber_empty() {
             track_namespace_object.delete_track(track_name);
         }
@@ -225,22 +215,18 @@ impl TrackNamespaces {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
             return None;
         }
-        // track_namespaceが存在する場合はobjectを取得する
         let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
-
         if !track_namespace_object.is_exist_track_name(track_name.clone()) {
             return None;
         }
-        // track_nameが存在する場合はobjectを取得する
+
         let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
 
-        // track_nameに紐づくwaiting状態のsubscriberを取得する
         let waiting_subscribers = track_name_object
             .subscribers
             .iter()
             .filter(|(_, status)| status.is_waiting());
 
-        // session_idを取得する
         let waiting_subscriber_session_ids: Vec<usize> = waiting_subscribers
             .map(|(session_id, _)| *session_id)
             .collect();
@@ -253,20 +239,17 @@ impl TrackNamespaces {
     }
 
     fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>> {
-        // track_idが一致するtrackを取得する
         let track = self
             .publishers
             .values()
             .flat_map(|publisher| publisher.tracks.values())
             .find(|track| track.track_id == Some(track_id))?;
 
-        // trackに紐づくactive状態のsubscriberを取得する
         let active_subscribers = track
             .subscribers
             .iter()
             .filter(|(_, status)| status.is_active());
 
-        // session_idを取得する
         let active_subscriber_session_ids: Vec<usize> = active_subscribers
             .map(|(session_id, _)| *session_id)
             .collect();
@@ -286,13 +269,12 @@ impl TrackNamespaces {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
             return Err(anyhow::anyhow!("track_namespace not found"));
         }
-        // track_namespaceが存在する場合はobjectを取得する
-        let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
 
+        let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
         if !track_namespace_object.is_exist_track_name(track_name.clone()) {
             return Err(anyhow::anyhow!("track_name not found"));
         }
-        // track_nameが存在する場合はtrack_idを設定する
+
         let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
         track_name_object.set_track_id(track_id);
 
@@ -309,13 +291,11 @@ impl TrackNamespaces {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
             return Err(anyhow::anyhow!("track_namespace not found"));
         }
-        // track_namespaceが存在する場合はobjectを取得する
         let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
-
         if !track_namespace_object.is_exist_track_name(track_name.clone()) {
             return Err(anyhow::anyhow!("track_name not found"));
         }
-        // track_nameが存在する場合はsubscriberのstatusを設定する
+
         let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
         let subscriber = track_name_object
             .subscribers
@@ -528,7 +508,7 @@ pub(crate) enum TrackCommand {
     },
 }
 
-// channel周りの処理を隠蔽するためのラッパー
+// Wrapper to encapsulate channel-related operations
 pub(crate) struct TrackNamespaceManager {
     tx: mpsc::Sender<TrackCommand>,
 }
@@ -595,7 +575,6 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
         return result;
     }
 
-    // track_namespaceからpublisherのsession_idを取得する
     async fn get_publisher_session_id_by_track_namespace(
         &self,
         track_namespace: &str,
@@ -687,7 +666,6 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
         }
     }
 
-    // track_idからsubscriberのsession_idを取得する
     async fn get_subscriber_session_ids_by_track_namespace_and_track_name(
         &self,
         track_namespace: &str,
@@ -707,7 +685,6 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
         return session_ids;
     }
 
-    // track_idからsubscriberのsession_idを取得する
     async fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Option<Vec<usize>>>();
 

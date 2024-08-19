@@ -73,7 +73,7 @@ pub(crate) enum StreamCommand {
     },
     List {
         stream_type: String,
-        exclude_session_id: Option<usize>, // 現在はListはbroadcastにしか利用されないため、exclude_session_idを指定する
+        exclude_session_id: Option<usize>, // Currently, exclude_session_id is only used in broadcast for List
         resp: oneshot::Sender<Vec<MoqtMessageForwarder>>,
     },
     Get {
@@ -95,7 +95,7 @@ impl StreamManager {
 
 #[async_trait]
 impl StreamManagerRepository for StreamManager {
-    // TODO: SUBSCRIBE・OBJECTメッセージの際に関数名を修正する
+    // TODO: Modify function names
     async fn broadcast_message(
         &self,
         session_id: Option<usize>,

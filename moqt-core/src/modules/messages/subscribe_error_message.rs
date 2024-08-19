@@ -80,7 +80,7 @@ impl MOQTPayload for SubscribeError {
             &self.reason_phrase.as_bytes().to_vec(),
         ));
     }
-    /// MOQTPayloadからSubscribeErrorへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to SubscribeError
     fn as_any(&self) -> &dyn Any {
         self
     }

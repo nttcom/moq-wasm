@@ -57,7 +57,7 @@ impl MOQTPayload for ServerSetupMessage {
             setup_parameter.packetize(buf);
         }
     }
-    /// MOQTPayloadからServerSetupMessageへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to ServerSetupMessage
     fn as_any(&self) -> &dyn Any {
         self
     }

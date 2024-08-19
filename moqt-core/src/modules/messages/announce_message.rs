@@ -81,7 +81,7 @@ impl MOQTPayload for AnnounceMessage {
             param.packetize(buf);
         }
     }
-    /// MOQTPayloadからAnnounceMessageへのダウンキャストを可能にするためのメソッド
+    /// Method to enable downcasting from MOQTPayload to AnnounceMessage
     fn as_any(&self) -> &dyn Any {
         self
     }
