@@ -53,8 +53,8 @@ pub(crate) fn setup_handler(
         bail!("Role parameter is required in SETUP parameter from client.");
     }
 
-    // setupParametersでroleが3になるように作成して、付与する。
-    // 本来であれば、ここはserver側でroleを決めるところだが、一旦は、roleは3とする。
+    // Create a setup parameter with role set to 3 and assign it.
+    // Normally, the server should determine the role here, but for now, let's set it to 3.
     let role_parameter = SetupParameter::RoleParameter(RoleParameter::new(RoleCase::Both));
     let server_setup_message =
         ServerSetupMessage::new(constants::MOQ_TRANSPORT_VERSION, vec![role_parameter]);

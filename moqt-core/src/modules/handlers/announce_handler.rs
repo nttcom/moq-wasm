@@ -29,10 +29,10 @@ pub(crate) async fn announce_handler(
         client.id
     );
 
-    // announceされたTrack Namespaceを記録
+    // Record the announced Track Namespace
     let set_result = track_namespace_manager_repository
         .set_publisher(announce_message.track_namespace(), client.id)
-        .await;
+
 
     match set_result {
         Ok(_) => {

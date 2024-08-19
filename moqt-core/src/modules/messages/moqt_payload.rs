@@ -2,14 +2,14 @@ use anyhow::Result;
 use bytes::BytesMut;
 use std::any::Any;
 
-// 各messageがこれを実装する
+// Each message implements this trait
 pub trait MOQTPayload: Send + Sync {
-    /// 何らかの不正なデータが送られてきた場合は、Errを返すのでResult型
+    // If any invalid data is received, return Err as Result type
     fn depacketize(buf: &mut BytesMut) -> Result<Self>
     where
         Self: Sized;
-    /// 送信するデータをbufferに書き込む。書き込んだbufferを返すわけではないので注意
+    // Write the data to be sent into the buffer. Note that it does not return the written buffer.
     fn packetize(&self, buf: &mut BytesMut);
-    /// MOQTPayloadからMessageへのダウンキャストを可能にするためのメソッド
+    // Method to enable downcasting from MOQTPayload to Message
     fn as_any(&self) -> &dyn Any;
 }

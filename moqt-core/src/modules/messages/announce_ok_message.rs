@@ -53,7 +53,6 @@ mod success {
         announce_ok.packetize(&mut buf);
 
         // Track Namespace bytes Length
-        // .len()の時点ではusizeでu8としてto_be_bytesされないのでu8に事前に変換する
         let mut combined_bytes = Vec::from((track_namespace.len() as u8).to_be_bytes());
         // Track Namespace bytes
         combined_bytes.extend(track_namespace.as_bytes().to_vec());

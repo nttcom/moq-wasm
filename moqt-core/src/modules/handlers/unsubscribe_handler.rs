@@ -5,18 +5,18 @@ use crate::{
     TrackNamespaceManagerRepository,
 };
 
-// TODO: 未実装のためallow dead_codeをつけている
+// TODO: Not implemented yet
 #[allow(dead_code)]
 pub(crate) enum UnSubscribeResponse {
     Success,
     Failure,
 }
 
-// TODO: 未実装のため_をつけている
+// TODO: Not implemented yet
 pub(crate) async fn _unsubscribe_handler(
     unsubscribe_message: UnsubscribeMessage,
-    _client: &mut MOQTClient, // TODO: 未実装のため_をつけている
-    _track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository, // TODO: 未実装のため_をつけている
+    _client: &mut MOQTClient, // TODO: Not implemented yet
+    _track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository, // TODO: Not implemented yet
 ) -> Result<UnSubscribeResponse> {
     tracing::info!("unsubscribe_handler!");
 
@@ -29,7 +29,7 @@ pub(crate) async fn _unsubscribe_handler(
         unsubscribe_message.track_name()
     );
 
-    // TODO: unsubscribe情報を削除
+    // TODO: Remove unsubscribe information
 
     // FIXME: tmp
     Ok(UnSubscribeResponse::Success)
