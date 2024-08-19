@@ -56,9 +56,8 @@ impl MOQTPayload for ObjectMessageWithPayloadLength {
         let object_payload_length =
             read_variable_integer_from_buffer(buf).context("object payload length")?;
 
-        // Payloadの長さを示すvarint部分を読み飛ばす
+        // Skip the varint part that indicates the length of the payload
         let _ = read_variable_integer_from_buffer(buf)?;
-        // Payload Lengthがある場合は指定された長さだけ読む
         let object_payload =
             read_fixed_length_bytes_from_buffer(buf, object_payload_length as usize)
                 .context("object payload")?;
@@ -125,9 +124,8 @@ impl MOQTPayload for ObjectMessageWithoutPayloadLength {
         let object_send_order =
             read_variable_integer_from_buffer(buf).context("object send order")?;
 
-        // Payloadの長さを示すvarint部分を読み飛ばす
+        // Skip the varint part that indicates the length of the payload
         let _ = read_variable_integer_from_buffer(buf)?;
-        // Payload Lengthがない場合はバッファの最後まで読む
         let object_payload =
             read_variable_bytes_to_end_from_buffer(buf).context("object payload")?;
 

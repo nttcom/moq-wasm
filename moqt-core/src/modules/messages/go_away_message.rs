@@ -1,4 +1,3 @@
-// TODO: Implement GoAwayMessage
-// 未実装のため allow dead_code をつけている
+// TODO: Not implemented yet
 #[allow(dead_code)]
 pub(crate) struct GoAwayMessage {}
