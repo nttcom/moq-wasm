@@ -40,7 +40,7 @@ Both server and browser client are written in Rust.
 
 ## How to run
 
-### サーバ用の公開鍵と秘密鍵を作成する
+### Generating public and private keys for the server
 
 ```shell
 cd moqt-server-sample
@@ -50,16 +50,16 @@ openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -out cert.pem -subj '/
 
 ```
 
-### moqt-server-sample の実行
+### Run moqt-server-sample
 
 - `cargo run -p moqt-server-sample`
 
-#### ログレベルの指定
+#### Specify the log level
 
 - `cargo run -p moqt-server-sample -- -log <Log Level>`
   - Default setting is `DEBUG`
 
-### moqt-client-sample の実行
+### Run moqt-client-sample
 
 ```shell
 cd js
@@ -67,9 +67,9 @@ npm install
 npm run dev
 ```
 
-- chrome の WebTransport 機能の ON と証明書の追加
+- Add a certificate and Enable WebTransport feature in Chrome
 
 ```shell
-Mac の場合
+For Mac users
 ./scripts/start-localhost-test-chrome.sh
 ```
