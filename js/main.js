@@ -12,6 +12,9 @@ init().then(async () => {
     console.log(client.id, client)
     console.log('URL:', client.url())
 
+    // TODO: Move track management to lib.rs
+    const announcedTrackNamespaces = []
+
     const ary = new Uint8Array([1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233])
     client.array_buffer_sample_method(ary)
     client.array_buffer_sample_method(ary)
@@ -27,6 +30,14 @@ init().then(async () => {
     client.onSubscribe(async (subscribeResponse) => {
       console.log('relay will want to subscribe')
       console.log({ subscribeResponse })
+
+      // TODO: Move error handling to lib.rs
+      if (announcedTrackNamespace.includes(subscribeResponse.track_namespace)) {
+        client.sendSubscribeOkMessage(subscribeResponse.track_namespace, subscribeResponse.track_name, 0n, 0n)
+        console.log('send subscribe ok')
+      } else {
+        // TODO: Send subscribe error message
+      }
     })
 
     client.onSubscribeResponse(async (subscribeResponse) => {
@@ -66,6 +77,8 @@ init().then(async () => {
           break
         case 'announce':
           await client.sendAnnounceMessage(trackNamespace, 1, authInfo)
+          // TODO: Move track management to lib.rs
+          announcedTrackNamespaces.push(trackNamespace)
           break
         case 'unannounce':
           await client.sendUnannounceMessage(trackNamespace)
