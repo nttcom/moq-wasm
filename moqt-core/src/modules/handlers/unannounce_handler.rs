@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::{
     modules::{
         messages::unannounce_message::UnAnnounceMessage,
-        track_manager_repository::TrackManagerRepository,
+        track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
     MOQTClient,
 };
@@ -11,7 +11,7 @@ use crate::{
 pub(crate) async fn unannounce_handler(
     unannounce_message: UnAnnounceMessage,
     _client: &mut MOQTClient, // 未実装のため_をつけている
-    track_manager_repository: &mut dyn TrackManagerRepository,
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<()> {
     tracing::info!("unannounce_handler!");
 
@@ -21,8 +21,8 @@ pub(crate) async fn unannounce_handler(
     );
 
     // announceされたTrack Namespaceを削除
-    let delete_result = track_manager_repository
-        .delete(unannounce_message.track_namespace())
+    let delete_result = track_namespace_manager_repository
+        .delete_publisher(unannounce_message.track_namespace())
         .await;
 
     match delete_result {

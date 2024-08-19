@@ -1,7 +1,8 @@
 use anyhow::Result;
 
 use crate::{
-    modules::messages::unsubscribe_message::UnsubscribeMessage, MOQTClient, TrackManagerRepository,
+    modules::messages::unsubscribe_message::UnsubscribeMessage, MOQTClient,
+    TrackNamespaceManagerRepository,
 };
 
 // TODO: 未実装のためallow dead_codeをつけている
@@ -15,7 +16,7 @@ pub(crate) enum UnSubscribeResponse {
 pub(crate) async fn _unsubscribe_handler(
     unsubscribe_message: UnsubscribeMessage,
     _client: &mut MOQTClient, // TODO: 未実装のため_をつけている
-    _track_manager_repository: &mut dyn TrackManagerRepository, // TODO: 未実装のため_をつけている
+    _track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository, // TODO: 未実装のため_をつけている
 ) -> Result<UnSubscribeResponse> {
     tracing::info!("unsubscribe_handler!");
 

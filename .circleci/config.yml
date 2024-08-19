@@ -26,7 +26,7 @@ commands:
 jobs:
   rust_linter_and_formatter_and_test:
     docker:
-      - image: rust:latest
+      - image: rust:1.79
     steps:
       - checkout
       - record_build_env
@@ -62,7 +62,7 @@ jobs:
           command: npx prettier --check "js/**/*.{js,jsx,ts,tsx,json,css,md}"
   coverage_report:
     docker:
-      - image: rust:latest
+      - image: rust:1.79
     environment:
       CIRCLECI_CACHE_VERSION: 1
     steps:

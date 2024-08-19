@@ -6,7 +6,7 @@ use crate::{
             announce_error_message::AnnounceError, announce_message::AnnounceMessage,
             announce_ok_message::AnnounceOk,
         },
-        track_manager_repository::TrackManagerRepository,
+        track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
     MOQTClient,
 };
@@ -19,7 +19,7 @@ pub(crate) enum AnnounceResponse {
 pub(crate) async fn announce_handler(
     announce_message: AnnounceMessage,
     client: &mut MOQTClient,
-    track_manager_repository: &mut dyn TrackManagerRepository,
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<AnnounceResponse> {
     tracing::info!("announce_handler!");
 
@@ -30,8 +30,8 @@ pub(crate) async fn announce_handler(
     );
 
     // announceされたTrack Namespaceを記録
-    let set_result = track_manager_repository
-        .set(announce_message.track_namespace(), client.id)
+    let set_result = track_namespace_manager_repository
+        .set_publisher(announce_message.track_namespace(), client.id)
         .await;
 
     match set_result {
