@@ -31,6 +31,16 @@ impl SubscribeOk {
             expires,
         }
     }
+
+    pub fn track_namespace(&self) -> &str {
+        &self.track_namespace
+    }
+    pub fn track_name(&self) -> &str {
+        &self.track_name
+    }
+    pub fn track_id(&self) -> u64 {
+        self.track_id
+    }
 }
 
 impl MOQTPayload for SubscribeOk {

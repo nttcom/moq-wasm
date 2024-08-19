@@ -2,7 +2,6 @@ use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
 use crate::handlers::announce_handler::AnnounceResponse;
-use crate::handlers::subscribe_handler::SubscribeResponse;
 use crate::messages::object_message::{
     ObjectMessageWithPayloadLength, ObjectMessageWithoutPayloadLength,
 };
@@ -10,7 +9,8 @@ use crate::modules::handlers::unannounce_handler::unannounce_handler;
 use crate::modules::messages::unannounce_message::UnAnnounceMessage;
 use crate::server_processes::announce_message::process_announce_message;
 use crate::server_processes::client_setup_message::process_client_setup_message;
-use crate::server_processes::subscribe_message::process_subscribe_message;
+use crate::server_processes::subscribe_ok_message::process_subscribe_ok_message;
+use crate::server_processes::subscribe_request_message::process_subscribe_message;
 
 use super::constants::UnderlayType;
 use super::message_type::MessageType;
@@ -30,6 +30,7 @@ pub enum StreamType {
 
 pub enum MessageProcessResult {
     Success(BytesMut),
+    SuccessWithoutResponse,
     Failure(TerminationErrorCode, String),
     Fragment,
 }
@@ -187,16 +188,14 @@ pub async fn message_handler(
             match process_subscribe_message(
                 &mut payload_buf,
                 client,
-                &mut write_buf,
                 track_namespace_manager_repository,
                 stream_manager_repository,
             )
             .await
             {
-                Ok(subscribe_response) => match subscribe_response {
-                    SubscribeResponse::Success(_) => MessageType::SubscribeOk,
-                    SubscribeResponse::Failure(_) => MessageType::SubscribeError,
-                },
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
+                }
                 Err(err) => {
                     return MessageProcessResult::Failure(
                         TerminationErrorCode::GenericError,
@@ -205,12 +204,26 @@ pub async fn message_handler(
                 }
             }
         }
-        // MessageType::SubscribeOk => {
-        //       // TODO: server_processesフォルダに移管する
-        //     if client.status() != MOQTClientStatus::SetUp {
-        //         return MessageProcessResult::Failure;
-        //     }
-        // }
+        MessageType::SubscribeOk => {
+            match process_subscribe_ok_message(
+                &mut payload_buf,
+                client,
+                track_namespace_manager_repository,
+                stream_manager_repository,
+            )
+            .await
+            {
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
+                }
+                Err(err) => {
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::GenericError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
         // MessageType::SubscribeError => {
         //      // TODO: server_processesフォルダに移管する
         //     if client.status() != MOQTClientStatus::SetUp {

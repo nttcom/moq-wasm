@@ -36,6 +36,13 @@ impl SubscribeError {
             reason_phrase,
         }
     }
+
+    pub fn track_namespace(&self) -> &str {
+        &self.track_namespace
+    }
+    pub fn track_name(&self) -> &str {
+        &self.track_name
+    }
 }
 
 impl MOQTPayload for SubscribeError {
