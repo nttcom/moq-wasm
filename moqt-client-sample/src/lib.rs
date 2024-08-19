@@ -455,9 +455,8 @@ impl MOQTClient {
         }
 
         let transport = transport?;
-        // Object送信時に使うので保持しておく
+        // Keep it for sending object messages
         *self.transport.borrow_mut() = Some(transport.clone());
-        // await相当
         JsFuture::from(transport.ready()).await?;
 
         // All control messages are sent on same bidirectional stream which is called "control stream"
@@ -575,11 +574,9 @@ async fn stream_read_thread(
 #[cfg(web_sys_unstable_apis)]
 async fn message_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
-    _stream_type: StreamType, // TODO: 未実装のため_をつけている
+    _stream_type: StreamType, // TODO: Not implemented yet
     mut buf: &mut BytesMut,
 ) -> Result<()> {
-    // TODO: 読み戻しがあるかもしれないのでカーソルを使うようにする
-
     use moqt_core::messages::announce_ok_message;
 
     let message_type_value = read_variable_integer_from_buffer(&mut buf);
@@ -606,7 +603,6 @@ async fn message_handler(
                         callback
                             .call1(&JsValue::null(), &JsValue::from("called2"))
                             .unwrap();
-                        // `.?`は型が違うのでコンパイルエラーになる
                         let v = serde_wasm_bindgen::to_value(&server_setup_message).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
@@ -708,8 +704,8 @@ async fn message_handler(
     Ok(())
 }
 
-// `spawn_local`のlifetimeの問題のため、MOQTClientと別に持っておく必要がある
-// callbackはJSから渡される
+// Due to the lifetime issue of `spawn_local`, it needs to be kept separate from MOQTClient.
+// The callback is passed from JavaScript.
 #[cfg(web_sys_unstable_apis)]
 struct MOQTCallbacks {
     setup_callback: Option<js_sys::Function>,
