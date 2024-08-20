@@ -323,7 +323,7 @@ async fn handle_read_stream(
     let read_stream = &mut stream.read_stream;
     let shread_write_stream = &mut stream.shread_write_stream;
 
-    let mut track_manager =
+    let mut track_namespace_manager =
         modules::track_namespace_manager::TrackNamespaceManager::new(track_tx.clone());
     let mut stream_manager = modules::stream_manager::StreamManager::new(stream_tx.clone());
 
@@ -349,7 +349,7 @@ async fn handle_read_stream(
             stream_type,
             UnderlayType::WebTransport,
             &mut client,
-            &mut track_manager,
+            &mut track_namespace_manager,
             &mut stream_manager,
         )
         .await;
