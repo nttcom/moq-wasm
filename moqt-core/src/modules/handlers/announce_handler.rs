@@ -8,7 +8,7 @@ use crate::{
         },
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
-    track_manager_repository::TrackManagerRepository,
+    MOQTClient,
 };
 
 pub(crate) enum AnnounceResponse {
