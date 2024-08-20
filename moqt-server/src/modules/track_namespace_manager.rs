@@ -37,7 +37,7 @@ impl SubscriberObject {
     }
 
     fn is_waiting(&self) -> bool {
-        self.state == "waiting"
+        self.state == SubscriberStatus::Waiting
     }
 }
 
@@ -208,7 +208,7 @@ impl TrackNamespaces {
     }
 
     fn get_subscriber_session_ids_by_track_namespace_and_track_name(
-        &self,
+        &mut self,
         track_namespace: String,
         track_name: String,
     ) -> Option<Vec<usize>> {
@@ -231,11 +231,11 @@ impl TrackNamespaces {
             .map(|(session_id, _)| *session_id)
             .collect();
 
-        if waiting_session_ids.is_empty() {
+        if waiting_subscriber_session_ids.is_empty() {
             return None;
         }
 
-        Some(waiting_session_ids)
+        Some(waiting_subscriber_session_ids)
     }
 
     fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>> {
@@ -286,7 +286,7 @@ impl TrackNamespaces {
         track_namespace: String,
         track_name: String,
         subscriber_session_id: usize,
-        status: String,
+        status: SubscriberStatus,
     ) -> Result<()> {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
             return Err(anyhow::anyhow!("track_namespace not found"));
@@ -300,8 +300,8 @@ impl TrackNamespaces {
         let subscriber = track_name_object
             .subscribers
             .get_mut(&subscriber_session_id)
-            .unwrap()
-            .set_state(status);
+            .unwrap();
+        subscriber.set_state(status.clone());
 
         Ok(())
     }
@@ -494,7 +494,7 @@ pub(crate) enum TrackCommand {
         track_namespace: String,
         track_name: String,
         subscriber_session_id: usize,
-        status: String,
+        status: SubscriberStatus,
         resp: oneshot::Sender<bool>,
     },
     GetSubscliberSessionIdsByNamespaceAndName {
@@ -711,7 +711,7 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
             track_namespace: track_namespace.to_string(),
             track_name: track_name.to_string(),
             subscriber_session_id,
-            status: "active".to_string(),
+            status: SubscriberStatus::Activate,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
