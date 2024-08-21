@@ -1,18 +1,19 @@
 use anyhow::Result;
 
 use crate::{
+    message_handler::StreamType,
     messages::moqt_payload::MOQTPayload,
     modules::{
         messages::subscribe_ok_message::SubscribeOk,
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
-    StreamManagerRepository,
+    RelayHandlerManagerRepository,
 };
 
 pub(crate) async fn subscribe_ok_handler(
     subscribe_ok_message: SubscribeOk,
-    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
-    stream_manager_repository: &mut dyn StreamManagerRepository,
+    track_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    relay_handler_manager_repository: &mut dyn RelayHandlerManagerRepository,
 ) -> Result<()> {
     tracing::info!("subscribe_ok_handler!");
 
@@ -28,8 +29,8 @@ pub(crate) async fn subscribe_ok_handler(
         "subscribe_ok_handler: track_id: \"{}\"",
         subscribe_ok_message.track_id()
     );
-    // track_namespaceとtrack_nameを使ってSUBSCRIBEを送信したSUBSCRIBERを判断する
-    let subscriber_session_ids = track_namespace_manager_repository
+    // Determine the SUBSCRIBER who sent the SUBSCRIBE using the track_namespace and track_name
+    let subscriber_session_ids = track_manager_repository
         .get_subscriber_session_ids_by_track_namespace_and_track_name(
             subscribe_ok_message.track_namespace(),
             subscribe_ok_message.track_name(),
@@ -47,20 +48,20 @@ pub(crate) async fn subscribe_ok_handler(
                     subscribe_ok_message,
                     session_id
                 );
-                match stream_manager_repository
-                    .relay_message(*session_id, message)
+                match relay_handler_manager_repository
+                    .send_message_to_relay_handler(*session_id, message, StreamType::Bi)
                     .await
                 {
                     Ok(_) => {
-                        // 成功したらtrack_idを記録してsubscriberをactivateする
-                        let _ = track_namespace_manager_repository
+                        // Record the track_id upon success and activate the subscriber
+                        let _ = track_manager_repository
                             .set_track_id(
                                 subscribe_ok_message.track_namespace(),
                                 subscribe_ok_message.track_name(),
                                 subscribe_ok_message.track_id(),
                             )
                             .await;
-                        let _ = track_namespace_manager_repository
+                        let _ = track_manager_repository
                             .activate_subscriber(
                                 subscribe_ok_message.track_namespace(),
                                 subscribe_ok_message.track_name(),

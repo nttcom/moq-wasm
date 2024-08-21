@@ -24,8 +24,9 @@ pub(crate) async fn announce_handler(
     tracing::info!("announce_handler!");
 
     tracing::info!(
-        "announce_handler: track_namespace: \"{}\"",
-        announce_message.track_namespace()
+        "announce_handler: track_namespace: \"{}\" is announced by client: {}",
+        announce_message.track_namespace(),
+        client.id
     );
 
     // Record the announced Track Namespace

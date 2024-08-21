@@ -890,6 +890,36 @@ mod success {
     }
 
     #[tokio::test]
+    async fn delete_last_subscriber() {
+        let track_namespace = "test_namespace";
+        let publisher_session_id = 1;
+        let subscriber_session_id_1 = 2;
+        let subscriber_session_id_2 = 3;
+        let track_name = "test_name";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+
+        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let _ = track_namespace_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_subscriber(track_namespace, subscriber_session_id_1, track_name)
+            .await;
+        let _ = track_namespace_manager
+            .set_subscriber(track_namespace, subscriber_session_id_2, track_name)
+            .await;
+
+        let result = track_namespace_manager
+            .delete_subscriber(track_namespace, track_name, subscriber_session_id_1)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
     async fn get_subscriber_session_ids_by_track_id() {
         let track_namespace = "test_namespace";
         let publisher_session_id = 1;
