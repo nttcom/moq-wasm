@@ -13,7 +13,7 @@ init().then(async () => {
     console.log('URL:', client.url())
 
     // TODO: Move track management to lib.rs
-    const announcedTrackNamespaces = []
+    let announcedTrackNamespaces = []
 
     const ary = new Uint8Array([1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233])
     client.array_buffer_sample_method(ary)
@@ -69,11 +69,11 @@ init().then(async () => {
           break
         case 'object':
           // FIXME: Set these values from form or state
-          await client.sendObjectMessage(1n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
+          await client.sendObjectMessage(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
           break
         case 'object-wo-length':
           // FIXME: Set these values from form or state
-          await client.sendObjectMessageWithoutLength(1n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
+          await client.sendObjectMessageWithoutLength(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
           break
         case 'announce':
           await client.sendAnnounceMessage(trackNamespace, 1, authInfo)
@@ -82,6 +82,10 @@ init().then(async () => {
           break
         case 'unannounce':
           await client.sendUnannounceMessage(trackNamespace)
+          // TODO: Move track management to lib.rs
+          announcedTrackNamespaces = announcedTrackNamespaces.filter((x) => {
+            return x != trackNamespace
+          })
           break
         case 'subscribe':
           await client.sendSubscribeMessage(trackNamespace, trackName, authInfo)
