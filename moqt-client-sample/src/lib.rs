@@ -107,6 +107,13 @@ impl MOQTClient {
         self.callbacks.borrow_mut().set_object_callback(callback);
     }
 
+    #[wasm_bindgen(js_name = onObjectWithoutLength)]
+    pub fn set_object_without_length_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_object_without_length_callback(callback);
+    }
+
     #[wasm_bindgen(js_name = sendSetupMessage)]
     pub async fn send_setup_message(
         &self,
@@ -363,14 +370,13 @@ impl MOQTClient {
             );
             let writer = uni_stream.get_writer()?;
 
-            let object_message =
-                moqt_core::messages::object_message::ObjectMessageWithPayloadLength::new(
-                    track_id,
-                    group_sequence,
-                    object_sequence,
-                    object_send_order,
-                    object_payload,
-                );
+            let object_message = moqt_core::messages::object_message::ObjectWithLength::new(
+                track_id,
+                group_sequence,
+                object_sequence,
+                object_send_order,
+                object_payload,
+            );
             let mut object_message_buf = BytesMut::new();
             object_message.packetize(&mut object_message_buf);
 
@@ -415,14 +421,13 @@ impl MOQTClient {
             );
             let writer = uni_stream.get_writer()?;
 
-            let object_message =
-                moqt_core::messages::object_message::ObjectMessageWithoutPayloadLength::new(
-                    track_id,
-                    group_sequence,
-                    object_sequence,
-                    object_send_order,
-                    object_payload,
-                );
+            let object_message = moqt_core::messages::object_message::ObjectWithoutLength::new(
+                track_id,
+                group_sequence,
+                object_sequence,
+                object_send_order,
+                object_payload,
+            );
             let mut object_message_buf = BytesMut::new();
             object_message.packetize(&mut object_message_buf);
 
@@ -637,10 +642,10 @@ async fn message_handler(
                         moqt_core::messages::subscribe_request_message::SubscribeRequestMessage::depacketize(
                             &mut buf,
                         )?;
-
-                    let v = serde_wasm_bindgen::to_value(&subscribe_message).unwrap();
+                    log(std::format!("subscribe_message: {:#x?}", subscribe_message).as_str());
 
                     if let Some(callback) = callbacks.borrow().subscribe_callback() {
+                        let v = serde_wasm_bindgen::to_value(&subscribe_message).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
@@ -649,6 +654,9 @@ async fn message_handler(
                         moqt_core::messages::subscribe_ok_message::SubscribeOk::depacketize(
                             &mut buf,
                         )?;
+                    log(
+                        std::format!("subscribe_ok_message: {:#x?}", subscribe_ok_message).as_str(),
+                    );
 
                     if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
                         let v = serde_wasm_bindgen::to_value(&subscribe_ok_message).unwrap();
@@ -660,6 +668,10 @@ async fn message_handler(
                         moqt_core::messages::subscribe_error_message::SubscribeError::depacketize(
                             &mut buf,
                         )?;
+                    log(
+                        std::format!("subscribe_error_message: {:#x?}", subscribe_error_message)
+                            .as_str(),
+                    );
 
                     if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
                         let v = serde_wasm_bindgen::to_value(&subscribe_error_message).unwrap();
@@ -668,9 +680,14 @@ async fn message_handler(
                 }
                 MessageType::ObjectWithLength => {
                     let object_with_length_message =
-                        moqt_core::messages::object_message::ObjectMessageWithPayloadLength::depacketize(
+                        moqt_core::messages::object_message::ObjectWithLength::depacketize(
                             &mut buf,
                         )?;
+                    log(std::format!(
+                        "object_with_length_message: {:#x?}",
+                        object_with_length_message
+                    )
+                    .as_str());
 
                     if let Some(callback) = callbacks.borrow().object_callback() {
                         let v = serde_wasm_bindgen::to_value(&object_with_length_message).unwrap();
@@ -679,11 +696,16 @@ async fn message_handler(
                 }
                 MessageType::ObjectWithoutLength => {
                     let object_without_length_message =
-                        moqt_core::messages::object_message::ObjectMessageWithoutPayloadLength::depacketize(
+                        moqt_core::messages::object_message::ObjectWithoutLength::depacketize(
                             &mut buf,
                         )?;
+                    log(std::format!(
+                        "object_without_length_message: {:#x?}",
+                        object_without_length_message
+                    )
+                    .as_str());
 
-                    if let Some(callback) = callbacks.borrow().object_callback() {
+                    if let Some(callback) = callbacks.borrow().object_without_length_callback() {
                         let v =
                             serde_wasm_bindgen::to_value(&object_without_length_message).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
@@ -713,6 +735,7 @@ struct MOQTCallbacks {
     subscribe_callback: Option<js_sys::Function>,
     subscribe_response_callback: Option<js_sys::Function>,
     object_callback: Option<js_sys::Function>,
+    object_without_length_callback: Option<js_sys::Function>,
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -724,6 +747,7 @@ impl MOQTCallbacks {
             subscribe_callback: None,
             subscribe_response_callback: None,
             object_callback: None,
+            object_without_length_callback: None,
         }
     }
 
@@ -765,5 +789,13 @@ impl MOQTCallbacks {
 
     pub fn set_object_callback(&mut self, callback: js_sys::Function) {
         self.object_callback = Some(callback);
+    }
+
+    pub fn object_without_length_callback(&self) -> Option<js_sys::Function> {
+        self.object_without_length_callback.clone()
+    }
+
+    pub fn set_object_without_length_callback(&mut self, callback: js_sys::Function) {
+        self.object_without_length_callback = Some(callback);
     }
 }
