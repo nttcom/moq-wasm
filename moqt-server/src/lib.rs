@@ -234,11 +234,11 @@ async fn handle_connection_impl(
 
                 let stream_id = read_stream.id().into_u64();
 
-                let buffer_tx_clone = buffer_tx.clone();
-                let track_namespace_tx_clone = track_namespace_tx.clone();
-                let relay_handler_tx_clone = relay_handler_tx.clone();
-                let close_tx_clone = close_tx.clone();
-                let client_clone = client.clone();
+                let buffer_tx = buffer_tx.clone();
+                let track_namespace_tx = track_namespace_tx.clone();
+                let relay_handler_tx = relay_handler_tx.clone();
+                let close_tx = close_tx.clone();
+                let client= client.clone();
 
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
                 relay_handler_tx.send(RelayHandlerCommand::Set {
@@ -248,21 +248,21 @@ async fn handle_connection_impl(
                 }).await?;
 
                 // Thread that listens for WebTransport messages
-                let write_stream_clone = Arc::clone(&shread_write_stream);
+                let write_stream = Arc::clone(&shread_write_stream);
                 tokio::spawn(async move {
                     let mut stream = BiStream {
                         stable_id,
                         stream_id,
                         read_stream,
-                        shread_write_stream: write_stream_clone,
+                        shread_write_stream: write_stream,
                     };
-                    handle_incoming_bi_stream(&mut stream, client_clone, buffer_tx_clone, track_namespace_tx_clone, close_tx_clone, relay_handler_tx_clone).await
+                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_tx, relay_handler_tx).await
                 });
 
                 // Thread to send relayed messages (ANNOUNCE SUBSCRIBE) from the server
-                let write_stream_clone = Arc::clone(&shread_write_stream);
+                let write_stream = Arc::clone(&shread_write_stream);
                 tokio::spawn(async move {
-                    handle_bi_relay(write_stream_clone, message_rx).await;
+                    handle_bi_relay(write_stream, message_rx).await;
                 });
             },
             // Waiting for a uni-directional recv stream and processing the received message
@@ -523,7 +523,7 @@ async fn handle_uni_relay(mut write_stream: SendStream, message: Arc<Box<dyn MOQ
 }
 
 async fn handle_bi_relay(
-    write_stream_clone: Arc<Mutex<SendStream>>,
+    write_stream: Arc<Mutex<SendStream>>,
     mut message_rx: Receiver<Arc<Box<dyn MOQTPayload>>>,
 ) {
     while let Some(message) = message_rx.recv().await {
@@ -555,7 +555,7 @@ async fn handle_bi_relay(
         message_buf.extend(write_buf);
         tracing::info!("message relayed: {:x?}", message_buf.to_vec());
 
-        let mut shread_write_stream = write_stream_clone.lock().await;
+        let mut shread_write_stream = write_stream.lock().await;
         if let Err(e) = shread_write_stream.write_all(&message_buf).await {
             tracing::error!("Failed to write to stream: {:?}", e);
             break;
