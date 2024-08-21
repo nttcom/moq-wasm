@@ -28,11 +28,6 @@ pub enum StreamType {
     Bi,
 }
 
-pub enum UniStreamManageType {
-    Open,
-    Close,
-}
-
 pub enum MessageProcessResult {
     Success(BytesMut),
     SuccessWithoutResponse,
