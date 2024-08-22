@@ -1,6 +1,6 @@
 mod modules;
 use crate::modules::buffer_manager::{buffer_manager, BufferCommand};
-use crate::modules::relay_handler_manager::{relay_handler_manager, RelayHandlerCommand};
+use crate::modules::send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand};
 use crate::modules::track_namespace_manager::{track_namespace_manager, TrackCommand};
 use anyhow::{bail, Context, Ok, Result};
 use bytes::BytesMut;
@@ -96,7 +96,7 @@ impl MOQT {
         // For track management
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
         // For relay handler management
-        let (relay_handler_tx, mut relay_handler_rx) = mpsc::channel::<RelayHandlerCommand>(1024);
+        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
 
         if self.underlay != UnderlayType::WebTransport {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
@@ -109,7 +109,7 @@ impl MOQT {
         tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
 
         // Start stream management thread
-        tokio::spawn(async move { relay_handler_manager(&mut relay_handler_rx).await });
+        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
 
         // Start wtransport server
         let config = ServerConfig::builder()
@@ -134,14 +134,14 @@ impl MOQT {
         for id in 0.. {
             let buffer_tx = buffer_tx.clone();
             let track_namespace_tx = track_namespace_tx.clone();
-            let relay_handler_tx = relay_handler_tx.clone();
+            let send_stream_tx = send_stream_tx.clone();
             let incoming_session = server.accept().await;
             // Create a thread for each session
             tokio::spawn(
                 handle_connection(
                     buffer_tx,
                     track_namespace_tx,
-                    relay_handler_tx,
+                    send_stream_tx,
                     incoming_session,
                 )
                 .instrument(tracing::info_span!("Connection", id)),
@@ -155,13 +155,13 @@ impl MOQT {
 async fn handle_connection(
     buffer_tx: mpsc::Sender<BufferCommand>,
     track_namespace_tx: mpsc::Sender<TrackCommand>,
-    relay_handler_tx: mpsc::Sender<RelayHandlerCommand>,
+    send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
     incoming_session: IncomingSession,
 ) {
     let result = handle_connection_impl(
         buffer_tx,
         track_namespace_tx,
-        relay_handler_tx,
+        send_stream_tx,
         incoming_session,
     )
     .await;
@@ -171,7 +171,7 @@ async fn handle_connection(
 async fn handle_connection_impl(
     buffer_tx: mpsc::Sender<BufferCommand>,
     track_namespace_tx: mpsc::Sender<TrackCommand>,
-    relay_handler_tx: mpsc::Sender<RelayHandlerCommand>,
+    send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
     incoming_session: IncomingSession,
 ) -> Result<()> {
     tracing::info!("Waiting for session request...");
@@ -197,8 +197,8 @@ async fn handle_connection_impl(
     let (close_tx, mut close_rx) = mpsc::channel::<(u64, String)>(32);
 
     let (uni_relay_tx, mut uni_relay_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-    relay_handler_tx
-        .send(RelayHandlerCommand::Set {
+    send_stream_tx
+        .send(SendStreamDispatchCommand::Set {
             session_id: stable_id,
             stream_type: "unidirectional_stream".to_string(),
             sender: uni_relay_tx,
@@ -228,75 +228,75 @@ async fn handle_connection_impl(
                     tracing::info!("Accepted BI stream");
                 });
 
-                // The write_stream is wrapped with a Mutex to make it thread-safe since it can be called from multiple threads for returning and relaying messages.
-                let (write_stream, read_stream) = stream;
-                let shread_write_stream = Arc::new(Mutex::new(write_stream));
+                // The send_stream is wrapped with a Mutex to make it thread-safe since it can be called from multiple threads for returning and relaying messages.
+                let (send_stream, recv_stream) = stream;
+                let shread_send_stream = Arc::new(Mutex::new(send_stream));
 
-                let stream_id = read_stream.id().into_u64();
+                let stream_id = recv_stream.id().into_u64();
 
                 let buffer_tx = buffer_tx.clone();
                 let track_namespace_tx = track_namespace_tx.clone();
-                let relay_handler_tx = relay_handler_tx.clone();
+                let send_stream_tx = send_stream_tx.clone();
                 let close_tx = close_tx.clone();
                 let client= client.clone();
 
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-                relay_handler_tx.send(RelayHandlerCommand::Set {
+                send_stream_tx.send(SendStreamDispatchCommand::Set {
                     session_id: stable_id,
                     stream_type: "bidirectional_stream".to_string(),
                     sender: message_tx,
                 }).await?;
 
                 // Thread that listens for WebTransport messages
-                let write_stream = Arc::clone(&shread_write_stream);
+                let send_stream = Arc::clone(&shread_send_stream);
                 tokio::spawn(async move {
                     let mut stream = BiStream {
                         stable_id,
                         stream_id,
-                        read_stream,
-                        shread_write_stream: write_stream,
+                        recv_stream,
+                        shread_send_stream: send_stream,
                     };
-                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_tx, relay_handler_tx).await
+                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_tx, send_stream_tx).await
                 });
 
-                let write_stream = Arc::clone(&shread_write_stream);
+                let send_stream = Arc::clone(&shread_send_stream);
 
                 // Thread to relay messages (ANNOUNCE SUBSCRIBE) from the server
                 tokio::spawn(async move {
-                    handle_bi_relay(write_stream, message_rx).await;
+                    wait_and_relay_control_message(send_stream, message_rx).await;
                 });
             },
             // Waiting for a uni-directional recv stream and processing the received message
             stream = connection.accept_uni() => {
-                let read_stream = stream.unwrap();
+                let recv_stream = stream.unwrap();
 
                 let span = tracing::info_span!("sid", stable_id); // TODO: Not implemented yet
                 span.in_scope(|| {
                     tracing::info!("Accepted UNI stream");
                 });
-                let stream_id = read_stream.id().into_u64();
+                let stream_id = recv_stream.id().into_u64();
 
                 let buffer_tx = buffer_tx.clone();
                 let track_namespace_tx = track_namespace_tx.clone();
-                let relay_handler_tx = relay_handler_tx.clone();
+                let send_stream_tx = send_stream_tx.clone();
                 let close_tx = close_tx.clone();
                 let client = client.clone();
 
                 let mut stream = UniRecvStream {
                     stable_id,
                     stream_id,
-                    read_stream,
+                    recv_stream,
                 };
-                let _ = handle_incoming_uni_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_tx, relay_handler_tx).await;
+                let _ = handle_incoming_uni_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_tx, send_stream_tx).await;
 
             },
             // Waiting for a uni-directional relay request and relaying the message
             Some(message) = uni_relay_rx.recv() => {
                 // A sender MUST send each object over a dedicated stream.
-                let write_stream = connection.open_uni().await?.await?;
+                let send_stream = connection.open_uni().await?.await?;
 
                 // Send relayed messages (OBJECT) from the server
-                handle_uni_relay(write_stream, message).await;
+                relay_object_message(send_stream, message).await;
             },
             _ = connection.closed() => {
                 tracing::info!("Connection closed, rtt={:?}", connection.rtt());
@@ -326,7 +326,7 @@ async fn handle_connection_impl(
 struct UniRecvStream {
     stable_id: usize,
     stream_id: u64,
-    read_stream: RecvStream,
+    recv_stream: RecvStream,
 }
 
 async fn handle_incoming_uni_stream(
@@ -335,21 +335,21 @@ async fn handle_incoming_uni_stream(
     buffer_tx: Sender<BufferCommand>,
     track_namespace_tx: Sender<TrackCommand>,
     close_tx: Sender<(u64, String)>,
-    relay_handler_tx: Sender<RelayHandlerCommand>,
+    send_stream_tx: Sender<SendStreamDispatchCommand>,
 ) -> Result<()> {
     let mut buffer = vec![0; 65536].into_boxed_slice();
 
     let stable_id = stream.stable_id;
     let stream_id = stream.stream_id;
-    let read_stream = &mut stream.read_stream;
+    let recv_stream = &mut stream.recv_stream;
 
     let mut track_namespace_manager =
         modules::track_namespace_manager::TrackNamespaceManager::new(track_namespace_tx.clone());
-    let mut relay_handler_manager =
-        modules::relay_handler_manager::RelayHandlerManager::new(relay_handler_tx.clone());
+    let mut send_stream_dispatcher =
+        modules::send_stream_dispatcher::RelayHandlerManager::new(send_stream_tx.clone());
 
     let span = tracing::info_span!("sid", stable_id);
-    let bytes_read = match read_stream.read(&mut buffer).instrument(span).await? {
+    let bytes_read = match recv_stream.read(&mut buffer).instrument(span).await? {
         Some(bytes_read) => bytes_read,
         None => return Err(anyhow::anyhow!("Failed to read from stream")),
     };
@@ -369,7 +369,7 @@ async fn handle_incoming_uni_stream(
         UnderlayType::WebTransport,
         &mut client,
         &mut track_namespace_manager,
-        &mut relay_handler_manager,
+        &mut send_stream_dispatcher,
     )
     .await;
 
@@ -409,8 +409,8 @@ async fn handle_incoming_uni_stream(
 struct BiStream {
     stable_id: usize,
     stream_id: u64,
-    read_stream: RecvStream,
-    shread_write_stream: Arc<Mutex<SendStream>>,
+    recv_stream: RecvStream,
+    shread_send_stream: Arc<Mutex<SendStream>>,
 }
 
 async fn handle_incoming_bi_stream(
@@ -419,23 +419,23 @@ async fn handle_incoming_bi_stream(
     buffer_tx: Sender<BufferCommand>,
     track_namespace_tx: Sender<TrackCommand>,
     close_tx: Sender<(u64, String)>,
-    relay_handler_tx: Sender<RelayHandlerCommand>,
+    send_stream_tx: Sender<SendStreamDispatchCommand>,
 ) -> Result<()> {
     let mut buffer = vec![0; 65536].into_boxed_slice();
 
     let stable_id = stream.stable_id;
     let stream_id = stream.stream_id;
-    let read_stream = &mut stream.read_stream;
-    let shread_write_stream = &mut stream.shread_write_stream;
+    let recv_stream = &mut stream.recv_stream;
+    let shread_send_stream = &mut stream.shread_send_stream;
 
     let mut track_namespace_manager =
         modules::track_namespace_manager::TrackNamespaceManager::new(track_namespace_tx.clone());
-    let mut relay_handler_manager =
-        modules::relay_handler_manager::RelayHandlerManager::new(relay_handler_tx.clone());
+    let mut send_stream_dispatcher =
+        modules::send_stream_dispatcher::RelayHandlerManager::new(send_stream_tx.clone());
 
     loop {
         let span = tracing::info_span!("sid", stable_id);
-        let bytes_read = match read_stream.read(&mut buffer).instrument(span).await? {
+        let bytes_read = match recv_stream.read(&mut buffer).instrument(span).await? {
             Some(bytes_read) => bytes_read,
             None => break,
         };
@@ -455,14 +455,14 @@ async fn handle_incoming_bi_stream(
             UnderlayType::WebTransport,
             &mut client,
             &mut track_namespace_manager,
-            &mut relay_handler_manager,
+            &mut send_stream_dispatcher,
         )
         .await;
 
         match message_result {
             MessageProcessResult::Success(buf) => {
-                let mut shread_write_stream = shread_write_stream.lock().await;
-                shread_write_stream.write_all(&buf).await?;
+                let mut shread_send_stream = shread_send_stream.lock().await;
+                shread_send_stream.write_all(&buf).await?;
                 tracing::info!("sent {:x?}", buf.to_vec());
             }
             MessageProcessResult::SuccessWithoutResponse => {
@@ -486,7 +486,7 @@ async fn handle_incoming_bi_stream(
     Ok::<()>(())
 }
 
-async fn handle_uni_relay(mut write_stream: SendStream, message: Arc<Box<dyn MOQTPayload>>) {
+async fn relay_object_message(mut send_stream: SendStream, message: Arc<Box<dyn MOQTPayload>>) {
     let mut write_buf = BytesMut::new();
     message.packetize(&mut write_buf);
     let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
@@ -514,16 +514,16 @@ async fn handle_uni_relay(mut write_stream: SendStream, message: Arc<Box<dyn MOQ
 
     message_buf.extend(write_buf);
 
-    if let Err(e) = write_stream.write_all(&message_buf).await {
+    if let Err(e) = send_stream.write_all(&message_buf).await {
         tracing::error!("Failed to write to stream: {:?}", e);
         return;
     }
     tracing::info!("message relayed: {:?}", message_buf.to_vec());
-    let _ = write_stream.finish().await;
+    let _ = send_stream.finish().await;
 }
 
-async fn handle_bi_relay(
-    write_stream: Arc<Mutex<SendStream>>,
+async fn wait_and_relay_control_message(
+    send_stream: Arc<Mutex<SendStream>>,
     mut message_rx: Receiver<Arc<Box<dyn MOQTPayload>>>,
 ) {
     while let Some(message) = message_rx.recv().await {
@@ -555,8 +555,8 @@ async fn handle_bi_relay(
         message_buf.extend(write_buf);
         tracing::info!("message relayed: {:?}", message_buf.to_vec());
 
-        let mut shread_write_stream = write_stream.lock().await;
-        if let Err(e) = shread_write_stream.write_all(&message_buf).await {
+        let mut shread_send_stream = send_stream.lock().await;
+        if let Err(e) = shread_send_stream.write_all(&message_buf).await {
             tracing::error!("Failed to write to stream: {:?}", e);
             break;
         }

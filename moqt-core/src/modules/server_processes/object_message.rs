@@ -7,7 +7,7 @@ use crate::{
         object_message::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
     },
     moqt_client::MOQTClientStatus,
-    MOQTClient, RelayHandlerManagerRepository, TrackNamespaceManagerRepository,
+    MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 use anyhow::{bail, Result};
 use bytes::BytesMut;
@@ -16,7 +16,7 @@ pub(crate) async fn process_object_with_payload_length(
     payload_buf: &mut BytesMut,
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
-    relay_handler_manager_repository: &mut dyn RelayHandlerManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
     if client.status() != MOQTClientStatus::SetUp {
         let message = String::from("Invalid timing");
@@ -35,7 +35,7 @@ pub(crate) async fn process_object_with_payload_length(
     object_with_payload_length_handler(
         object_message,
         track_namespace_manager_repository,
-        relay_handler_manager_repository,
+        send_stream_dispatcher_repository,
     )
     .await
 }
@@ -44,7 +44,7 @@ pub(crate) async fn process_object_without_payload_length(
     payload_buf: &mut BytesMut,
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
-    relay_handler_manager_repository: &mut dyn RelayHandlerManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
     if client.status() != MOQTClientStatus::SetUp {
         let message = String::from("Invalid timing");
@@ -63,7 +63,7 @@ pub(crate) async fn process_object_without_payload_length(
     object_without_payload_length_handler(
         object_message,
         track_namespace_manager_repository,
-        relay_handler_manager_repository,
+        send_stream_dispatcher_repository,
     )
     .await
 }

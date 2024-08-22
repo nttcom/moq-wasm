@@ -7,13 +7,13 @@ use crate::{
         messages::object_message::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
-    RelayHandlerManagerRepository,
+    SendStreamDispatcherRepository,
 };
 
 pub(crate) async fn object_with_payload_length_handler(
     object_with_payload_length_message: ObjectWithPayloadLength,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
-    relay_handler_manager_repository: &mut dyn RelayHandlerManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
     tracing::info!("object_with_payload_length_handler!");
 
@@ -40,8 +40,8 @@ pub(crate) async fn object_with_payload_length_handler(
                     object_with_payload_length_message,
                     session_id
                 );
-                match relay_handler_manager_repository
-                    .send_message_to_relay_handler(*session_id, message, StreamType::Uni)
+                match send_stream_dispatcher_repository
+                    .send_message_to_send_stream_thread(*session_id, message, StreamType::Uni)
                     .await
                 {
                     Ok(_) => {}
@@ -67,7 +67,7 @@ pub(crate) async fn object_with_payload_length_handler(
 pub(crate) async fn object_without_payload_length_handler(
     object_without_payload_length_message: ObjectWithoutPayloadLength,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
-    relay_handler_manager_repository: &mut dyn RelayHandlerManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
     tracing::info!("object_without_payload_length_handler!");
 
@@ -93,8 +93,8 @@ pub(crate) async fn object_without_payload_length_handler(
                     object_without_payload_length_message,
                     session_id
                 );
-                match relay_handler_manager_repository
-                    .send_message_to_relay_handler(*session_id, message, StreamType::Uni)
+                match send_stream_dispatcher_repository
+                    .send_message_to_send_stream_thread(*session_id, message, StreamType::Uni)
                     .await
                 {
                     Ok(_) => {}

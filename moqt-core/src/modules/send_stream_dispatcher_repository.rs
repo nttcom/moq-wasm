@@ -4,13 +4,13 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 #[async_trait]
-pub trait RelayHandlerManagerRepository: Send + Sync {
-    async fn broadcast_message_to_relay_handlers(
+pub trait SendStreamDispatcherRepository: Send + Sync {
+    async fn broadcast_message_to_send_stream_threads(
         &self,
         session_id: Option<usize>,
         message: Box<dyn MOQTPayload>,
     ) -> Result<()>;
-    async fn send_message_to_relay_handler(
+    async fn send_message_to_send_stream_thread(
         &self,
         session_id: usize,
         message: Box<dyn MOQTPayload>,

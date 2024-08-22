@@ -7,13 +7,13 @@ use crate::{
         messages::subscribe_ok_message::SubscribeOk,
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
-    RelayHandlerManagerRepository,
+    SendStreamDispatcherRepository,
 };
 
 pub(crate) async fn subscribe_ok_handler(
     subscribe_ok_message: SubscribeOk,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
-    relay_handler_manager_repository: &mut dyn RelayHandlerManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
     tracing::info!("subscribe_ok_handler!");
 
@@ -48,8 +48,8 @@ pub(crate) async fn subscribe_ok_handler(
                     subscribe_ok_message,
                     session_id
                 );
-                match relay_handler_manager_repository
-                    .send_message_to_relay_handler(*session_id, message, StreamType::Bi)
+                match send_stream_dispatcher_repository
+                    .send_message_to_send_stream_thread(*session_id, message, StreamType::Bi)
                     .await
                 {
                     Ok(_) => {

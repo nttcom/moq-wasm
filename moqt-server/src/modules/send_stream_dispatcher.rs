@@ -4,22 +4,22 @@ use anyhow::Result;
 use async_trait::async_trait;
 use moqt_core::message_handler::StreamType;
 use moqt_core::messages::moqt_payload::MOQTPayload;
-use moqt_core::RelayHandlerManagerRepository;
+use moqt_core::SendStreamDispatcherRepository;
 use tokio::sync::{mpsc, oneshot};
 
-type MoqtRelayHandler = mpsc::Sender<Arc<Box<dyn MOQTPayload>>>;
+type SenderToSendStreamThread = mpsc::Sender<Arc<Box<dyn MOQTPayload>>>;
 
-use RelayHandlerCommand::*;
+use SendStreamDispatchCommand::*;
 // Called as a separate thread
-pub(crate) async fn relay_handler_manager(rx: &mut mpsc::Receiver<RelayHandlerCommand>) {
-    tracing::info!("relay_handler_manager start");
+pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDispatchCommand>) {
+    tracing::info!("send_stream_dispatcher start");
     // {
     //   "${session_id}" : {
     //     "unidirectional_stream" : tx,
     //     "bidirectional_stream" : tx,
     //   }
     // }
-    let mut relay_handlers = HashMap::<usize, HashMap<String, MoqtRelayHandler>>::new();
+    let mut relay_senders = HashMap::<usize, HashMap<String, SenderToSendStreamThread>>::new();
 
     while let Some(cmd) = rx.recv().await {
         tracing::info!("command received");
@@ -29,9 +29,9 @@ pub(crate) async fn relay_handler_manager(rx: &mut mpsc::Receiver<RelayHandlerCo
                 stream_type,
                 sender,
             } => {
-                let inner_map = relay_handlers.entry(session_id).or_default();
+                let inner_map = relay_senders.entry(session_id).or_default();
                 inner_map.insert(stream_type.to_string(), sender);
-                tracing::info!("set: {:?}", relay_handlers);
+                tracing::info!("set: {:?}", relay_senders);
             }
             List {
                 stream_type,
@@ -39,7 +39,7 @@ pub(crate) async fn relay_handler_manager(rx: &mut mpsc::Receiver<RelayHandlerCo
                 resp,
             } => {
                 let mut senders = Vec::new();
-                for (session_id, inner_map) in &relay_handlers {
+                for (session_id, inner_map) in &relay_senders {
                     if let Some(exclude_session_id) = exclude_session_id {
                         if *session_id == exclude_session_id {
                             continue;
@@ -56,7 +56,7 @@ pub(crate) async fn relay_handler_manager(rx: &mut mpsc::Receiver<RelayHandlerCo
                 stream_type,
                 resp,
             } => {
-                let sender = relay_handlers
+                let sender = relay_senders
                     .get(&session_id)
                     .and_then(|inner_map| inner_map.get(&stream_type))
                     .cloned();
@@ -68,43 +68,43 @@ pub(crate) async fn relay_handler_manager(rx: &mut mpsc::Receiver<RelayHandlerCo
 }
 
 #[derive(Debug)]
-pub(crate) enum RelayHandlerCommand {
+pub(crate) enum SendStreamDispatchCommand {
     Set {
         session_id: usize,
         stream_type: String,
-        sender: MoqtRelayHandler,
+        sender: SenderToSendStreamThread,
     },
     List {
         stream_type: String,
         exclude_session_id: Option<usize>, // Currently, exclude_session_id is only used in broadcast for List
-        resp: oneshot::Sender<Vec<MoqtRelayHandler>>,
+        resp: oneshot::Sender<Vec<SenderToSendStreamThread>>,
     },
     Get {
         session_id: usize,
         stream_type: String,
-        resp: oneshot::Sender<Option<MoqtRelayHandler>>,
+        resp: oneshot::Sender<Option<SenderToSendStreamThread>>,
     },
 }
 
 pub(crate) struct RelayHandlerManager {
-    tx: mpsc::Sender<RelayHandlerCommand>,
+    tx: mpsc::Sender<SendStreamDispatchCommand>,
 }
 
 impl RelayHandlerManager {
-    pub fn new(tx: mpsc::Sender<RelayHandlerCommand>) -> Self {
+    pub fn new(tx: mpsc::Sender<SendStreamDispatchCommand>) -> Self {
         Self { tx }
     }
 }
 
 #[async_trait]
-impl RelayHandlerManagerRepository for RelayHandlerManager {
-    async fn broadcast_message_to_relay_handlers(
+impl SendStreamDispatcherRepository for RelayHandlerManager {
+    async fn broadcast_message_to_send_stream_threads(
         &self,
         session_id: Option<usize>,
         message: Box<dyn MOQTPayload>,
     ) -> Result<()> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Vec<MoqtRelayHandler>>();
-        let cmd = RelayHandlerCommand::List {
+        let (resp_tx, resp_rx) = oneshot::channel::<Vec<SenderToSendStreamThread>>();
+        let cmd = SendStreamDispatchCommand::List {
             stream_type: "bidirectional_stream".to_string(),
             exclude_session_id: session_id,
             resp: resp_tx,
@@ -119,19 +119,19 @@ impl RelayHandlerManagerRepository for RelayHandlerManager {
         }
         Ok(())
     }
-    async fn send_message_to_relay_handler(
+    async fn send_message_to_send_stream_thread(
         &self,
         session_id: usize,
         message: Box<dyn MOQTPayload>,
         stream_type: StreamType,
     ) -> Result<()> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Option<MoqtRelayHandler>>();
+        let (resp_tx, resp_rx) = oneshot::channel::<Option<SenderToSendStreamThread>>();
 
         let stream_type_str = match stream_type {
             StreamType::Uni => "unidirectional_stream",
             StreamType::Bi => "bidirectional_stream",
         };
-        let cmd = RelayHandlerCommand::Get {
+        let cmd = SendStreamDispatchCommand::Get {
             session_id,
             stream_type: stream_type_str.to_string(),
             resp: resp_tx,

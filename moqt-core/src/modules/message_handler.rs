@@ -16,7 +16,7 @@ use super::constants::UnderlayType;
 use super::message_type::MessageType;
 use super::messages::moqt_payload::MOQTPayload;
 use super::moqt_client::{MOQTClient, MOQTClientStatus};
-use super::relay_handler_manager_repository::RelayHandlerManagerRepository;
+use super::send_stream_dispatcher_repository::SendStreamDispatcherRepository;
 use super::track_namespace_manager_repository::TrackNamespaceManagerRepository;
 use super::variable_integer::{read_variable_integer, write_variable_integer};
 use anyhow::{bail, Result};
@@ -59,7 +59,7 @@ pub async fn message_handler(
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
-    relay_handler_manager_repository: &mut dyn RelayHandlerManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> MessageProcessResult {
     tracing::info!("message_handler! {}", read_buf.len());
 
@@ -119,7 +119,7 @@ pub async fn message_handler(
                 &mut payload_buf,
                 client,
                 track_namespace_manager_repository,
-                relay_handler_manager_repository,
+                send_stream_dispatcher_repository,
             )
             .await
             {
@@ -139,7 +139,7 @@ pub async fn message_handler(
                 &mut payload_buf,
                 client,
                 track_namespace_manager_repository,
-                relay_handler_manager_repository,
+                send_stream_dispatcher_repository,
             )
             .await
             {
@@ -176,7 +176,7 @@ pub async fn message_handler(
                 &mut payload_buf,
                 client,
                 track_namespace_manager_repository,
-                relay_handler_manager_repository,
+                send_stream_dispatcher_repository,
             )
             .await
             {
@@ -196,7 +196,7 @@ pub async fn message_handler(
                 &mut payload_buf,
                 client,
                 track_namespace_manager_repository,
-                relay_handler_manager_repository,
+                send_stream_dispatcher_repository,
             )
             .await
             {

@@ -7,14 +7,14 @@ use crate::{
         messages::subscribe_request_message::SubscribeRequest,
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
-    MOQTClient, RelayHandlerManagerRepository,
+    MOQTClient, SendStreamDispatcherRepository,
 };
 
 pub(crate) async fn subscribe_handler(
     subscribe_message: SubscribeRequest,
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
-    relay_handler_manager_repository: &mut dyn RelayHandlerManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
     tracing::info!("subscribe_handler!");
 
@@ -54,8 +54,8 @@ pub(crate) async fn subscribe_handler(
                 session_id
             );
 
-            match relay_handler_manager_repository
-                .send_message_to_relay_handler(session_id, message, StreamType::Bi)
+            match send_stream_dispatcher_repository
+                .send_message_to_send_stream_thread(session_id, message, StreamType::Bi)
                 .await
             {
                 Ok(_) => Ok(()),
