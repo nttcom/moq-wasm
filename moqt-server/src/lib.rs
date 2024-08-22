@@ -293,11 +293,8 @@ async fn handle_connection_impl(
             Some(message) = uni_relay_rx.recv() => {
                 // A sender MUST send each object over a dedicated stream.
                 let write_stream = connection.open_uni().await?.await?;
-
-                // Thread to send relayed messages (OBJECT) from the server
-                tokio::spawn(async move {
-                    handle_uni_relay(write_stream, message).await;
-                });
+                // Send relayed messages (OBJECT) from the server
+                handle_uni_relay(write_stream, message).await;
             },
             _ = connection.closed() => {
                 tracing::info!("Connection closed, rtt={:?}", connection.rtt());
@@ -349,51 +346,53 @@ async fn handle_incoming_uni_stream(
     let mut relay_handler_manager =
         modules::relay_handler_manager::RelayHandlerManager::new(relay_handler_tx.clone());
 
-    loop {
-        let span = tracing::info_span!("sid", stable_id);
-        let bytes_read = match read_stream.read(&mut buffer).instrument(span).await? {
-            Some(bytes_read) => bytes_read,
-            None => break,
-        };
+    let span = tracing::info_span!("sid", stable_id);
+    let bytes_read = match read_stream.read(&mut buffer).instrument(span).await? {
+        Some(bytes_read) => bytes_read,
+        None => return Err(anyhow::anyhow!("Failed to read from stream")),
+    };
 
-        tracing::info!("bytes_read: {}", bytes_read);
+    tracing::info!("bytes_read: {}", bytes_read);
 
-        let buffer_tx = buffer_tx.clone();
-        let read_buf = BytesMut::from(&buffer[..bytes_read]);
-        let buf = buffer_manager::request_buffer(buffer_tx, stable_id, stream_id).await;
-        let mut buf = buf.lock().await;
-        buf.extend_from_slice(&read_buf);
+    let read_buf = BytesMut::from(&buffer[..bytes_read]);
+    let buf = buffer_manager::request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
+    let mut buf = buf.lock().await;
+    buf.extend_from_slice(&read_buf);
 
-        let mut client = client.lock().await;
-        // TODO: Move the implementation of message_handler to the server side since it is only used by the server
-        let message_result = message_handler(
-            &mut buf,
-            StreamType::Uni,
-            UnderlayType::WebTransport,
-            &mut client,
-            &mut track_namespace_manager,
-            &mut relay_handler_manager,
-        )
-        .await;
+    let mut client = client.lock().await;
+    // TODO: Move the implementation of message_handler to the server side since it is only used by the server
+    let message_result = message_handler(
+        &mut buf,
+        StreamType::Uni,
+        UnderlayType::WebTransport,
+        &mut client,
+        &mut track_namespace_manager,
+        &mut relay_handler_manager,
+    )
+    .await;
 
-        match message_result {
-            MessageProcessResult::SuccessWithoutResponse => {
-                tracing::info!("SuccessWithoutResponse");
-            }
-            MessageProcessResult::Failure(code, message) => {
-                close_tx.send((u8::from(code) as u64, message)).await?;
-                break;
-            }
-            MessageProcessResult::Fragment => (),
-            MessageProcessResult::Success(_) => {
-                let message = "Unsuported message type for uni-directional stream".to_string();
-                close_tx
-                    .send((u8::from(TerminationErrorCode::GenericError) as u64, message))
-                    .await?;
-                break;
-            }
-        };
-    }
+    match message_result {
+        MessageProcessResult::SuccessWithoutResponse => {
+            tracing::info!("SuccessWithoutResponse");
+        }
+        MessageProcessResult::Failure(code, message) => {
+            close_tx
+                .send((u8::from(code) as u64, message.clone()))
+                .await?;
+            return Err(anyhow::anyhow!(message));
+        }
+        MessageProcessResult::Fragment => (),
+        MessageProcessResult::Success(_) => {
+            let message = "Unsuported message type for uni-directional stream".to_string();
+            close_tx
+                .send((
+                    u8::from(TerminationErrorCode::GenericError) as u64,
+                    message.clone(),
+                ))
+                .await?;
+            return Err(anyhow::anyhow!(message));
+        }
+    };
 
     buffer_tx
         .send(BufferCommand::ReleaseStream {
@@ -441,9 +440,8 @@ async fn handle_incoming_bi_stream(
 
         tracing::info!("bytes_read: {}", bytes_read);
 
-        let buffer_tx = buffer_tx.clone();
         let read_buf = BytesMut::from(&buffer[..bytes_read]);
-        let buf = buffer_manager::request_buffer(buffer_tx, stable_id, stream_id).await;
+        let buf = buffer_manager::request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
         let mut buf = buf.lock().await;
         buf.extend_from_slice(&read_buf);
 
