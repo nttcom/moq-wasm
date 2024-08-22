@@ -9,15 +9,15 @@ use crate::{
 use anyhow::{bail, Result};
 
 use crate::modules::{
-    messages::client_setup_message::ClientSetupMessage,
-    messages::server_setup_message::ServerSetupMessage, moqt_client::MOQTClient,
+    messages::client_setup_message::ClientSetup, messages::server_setup_message::ServerSetup,
+    moqt_client::MOQTClient,
 };
 
 pub(crate) fn setup_handler(
-    client_setup_message: ClientSetupMessage,
+    client_setup_message: ClientSetup,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
-) -> Result<ServerSetupMessage> {
+) -> Result<ServerSetup> {
     tracing::info!("setup_handler");
 
     tracing::info!(
@@ -57,7 +57,7 @@ pub(crate) fn setup_handler(
     // Normally, the server should determine the role here, but for now, let's set it to 3.
     let role_parameter = SetupParameter::RoleParameter(RoleParameter::new(RoleCase::Both));
     let server_setup_message =
-        ServerSetupMessage::new(constants::MOQ_TRANSPORT_VERSION, vec![role_parameter]);
+        ServerSetup::new(constants::MOQ_TRANSPORT_VERSION, vec![role_parameter]);
     // State: Connected -> Setup
     client.update_status(MOQTClientStatus::SetUp);
 
@@ -76,7 +76,7 @@ mod success {
         modules::{
             handlers::server_setup_handler::setup_handler,
             messages::{
-                client_setup_message::ClientSetupMessage,
+                client_setup_message::ClientSetup,
                 setup_parameters::{PathParameter, RoleCase, RoleParameter, SetupParameter},
             },
             moqt_client::MOQTClient,
@@ -90,7 +90,7 @@ mod success {
             RoleCase::Injection,
         ))];
         let client_setup_message =
-            ClientSetupMessage::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
+            ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
@@ -107,7 +107,7 @@ mod success {
             SetupParameter::PathParameter(PathParameter::new(String::from("test"))),
         ];
         let client_setup_message =
-            ClientSetupMessage::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
+            ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
@@ -126,7 +126,7 @@ mod failure {
         modules::{
             handlers::server_setup_handler::setup_handler,
             messages::{
-                client_setup_message::ClientSetupMessage,
+                client_setup_message::ClientSetup,
                 setup_parameters::{PathParameter, SetupParameter},
             },
             moqt_client::MOQTClient,
@@ -138,7 +138,7 @@ mod failure {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![];
         let client_setup_message =
-            ClientSetupMessage::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
+            ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
@@ -153,7 +153,7 @@ mod failure {
             String::from("test"),
         ))];
         let client_setup_message =
-            ClientSetupMessage::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
+            ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
@@ -167,7 +167,7 @@ mod failure {
         let setup_parameters = vec![SetupParameter::PathParameter(PathParameter::new(
             String::from("test"),
         ))];
-        let client_setup_message = ClientSetupMessage::new(vec![1], setup_parameters);
+        let client_setup_message = ClientSetup::new(vec![1], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);

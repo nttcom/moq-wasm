@@ -1,6 +1,6 @@
 use crate::{
     handlers::subscribe_handler::subscribe_handler,
-    messages::{moqt_payload::MOQTPayload, subscribe_request_message::SubscribeRequestMessage},
+    messages::{moqt_payload::MOQTPayload, subscribe_request_message::SubscribeRequest},
     moqt_client::MOQTClientStatus,
     MOQTClient, RelayHandlerManagerRepository, TrackNamespaceManagerRepository,
 };
@@ -19,7 +19,7 @@ pub(crate) async fn process_subscribe_message(
         bail!(message);
     }
 
-    let subscribe_request_message = match SubscribeRequestMessage::depacketize(payload_buf) {
+    let subscribe_request_message = match SubscribeRequest::depacketize(payload_buf) {
         Ok(subscribe_request_message) => subscribe_request_message,
         Err(err) => {
             tracing::info!("{:#?}", err);

@@ -9,10 +9,10 @@ pub use moqt_core::constants;
 use moqt_core::constants::TerminationErrorCode;
 use moqt_core::message_type::MessageType;
 use moqt_core::messages::moqt_payload::MOQTPayload;
-use moqt_core::messages::object_message::{ObjectWithLength, ObjectWithoutLength};
+use moqt_core::messages::object_message::{ObjectWithPayloadLength, ObjectWithoutPayloadLength};
 use moqt_core::messages::subscribe_error_message::SubscribeError;
 use moqt_core::messages::subscribe_ok_message::SubscribeOk;
-use moqt_core::messages::subscribe_request_message::SubscribeRequestMessage;
+use moqt_core::messages::subscribe_request_message::SubscribeRequest;
 use moqt_core::variable_integer::write_variable_integer;
 use moqt_core::{constants::UnderlayType, message_handler::*, MOQTClient};
 use std::sync::Arc;
@@ -493,19 +493,19 @@ async fn handle_uni_relay(mut write_stream: SendStream, message: Arc<Box<dyn MOQ
 
     if message
         .as_any()
-        .downcast_ref::<ObjectWithLength>()
+        .downcast_ref::<ObjectWithPayloadLength>()
         .is_some()
     {
         message_buf.extend(write_variable_integer(
-            u8::from(MessageType::ObjectWithLength) as u64,
+            u8::from(MessageType::ObjectWithPayloadLength) as u64,
         ));
     } else if message
         .as_any()
-        .downcast_ref::<ObjectWithoutLength>()
+        .downcast_ref::<ObjectWithoutPayloadLength>()
         .is_some()
     {
         message_buf.extend(write_variable_integer(
-            u8::from(MessageType::ObjectWithoutLength) as u64,
+            u8::from(MessageType::ObjectWithoutPayloadLength) as u64,
         ));
     } else {
         tracing::error!("Unsupported message type for uni-directional stream");
@@ -533,7 +533,7 @@ async fn handle_bi_relay(
 
         if message
             .as_any()
-            .downcast_ref::<SubscribeRequestMessage>()
+            .downcast_ref::<SubscribeRequest>()
             .is_some()
         {
             message_buf.extend(write_variable_integer(

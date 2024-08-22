@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::{
     modules::{
         messages::{
-            announce_error_message::AnnounceError, announce_message::AnnounceMessage,
+            announce_error_message::AnnounceError, announce_message::Announce,
             announce_ok_message::AnnounceOk,
         },
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
@@ -17,7 +17,7 @@ pub(crate) enum AnnounceResponse {
 }
 
 pub(crate) async fn announce_handler(
-    announce_message: AnnounceMessage,
+    announce_message: Announce,
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<AnnounceResponse> {

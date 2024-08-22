@@ -4,14 +4,14 @@ use crate::{
     message_handler::StreamType,
     messages::moqt_payload::MOQTPayload,
     modules::{
-        messages::object_message::{ObjectWithLength, ObjectWithoutLength},
+        messages::object_message::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
     RelayHandlerManagerRepository,
 };
 
 pub(crate) async fn object_with_payload_length_handler(
-    object_with_payload_length_message: ObjectWithLength,
+    object_with_payload_length_message: ObjectWithPayloadLength,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     relay_handler_manager_repository: &mut dyn RelayHandlerManagerRepository,
 ) -> Result<()> {
@@ -65,7 +65,7 @@ pub(crate) async fn object_with_payload_length_handler(
 }
 
 pub(crate) async fn object_without_payload_length_handler(
-    object_without_payload_length_message: ObjectWithoutLength,
+    object_without_payload_length_message: ObjectWithoutPayloadLength,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     relay_handler_manager_repository: &mut dyn RelayHandlerManagerRepository,
 ) -> Result<()> {

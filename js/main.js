@@ -19,8 +19,8 @@ init().then(async () => {
     client.array_buffer_sample_method(ary)
     client.array_buffer_sample_method(ary)
 
-    client.onSetup(async (serverSetupMessage) => {
-      console.log({ serverSetupMessage })
+    client.onSetup(async (serverSetup) => {
+      console.log({ serverSetup })
     })
 
     client.onAnnounce(async (announceResponse) => {
@@ -44,8 +44,8 @@ init().then(async () => {
       console.log({ subscribeResponse })
     })
 
-    client.onObject(async (objectMessage) => {
-      console.log({ objectMessage })
+    client.onObject(async (object) => {
+      console.log({ object })
     })
 
     const sendBtn = document.getElementById('sendBtn')
@@ -69,11 +69,11 @@ init().then(async () => {
           break
         case 'object':
           // FIXME: Set these values from form or state
-          await client.sendObjectMessage(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
+          await client.sendObjectMessageWithPayloadLength(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
           break
         case 'object-wo-length':
           // FIXME: Set these values from form or state
-          await client.sendObjectMessageWithoutLength(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
+          await client.sendObjectMessageWithoutPayloadLength(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
           break
         case 'announce':
           await client.sendAnnounceMessage(trackNamespace, 1, authInfo)

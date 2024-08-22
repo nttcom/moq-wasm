@@ -3,7 +3,7 @@ use std::io::Cursor;
 use crate::constants::TerminationErrorCode;
 use crate::handlers::announce_handler::AnnounceResponse;
 use crate::modules::handlers::unannounce_handler::unannounce_handler;
-use crate::modules::messages::unannounce_message::UnAnnounceMessage;
+use crate::modules::messages::unannounce_message::UnAnnounce;
 use crate::server_processes::announce_message::process_announce_message;
 use crate::server_processes::client_setup_message::process_client_setup_message;
 use crate::server_processes::object_message::{
@@ -114,7 +114,7 @@ pub async fn message_handler(
     let mut write_buf = BytesMut::new();
 
     let return_message_type = match message_type {
-        MessageType::ObjectWithLength => {
+        MessageType::ObjectWithPayloadLength => {
             match process_object_with_payload_length(
                 &mut payload_buf,
                 client,
@@ -134,7 +134,7 @@ pub async fn message_handler(
                 }
             }
         }
-        MessageType::ObjectWithoutLength => {
+        MessageType::ObjectWithoutPayloadLength => {
             match process_object_without_payload_length(
                 &mut payload_buf,
                 client,
@@ -223,7 +223,7 @@ pub async fn message_handler(
                 return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
             }
 
-            let unsubscribe_message = UnAnnounceMessage::depacketize(&mut payload_buf);
+            let unsubscribe_message = UnAnnounce::depacketize(&mut payload_buf);
 
             if let Err(err) = unsubscribe_message {
                 // fix
@@ -281,7 +281,7 @@ pub async fn message_handler(
                 return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
             }
 
-            let unannounce_message = UnAnnounceMessage::depacketize(&mut payload_buf);
+            let unannounce_message = UnAnnounce::depacketize(&mut payload_buf);
 
             if let Err(err) = unannounce_message {
                 tracing::info!("{:#?}", err);

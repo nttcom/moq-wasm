@@ -3,8 +3,8 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 #[derive(Debug, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
 #[repr(u8)]
 pub enum MessageType {
-    ObjectWithLength = 0x00,
-    ObjectWithoutLength = 0x02,
+    ObjectWithPayloadLength = 0x00,
+    ObjectWithoutPayloadLength = 0x02,
     Subscribe = 0x03,
     SubscribeOk = 0x04,
     SubscribeError = 0x05,
@@ -27,7 +27,7 @@ impl MessageType {
     pub fn is_object(&self) -> bool {
         matches!(
             self,
-            MessageType::ObjectWithLength | MessageType::ObjectWithoutLength
+            MessageType::ObjectWithPayloadLength | MessageType::ObjectWithoutPayloadLength
         )
     }
     pub fn is_control_message(&self) -> bool {

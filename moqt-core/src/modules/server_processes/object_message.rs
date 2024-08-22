@@ -4,7 +4,7 @@ use crate::{
     },
     messages::{
         moqt_payload::MOQTPayload,
-        object_message::{ObjectWithLength, ObjectWithoutLength},
+        object_message::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
     },
     moqt_client::MOQTClientStatus,
     MOQTClient, RelayHandlerManagerRepository, TrackNamespaceManagerRepository,
@@ -24,7 +24,7 @@ pub(crate) async fn process_object_with_payload_length(
         bail!(message);
     }
 
-    let object_message = match ObjectWithLength::depacketize(payload_buf) {
+    let object_message = match ObjectWithPayloadLength::depacketize(payload_buf) {
         Ok(object_message) => object_message,
         Err(err) => {
             tracing::info!("{:#?}", err);
@@ -52,7 +52,7 @@ pub(crate) async fn process_object_without_payload_length(
         bail!(message);
     }
 
-    let object_message = match ObjectWithoutLength::depacketize(payload_buf) {
+    let object_message = match ObjectWithoutPayloadLength::depacketize(payload_buf) {
         Ok(object_message) => object_message,
         Err(err) => {
             tracing::info!("{:#?}", err);
