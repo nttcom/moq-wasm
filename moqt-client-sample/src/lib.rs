@@ -109,7 +109,7 @@ impl MOQTClient {
             .set_object_with_payload_length_callback(callback);
     }
 
-    #[wasm_bindgen(js_name = onObjectWithoutLength)]
+    #[wasm_bindgen(js_name = onObjectWithoutPayloadLength)]
     pub fn set_object_without_payload_length_callback(&mut self, callback: js_sys::Function) {
         self.callbacks
             .borrow_mut()
@@ -383,7 +383,7 @@ impl MOQTClient {
 
             let mut buf = Vec::new();
             buf.extend(write_variable_integer(
-                u8::from(MessageType::ObjectWithLength) as u64,
+                u8::from(MessageType::ObjectWithPayloadLength) as u64,
             )); // object
             buf.extend(object_message_buf);
 
@@ -435,7 +435,7 @@ impl MOQTClient {
 
             let mut buf = Vec::new();
             buf.extend(write_variable_integer(
-                u8::from(MessageType::ObjectWithoutLength) as u64,
+                u8::from(MessageType::ObjectWithoutPayloadLength) as u64,
             )); // object
             buf.extend(object_message_buf);
 
@@ -680,7 +680,7 @@ async fn message_handler(
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
-                MessageType::ObjectWithLength => {
+                MessageType::ObjectWithPayloadLength => {
                     let object_with_length_message =
                         moqt_core::messages::object_message::ObjectWithPayloadLength::depacketize(
                             &mut buf,
@@ -697,7 +697,7 @@ async fn message_handler(
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
-                MessageType::ObjectWithoutLength => {
+                MessageType::ObjectWithoutPayloadLength => {
                     let object_without_length_message =
                         moqt_core::messages::object_message::ObjectWithoutPayloadLength::depacketize(
                             &mut buf,
