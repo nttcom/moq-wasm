@@ -44,7 +44,7 @@ pub(crate) async fn subscribe_ok_handler(
             for session_id in session_ids.iter() {
                 let message: Box<dyn MOQTPayload> = Box::new(subscribe_ok_message.clone());
                 tracing::info!(
-                    "message: {:#?} is relayed into client {:?}",
+                    "message: {:#?} is sent to relay handler for client {:?}",
                     subscribe_ok_message,
                     session_id
                 );

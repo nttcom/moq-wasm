@@ -259,8 +259,9 @@ async fn handle_connection_impl(
                     handle_incoming_bi_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_tx, relay_handler_tx).await
                 });
 
-                // Thread to send relayed messages (ANNOUNCE SUBSCRIBE) from the server
                 let write_stream = Arc::clone(&shread_write_stream);
+
+                // Thread to relay messages (ANNOUNCE SUBSCRIBE) from the server
                 tokio::spawn(async move {
                     handle_bi_relay(write_stream, message_rx).await;
                 });
@@ -293,6 +294,7 @@ async fn handle_connection_impl(
             Some(message) = uni_relay_rx.recv() => {
                 // A sender MUST send each object over a dedicated stream.
                 let write_stream = connection.open_uni().await?.await?;
+
                 // Send relayed messages (OBJECT) from the server
                 handle_uni_relay(write_stream, message).await;
             },
@@ -551,7 +553,7 @@ async fn handle_bi_relay(
         }
 
         message_buf.extend(write_buf);
-        tracing::info!("message relayed: {:x?}", message_buf.to_vec());
+        tracing::info!("message relayed: {:?}", message_buf.to_vec());
 
         let mut shread_write_stream = write_stream.lock().await;
         if let Err(e) = shread_write_stream.write_all(&message_buf).await {

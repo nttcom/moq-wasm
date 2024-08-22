@@ -36,7 +36,7 @@ pub(crate) async fn object_with_payload_length_handler(
                 let message: Box<dyn MOQTPayload> =
                     Box::new(object_with_payload_length_message.clone());
                 tracing::info!(
-                    "message: {:#?} is relayed into client {:?}",
+                    "message: {:#?} is sent to relay handler for client {:?}",
                     object_with_payload_length_message,
                     session_id
                 );
@@ -89,7 +89,7 @@ pub(crate) async fn object_without_payload_length_handler(
                 let message: Box<dyn MOQTPayload> =
                     Box::new(object_without_payload_length_message.clone());
                 tracing::info!(
-                    "message: {:#?} is relayed into client {:?}",
+                    "message: {:#?} is sent to relay handler for client {:?}",
                     object_without_payload_length_message,
                     session_id
                 );
