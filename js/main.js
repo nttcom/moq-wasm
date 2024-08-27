@@ -69,11 +69,11 @@ init().then(async () => {
           break
         case 'object':
           // FIXME: Set these values from form or state
-          await client.sendObjectMessageWithPayloadLength(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
+          await client.sendObjectWithPayloadLengthMessage(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
           break
         case 'object-wo-length':
           // FIXME: Set these values from form or state
-          await client.sendObjectMessageWithoutPayloadLength(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
+          await client.sendObjectWithoutPayloadLengthMessage(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
           break
         case 'announce':
           await client.sendAnnounceMessage(trackNamespace, 1, authInfo)

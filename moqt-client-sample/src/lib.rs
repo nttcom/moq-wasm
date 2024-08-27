@@ -348,7 +348,7 @@ impl MOQTClient {
         }
     }
 
-    #[wasm_bindgen(js_name = sendObjectMessageWithPayloadLength)]
+    #[wasm_bindgen(js_name = sendObjectWithPayloadLengthMessage)]
     pub async fn send_object_message_with_payload_length(
         &self,
         track_id: u64,
@@ -399,7 +399,7 @@ impl MOQTClient {
         }
     }
 
-    #[wasm_bindgen(js_name = sendObjectMessageWithoutPayloadLength)]
+    #[wasm_bindgen(js_name = sendObjectWithoutPayloadLengthMessage)]
     pub async fn send_object_message_without_payload_length(
         &self,
         track_id: u64,
