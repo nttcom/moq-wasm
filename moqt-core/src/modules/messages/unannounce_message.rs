@@ -6,21 +6,21 @@ use anyhow::{Context, Result};
 use std::any::Any;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct UnAnnounceMessage {
+pub(crate) struct UnAnnounce {
     track_namespace: String,
 }
 
-impl UnAnnounceMessage {
+impl UnAnnounce {
     pub(crate) fn track_namespace(&self) -> &str {
         &self.track_namespace
     }
 }
 
-impl MOQTPayload for UnAnnounceMessage {
+impl MOQTPayload for UnAnnounce {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let track_namespace = read_variable_bytes_from_buffer(buf).context("track namespace")?;
 
-        let unannounce_message = UnAnnounceMessage {
+        let unannounce_message = UnAnnounce {
             track_namespace: String::from_utf8(track_namespace)?,
         };
 
@@ -32,7 +32,7 @@ impl MOQTPayload for UnAnnounceMessage {
             &self.track_namespace.as_bytes().to_vec(),
         ))
     }
-    /// Method to enable downcasting from MOQTPayload to UnAnnounceMessage
+    /// Method to enable downcasting from MOQTPayload to UnAnnounce
     fn as_any(&self) -> &dyn Any {
         self
     }

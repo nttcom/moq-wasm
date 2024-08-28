@@ -1,6 +1,6 @@
 use crate::{
     handlers::announce_handler::{announce_handler, AnnounceResponse},
-    messages::{announce_message::AnnounceMessage, moqt_payload::MOQTPayload},
+    messages::{announce_message::Announce, moqt_payload::MOQTPayload},
     moqt_client::MOQTClientStatus,
     MOQTClient, TrackNamespaceManagerRepository,
 };
@@ -19,7 +19,7 @@ pub(crate) async fn process_announce_message(
         bail!(message);
     }
 
-    let announce_message = match AnnounceMessage::depacketize(payload_buf) {
+    let announce_message = match Announce::depacketize(payload_buf) {
         Ok(announce_message) => announce_message,
         Err(err) => {
             tracing::error!("{:#?}", err);

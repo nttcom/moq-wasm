@@ -14,19 +14,19 @@ use crate::{
 use super::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AnnounceMessage {
+pub struct Announce {
     pub(crate) track_namespace: String,
     pub(crate) number_of_parameters: u8,
     pub(crate) parameters: Vec<VersionSpecificParameter>,
 }
 
-impl AnnounceMessage {
+impl Announce {
     pub fn new(
         track_namespace: String,
         number_of_parameters: u8,
         parameters: Vec<VersionSpecificParameter>,
     ) -> Self {
-        AnnounceMessage {
+        Announce {
             track_namespace,
             number_of_parameters,
             parameters,
@@ -37,7 +37,7 @@ impl AnnounceMessage {
     }
 }
 
-impl MOQTPayload for AnnounceMessage {
+impl MOQTPayload for Announce {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let read_cur = Cursor::new(&buf[..]);
         tracing::info!("read_cur! {:?}", read_cur);
@@ -51,7 +51,7 @@ impl MOQTPayload for AnnounceMessage {
             parameters.push(param);
         }
 
-        let announce_message = AnnounceMessage {
+        let announce_message = Announce {
             track_namespace,
             number_of_parameters,
             parameters,
@@ -81,7 +81,7 @@ impl MOQTPayload for AnnounceMessage {
             param.packetize(buf);
         }
     }
-    /// Method to enable downcasting from MOQTPayload to AnnounceMessage
+    /// Method to enable downcasting from MOQTPayload to Announce
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -91,7 +91,7 @@ impl MOQTPayload for AnnounceMessage {
 mod success {
     use crate::messages::moqt_payload::MOQTPayload;
     use crate::messages::version_specific_parameters::AuthorizationInfo;
-    use crate::modules::messages::announce_message::AnnounceMessage;
+    use crate::modules::messages::announce_message::Announce;
     use crate::modules::messages::version_specific_parameters::{
         VersionSpecificParameter, VersionSpecificParameterType,
     };
@@ -110,7 +110,7 @@ mod success {
         ));
         let parameters = vec![parameter];
         let announce_message =
-            AnnounceMessage::new(track_namespace.clone(), number_of_parameters, parameters);
+            Announce::new(track_namespace.clone(), number_of_parameters, parameters);
         let mut buf = bytes::BytesMut::new();
         announce_message.packetize(&mut buf);
 
@@ -142,7 +142,7 @@ mod success {
         ));
         let parameters = vec![parameter];
         let expected_announce_message =
-            AnnounceMessage::new(track_namespace.clone(), number_of_parameters, parameters);
+            Announce::new(track_namespace.clone(), number_of_parameters, parameters);
 
         // Track Namespace Length
         let mut combined_bytes = Vec::from((track_namespace.len() as u8).to_be_bytes());
@@ -157,7 +157,7 @@ mod success {
         combined_bytes.extend(parameter_value.as_bytes());
 
         let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
-        let depacketized_announce_message = AnnounceMessage::depacketize(&mut buf).unwrap();
+        let depacketized_announce_message = Announce::depacketize(&mut buf).unwrap();
 
         assert_eq!(depacketized_announce_message, expected_announce_message);
     }
@@ -168,7 +168,7 @@ mod success {
         let number_of_parameters = 0;
         let parameters = vec![];
         let announce_message =
-            AnnounceMessage::new(track_namespace.clone(), number_of_parameters, parameters);
+            Announce::new(track_namespace.clone(), number_of_parameters, parameters);
         let mut buf = bytes::BytesMut::new();
         announce_message.packetize(&mut buf);
 
@@ -189,7 +189,7 @@ mod success {
 
         let parameters = vec![];
         let expected_announce_message =
-            AnnounceMessage::new(track_namespace.clone(), number_of_parameters, parameters);
+            Announce::new(track_namespace.clone(), number_of_parameters, parameters);
 
         // Track Namespace Length
         let mut combined_bytes = Vec::from((track_namespace.len() as u8).to_be_bytes());
@@ -199,7 +199,7 @@ mod success {
         combined_bytes.extend(0u8.to_be_bytes());
 
         let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
-        let depacketized_announce_message = AnnounceMessage::depacketize(&mut buf).unwrap();
+        let depacketized_announce_message = Announce::depacketize(&mut buf).unwrap();
 
         assert_eq!(depacketized_announce_message, expected_announce_message);
     }

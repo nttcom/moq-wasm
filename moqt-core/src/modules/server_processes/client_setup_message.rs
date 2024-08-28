@@ -3,7 +3,7 @@ use bytes::BytesMut;
 use crate::{
     constants::UnderlayType,
     handlers::server_setup_handler::setup_handler,
-    messages::{client_setup_message::ClientSetupMessage, moqt_payload::MOQTPayload},
+    messages::{client_setup_message::ClientSetup, moqt_payload::MOQTPayload},
     moqt_client::MOQTClientStatus,
     MOQTClient,
 };
@@ -20,7 +20,7 @@ pub(crate) fn process_client_setup_message(
         tracing::error!(message);
         bail!(message);
     }
-    let client_setup_message = match ClientSetupMessage::depacketize(payload_buf) {
+    let client_setup_message = match ClientSetup::depacketize(payload_buf) {
         Ok(client_setup_message) => client_setup_message,
         Err(err) => {
             tracing::error!("{:#?}", err);

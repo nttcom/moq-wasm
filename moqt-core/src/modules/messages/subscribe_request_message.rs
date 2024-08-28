@@ -14,7 +14,7 @@ use crate::{
 use super::{moqt_payload::MOQTPayload, version_specific_parameters::VersionSpecificParameter};
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
-pub struct SubscribeRequestMessage {
+pub struct SubscribeRequest {
     track_namespace: String,
     track_name: String,
     start_group: Location,
@@ -24,7 +24,7 @@ pub struct SubscribeRequestMessage {
     track_request_parameters: Vec<VersionSpecificParameter>,
 }
 
-impl SubscribeRequestMessage {
+impl SubscribeRequest {
     pub fn new(
         track_namespace: String,
         track_name: String,
@@ -33,8 +33,8 @@ impl SubscribeRequestMessage {
         end_group: Location,
         end_object: Location,
         track_request_parameters: Vec<VersionSpecificParameter>,
-    ) -> SubscribeRequestMessage {
-        SubscribeRequestMessage {
+    ) -> SubscribeRequest {
+        SubscribeRequest {
             track_namespace,
             track_name,
             start_group,
@@ -53,7 +53,7 @@ impl SubscribeRequestMessage {
     }
 }
 
-impl MOQTPayload for SubscribeRequestMessage {
+impl MOQTPayload for SubscribeRequest {
     fn depacketize(buf: &mut bytes::BytesMut) -> anyhow::Result<Self>
     where
         Self: Sized,
@@ -86,7 +86,7 @@ impl MOQTPayload for SubscribeRequestMessage {
             }
         }
 
-        Ok(SubscribeRequestMessage {
+        Ok(SubscribeRequest {
             track_namespace,
             track_name,
             start_group,
@@ -116,7 +116,7 @@ impl MOQTPayload for SubscribeRequestMessage {
             version_specific_parameter.packetize(buf);
         }
     }
-    /// Method to enable downcasting from MOQTPayload to SubscribeRequestMessage
+    /// Method to enable downcasting from MOQTPayload to SubscribeRequest
     fn as_any(&self) -> &dyn Any {
         self
     }

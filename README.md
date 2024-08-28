@@ -14,7 +14,7 @@ Both server and browser client are written in Rust.
 - [ ] Send/Recv SUBSCRIBE_FIN/SUBSCRIBE_RST message
 - [x] Transfer SUBSCRIBE message
   - [x] Manage stream of publishers
-- [ ] Transfer OBJECT message
+- [x] Transfer OBJECT message
   - [x] Manage subscriptions
 
 ## Modules

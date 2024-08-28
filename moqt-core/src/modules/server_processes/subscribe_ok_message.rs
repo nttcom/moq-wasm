@@ -2,7 +2,7 @@ use crate::{
     handlers::subscribe_ok_handler::subscribe_ok_handler,
     messages::{moqt_payload::MOQTPayload, subscribe_ok_message::SubscribeOk},
     moqt_client::MOQTClientStatus,
-    MOQTClient, StreamManagerRepository, TrackNamespaceManagerRepository,
+    MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 use anyhow::{bail, Result};
 use bytes::BytesMut;
@@ -11,7 +11,7 @@ pub(crate) async fn process_subscribe_ok_message(
     payload_buf: &mut BytesMut,
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
-    stream_manager_repository: &mut dyn StreamManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
     if client.status() != MOQTClientStatus::SetUp {
         let message = String::from("Invalid timing");
@@ -30,7 +30,7 @@ pub(crate) async fn process_subscribe_ok_message(
     subscribe_ok_handler(
         subscribe_ok_message,
         track_namespace_manager_repository,
-        stream_manager_repository,
+        send_stream_dispatcher_repository,
     )
     .await
 }

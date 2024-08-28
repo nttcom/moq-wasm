@@ -4,19 +4,16 @@ use anyhow::{Context, Result};
 use std::{any::Any, vec};
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ClientSetupMessage {
+pub struct ClientSetup {
     pub(crate) number_of_supported_versions: u8,
     pub(crate) supported_versions: Vec<u32>,
     pub(crate) number_of_parameters: u8,
     pub(crate) setup_parameters: Vec<SetupParameter>,
 }
 
-impl ClientSetupMessage {
-    pub fn new(
-        supported_versions: Vec<u32>,
-        setup_parameters: Vec<SetupParameter>,
-    ) -> ClientSetupMessage {
-        ClientSetupMessage {
+impl ClientSetup {
+    pub fn new(supported_versions: Vec<u32>, setup_parameters: Vec<SetupParameter>) -> ClientSetup {
+        ClientSetup {
             number_of_supported_versions: supported_versions.len() as u8,
             supported_versions,
             number_of_parameters: setup_parameters.len() as u8,
@@ -25,7 +22,7 @@ impl ClientSetupMessage {
     }
 }
 
-impl MOQTPayload for ClientSetupMessage {
+impl MOQTPayload for ClientSetup {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let number_of_supported_versions = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("number of supported versions")?;
@@ -61,7 +58,7 @@ impl MOQTPayload for ClientSetupMessage {
             setup_parameters
         );
 
-        let client_setup_message = ClientSetupMessage {
+        let client_setup_message = ClientSetup {
             number_of_supported_versions,
             supported_versions,
             number_of_parameters,
@@ -92,7 +89,7 @@ impl MOQTPayload for ClientSetupMessage {
             setup_parameter.packetize(buf);
         }
     }
-    /// Method to enable downcasting from MOQTPayload to ClientSetupMessage
+    /// Method to enable downcasting from MOQTPayload to ClientSetup
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -105,7 +102,7 @@ mod success {
         constants::MOQ_TRANSPORT_VERSION,
         messages::moqt_payload::MOQTPayload,
         modules::messages::{
-            client_setup_message::ClientSetupMessage,
+            client_setup_message::ClientSetup,
             setup_parameters::{RoleCase, RoleParameter, SetupParameter},
         },
     };
@@ -118,7 +115,7 @@ mod success {
         let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
         let setup_parameters_length = setup_parameters.len() as u8;
 
-        let client_setup = ClientSetupMessage::new(supported_versions, setup_parameters.clone());
+        let client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
         let mut buf = bytes::BytesMut::new();
         client_setup.packetize(&mut buf);
 
@@ -147,8 +144,7 @@ mod success {
         let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
         let setup_parameters_length = setup_parameters.len() as u8;
 
-        let expected_client_setup =
-            ClientSetupMessage::new(supported_versions, setup_parameters.clone());
+        let expected_client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
 
         // Number of Supported Versions (i)
         let mut combined_bytes = Vec::from(supported_versions_length.to_be_bytes());
@@ -164,7 +160,7 @@ mod success {
         ]);
 
         let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
-        let depacketized_client_setup = ClientSetupMessage::depacketize(&mut buf).unwrap();
+        let depacketized_client_setup = ClientSetup::depacketize(&mut buf).unwrap();
 
         assert_eq!(depacketized_client_setup, expected_client_setup);
     }
