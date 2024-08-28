@@ -13,7 +13,7 @@ use crate::{
 use super::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ObjectMessageWithPayloadLength {
+pub struct ObjectWithPayloadLength {
     track_id: u64,
     group_sequence: u64,
     object_sequence: u64,
@@ -22,7 +22,7 @@ pub struct ObjectMessageWithPayloadLength {
     object_payload: Vec<u8>,
 }
 
-impl ObjectMessageWithPayloadLength {
+impl ObjectWithPayloadLength {
     pub fn new(
         track_id: u64,
         group_sequence: u64,
@@ -32,7 +32,7 @@ impl ObjectMessageWithPayloadLength {
     ) -> Self {
         let object_payload_length = object_payload.len() as u64;
 
-        ObjectMessageWithPayloadLength {
+        ObjectWithPayloadLength {
             track_id,
             group_sequence,
             object_sequence,
@@ -41,9 +41,13 @@ impl ObjectMessageWithPayloadLength {
             object_payload,
         }
     }
+
+    pub fn track_id(&self) -> u64 {
+        self.track_id
+    }
 }
 
-impl MOQTPayload for ObjectMessageWithPayloadLength {
+impl MOQTPayload for ObjectWithPayloadLength {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self>
     where
         Self: Sized,
@@ -62,7 +66,7 @@ impl MOQTPayload for ObjectMessageWithPayloadLength {
             read_fixed_length_bytes_from_buffer(buf, object_payload_length as usize)
                 .context("object payload")?;
 
-        Ok(ObjectMessageWithPayloadLength {
+        Ok(ObjectWithPayloadLength {
             track_id,
             group_sequence,
             object_sequence,
@@ -80,14 +84,14 @@ impl MOQTPayload for ObjectMessageWithPayloadLength {
         buf.extend(write_variable_integer(self.object_payload_length));
         buf.extend(write_variable_bytes(&self.object_payload));
     }
-    /// Method to enable downcasting from MOQTPayload to ObjectMessageWithPayloadLength
+    /// Method to enable downcasting from MOQTPayload to ObjectWithPayloadLength
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ObjectMessageWithoutPayloadLength {
+pub struct ObjectWithoutPayloadLength {
     track_id: u64,
     group_sequence: u64,
     object_sequence: u64,
@@ -95,7 +99,7 @@ pub struct ObjectMessageWithoutPayloadLength {
     object_payload: Vec<u8>,
 }
 
-impl ObjectMessageWithoutPayloadLength {
+impl ObjectWithoutPayloadLength {
     pub fn new(
         track_id: u64,
         group_sequence: u64,
@@ -103,7 +107,7 @@ impl ObjectMessageWithoutPayloadLength {
         object_send_order: u64,
         object_payload: Vec<u8>,
     ) -> Self {
-        ObjectMessageWithoutPayloadLength {
+        ObjectWithoutPayloadLength {
             track_id,
             group_sequence,
             object_sequence,
@@ -111,9 +115,13 @@ impl ObjectMessageWithoutPayloadLength {
             object_payload,
         }
     }
+
+    pub fn track_id(&self) -> u64 {
+        self.track_id
+    }
 }
 
-impl MOQTPayload for ObjectMessageWithoutPayloadLength {
+impl MOQTPayload for ObjectWithoutPayloadLength {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self>
     where
         Self: Sized,
@@ -129,7 +137,7 @@ impl MOQTPayload for ObjectMessageWithoutPayloadLength {
         let object_payload =
             read_variable_bytes_to_end_from_buffer(buf).context("object payload")?;
 
-        Ok(ObjectMessageWithoutPayloadLength {
+        Ok(ObjectWithoutPayloadLength {
             track_id,
             group_sequence,
             object_sequence,
@@ -145,7 +153,7 @@ impl MOQTPayload for ObjectMessageWithoutPayloadLength {
         buf.extend(write_variable_integer(self.object_send_order));
         buf.extend(write_variable_bytes(&self.object_payload));
     }
-    /// Method to enable downcasting from MOQTPayload to ObjectMessageWithoutPayloadLength
+    /// Method to enable downcasting from MOQTPayload to ObjectWithoutPayloadLength
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -154,9 +162,7 @@ impl MOQTPayload for ObjectMessageWithoutPayloadLength {
 #[cfg(test)]
 mod success {
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::messages::object_message::{
-        ObjectMessageWithPayloadLength, ObjectMessageWithoutPayloadLength,
-    };
+    use crate::messages::object_message::{ObjectWithPayloadLength, ObjectWithoutPayloadLength};
     use crate::modules::{
         variable_bytes::write_variable_bytes, variable_integer::write_variable_integer,
     };
@@ -168,7 +174,7 @@ mod success {
         let object_send_order = 3;
         let object_payload = vec![0, 1, 2];
 
-        let object_with_payload_length = ObjectMessageWithPayloadLength::new(
+        let object_with_payload_length = ObjectWithPayloadLength::new(
             track_id,
             group_sequence,
             object_sequence,
@@ -203,7 +209,7 @@ mod success {
         let object_send_order = 3;
         let object_payload = vec![0, 1, 2];
 
-        let expected_object_with_payload_length = ObjectMessageWithPayloadLength::new(
+        let expected_object_with_payload_length = ObjectWithPayloadLength::new(
             track_id,
             group_sequence,
             object_sequence,
@@ -226,7 +232,7 @@ mod success {
 
         let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
         let depacketized_object_with_payload_length =
-            ObjectMessageWithPayloadLength::depacketize(&mut buf).unwrap();
+            ObjectWithPayloadLength::depacketize(&mut buf).unwrap();
 
         assert_eq!(
             depacketized_object_with_payload_length,
@@ -242,7 +248,7 @@ mod success {
         let object_send_order = 3;
         let object_payload = vec![0, 1, 2];
 
-        let object_without_payload_length = ObjectMessageWithoutPayloadLength::new(
+        let object_without_payload_length = ObjectWithoutPayloadLength::new(
             track_id,
             group_sequence,
             object_sequence,
@@ -275,7 +281,7 @@ mod success {
         let object_send_order = 3;
         let object_payload = vec![0, 1, 2];
 
-        let expected_object_with_payload_length = ObjectMessageWithoutPayloadLength::new(
+        let expected_object_with_payload_length = ObjectWithoutPayloadLength::new(
             track_id,
             group_sequence,
             object_sequence,
@@ -296,7 +302,7 @@ mod success {
 
         let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
         let depacketized_object_with_payload_length =
-            ObjectMessageWithoutPayloadLength::depacketize(&mut buf).unwrap();
+            ObjectWithoutPayloadLength::depacketize(&mut buf).unwrap();
 
         assert_eq!(
             depacketized_object_with_payload_length,

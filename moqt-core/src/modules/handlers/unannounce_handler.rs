@@ -2,14 +2,14 @@ use anyhow::Result;
 
 use crate::{
     modules::{
-        messages::unannounce_message::UnAnnounceMessage,
+        messages::unannounce_message::UnAnnounce,
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
     MOQTClient,
 };
 
 pub(crate) async fn unannounce_handler(
-    unannounce_message: UnAnnounceMessage,
+    unannounce_message: UnAnnounce,
     _client: &mut MOQTClient, // TODO: Not implemented yet
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<()> {

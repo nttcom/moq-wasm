@@ -6,14 +6,14 @@ use anyhow::{Context, Result};
 use std::any::Any;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct UnsubscribeMessage {
+pub struct Unsubscribe {
     track_namespace: String,
     track_name: String,
 }
 
-impl UnsubscribeMessage {
-    pub fn new(track_namespace: String, track_name: String) -> UnsubscribeMessage {
-        UnsubscribeMessage {
+impl Unsubscribe {
+    pub fn new(track_namespace: String, track_name: String) -> Unsubscribe {
+        Unsubscribe {
             track_namespace,
             track_name,
         }
@@ -32,12 +32,12 @@ impl UnsubscribeMessage {
     }
 }
 
-impl MOQTPayload for UnsubscribeMessage {
+impl MOQTPayload for Unsubscribe {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let track_namespace = read_variable_bytes_from_buffer(buf).context("track namespace")?;
         let track_name = read_variable_bytes_from_buffer(buf).context("track name")?;
 
-        let unsubscribe_message = UnsubscribeMessage {
+        let unsubscribe_message = Unsubscribe {
             track_namespace: String::from_utf8(track_namespace)?,
             track_name: String::from_utf8(track_name)?,
         };
@@ -51,7 +51,7 @@ impl MOQTPayload for UnsubscribeMessage {
         ));
         buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
     }
-    /// Method to enable downcasting from MOQTPayload to UnsubscribeMessage
+    /// Method to enable downcasting from MOQTPayload to Unsubscribe
     fn as_any(&self) -> &dyn Any {
         self
     }

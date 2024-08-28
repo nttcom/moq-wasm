@@ -2,13 +2,13 @@ use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
 use crate::handlers::announce_handler::AnnounceResponse;
-use crate::messages::object_message::{
-    ObjectMessageWithPayloadLength, ObjectMessageWithoutPayloadLength,
-};
 use crate::modules::handlers::unannounce_handler::unannounce_handler;
-use crate::modules::messages::unannounce_message::UnAnnounceMessage;
+use crate::modules::messages::unannounce_message::UnAnnounce;
 use crate::server_processes::announce_message::process_announce_message;
 use crate::server_processes::client_setup_message::process_client_setup_message;
+use crate::server_processes::object_message::{
+    process_object_with_payload_length, process_object_without_payload_length,
+};
 use crate::server_processes::subscribe_ok_message::process_subscribe_ok_message;
 use crate::server_processes::subscribe_request_message::process_subscribe_message;
 
@@ -16,7 +16,7 @@ use super::constants::UnderlayType;
 use super::message_type::MessageType;
 use super::messages::moqt_payload::MOQTPayload;
 use super::moqt_client::{MOQTClient, MOQTClientStatus};
-use super::stream_manager_repository::StreamManagerRepository;
+use super::send_stream_dispatcher_repository::SendStreamDispatcherRepository;
 use super::track_namespace_manager_repository::TrackNamespaceManagerRepository;
 use super::variable_integer::{read_variable_integer, write_variable_integer};
 use anyhow::{bail, Result};
@@ -59,7 +59,7 @@ pub async fn message_handler(
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
-    stream_manager_repository: &mut dyn StreamManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> MessageProcessResult {
     tracing::info!("message_handler! {}", read_buf.len());
 
@@ -114,19 +114,19 @@ pub async fn message_handler(
     let mut write_buf = BytesMut::new();
 
     let return_message_type = match message_type {
-        MessageType::ObjectWithLength => {
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
-            }
-            match ObjectMessageWithPayloadLength::depacketize(&mut payload_buf) {
-                Ok(object_message) => {
-                    object_message.packetize(&mut write_buf);
-                    MessageType::ObjectWithLength
+        MessageType::ObjectWithPayloadLength => {
+            match process_object_with_payload_length(
+                &mut payload_buf,
+                client,
+                track_namespace_manager_repository,
+                send_stream_dispatcher_repository,
+            )
+            .await
+            {
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
                 }
                 Err(err) => {
-                    tracing::info!("{:#?}", err);
                     return MessageProcessResult::Failure(
                         TerminationErrorCode::GenericError,
                         err.to_string(),
@@ -134,20 +134,19 @@ pub async fn message_handler(
                 }
             }
         }
-        MessageType::ObjectWithoutLength => {
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
-            }
-            match ObjectMessageWithoutPayloadLength::depacketize(&mut payload_buf) {
-                Ok(object_message) => {
-                    object_message.packetize(&mut write_buf);
-
-                    MessageType::ObjectWithoutLength
+        MessageType::ObjectWithoutPayloadLength => {
+            match process_object_without_payload_length(
+                &mut payload_buf,
+                client,
+                track_namespace_manager_repository,
+                send_stream_dispatcher_repository,
+            )
+            .await
+            {
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
                 }
                 Err(err) => {
-                    tracing::info!("{:#?}", err);
                     return MessageProcessResult::Failure(
                         TerminationErrorCode::GenericError,
                         err.to_string(),
@@ -177,7 +176,7 @@ pub async fn message_handler(
                 &mut payload_buf,
                 client,
                 track_namespace_manager_repository,
-                stream_manager_repository,
+                send_stream_dispatcher_repository,
             )
             .await
             {
@@ -197,7 +196,7 @@ pub async fn message_handler(
                 &mut payload_buf,
                 client,
                 track_namespace_manager_repository,
-                stream_manager_repository,
+                send_stream_dispatcher_repository,
             )
             .await
             {
@@ -224,7 +223,7 @@ pub async fn message_handler(
                 return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
             }
 
-            let unsubscribe_message = UnAnnounceMessage::depacketize(&mut payload_buf);
+            let unsubscribe_message = UnAnnounce::depacketize(&mut payload_buf);
 
             if let Err(err) = unsubscribe_message {
                 // fix
@@ -282,7 +281,7 @@ pub async fn message_handler(
                 return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
             }
 
-            let unannounce_message = UnAnnounceMessage::depacketize(&mut payload_buf);
+            let unannounce_message = UnAnnounce::depacketize(&mut payload_buf);
 
             if let Err(err) = unannounce_message {
                 tracing::info!("{:#?}", err);

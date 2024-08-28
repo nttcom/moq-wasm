@@ -1,3 +1,3 @@
 // TODO: Not implemented yet
 #[allow(dead_code)]
-pub(crate) struct GoAwayMessage {}
+pub(crate) struct GoAway {}

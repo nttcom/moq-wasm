@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::{
-    modules::messages::unsubscribe_message::UnsubscribeMessage, MOQTClient,
+    modules::messages::unsubscribe_message::Unsubscribe, MOQTClient,
     TrackNamespaceManagerRepository,
 };
 
@@ -14,7 +14,7 @@ pub(crate) enum UnSubscribeResponse {
 
 // TODO: Not implemented yet
 pub(crate) async fn _unsubscribe_handler(
-    unsubscribe_message: UnsubscribeMessage,
+    unsubscribe_message: Unsubscribe,
     _client: &mut MOQTClient, // TODO: Not implemented yet
     _track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository, // TODO: Not implemented yet
 ) -> Result<UnSubscribeResponse> {

@@ -7,15 +7,15 @@ use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_
 use super::{moqt_payload::MOQTPayload, setup_parameters::SetupParameter};
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
-pub struct ServerSetupMessage {
+pub struct ServerSetup {
     pub selected_version: u32,
     pub number_of_parameters: u8,
     pub setup_parameters: Vec<SetupParameter>,
 }
 
-impl ServerSetupMessage {
+impl ServerSetup {
     pub fn new(selected_version: u32, setup_parameters: Vec<SetupParameter>) -> Self {
-        ServerSetupMessage {
+        ServerSetup {
             selected_version,
             number_of_parameters: setup_parameters.len() as u8,
             setup_parameters,
@@ -23,7 +23,7 @@ impl ServerSetupMessage {
     }
 }
 
-impl MOQTPayload for ServerSetupMessage {
+impl MOQTPayload for ServerSetup {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let selected_version = u32::try_from(read_variable_integer_from_buffer(buf)?)
             .context("Depacketize selected version")?;
@@ -37,7 +37,7 @@ impl MOQTPayload for ServerSetupMessage {
                 .push(SetupParameter::depacketize(buf).context("Depacketize setup parameter")?);
         }
 
-        let server_setup_message = ServerSetupMessage {
+        let server_setup_message = ServerSetup {
             selected_version,
             number_of_parameters,
             setup_parameters,
@@ -57,7 +57,7 @@ impl MOQTPayload for ServerSetupMessage {
             setup_parameter.packetize(buf);
         }
     }
-    /// Method to enable downcasting from MOQTPayload to ServerSetupMessage
+    /// Method to enable downcasting from MOQTPayload to ServerSetup
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -70,7 +70,7 @@ mod success {
         constants::MOQ_TRANSPORT_VERSION,
         messages::moqt_payload::MOQTPayload,
         modules::messages::{
-            server_setup_message::ServerSetupMessage,
+            server_setup_message::ServerSetup,
             setup_parameters::{RoleCase, RoleParameter, SetupParameter},
         },
     };
@@ -82,7 +82,7 @@ mod success {
         let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
         let setup_parameters_length = setup_parameters.len() as u8;
 
-        let server_setup = ServerSetupMessage::new(selected_version, setup_parameters.clone());
+        let server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
         let mut buf = bytes::BytesMut::new();
         server_setup.packetize(&mut buf);
 
@@ -108,8 +108,7 @@ mod success {
         let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
         let setup_parameters_length = setup_parameters.len() as u8;
 
-        let expected_server_setup =
-            ServerSetupMessage::new(selected_version, setup_parameters.clone());
+        let expected_server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
 
         // Selected Version (i)
         let mut combined_bytes = Vec::from(write_variable_integer(selected_version as u64));
@@ -123,7 +122,7 @@ mod success {
         ]);
 
         let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
-        let depacketized_server_setup = ServerSetupMessage::depacketize(&mut buf).unwrap();
+        let depacketized_server_setup = ServerSetup::depacketize(&mut buf).unwrap();
 
         assert_eq!(depacketized_server_setup, expected_server_setup);
     }

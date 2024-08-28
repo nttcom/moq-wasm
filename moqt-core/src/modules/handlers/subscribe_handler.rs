@@ -1,19 +1,20 @@
 use anyhow::Result;
 
 use crate::{
+    message_handler::StreamType,
     messages::moqt_payload::MOQTPayload,
     modules::{
-        messages::subscribe_request_message::SubscribeRequestMessage,
+        messages::subscribe_request_message::SubscribeRequest,
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
-    MOQTClient, StreamManagerRepository,
+    MOQTClient, SendStreamDispatcherRepository,
 };
 
 pub(crate) async fn subscribe_handler(
-    subscribe_message: SubscribeRequestMessage,
+    subscribe_message: SubscribeRequest,
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
-    stream_manager_repository: &mut dyn StreamManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
     tracing::info!("subscribe_handler!");
 
@@ -48,13 +49,13 @@ pub(crate) async fn subscribe_handler(
             // Notify the publisher about the SUBSCRIBE message
             let message: Box<dyn MOQTPayload> = Box::new(subscribe_message.clone());
             tracing::info!(
-                "message: {:#?} is relayed into client {:?}",
+                "message: {:#?} is sent to relay handler for client {:?}",
                 subscribe_message,
                 session_id
             );
 
-            match stream_manager_repository
-                .relay_message(session_id, message)
+            match send_stream_dispatcher_repository
+                .send_message_to_send_stream_thread(session_id, message, StreamType::Bi)
                 .await
             {
                 Ok(_) => Ok(()),
