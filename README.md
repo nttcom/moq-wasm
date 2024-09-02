@@ -1,6 +1,4 @@
-# loc-over-moqt
-
-~~"Low Overhead Media Container" (LOC) over~~ "Media over QUIC Transport" (MOQT)
+# MoQ WASM
 
 Both server and browser client are written in Rust.
 
