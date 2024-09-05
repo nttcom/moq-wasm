@@ -26,12 +26,6 @@ use wasm_bindgen_futures::JsFuture;
 #[cfg(web_sys_unstable_apis)]
 use web_sys::ReadableStreamDefaultReader;
 
-// When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
-// allocator.
-#[cfg(feature = "wee_alloc")]
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
-
 #[wasm_bindgen]
 extern "C" {
     fn alert(s: &str);
