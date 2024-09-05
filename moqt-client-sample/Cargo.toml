@@ -9,11 +9,10 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["console_error_panic_hook", "wee_alloc"]
+default = ["console_error_panic_hook"]
 
 [dependencies]
 bytes = "1.5.0"
-cfg-if = "1.0.0"
 console_error_panic_hook = { version = "0.1.7", optional = true }
 js-sys = "0.3.64"
 serde = { version = "1.0.188", features = ["derive"] }
@@ -23,7 +22,6 @@ wasm-bindgen-futures = "0.4.37"
 moqt-core = {path = "../moqt-core"}
 futures = "0.3.29"
 anyhow = "1.0.75"
-wee_alloc = { version = "0.4.5", optional = true }
 
 [dependencies.web-sys]
 version = "0.3.64"
