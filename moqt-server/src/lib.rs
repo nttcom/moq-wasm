@@ -137,15 +137,17 @@ impl MOQT {
             let send_stream_tx = send_stream_tx.clone();
             let incoming_session = server.accept().await;
             // Create a thread for each session
-            tokio::spawn(
-                handle_connection(
+            tokio::spawn(async move {
+                let result = handle_connection(
                     buffer_tx,
                     track_namespace_tx,
                     send_stream_tx,
                     incoming_session,
                 )
-                .instrument(tracing::info_span!("Connection", id)),
-            );
+                .instrument(tracing::info_span!("Connection", id))
+                .await;
+                tracing::error!("{:?}", result);
+            });
         }
 
         Ok(())
@@ -153,22 +155,6 @@ impl MOQT {
 }
 
 async fn handle_connection(
-    buffer_tx: mpsc::Sender<BufferCommand>,
-    track_namespace_tx: mpsc::Sender<TrackCommand>,
-    send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
-    incoming_session: IncomingSession,
-) {
-    let result = handle_connection_impl(
-        buffer_tx,
-        track_namespace_tx,
-        send_stream_tx,
-        incoming_session,
-    )
-    .await;
-    tracing::error!("{:?}", result);
-}
-
-async fn handle_connection_impl(
     buffer_tx: mpsc::Sender<BufferCommand>,
     track_namespace_tx: mpsc::Sender<TrackCommand>,
     send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
