@@ -102,7 +102,7 @@ mod success {
         constants::MOQ_TRANSPORT_VERSION,
         messages::moqt_payload::MOQTPayload,
         modules::messages::{
-            client_setup_message::ClientSetup,
+            client_setup::ClientSetup,
             setup_parameters::{RoleCase, RoleParameter, SetupParameter},
         },
     };

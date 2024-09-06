@@ -1,6 +1,6 @@
 use crate::{
     handlers::subscribe_ok_handler::subscribe_ok_handler,
-    messages::{moqt_payload::MOQTPayload, subscribe_ok_message::SubscribeOk},
+    messages::{moqt_payload::MOQTPayload, subscribe_ok::SubscribeOk},
     moqt_client::MOQTClientStatus,
     MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
