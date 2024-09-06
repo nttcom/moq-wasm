@@ -1,8 +1,7 @@
 use anyhow::Result;
 
 use crate::{
-    modules::messages::unsubscribe_message::Unsubscribe, MOQTClient,
-    TrackNamespaceManagerRepository,
+    modules::messages::unsubscribe::Unsubscribe, MOQTClient, TrackNamespaceManagerRepository,
 };
 
 // TODO: Not implemented yet
