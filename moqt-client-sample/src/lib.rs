@@ -224,13 +224,13 @@ impl MOQTClient {
             let auth_info =
                 VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
             let version_specific_parameters = vec![auth_info];
-            let subscribe_message = moqt_core::messages::subscribe_request::SubscribeRequest::new(
+            let subscribe_message = moqt_core::messages::subscribe::Subscribe::new(
                 track_namespace,
                 track_name,
-                moqt_core::messages::subscribe_request::Location::RelativePrevious(0),
-                moqt_core::messages::subscribe_request::Location::Absolute(0),
-                moqt_core::messages::subscribe_request::Location::None,
-                moqt_core::messages::subscribe_request::Location::None,
+                moqt_core::messages::subscribe::Location::RelativePrevious(0),
+                moqt_core::messages::subscribe::Location::Absolute(0),
+                moqt_core::messages::subscribe::Location::None,
+                moqt_core::messages::subscribe::Location::None,
                 version_specific_parameters,
             );
             let mut subscribe_message_buf = BytesMut::new();
@@ -631,9 +631,7 @@ async fn message_handler(
                 }
                 MessageType::Subscribe => {
                     let subscribe_message =
-                        moqt_core::messages::subscribe_request::SubscribeRequest::depacketize(
-                            &mut buf,
-                        )?;
+                        moqt_core::messages::subscribe::Subscribe::depacketize(&mut buf)?;
                     log(std::format!("subscribe_message: {:#x?}", subscribe_message).as_str());
 
                     if let Some(callback) = callbacks.borrow().subscribe_callback() {
