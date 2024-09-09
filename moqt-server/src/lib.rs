@@ -9,10 +9,10 @@ pub use moqt_core::constants;
 use moqt_core::constants::TerminationErrorCode;
 use moqt_core::message_type::MessageType;
 use moqt_core::messages::moqt_payload::MOQTPayload;
-use moqt_core::messages::object_message::{ObjectWithPayloadLength, ObjectWithoutPayloadLength};
-use moqt_core::messages::subscribe_error_message::SubscribeError;
-use moqt_core::messages::subscribe_ok_message::SubscribeOk;
-use moqt_core::messages::subscribe_request_message::SubscribeRequest;
+use moqt_core::messages::object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength};
+use moqt_core::messages::subscribe::Subscribe;
+use moqt_core::messages::subscribe_error::SubscribeError;
+use moqt_core::messages::subscribe_ok::SubscribeOk;
 use moqt_core::variable_integer::write_variable_integer;
 use moqt_core::{constants::UnderlayType, message_handler::*, MOQTClient};
 use std::sync::Arc;
@@ -139,15 +139,17 @@ impl MOQT {
             let connection_span = tracing::info_span!("Connection", id);
 
             // Create a thread for each session
-            tokio::spawn(
-                handle_connection(
+            tokio::spawn(async move {
+                let result = handle_connection(
                     buffer_tx,
                     track_namespace_tx,
                     send_stream_tx,
                     incoming_session,
                 )
-                .instrument(connection_span),
-            );
+                .instrument(connection_span)
+                .await;
+                tracing::error!("{:?}", result);
+            });
         }
 
         Ok(())
@@ -155,22 +157,6 @@ impl MOQT {
 }
 
 async fn handle_connection(
-    buffer_tx: mpsc::Sender<BufferCommand>,
-    track_namespace_tx: mpsc::Sender<TrackCommand>,
-    send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
-    incoming_session: IncomingSession,
-) {
-    let result = handle_connection_impl(
-        buffer_tx,
-        track_namespace_tx,
-        send_stream_tx,
-        incoming_session,
-    )
-    .await;
-    tracing::error!("{:?}", result);
-}
-
-async fn handle_connection_impl(
     buffer_tx: mpsc::Sender<BufferCommand>,
     track_namespace_tx: mpsc::Sender<TrackCommand>,
     send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
@@ -555,11 +541,7 @@ async fn wait_and_relay_control_message(
         message.packetize(&mut write_buf);
         let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
 
-        if message
-            .as_any()
-            .downcast_ref::<SubscribeRequest>()
-            .is_some()
-        {
+        if message.as_any().downcast_ref::<Subscribe>().is_some() {
             message_buf.extend(write_variable_integer(
                 u8::from(MessageType::Subscribe) as u64
             ));

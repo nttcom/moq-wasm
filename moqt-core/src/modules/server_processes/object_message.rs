@@ -4,7 +4,7 @@ use crate::{
     },
     messages::{
         moqt_payload::MOQTPayload,
-        object_message::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
+        object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
     },
     moqt_client::MOQTClientStatus,
     MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,

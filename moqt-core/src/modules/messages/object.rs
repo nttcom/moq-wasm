@@ -170,7 +170,7 @@ impl MOQTPayload for ObjectWithoutPayloadLength {
 #[cfg(test)]
 mod success {
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::messages::object_message::{ObjectWithPayloadLength, ObjectWithoutPayloadLength};
+    use crate::messages::object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength};
     use crate::modules::{
         variable_bytes::write_variable_bytes, variable_integer::write_variable_integer,
     };

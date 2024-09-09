@@ -4,7 +4,7 @@ use crate::{
     message_handler::StreamType,
     messages::moqt_payload::MOQTPayload,
     modules::{
-        messages::object_message::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
+        messages::object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
     SendStreamDispatcherRepository,
