@@ -43,6 +43,8 @@ impl MOQTPayload for ServerSetup {
             setup_parameters,
         };
 
+        tracing::trace!("Depacketized Server Setup message.");
+
         Ok(server_setup_message)
     }
 
@@ -56,6 +58,8 @@ impl MOQTPayload for ServerSetup {
         for setup_parameter in self.setup_parameters.iter() {
             setup_parameter.packetize(buf);
         }
+
+        tracing::trace!("Packetized Server Setup message.");
     }
     /// Method to enable downcasting from MOQTPayload to ServerSetup
     fn as_any(&self) -> &dyn Any {
