@@ -10,9 +10,9 @@ use moqt_core::constants::TerminationErrorCode;
 use moqt_core::message_type::MessageType;
 use moqt_core::messages::moqt_payload::MOQTPayload;
 use moqt_core::messages::object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength};
+use moqt_core::messages::subscribe::Subscribe;
 use moqt_core::messages::subscribe_error::SubscribeError;
 use moqt_core::messages::subscribe_ok::SubscribeOk;
-use moqt_core::messages::subscribe_request::SubscribeRequest;
 use moqt_core::variable_integer::write_variable_integer;
 use moqt_core::{constants::UnderlayType, message_handler::*, MOQTClient};
 use std::sync::Arc;
@@ -517,11 +517,7 @@ async fn wait_and_relay_control_message(
         message.packetize(&mut write_buf);
         let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
 
-        if message
-            .as_any()
-            .downcast_ref::<SubscribeRequest>()
-            .is_some()
-        {
+        if message.as_any().downcast_ref::<Subscribe>().is_some() {
             message_buf.extend(write_variable_integer(
                 u8::from(MessageType::Subscribe) as u64
             ));

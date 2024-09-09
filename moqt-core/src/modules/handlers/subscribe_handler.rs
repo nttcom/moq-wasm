@@ -4,14 +4,14 @@ use crate::{
     message_handler::StreamType,
     messages::moqt_payload::MOQTPayload,
     modules::{
-        messages::subscribe_request::SubscribeRequest,
+        messages::subscribe::Subscribe,
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
     MOQTClient, SendStreamDispatcherRepository,
 };
 
 pub(crate) async fn subscribe_handler(
-    subscribe_message: SubscribeRequest,
+    subscribe_message: Subscribe,
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
