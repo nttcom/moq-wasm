@@ -86,6 +86,8 @@ impl MOQTPayload for SubscribeRequest {
             }
         }
 
+        tracing::trace!("Depacketized Subscribe message.");
+
         Ok(SubscribeRequest {
             track_namespace,
             track_name,
@@ -115,6 +117,8 @@ impl MOQTPayload for SubscribeRequest {
         for version_specific_parameter in &self.track_request_parameters {
             version_specific_parameter.packetize(buf);
         }
+
+        tracing::trace!("Packetized Subscribe OK message.");
     }
     /// Method to enable downcasting from MOQTPayload to SubscribeRequest
     fn as_any(&self) -> &dyn Any {

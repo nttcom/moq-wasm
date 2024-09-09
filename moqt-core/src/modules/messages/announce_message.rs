@@ -57,6 +57,8 @@ impl MOQTPayload for Announce {
             parameters,
         };
 
+        tracing::trace!("Depacketized Announce message.");
+
         Ok(announce_message)
     }
 
@@ -79,6 +81,8 @@ impl MOQTPayload for Announce {
         for param in &self.parameters {
             param.packetize(buf);
         }
+
+        tracing::trace!("Packetized Announce message.");
     }
     /// Method to enable downcasting from MOQTPayload to Announce
     fn as_any(&self) -> &dyn Any {
