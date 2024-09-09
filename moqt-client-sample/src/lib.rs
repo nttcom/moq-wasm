@@ -9,8 +9,8 @@ use moqt_core::{
     message_handler::StreamType,
     message_type::MessageType,
     messages::{
-        announce_message::Announce,
-        client_setup_message::ClientSetup,
+        announce::Announce,
+        client_setup::ClientSetup,
         moqt_payload::MOQTPayload,
         setup_parameters::{RoleCase, RoleParameter, SetupParameter},
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
@@ -218,16 +218,15 @@ impl MOQTClient {
             let auth_info =
                 VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
             let version_specific_parameters = vec![auth_info];
-            let subscribe_message =
-                moqt_core::messages::subscribe_request_message::SubscribeRequest::new(
-                    track_namespace,
-                    track_name,
-                    moqt_core::messages::subscribe_request_message::Location::RelativePrevious(0),
-                    moqt_core::messages::subscribe_request_message::Location::Absolute(0),
-                    moqt_core::messages::subscribe_request_message::Location::None,
-                    moqt_core::messages::subscribe_request_message::Location::None,
-                    version_specific_parameters,
-                );
+            let subscribe_message = moqt_core::messages::subscribe_request::SubscribeRequest::new(
+                track_namespace,
+                track_name,
+                moqt_core::messages::subscribe_request::Location::RelativePrevious(0),
+                moqt_core::messages::subscribe_request::Location::Absolute(0),
+                moqt_core::messages::subscribe_request::Location::None,
+                moqt_core::messages::subscribe_request::Location::None,
+                version_specific_parameters,
+            );
             let mut subscribe_message_buf = BytesMut::new();
             subscribe_message.packetize(&mut subscribe_message_buf);
 
@@ -255,7 +254,7 @@ impl MOQTClient {
         expires: u64,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
-            let subscribe_ok_message = moqt_core::messages::subscribe_ok_message::SubscribeOk::new(
+            let subscribe_ok_message = moqt_core::messages::subscribe_ok::SubscribeOk::new(
                 track_namespace,
                 track_name,
                 track_id,
@@ -288,13 +287,12 @@ impl MOQTClient {
         reason_phrase: String,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
-            let subscribe_error_message =
-                moqt_core::messages::subscribe_error_message::SubscribeError::new(
-                    track_namespace,
-                    track_name,
-                    error_code,
-                    reason_phrase,
-                );
+            let subscribe_error_message = moqt_core::messages::subscribe_error::SubscribeError::new(
+                track_namespace,
+                track_name,
+                error_code,
+                reason_phrase,
+            );
             let mut subscribe_error_message_buf = BytesMut::new();
             subscribe_error_message.packetize(&mut subscribe_error_message_buf);
 
@@ -320,10 +318,8 @@ impl MOQTClient {
         track_name: String,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
-            let unsubscribe_message = moqt_core::messages::unsubscribe_message::Unsubscribe::new(
-                track_namespace,
-                track_name,
-            );
+            let unsubscribe_message =
+                moqt_core::messages::unsubscribe::Unsubscribe::new(track_namespace, track_name);
             let mut unsubscribe_message_buf = BytesMut::new();
             unsubscribe_message.packetize(&mut unsubscribe_message_buf);
 
@@ -365,7 +361,7 @@ impl MOQTClient {
             );
             let writer = uni_stream.get_writer()?;
 
-            let object_message = moqt_core::messages::object_message::ObjectWithPayloadLength::new(
+            let object_message = moqt_core::messages::object::ObjectWithPayloadLength::new(
                 track_id,
                 group_sequence,
                 object_sequence,
@@ -416,14 +412,13 @@ impl MOQTClient {
             );
             let writer = uni_stream.get_writer()?;
 
-            let object_message =
-                moqt_core::messages::object_message::ObjectWithoutPayloadLength::new(
-                    track_id,
-                    group_sequence,
-                    object_sequence,
-                    object_send_order,
-                    object_payload,
-                );
+            let object_message = moqt_core::messages::object::ObjectWithoutPayloadLength::new(
+                track_id,
+                group_sequence,
+                object_sequence,
+                object_send_order,
+                object_payload,
+            );
             let mut object_message_buf = BytesMut::new();
             object_message.packetize(&mut object_message_buf);
 
@@ -578,7 +573,7 @@ async fn message_handler(
     _stream_type: StreamType, // TODO: Not implemented yet
     mut buf: &mut BytesMut,
 ) -> Result<()> {
-    use moqt_core::messages::announce_ok_message;
+    use moqt_core::messages::announce_ok;
 
     let message_type_value = read_variable_integer_from_buffer(&mut buf);
 
@@ -592,9 +587,7 @@ async fn message_handler(
             match message_type {
                 MessageType::ServerSetup => {
                     let server_setup_message =
-                        moqt_core::messages::server_setup_message::ServerSetup::depacketize(
-                            &mut buf,
-                        )?;
+                        moqt_core::messages::server_setup::ServerSetup::depacketize(&mut buf)?;
 
                     log(
                         std::format!("server_setup_message: {:#x?}", server_setup_message).as_str(),
@@ -609,8 +602,7 @@ async fn message_handler(
                     }
                 }
                 MessageType::AnnounceOk => {
-                    let announce_ok_message =
-                        announce_ok_message::AnnounceOk::depacketize(&mut buf)?;
+                    let announce_ok_message = announce_ok::AnnounceOk::depacketize(&mut buf)?;
                     log(std::format!("announce_ok_message: {:#x?}", announce_ok_message).as_str());
 
                     if let Some(callback) = callbacks.borrow().announce_callback() {
@@ -620,9 +612,7 @@ async fn message_handler(
                 }
                 MessageType::AnnounceError => {
                     let announce_error_message =
-                        moqt_core::messages::announce_error_message::AnnounceError::depacketize(
-                            &mut buf,
-                        )?;
+                        moqt_core::messages::announce_error::AnnounceError::depacketize(&mut buf)?;
                     log(
                         std::format!("announce_error_message: {:#x?}", announce_error_message)
                             .as_str(),
@@ -635,7 +625,7 @@ async fn message_handler(
                 }
                 MessageType::Subscribe => {
                     let subscribe_message =
-                        moqt_core::messages::subscribe_request_message::SubscribeRequest::depacketize(
+                        moqt_core::messages::subscribe_request::SubscribeRequest::depacketize(
                             &mut buf,
                         )?;
                     log(std::format!("subscribe_message: {:#x?}", subscribe_message).as_str());
@@ -647,9 +637,7 @@ async fn message_handler(
                 }
                 MessageType::SubscribeOk => {
                     let subscribe_ok_message =
-                        moqt_core::messages::subscribe_ok_message::SubscribeOk::depacketize(
-                            &mut buf,
-                        )?;
+                        moqt_core::messages::subscribe_ok::SubscribeOk::depacketize(&mut buf)?;
                     log(
                         std::format!("subscribe_ok_message: {:#x?}", subscribe_ok_message).as_str(),
                     );
@@ -661,7 +649,7 @@ async fn message_handler(
                 }
                 MessageType::SubscribeError => {
                     let subscribe_error_message =
-                        moqt_core::messages::subscribe_error_message::SubscribeError::depacketize(
+                        moqt_core::messages::subscribe_error::SubscribeError::depacketize(
                             &mut buf,
                         )?;
                     log(
@@ -676,7 +664,7 @@ async fn message_handler(
                 }
                 MessageType::ObjectWithPayloadLength => {
                     let object_with_length_message =
-                        moqt_core::messages::object_message::ObjectWithPayloadLength::depacketize(
+                        moqt_core::messages::object::ObjectWithPayloadLength::depacketize(
                             &mut buf,
                         )?;
                     log(std::format!(
@@ -693,7 +681,7 @@ async fn message_handler(
                 }
                 MessageType::ObjectWithoutPayloadLength => {
                     let object_without_length_message =
-                        moqt_core::messages::object_message::ObjectWithoutPayloadLength::depacketize(
+                        moqt_core::messages::object::ObjectWithoutPayloadLength::depacketize(
                             &mut buf,
                         )?;
                     log(std::format!(

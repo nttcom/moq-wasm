@@ -2,10 +2,7 @@ use anyhow::Result;
 
 use crate::{
     modules::{
-        messages::{
-            announce_error_message::AnnounceError, announce_message::Announce,
-            announce_ok_message::AnnounceOk,
-        },
+        messages::{announce::Announce, announce_error::AnnounceError, announce_ok::AnnounceOk},
         track_namespace_manager_repository::TrackNamespaceManagerRepository,
     },
     MOQTClient,

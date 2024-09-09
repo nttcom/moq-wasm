@@ -3,7 +3,7 @@ use bytes::BytesMut;
 use crate::{
     constants::UnderlayType,
     handlers::server_setup_handler::setup_handler,
-    messages::{client_setup_message::ClientSetup, moqt_payload::MOQTPayload},
+    messages::{client_setup::ClientSetup, moqt_payload::MOQTPayload},
     moqt_client::MOQTClientStatus,
     MOQTClient,
 };

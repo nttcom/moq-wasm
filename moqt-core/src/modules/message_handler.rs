@@ -3,7 +3,7 @@ use std::io::Cursor;
 use crate::constants::TerminationErrorCode;
 use crate::handlers::announce_handler::AnnounceResponse;
 use crate::modules::handlers::unannounce_handler::unannounce_handler;
-use crate::modules::messages::unannounce_message::UnAnnounce;
+use crate::modules::messages::unannounce::UnAnnounce;
 use crate::server_processes::announce_message::process_announce_message;
 use crate::server_processes::client_setup_message::process_client_setup_message;
 use crate::server_processes::object_message::{
