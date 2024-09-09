@@ -26,7 +26,7 @@ impl MOQTPayload for ClientSetup {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let number_of_supported_versions = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("number of supported versions")?;
-        tracing::debug!(
+        tracing::trace!(
             "Depacketized client setup message number_of_supported_versions: {:#?}",
             number_of_supported_versions
         );
@@ -37,14 +37,14 @@ impl MOQTPayload for ClientSetup {
                 .context("supported version")?;
             supported_versions.push(supported_version);
         }
-        tracing::debug!(
+        tracing::trace!(
             "Depacketized client setup message supported_versions: {:#?}",
             supported_versions
         );
 
         let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("number of parameters")?;
-        tracing::debug!(
+        tracing::trace!(
             "Depacketized client setup message number_of_parameters: {:#?}",
             number_of_parameters
         );
@@ -53,7 +53,7 @@ impl MOQTPayload for ClientSetup {
         for _ in 0..number_of_parameters {
             setup_parameters.push(SetupParameter::depacketize(buf)?);
         }
-        tracing::debug!(
+        tracing::trace!(
             "Depacketized client setup message setup_parameters: {:#?}",
             setup_parameters
         );

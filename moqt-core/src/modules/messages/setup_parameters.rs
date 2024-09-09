@@ -20,7 +20,7 @@ impl MOQTPayload for SetupParameter {
             read_variable_integer_from_buffer(buf).context("key")?,
         )?);
         if let Err(err) = key {
-            tracing::info!("Unknown SETUP parameter {:#04x}", err.number);
+            tracing::warn!("Unknown SETUP parameter {:#04x}", err.number);
             return Ok(SetupParameter::Unknown(err.number));
         }
 

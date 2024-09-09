@@ -40,7 +40,7 @@ impl Announce {
 impl MOQTPayload for Announce {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let read_cur = Cursor::new(&buf[..]);
-        tracing::info!("read_cur! {:?}", read_cur);
+        tracing::debug!("read_cur! {:?}", read_cur);
         let track_namespace =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
         let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
@@ -56,7 +56,6 @@ impl MOQTPayload for Announce {
             number_of_parameters,
             parameters,
         };
-        tracing::info!("announce_message! {:?}", announce_message);
 
         Ok(announce_message)
     }

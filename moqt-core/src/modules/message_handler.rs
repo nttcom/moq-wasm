@@ -28,6 +28,7 @@ pub enum StreamType {
     Bi,
 }
 
+#[derive(Debug)]
 pub enum MessageProcessResult {
     Success(BytesMut),
     SuccessWithoutResponse,
@@ -52,7 +53,6 @@ fn read_message_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<MessageTyp
     Ok(message_type)
 }
 
-#[tracing::instrument(name="StableID",skip_all,fields(id=client.id()))]
 pub async fn message_handler(
     read_buf: &mut BytesMut,
     stream_type: StreamType,
@@ -61,10 +61,10 @@ pub async fn message_handler(
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> MessageProcessResult {
-    tracing::info!("message_handler! {}", read_buf.len());
+    tracing::trace!("message_handler! {}", read_buf.len());
 
     let mut read_cur = Cursor::new(&read_buf[..]);
-    tracing::info!("read_cur! {:?}", read_cur);
+    tracing::debug!("read_cur! {:?}", read_cur);
 
     // Read the message type
     let message_type = match read_message_type(&mut read_cur) {
@@ -72,21 +72,21 @@ pub async fn message_handler(
         Err(err) => {
             read_buf.advance(read_cur.position() as usize);
 
-            tracing::info!("message_type is wrong {:?}", err);
+            tracing::error!("message_type is wrong {:?}", err);
             return MessageProcessResult::Failure(
                 TerminationErrorCode::GenericError,
                 err.to_string(),
             );
         }
     };
-    tracing::info!("Message Type: {:?}", message_type);
+    tracing::info!("Received Message Type: {:?}", message_type);
     if message_type.is_setup_message() {
         // Setup message must be sent on bidirectional stream
         if stream_type == StreamType::Uni {
             read_buf.advance(read_cur.position() as usize);
 
             let message = String::from("Setup message must be sent on bidirectional stream");
-            tracing::info!(message);
+            tracing::debug!(message);
             return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
         }
     } else if message_type.is_control_message() {
@@ -97,14 +97,14 @@ pub async fn message_handler(
             read_buf.advance(read_cur.position() as usize);
 
             let message = String::from("Object message must be sent on unidirectional stream");
-            tracing::info!(message);
+            tracing::debug!(message);
             return MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, message);
         }
     }
 
     if read_cur.remaining() == 0 {
         // The length is insufficient, so do nothing. Do not synchronize with the cursor.
-        tracing::info!("fragmented {}", read_buf.len());
+        tracing::error!("fragmented {}", read_buf.len());
         return MessageProcessResult::Fragment;
     }
 
@@ -226,8 +226,7 @@ pub async fn message_handler(
             let unsubscribe_message = UnAnnounce::depacketize(&mut payload_buf);
 
             if let Err(err) = unsubscribe_message {
-                // fix
-                tracing::info!("{:#?}", err);
+                tracing::error!("{:#?}", err);
                 return MessageProcessResult::Failure(
                     TerminationErrorCode::GenericError,
                     err.to_string(),
@@ -284,7 +283,7 @@ pub async fn message_handler(
             let unannounce_message = UnAnnounce::depacketize(&mut payload_buf);
 
             if let Err(err) = unannounce_message {
-                tracing::info!("{:#?}", err);
+                tracing::error!("{:#?}", err);
                 return MessageProcessResult::Failure(
                     TerminationErrorCode::GenericError,
                     err.to_string(),
@@ -312,13 +311,14 @@ pub async fn message_handler(
         }
     };
 
+    tracing::info!("Return Message Type: {:?}", return_message_type.clone());
     let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
     // Add type
     message_buf.extend(write_variable_integer(u8::from(return_message_type) as u64));
     // Add payload
     message_buf.extend(write_buf);
 
-    tracing::info!("message_buf: {:#x?}", message_buf);
+    tracing::debug!("message_buf: {:#x?}", message_buf);
 
     MessageProcessResult::Success(message_buf)
 }
