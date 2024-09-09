@@ -15,11 +15,11 @@ pub(crate) async fn object_with_payload_length_handler(
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
-    tracing::info!("object_with_payload_length_handler!");
+    tracing::trace!("object_with_payload_length_handler start.");
 
-    tracing::info!(
-        "object_with_payload_length_handler: track_id: \"{}\"",
-        object_with_payload_length_message.track_id()
+    tracing::debug!(
+        "object_with_payload_length_message: {:#?}",
+        object_with_payload_length_message
     );
 
     // Use track_id to determine the subscriber
@@ -35,7 +35,7 @@ pub(crate) async fn object_with_payload_length_handler(
             for session_id in session_ids.iter() {
                 let message: Box<dyn MOQTPayload> =
                     Box::new(object_with_payload_length_message.clone());
-                tracing::info!(
+                tracing::debug!(
                     "message: {:#?} is sent to relay handler for client {:?}",
                     object_with_payload_length_message,
                     session_id
@@ -55,6 +55,7 @@ pub(crate) async fn object_with_payload_length_handler(
                     }
                 }
             }
+            tracing::trace!("object_with_payload_length_handler complete.");
             result
         }
         None => {
@@ -69,11 +70,11 @@ pub(crate) async fn object_without_payload_length_handler(
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
-    tracing::info!("object_without_payload_length_handler!");
+    tracing::trace!("object_without_payload_length_handler start.");
 
-    tracing::info!(
-        "object_without_payload_length_handler: track_id: \"{}\"",
-        object_without_payload_length_message.track_id()
+    tracing::debug!(
+        "object_without_payload_length_message: {:#?}",
+        object_without_payload_length_message
     );
 
     // Use track_id to determine the subscriber
@@ -88,7 +89,7 @@ pub(crate) async fn object_without_payload_length_handler(
             for session_id in session_ids.iter() {
                 let message: Box<dyn MOQTPayload> =
                     Box::new(object_without_payload_length_message.clone());
-                tracing::info!(
+                tracing::debug!(
                     "message: {:#?} is sent to relay handler for client {:?}",
                     object_without_payload_length_message,
                     session_id
@@ -108,6 +109,7 @@ pub(crate) async fn object_without_payload_length_handler(
                     }
                 }
             }
+            tracing::trace!("object_without_payload_length_handler complete.");
             result
         }
         None => {

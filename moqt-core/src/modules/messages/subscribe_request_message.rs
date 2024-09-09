@@ -73,7 +73,7 @@ impl MOQTPayload for SubscribeRequest {
         for _ in 0..number_of_parameters {
             let version_specific_parameter = VersionSpecificParameter::depacketize(buf)?;
             if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
-                tracing::info!("unknown track request parameter {}", code);
+                tracing::warn!("unknown track request parameter {}", code);
             } else {
                 // NOTE:
                 //   According to "6.1.1. Version Specific Parameters", the parameters used
