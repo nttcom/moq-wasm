@@ -1,0 +1,34 @@
+name: Lint
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    container:
+      image: rust:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Clippy and Rustfmt
+        run: |
+          rustup component add clippy
+          rustup component add rustfmt
+      - name: Run Clippy
+        run: cargo clippy -- -D warnings
+      - name: Check code formatting
+        run: cargo fmt -- --check
+      - name: Run Unit Tests
+        run: cargo test
+  pretiier:
+    runs-on: ubuntu-latest
+    container:
+      image: cimg/node:21.6.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Prettier
+        run: npm install ./js
+      - name: Check code formatting
+        run: npx prettier --check "js/**/*.{js,jsx,ts,tsx,json,css,md}"

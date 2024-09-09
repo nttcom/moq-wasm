@@ -74,7 +74,7 @@ mod success {
         constants::MOQ_TRANSPORT_VERSION,
         messages::moqt_payload::MOQTPayload,
         modules::messages::{
-            server_setup_message::ServerSetup,
+            server_setup::ServerSetup,
             setup_parameters::{RoleCase, RoleParameter, SetupParameter},
         },
     };

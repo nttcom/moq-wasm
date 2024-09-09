@@ -46,7 +46,7 @@ impl MOQTPayload for AnnounceOk {
 #[cfg(test)]
 mod success {
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::announce_ok_message::AnnounceOk;
+    use crate::modules::messages::announce_ok::AnnounceOk;
     use bytes::BytesMut;
 
     #[test]

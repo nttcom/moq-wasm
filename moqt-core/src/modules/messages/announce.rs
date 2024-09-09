@@ -94,7 +94,7 @@ impl MOQTPayload for Announce {
 mod success {
     use crate::messages::moqt_payload::MOQTPayload;
     use crate::messages::version_specific_parameters::AuthorizationInfo;
-    use crate::modules::messages::announce_message::Announce;
+    use crate::modules::messages::announce::Announce;
     use crate::modules::messages::version_specific_parameters::{
         VersionSpecificParameter, VersionSpecificParameterType,
     };

@@ -9,7 +9,7 @@ use crate::{
 use anyhow::{bail, Result};
 
 use crate::modules::{
-    messages::client_setup_message::ClientSetup, messages::server_setup_message::ServerSetup,
+    messages::client_setup::ClientSetup, messages::server_setup::ServerSetup,
     moqt_client::MOQTClient,
 };
 
@@ -78,7 +78,7 @@ mod success {
         modules::{
             handlers::server_setup_handler::setup_handler,
             messages::{
-                client_setup_message::ClientSetup,
+                client_setup::ClientSetup,
                 setup_parameters::{PathParameter, RoleCase, RoleParameter, SetupParameter},
             },
             moqt_client::MOQTClient,
@@ -128,7 +128,7 @@ mod failure {
         modules::{
             handlers::server_setup_handler::setup_handler,
             messages::{
-                client_setup_message::ClientSetup,
+                client_setup::ClientSetup,
                 setup_parameters::{PathParameter, SetupParameter},
             },
             moqt_client::MOQTClient,
