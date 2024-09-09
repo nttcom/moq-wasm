@@ -41,7 +41,7 @@ pub(crate) async fn announce_handler(
             )))
         }
         Err(err) => {
-            tracing::warn!("announce_handler: err: {:?}", err.to_string());
+            tracing::error!("announce_handler: err: {:?}", err.to_string());
 
             Ok(AnnounceResponse::Failure(AnnounceError::new(
                 announce_message.track_namespace().to_string(),
