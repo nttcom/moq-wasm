@@ -1,6 +1,6 @@
 use crate::{
     handlers::announce_handler::{announce_handler, AnnounceResponse},
-    messages::{announce_message::Announce, moqt_payload::MOQTPayload},
+    messages::{announce::Announce, moqt_payload::MOQTPayload},
     moqt_client::MOQTClientStatus,
     MOQTClient, TrackNamespaceManagerRepository,
 };

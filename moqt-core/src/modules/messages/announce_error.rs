@@ -76,8 +76,7 @@ impl MOQTPayload for AnnounceError {
 #[cfg(test)]
 mod success {
     use crate::{
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::announce_error_message::AnnounceError,
+        messages::moqt_payload::MOQTPayload, modules::messages::announce_error::AnnounceError,
     };
     #[test]
     fn packetize_announce_error() {
