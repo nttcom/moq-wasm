@@ -26,10 +26,6 @@ impl MOQTPayload for ClientSetup {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let number_of_supported_versions = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("number of supported versions")?;
-        tracing::debug!(
-            "Depacketized client setup message number_of_supported_versions: {:#?}",
-            number_of_supported_versions
-        );
 
         let mut supported_versions = Vec::with_capacity(number_of_supported_versions as usize);
         for _ in 0..number_of_supported_versions {
@@ -37,26 +33,14 @@ impl MOQTPayload for ClientSetup {
                 .context("supported version")?;
             supported_versions.push(supported_version);
         }
-        tracing::debug!(
-            "Depacketized client setup message supported_versions: {:#?}",
-            supported_versions
-        );
 
         let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("number of parameters")?;
-        tracing::debug!(
-            "Depacketized client setup message number_of_parameters: {:#?}",
-            number_of_parameters
-        );
 
         let mut setup_parameters = vec![];
         for _ in 0..number_of_parameters {
             setup_parameters.push(SetupParameter::depacketize(buf)?);
         }
-        tracing::debug!(
-            "Depacketized client setup message setup_parameters: {:#?}",
-            setup_parameters
-        );
 
         let client_setup_message = ClientSetup {
             number_of_supported_versions,
@@ -64,6 +48,8 @@ impl MOQTPayload for ClientSetup {
             number_of_parameters,
             setup_parameters,
         };
+
+        tracing::trace!("Depacketized Client Setup message.");
 
         Ok(client_setup_message)
     }
@@ -88,6 +74,8 @@ impl MOQTPayload for ClientSetup {
         for setup_parameter in &self.setup_parameters {
             setup_parameter.packetize(buf);
         }
+
+        tracing::trace!("Packetized Client Setup message.");
     }
     /// Method to enable downcasting from MOQTPayload to ClientSetup
     fn as_any(&self) -> &dyn Any {

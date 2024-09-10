@@ -12,7 +12,7 @@ type SenderToSendStreamThread = mpsc::Sender<Arc<Box<dyn MOQTPayload>>>;
 use SendStreamDispatchCommand::*;
 // Called as a separate thread
 pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDispatchCommand>) {
-    tracing::info!("send_stream_dispatcher start");
+    tracing::trace!("send_stream_dispatcher start");
     // {
     //   "${session_id}" : {
     //     "unidirectional_stream" : tx,
@@ -22,7 +22,7 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
     let mut relay_senders = HashMap::<usize, HashMap<String, SenderToSendStreamThread>>::new();
 
     while let Some(cmd) = rx.recv().await {
-        tracing::info!("command received");
+        tracing::debug!("command received: {:#?}", cmd);
         match cmd {
             Set {
                 session_id,
@@ -31,7 +31,7 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
             } => {
                 let inner_map = relay_senders.entry(session_id).or_default();
                 inner_map.insert(stream_type.to_string(), sender);
-                tracing::info!("set: {:?}", relay_senders);
+                tracing::debug!("set: {:?}", relay_senders);
             }
             List {
                 stream_type,
@@ -60,11 +60,13 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
                     .get(&session_id)
                     .and_then(|inner_map| inner_map.get(&stream_type))
                     .cloned();
-                tracing::info!("get: {:?}", sender);
+                tracing::debug!("get: {:?}", sender);
                 let _ = resp.send(sender);
             }
         }
     }
+
+    tracing::trace!("send_stream_dispatcher end");
 }
 
 #[derive(Debug)]

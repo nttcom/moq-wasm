@@ -32,7 +32,7 @@ impl MOQTPayload for VersionSpecificParameter {
 
         if let Err(err) = parameter_type {
             // If it appears in some other type of message, it MUST be ignored.
-            tracing::info!("Unknown version specific parameter {:#04x}", err.number);
+            tracing::warn!("Unknown version specific parameter {:#04x}", err.number);
             return Ok(VersionSpecificParameter::Unknown(err.number));
         }
 

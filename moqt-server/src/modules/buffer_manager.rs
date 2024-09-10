@@ -6,7 +6,7 @@ use BufferCommand::*;
 
 // Called as a separate thread
 pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
-    tracing::info!("buffer_manager start");
+    tracing::trace!("buffer_manager start");
 
     // {
     //   "${session_id}" : {
@@ -16,7 +16,7 @@ pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
     let mut buffers = HashMap::<usize, HashMap<u64, BufferType>>::new();
 
     while let Some(cmd) = rx.recv().await {
-        tracing::info!("command received");
+        tracing::debug!("command received: {:#?}", cmd);
         match cmd {
             Get {
                 session_id,
@@ -58,7 +58,7 @@ pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
         }
     }
 
-    tracing::info!("buffer_manager end");
+    tracing::trace!("buffer_manager end");
 }
 
 #[derive(Debug)]
@@ -85,7 +85,7 @@ pub(crate) async fn request_buffer(
     session_id: usize,
     stream_id: u64,
 ) -> BufferType {
-    tracing::info!("request_buffer start");
+    tracing::trace!("request_buffer start");
 
     let (resp_tx, resp_rx) = oneshot::channel::<BufferType>();
 
@@ -98,7 +98,7 @@ pub(crate) async fn request_buffer(
 
     let buf = resp_rx.await.unwrap();
 
-    tracing::info!("request_buffer end");
+    tracing::trace!("request_buffer end");
 
     buf
 }
