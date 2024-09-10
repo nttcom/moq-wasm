@@ -22,7 +22,7 @@ pub(crate) async fn process_subscribe_message(
     let subscribe_request_message = match Subscribe::depacketize(payload_buf) {
         Ok(subscribe_request_message) => subscribe_request_message,
         Err(err) => {
-            tracing::info!("{:#?}", err);
+            tracing::error!("{:#?}", err);
             bail!(err.to_string());
         }
     };

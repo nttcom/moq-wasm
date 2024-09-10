@@ -309,7 +309,7 @@ impl TrackNamespaces {
 
 // Called as a separate thread
 pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
-    tracing::info!("track_namespace_manager start");
+    tracing::trace!("track_namespace_manager start");
 
     // TrackNamespaces
     // {
@@ -332,7 +332,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
     let mut namespaces: TrackNamespaces = TrackNamespaces::new();
 
     while let Some(cmd) = rx.recv().await {
-        tracing::info!("command received");
+        tracing::debug!("command received: {:#?}", cmd);
         match cmd {
             SetPublisher {
                 track_namespace,
@@ -341,7 +341,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             } => match namespaces.set_publisher(track_namespace, publisher_session_id) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
-                    tracing::info!("set_publisher: err: {:?}", err.to_string());
+                    tracing::error!("set_publisher: err: {:?}", err.to_string());
                     resp.send(false).unwrap();
                 }
             },
@@ -351,7 +351,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             } => match namespaces.delete_publisher(track_namespace) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
-                    tracing::info!("set_publisher: err: {:?}", err.to_string());
+                    tracing::error!("set_publisher: err: {:?}", err.to_string());
                     resp.send(false).unwrap();
                 }
             },
@@ -380,7 +380,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
                 {
                     Ok(_) => resp.send(true).unwrap(),
                     Err(err) => {
-                        tracing::info!("set_subscriber: err: {:?}", err.to_string());
+                        tracing::error!("set_subscriber: err: {:?}", err.to_string());
                         resp.send(false).unwrap();
                     }
                 }
@@ -397,7 +397,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             ) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
-                    tracing::info!("delete_subscriber: err: {:?}", err.to_string());
+                    tracing::error!("delete_subscriber: err: {:?}", err.to_string());
                     resp.send(false).unwrap();
                 }
             },
@@ -409,7 +409,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             } => match namespaces.set_track_id(track_namespace, track_name, track_id) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
-                    tracing::info!("set_track_id: err: {:?}", err.to_string());
+                    tracing::error!("set_track_id: err: {:?}", err.to_string());
                     resp.send(false).unwrap();
                 }
             },
@@ -427,7 +427,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             ) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
-                    tracing::info!("set_status: err: {:?}", err.to_string());
+                    tracing::error!("set_status: err: {:?}", err.to_string());
                     resp.send(false).unwrap();
                 }
             },
@@ -450,7 +450,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
         }
     }
 
-    tracing::info!("track_namespace_manager end");
+    tracing::trace!("track_namespace_manager end");
 }
 
 #[derive(Debug)]

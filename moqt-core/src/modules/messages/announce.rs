@@ -40,7 +40,7 @@ impl Announce {
 impl MOQTPayload for Announce {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let read_cur = Cursor::new(&buf[..]);
-        tracing::info!("read_cur! {:?}", read_cur);
+        tracing::debug!("read_cur! {:?}", read_cur);
         let track_namespace =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
         let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
@@ -56,7 +56,8 @@ impl MOQTPayload for Announce {
             number_of_parameters,
             parameters,
         };
-        tracing::info!("announce_message! {:?}", announce_message);
+
+        tracing::trace!("Depacketized Announce message.");
 
         Ok(announce_message)
     }
@@ -80,6 +81,8 @@ impl MOQTPayload for Announce {
         for param in &self.parameters {
             param.packetize(buf);
         }
+
+        tracing::trace!("Packetized Announce message.");
     }
     /// Method to enable downcasting from MOQTPayload to Announce
     fn as_any(&self) -> &dyn Any {

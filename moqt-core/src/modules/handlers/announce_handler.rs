@@ -18,13 +18,8 @@ pub(crate) async fn announce_handler(
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<AnnounceResponse> {
-    tracing::info!("announce_handler!");
-
-    tracing::info!(
-        "announce_handler: track_namespace: \"{}\" is announced by client: {}",
-        announce_message.track_namespace(),
-        client.id
-    );
+    tracing::trace!("announce_handler start.");
+    tracing::debug!("announce_message: {:#?}", announce_message);
 
     // Record the announced Track Namespace
     let set_result = track_namespace_manager_repository
@@ -34,12 +29,16 @@ pub(crate) async fn announce_handler(
     match set_result {
         Ok(_) => {
             let track_namespace = announce_message.track_namespace().to_string();
+
+            tracing::info!("announced track_namespace: {:#?}", track_namespace);
+            tracing::trace!("announce_handler complete.");
+
             Ok(AnnounceResponse::Success(AnnounceOk::new(
                 track_namespace.to_string(),
             )))
         }
         Err(err) => {
-            tracing::info!("announce_handler: err: {:?}", err.to_string());
+            tracing::error!("announce_handler: err: {:?}", err.to_string());
 
             Ok(AnnounceResponse::Failure(AnnounceError::new(
                 announce_message.track_namespace().to_string(),
