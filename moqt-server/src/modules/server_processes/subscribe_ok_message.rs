@@ -1,13 +1,13 @@
-use crate::{
-    handlers::subscribe_handler::subscribe_handler,
-    messages::{moqt_payload::MOQTPayload, subscribe::Subscribe},
+use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
+use anyhow::{bail, Result};
+use bytes::BytesMut;
+use moqt_core::{
+    messages::{moqt_payload::MOQTPayload, subscribe_ok::SubscribeOk},
     moqt_client::MOQTClientStatus,
     MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
-use anyhow::{bail, Result};
-use bytes::BytesMut;
 
-pub(crate) async fn process_subscribe_message(
+pub(crate) async fn process_subscribe_ok_message(
     payload_buf: &mut BytesMut,
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
@@ -19,17 +19,16 @@ pub(crate) async fn process_subscribe_message(
         bail!(message);
     }
 
-    let subscribe_request_message = match Subscribe::depacketize(payload_buf) {
-        Ok(subscribe_request_message) => subscribe_request_message,
+    let subscribe_ok_message = match SubscribeOk::depacketize(payload_buf) {
+        Ok(subscribe_ok_message) => subscribe_ok_message,
         Err(err) => {
             tracing::error!("{:#?}", err);
             bail!(err.to_string());
         }
     };
 
-    subscribe_handler(
-        subscribe_request_message,
-        client,
+    subscribe_ok_handler(
+        subscribe_ok_message,
         track_namespace_manager_repository,
         send_stream_dispatcher_repository,
     )

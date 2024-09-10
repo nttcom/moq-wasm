@@ -19,7 +19,7 @@ pub struct AnnounceError {
 
 // draft-03
 impl AnnounceError {
-    pub(crate) fn new(track_namespace: String, error_code: u64, reason_phrase: String) -> Self {
+    pub fn new(track_namespace: String, error_code: u64, reason_phrase: String) -> Self {
         AnnounceError {
             track_namespace,
             error_code,

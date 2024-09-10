@@ -1,13 +1,9 @@
 use anyhow::Result;
 
-use crate::{
-    message_handler::StreamType,
-    messages::moqt_payload::MOQTPayload,
-    modules::{
-        messages::subscribe::Subscribe,
-        track_namespace_manager_repository::TrackNamespaceManagerRepository,
-    },
-    MOQTClient, SendStreamDispatcherRepository,
+use moqt_core::{
+    messages::{moqt_payload::MOQTPayload, subscribe::Subscribe},
+    stream_type::StreamType,
+    MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
 pub(crate) async fn subscribe_handler(

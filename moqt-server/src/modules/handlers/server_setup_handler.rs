@@ -1,16 +1,16 @@
-use crate::{
-    constants,
-    messages::setup_parameters::{RoleCase, RoleParameter},
-    modules::{
-        constants::UnderlayType, messages::setup_parameters::SetupParameter,
-        moqt_client::MOQTClientStatus,
-    },
-};
+use crate::constants;
 use anyhow::{bail, Result};
 
-use crate::modules::{
-    messages::client_setup::ClientSetup, messages::server_setup::ServerSetup,
-    moqt_client::MOQTClient,
+use moqt_core::{
+    constants::UnderlayType,
+    messages::{
+        client_setup::ClientSetup,
+        server_setup::ServerSetup,
+        setup_parameters::SetupParameter,
+        setup_parameters::{RoleCase, RoleParameter},
+    },
+    moqt_client::MOQTClientStatus,
+    MOQTClient,
 };
 
 pub(crate) fn setup_handler(
@@ -73,17 +73,12 @@ pub(crate) fn setup_handler(
 mod success {
     use std::vec;
 
-    use crate::{
-        constants,
-        modules::{
-            handlers::server_setup_handler::setup_handler,
-            messages::{
-                client_setup::ClientSetup,
-                setup_parameters::{PathParameter, RoleCase, RoleParameter, SetupParameter},
-            },
-            moqt_client::MOQTClient,
-        },
+    use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
+    use moqt_core::messages::{
+        client_setup::ClientSetup,
+        setup_parameters::{PathParameter, RoleCase, RoleParameter, SetupParameter},
     };
+    use moqt_core::moqt_client::MOQTClient;
 
     #[test]
     fn only_role() {
@@ -123,17 +118,12 @@ mod success {
 mod failure {
     use std::vec;
 
-    use crate::{
-        constants,
-        modules::{
-            handlers::server_setup_handler::setup_handler,
-            messages::{
-                client_setup::ClientSetup,
-                setup_parameters::{PathParameter, SetupParameter},
-            },
-            moqt_client::MOQTClient,
-        },
+    use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
+    use moqt_core::messages::{
+        client_setup::ClientSetup,
+        setup_parameters::{PathParameter, SetupParameter},
     };
+    use moqt_core::moqt_client::MOQTClient;
 
     #[test]
     fn no_setup_parameter() {

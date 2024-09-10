@@ -5,10 +5,10 @@ use std::{any::Any, vec};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientSetup {
-    pub(crate) number_of_supported_versions: u8,
-    pub(crate) supported_versions: Vec<u32>,
+    pub number_of_supported_versions: u8,
+    pub supported_versions: Vec<u32>,
     pub(crate) number_of_parameters: u8,
-    pub(crate) setup_parameters: Vec<SetupParameter>,
+    pub setup_parameters: Vec<SetupParameter>,
 }
 
 impl ClientSetup {

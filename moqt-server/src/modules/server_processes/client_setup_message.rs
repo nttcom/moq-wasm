@@ -1,13 +1,13 @@
 use bytes::BytesMut;
 
-use crate::{
+use crate::modules::handlers::server_setup_handler::setup_handler;
+use anyhow::{bail, Result};
+use moqt_core::{
     constants::UnderlayType,
-    handlers::server_setup_handler::setup_handler,
     messages::{client_setup::ClientSetup, moqt_payload::MOQTPayload},
     moqt_client::MOQTClientStatus,
     MOQTClient,
 };
-use anyhow::{bail, Result};
 
 pub(crate) fn process_client_setup_message(
     payload_buf: &mut BytesMut,

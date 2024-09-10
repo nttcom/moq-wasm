@@ -1,5 +1,5 @@
-use crate::message_handler::StreamType;
 use crate::messages::moqt_payload::MOQTPayload;
+use crate::stream_type::StreamType;
 use anyhow::Result;
 use async_trait::async_trait;
 
