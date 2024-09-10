@@ -41,6 +41,8 @@ impl MOQTPayload for AnnounceError {
         let reason_phrase =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
 
+        tracing::trace!("Depacketized Announce Error message.");
+
         Ok(AnnounceError {
             track_namespace,
             error_code,
@@ -66,6 +68,8 @@ impl MOQTPayload for AnnounceError {
         buf.extend(write_variable_bytes(
             &self.reason_phrase.as_bytes().to_vec(),
         ));
+
+        tracing::trace!("Packetized Announce Error message.");
     }
     /// Method to enable downcasting from MOQTPayload to AnnounceError
     fn as_any(&self) -> &dyn Any {

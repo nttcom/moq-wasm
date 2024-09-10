@@ -22,7 +22,7 @@ pub(crate) async fn process_subscribe_ok_message(
     let subscribe_ok_message = match SubscribeOk::depacketize(payload_buf) {
         Ok(subscribe_ok_message) => subscribe_ok_message,
         Err(err) => {
-            tracing::info!("{:#?}", err);
+            tracing::error!("{:#?}", err);
             bail!(err.to_string());
         }
     };

@@ -16,16 +16,10 @@ pub(crate) async fn subscribe_handler(
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
-    tracing::info!("subscribe_handler!");
+    tracing::trace!("subscribe_handler start.");
 
-    tracing::info!(
-        "subscribe_handler: track_namespace: \"{}\"",
-        subscribe_message.track_namespace()
-    );
-    tracing::info!(
-        "subscribe_handler: track_name: \"{}\"",
-        subscribe_message.track_name()
-    );
+    tracing::debug!("subscribe_message: {:#?}", subscribe_message);
+
     // Since only the track_namespace is recorded in ANNOUNCE, use track_namespace to determine the publisher
     let publisher_session_id = track_namespace_manager_repository
         .get_publisher_session_id_by_track_namespace(subscribe_message.track_namespace())
@@ -48,7 +42,7 @@ pub(crate) async fn subscribe_handler(
             }
             // Notify the publisher about the SUBSCRIBE message
             let message: Box<dyn MOQTPayload> = Box::new(subscribe_message.clone());
-            tracing::info!(
+            tracing::debug!(
                 "message: {:#?} is sent to relay handler for client {:?}",
                 subscribe_message,
                 session_id
@@ -58,7 +52,18 @@ pub(crate) async fn subscribe_handler(
                 .send_message_to_send_stream_thread(session_id, message, StreamType::Bi)
                 .await
             {
-                Ok(_) => Ok(()),
+                Ok(_) => {
+                    tracing::info!(
+                        "subscribed track_namespace: {:?}",
+                        subscribe_message.track_namespace(),
+                    );
+                    tracing::info!(
+                        "subscribed track_name: {:?}",
+                        subscribe_message.track_name()
+                    );
+                    tracing::trace!("subscribe_handler complete.");
+                    Ok(())
+                }
                 Err(e) => bail!("relay subscribe failed: {:?}", e),
             }
         }

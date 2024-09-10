@@ -42,6 +42,8 @@ impl MOQTPayload for Unsubscribe {
             track_name: String::from_utf8(track_name)?,
         };
 
+        tracing::trace!("Depacketized Unsubscribe message.");
+
         Ok(unsubscribe_message)
     }
 
@@ -50,6 +52,8 @@ impl MOQTPayload for Unsubscribe {
             &self.track_namespace.as_bytes().to_vec(),
         ));
         buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
+
+        tracing::trace!("Packetized Unsubscribe message.");
     }
     /// Method to enable downcasting from MOQTPayload to Unsubscribe
     fn as_any(&self) -> &dyn Any {
