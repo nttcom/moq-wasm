@@ -1,8 +1,6 @@
 use anyhow::Result;
 
-use crate::{
-    modules::messages::unsubscribe::Unsubscribe, MOQTClient, TrackNamespaceManagerRepository,
-};
+use moqt_core::{messages::unsubscribe::Unsubscribe, MOQTClient, TrackNamespaceManagerRepository};
 
 // TODO: Not implemented yet
 #[allow(dead_code)]

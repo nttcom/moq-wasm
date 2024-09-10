@@ -1,30 +1,41 @@
 mod modules;
-use crate::modules::buffer_manager::{buffer_manager, BufferCommand};
-use crate::modules::send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand};
-use crate::modules::track_namespace_manager::{track_namespace_manager, TrackCommand};
+use crate::modules::{
+    buffer_manager,
+    buffer_manager::{buffer_manager, BufferCommand},
+    message_handler::*,
+    send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
+    track_namespace_manager::{track_namespace_manager, TrackCommand},
+};
 use anyhow::{bail, Context, Ok, Result};
 use bytes::BytesMut;
-use modules::buffer_manager;
 pub use moqt_core::constants;
-use moqt_core::constants::TerminationErrorCode;
-use moqt_core::message_type::MessageType;
-use moqt_core::messages::moqt_payload::MOQTPayload;
-use moqt_core::messages::object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength};
-use moqt_core::messages::subscribe::Subscribe;
-use moqt_core::messages::subscribe_error::SubscribeError;
-use moqt_core::messages::subscribe_ok::SubscribeOk;
-use moqt_core::variable_integer::write_variable_integer;
-use moqt_core::{constants::UnderlayType, message_handler::*, MOQTClient};
+use moqt_core::{
+    constants::{TerminationErrorCode, UnderlayType},
+    message_type::MessageType,
+    messages::{
+        moqt_payload::MOQTPayload,
+        object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
+        subscribe::Subscribe,
+        subscribe_error::SubscribeError,
+        subscribe_ok::SubscribeOk,
+    },
+    stream_type::StreamType,
+    variable_integer::write_variable_integer,
+    MOQTClient,
+};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::Mutex;
+use tokio::sync::{
+    mpsc,
+    mpsc::{Receiver, Sender},
+    Mutex,
+};
 use tracing::{self, Instrument};
 use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
-use wtransport::RecvStream;
-use wtransport::SendStream;
-use wtransport::{endpoint::IncomingSession, Endpoint, Identity, ServerConfig};
+use wtransport::{
+    RecvStream, SendStream,
+    {endpoint::IncomingSession, Endpoint, Identity, ServerConfig},
+};
 
 // Callback to validate the Auth parameter
 pub enum AuthCallbackType {
