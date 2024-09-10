@@ -55,6 +55,8 @@ impl MOQTPayload for SubscribeOk {
         let track_id = read_variable_integer_from_buffer(buf).context("track id")?;
         let expires = read_variable_integer_from_buffer(buf).context("expires")?;
 
+        tracing::trace!("Depacketized Subscribe OK message.");
+
         Ok(SubscribeOk {
             track_namespace: full_track_namespace,
             track_name: full_track_name,
@@ -70,6 +72,8 @@ impl MOQTPayload for SubscribeOk {
         buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
         buf.extend(write_variable_integer(self.track_id));
         buf.extend(write_variable_integer(self.expires));
+
+        tracing::trace!("Packetized Subscribe OK message.");
     }
     /// Method to enable downcasting from MOQTPayload to SubscribeOk
     fn as_any(&self) -> &dyn Any {

@@ -17,19 +17,12 @@ pub(crate) async fn _unsubscribe_handler(
     _client: &mut MOQTClient, // TODO: Not implemented yet
     _track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository, // TODO: Not implemented yet
 ) -> Result<UnSubscribeResponse> {
-    tracing::info!("unsubscribe_handler!");
+    tracing::trace!("unsubscribe_handler start.");
 
-    tracing::info!(
-        "unsubscribe_handler: track_namespace: \"{}\"",
-        unsubscribe_message.track_namespace()
-    );
-    tracing::info!(
-        "unsubscribe_handler: track_name: \"{}\"",
-        unsubscribe_message.track_name()
-    );
-
+    tracing::debug!("unsubscribe_message: {:#?}", unsubscribe_message);
     // TODO: Remove unsubscribe information
 
     // FIXME: tmp
+    tracing::trace!("unsubscribe_handler complete.");
     Ok(UnSubscribeResponse::Success)
 }

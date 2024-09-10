@@ -18,9 +18,11 @@ pub(crate) fn setup_handler(
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
 ) -> Result<ServerSetup> {
-    tracing::info!("setup_handler");
+    tracing::trace!("setup_handler start.");
 
-    tracing::info!(
+    tracing::debug!("client_setup_message: {:#?}", client_setup_message);
+
+    tracing::debug!(
         "supported_versions: {:#x?}",
         client_setup_message.supported_versions
     );
@@ -44,7 +46,7 @@ pub(crate) fn setup_handler(
                 }
             }
             SetupParameter::Unknown(v) => {
-                tracing::info!("Ignore unknown SETUP parameter {}", v);
+                tracing::warn!("Ignore unknown SETUP parameter {}", v);
             }
         }
     }
@@ -61,7 +63,7 @@ pub(crate) fn setup_handler(
     // State: Connected -> Setup
     client.update_status(MOQTClientStatus::SetUp);
 
-    tracing::info!("setup_handler completed. {:#?}", client);
+    tracing::trace!("setup_handler complete.");
 
     Ok(server_setup_message)
 }
