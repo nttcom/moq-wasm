@@ -54,6 +54,8 @@ impl MOQTPayload for SubscribeError {
         let reason_phrase =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
 
+        tracing::trace!("Depacketized Subscribe Error message.");
+
         Ok(SubscribeError {
             track_namespace,
             track_name,
@@ -71,6 +73,8 @@ impl MOQTPayload for SubscribeError {
         buf.extend(write_variable_bytes(
             &self.reason_phrase.as_bytes().to_vec(),
         ));
+
+        tracing::trace!("Packetized Subscribe Error message.");
     }
     /// Method to enable downcasting from MOQTPayload to SubscribeError
     fn as_any(&self) -> &dyn Any {

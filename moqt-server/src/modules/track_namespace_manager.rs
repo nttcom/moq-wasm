@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use async_trait::async_trait;
 use moqt_core::TrackNamespaceManagerRepository;
 use tokio::sync::{mpsc, oneshot};
@@ -126,7 +126,7 @@ impl TrackNamespaces {
         publisher_session_id: usize,
     ) -> Result<()> {
         if self.is_exist_track_namespace(track_namespace.clone()) {
-            return Err(anyhow::anyhow!("already exist"));
+            bail!("already exist");
         }
 
         let publisher = TrackNamespaceObject::new(publisher_session_id);
@@ -136,7 +136,7 @@ impl TrackNamespaces {
 
     fn delete_publisher(&mut self, track_namespace: String) -> Result<()> {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
-            return Err(anyhow::anyhow!("not found"));
+            bail!("not found");
         }
 
         self.publishers.remove(&track_namespace);
@@ -159,14 +159,14 @@ impl TrackNamespaces {
         track_name: String,
     ) -> Result<()> {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
-            return Err(anyhow::anyhow!("track_namespace not found"));
+            bail!("track_namespace not found");
         }
         let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
 
         if track_namespace_object.is_exist_track_name(track_name.clone()) {
             let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
             if track_name_object.is_exist_subscriber(subscriber_session_id) {
-                return Err(anyhow::anyhow!("already exist"));
+                bail!("already exist");
             }
             track_name_object.set_subscriber(subscriber_session_id);
 
@@ -187,17 +187,17 @@ impl TrackNamespaces {
         subscriber_session_id: usize,
     ) -> Result<()> {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
-            return Err(anyhow::anyhow!("track_namespace not found"));
+            bail!("track_namespace not found");
         }
         let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
 
         if !track_namespace_object.is_exist_track_name(track_name.clone()) {
-            return Err(anyhow::anyhow!("track_name not found"));
+            bail!("track_name not found");
         }
         let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
 
         if !track_name_object.is_exist_subscriber(subscriber_session_id) {
-            return Err(anyhow::anyhow!("subscriber not found"));
+            bail!("subscriber not found");
         }
         track_name_object.delete_subscriber(subscriber_session_id);
         if track_name_object.is_subscriber_empty() {
@@ -267,12 +267,12 @@ impl TrackNamespaces {
         track_id: u64,
     ) -> Result<()> {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
-            return Err(anyhow::anyhow!("track_namespace not found"));
+            bail!("track_namespace not found");
         }
 
         let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
         if !track_namespace_object.is_exist_track_name(track_name.clone()) {
-            return Err(anyhow::anyhow!("track_name not found"));
+            bail!("track_name not found");
         }
 
         let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
@@ -289,11 +289,11 @@ impl TrackNamespaces {
         status: SubscriberStatus,
     ) -> Result<()> {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
-            return Err(anyhow::anyhow!("track_namespace not found"));
+            bail!("track_namespace not found");
         }
         let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
         if !track_namespace_object.is_exist_track_name(track_name.clone()) {
-            return Err(anyhow::anyhow!("track_name not found"));
+            bail!("track_name not found");
         }
 
         let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
@@ -309,7 +309,7 @@ impl TrackNamespaces {
 
 // Called as a separate thread
 pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
-    tracing::info!("track_namespace_manager start");
+    tracing::trace!("track_namespace_manager start");
 
     // TrackNamespaces
     // {
@@ -332,7 +332,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
     let mut namespaces: TrackNamespaces = TrackNamespaces::new();
 
     while let Some(cmd) = rx.recv().await {
-        tracing::info!("command received");
+        tracing::debug!("command received: {:#?}", cmd);
         match cmd {
             SetPublisher {
                 track_namespace,
@@ -341,7 +341,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             } => match namespaces.set_publisher(track_namespace, publisher_session_id) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
-                    tracing::info!("set_publisher: err: {:?}", err.to_string());
+                    tracing::error!("set_publisher: err: {:?}", err.to_string());
                     resp.send(false).unwrap();
                 }
             },
@@ -351,7 +351,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             } => match namespaces.delete_publisher(track_namespace) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
-                    tracing::info!("set_publisher: err: {:?}", err.to_string());
+                    tracing::error!("set_publisher: err: {:?}", err.to_string());
                     resp.send(false).unwrap();
                 }
             },
@@ -380,7 +380,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
                 {
                     Ok(_) => resp.send(true).unwrap(),
                     Err(err) => {
-                        tracing::info!("set_subscriber: err: {:?}", err.to_string());
+                        tracing::error!("set_subscriber: err: {:?}", err.to_string());
                         resp.send(false).unwrap();
                     }
                 }
@@ -397,7 +397,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             ) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
-                    tracing::info!("delete_subscriber: err: {:?}", err.to_string());
+                    tracing::error!("delete_subscriber: err: {:?}", err.to_string());
                     resp.send(false).unwrap();
                 }
             },
@@ -409,7 +409,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             } => match namespaces.set_track_id(track_namespace, track_name, track_id) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
-                    tracing::info!("set_track_id: err: {:?}", err.to_string());
+                    tracing::error!("set_track_id: err: {:?}", err.to_string());
                     resp.send(false).unwrap();
                 }
             },
@@ -427,7 +427,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             ) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
-                    tracing::info!("set_status: err: {:?}", err.to_string());
+                    tracing::error!("set_status: err: {:?}", err.to_string());
                     resp.send(false).unwrap();
                 }
             },
@@ -450,7 +450,7 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
         }
     }
 
-    tracing::info!("track_namespace_manager end");
+    tracing::trace!("track_namespace_manager end");
 }
 
 #[derive(Debug)]
@@ -537,10 +537,9 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
         let result = resp_rx.await.unwrap();
 
-        if result {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("already exist"))
+        match result {
+            true => Ok(()),
+            false => bail!("already exist"),
         }
     }
 
@@ -555,10 +554,9 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
         let result = resp_rx.await.unwrap();
 
-        if result {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("not found"))
+        match result {
+            true => Ok(()),
+            false => bail!("not found"),
         }
     }
 
@@ -609,10 +607,9 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
         let result = resp_rx.await.unwrap();
 
-        if result {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("already exist"))
+        match result {
+            true => Ok(()),
+            false => bail!("already exist"),
         }
     }
 
@@ -634,10 +631,9 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
         let result = resp_rx.await.unwrap();
 
-        if result {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("not found"))
+        match result {
+            true => Ok(()),
+            false => bail!("not found"),
         }
     }
 
@@ -659,10 +655,9 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
         let result = resp_rx.await.unwrap();
 
-        if result {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("not found"))
+        match result {
+            true => Ok(()),
+            false => bail!("not found"),
         }
     }
 
@@ -718,10 +713,9 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
         let result = resp_rx.await.unwrap();
 
-        if result {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("not found"))
+        match result {
+            true => Ok(()),
+            false => bail!("not found"),
         }
     }
 }
