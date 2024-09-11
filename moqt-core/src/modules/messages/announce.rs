@@ -32,7 +32,7 @@ impl Announce {
             parameters,
         }
     }
-    pub(crate) fn track_namespace(&self) -> &str {
+    pub fn track_namespace(&self) -> &str {
         &self.track_namespace
     }
 }
