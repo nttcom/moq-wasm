@@ -163,9 +163,7 @@ impl MOQTPayload for ObjectWithoutPayloadLength {
 mod success {
     use crate::messages::moqt_payload::MOQTPayload;
     use crate::messages::object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength};
-    use crate::modules::{
-        variable_bytes::write_variable_bytes, variable_integer::write_variable_integer,
-    };
+    use bytes::BytesMut;
     #[test]
     fn packetize_object_with_payload_length() {
         let track_id = 0;
@@ -185,24 +183,35 @@ mod success {
         let mut buf = bytes::BytesMut::new();
         object_with_payload_length.packetize(&mut buf);
 
-        // Track ID (i)
-        let mut combined_bytes = Vec::from(write_variable_integer(track_id));
-        // Group Sequence (i)
-        combined_bytes.extend(write_variable_integer(group_sequence));
-        // Object Sequence (i)
-        combined_bytes.extend(write_variable_integer(object_sequence));
-        // Object Send Order (i)
-        combined_bytes.extend(write_variable_integer(object_send_order));
-        // [Object Payload Length (i)]
-        combined_bytes.extend(write_variable_integer(object_payload.len() as u64));
-        // Object Payload (b)
-        combined_bytes.extend(write_variable_bytes(object_payload.as_ref()));
+        let expected_bytes_array = [
+            0, // Track ID
+            1, // Group Sequence
+            2, // Object Sequence
+            3, // Object Send Order
+            3, // Object Payload Length
+            3, // Object Payload Length
+            0, 1, 2, // Object Payload
+        ];
 
-        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+        assert_eq!(buf.as_ref(), expected_bytes_array);
     }
 
     #[test]
     fn depacketize_object_with_payload_length() {
+        let bytes_array = [
+            0, // Track ID
+            1, // Group Sequence
+            2, // Object Sequence
+            3, // Object Send Order
+            3, // Object Payload Length
+            3, // Object Payload Length
+            0, 1, 2, // Object Payload
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
+        let depacketized_object_with_payload_length =
+            ObjectWithPayloadLength::depacketize(&mut buf).unwrap();
+
         let track_id = 0;
         let group_sequence = 1;
         let object_sequence = 2;
@@ -216,23 +225,6 @@ mod success {
             object_send_order,
             object_payload.clone(),
         );
-
-        // Track ID (i)
-        let mut combined_bytes = Vec::from(write_variable_integer(track_id));
-        // Group Sequence (i)
-        combined_bytes.extend(write_variable_integer(group_sequence));
-        // Object Sequence (i)
-        combined_bytes.extend(write_variable_integer(object_sequence));
-        // Object Send Order (i)
-        combined_bytes.extend(write_variable_integer(object_send_order));
-        // [Object Payload Length (i)]
-        combined_bytes.extend(write_variable_integer(object_payload.len() as u64));
-        // Object Payload (b)
-        combined_bytes.extend(write_variable_bytes(object_payload.as_ref()));
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
-        let depacketized_object_with_payload_length =
-            ObjectWithPayloadLength::depacketize(&mut buf).unwrap();
 
         assert_eq!(
             depacketized_object_with_payload_length,
@@ -259,22 +251,33 @@ mod success {
         let mut buf = bytes::BytesMut::new();
         object_without_payload_length.packetize(&mut buf);
 
-        // Track ID (i)
-        let mut combined_bytes = Vec::from(write_variable_integer(track_id));
-        // Group Sequence (i)
-        combined_bytes.extend(write_variable_integer(group_sequence));
-        // Object Sequence (i)
-        combined_bytes.extend(write_variable_integer(object_sequence));
-        // Object Send Order (i)
-        combined_bytes.extend(write_variable_integer(object_send_order));
-        // Object Payload (b)
-        combined_bytes.extend(write_variable_bytes(object_payload.as_ref()));
+        let expected_bytes_array = [
+            0, // Track ID
+            1, // Group Sequence
+            2, // Object Sequence
+            3, // Object Send Order
+            3, // Object Payload Length
+            0, 1, 2, // Object Payload
+        ];
 
-        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+        assert_eq!(buf.as_ref(), expected_bytes_array);
     }
 
     #[test]
     fn depacketize_object_without_payload_length() {
+        let bytes_array = [
+            0, // Track ID
+            1, // Group Sequence
+            2, // Object Sequence
+            3, // Object Send Order
+            3, // Object Payload Length
+            0, 1, 2, // Object Payload
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
+        let depacketized_object_with_payload_length =
+            ObjectWithoutPayloadLength::depacketize(&mut buf).unwrap();
+
         let track_id = 0;
         let group_sequence = 1;
         let object_sequence = 2;
@@ -288,21 +291,6 @@ mod success {
             object_send_order,
             object_payload.clone(),
         );
-
-        // Track ID (i)
-        let mut combined_bytes = Vec::from(write_variable_integer(track_id));
-        // Group Sequence (i)
-        combined_bytes.extend(write_variable_integer(group_sequence));
-        // Object Sequence (i)
-        combined_bytes.extend(write_variable_integer(object_sequence));
-        // Object Send Order (i)
-        combined_bytes.extend(write_variable_integer(object_send_order));
-        // Object Payload (b)
-        combined_bytes.extend(write_variable_bytes(object_payload.as_ref()));
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
-        let depacketized_object_with_payload_length =
-            ObjectWithoutPayloadLength::depacketize(&mut buf).unwrap();
 
         assert_eq!(
             depacketized_object_with_payload_length,

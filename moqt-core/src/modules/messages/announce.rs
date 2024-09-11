@@ -92,19 +92,15 @@ mod success {
     use crate::messages::moqt_payload::MOQTPayload;
     use crate::messages::version_specific_parameters::AuthorizationInfo;
     use crate::modules::messages::announce::Announce;
-    use crate::modules::messages::version_specific_parameters::{
-        VersionSpecificParameter, VersionSpecificParameterType,
-    };
-    use crate::modules::variable_integer::write_variable_integer;
+    use crate::modules::messages::version_specific_parameters::VersionSpecificParameter;
+    use bytes::BytesMut;
 
     #[test]
     fn packetize_announce_with_parameter() {
-        let track_namespace = "live.example.com/meeting/123/member/alice/".to_string();
+        let track_namespace = "live.example.com".to_string();
         let number_of_parameters = 1;
 
         let parameter_value = "test".to_string();
-        let parameter_length = parameter_value.len() as u8;
-
         let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
             parameter_value.clone(),
         ));
@@ -114,57 +110,50 @@ mod success {
         let mut buf = bytes::BytesMut::new();
         announce_message.packetize(&mut buf);
 
-        // Track Namespace Length
-        let mut combined_bytes = Vec::from((track_namespace.len() as u8).to_be_bytes());
-        // Track Namespace
-        combined_bytes.extend(track_namespace.as_bytes().to_vec());
-        // Number of Parameters
-        combined_bytes.extend(1u8.to_be_bytes());
-        // Parameters
-        combined_bytes
-            .extend((VersionSpecificParameterType::AuthorizationInfo as u8).to_be_bytes());
-        combined_bytes.extend(write_variable_integer(parameter_length as u64));
-        combined_bytes.extend(parameter_value.as_bytes());
+        let expected_bytes_array = [
+            16, // track_namespace length
+            108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
+            109, // track_namespace bytes("live.example.com")
+            1,   // number_of_parameters
+            2,   // parameter type
+            4,   // parameter length
+            116, 101, 115, 116, // parameter bytes("test")
+        ];
 
-        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+        assert_eq!(buf.as_ref(), expected_bytes_array);
     }
 
     #[test]
     fn depacketize_announce_with_parameter() {
-        let track_namespace = "live.example.com/meeting/123/member/alice/".to_string();
+        let bytes_array = [
+            16, // track_namespace length
+            108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
+            109, // track_namespace bytes("live.example.com")
+            1,   // number_of_parameters
+            2,   // parameter type
+            4,   // parameter length
+            116, 101, 115, 116, // parameter bytes("test")
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
+        let depacketized_announce_message = Announce::depacketize(&mut buf).unwrap();
+
+        let track_namespace = "live.example.com".to_string();
         let number_of_parameters = 1;
-
         let parameter_value = "test".to_string();
-        let parameter_length = parameter_value.len() as u8;
-
         let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
             parameter_value.clone(),
         ));
         let parameters = vec![parameter];
         let expected_announce_message =
             Announce::new(track_namespace.clone(), number_of_parameters, parameters);
-
-        // Track Namespace Length
-        let mut combined_bytes = Vec::from((track_namespace.len() as u8).to_be_bytes());
-        // Track Namespace
-        combined_bytes.extend(track_namespace.as_bytes().to_vec());
-        // Number of Parameters
-        combined_bytes.extend(1u8.to_be_bytes());
-        // Parameters
-        combined_bytes
-            .extend((VersionSpecificParameterType::AuthorizationInfo as u8).to_be_bytes());
-        combined_bytes.extend(write_variable_integer(parameter_length as u64));
-        combined_bytes.extend(parameter_value.as_bytes());
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
-        let depacketized_announce_message = Announce::depacketize(&mut buf).unwrap();
 
         assert_eq!(depacketized_announce_message, expected_announce_message);
     }
 
     #[test]
     fn packetize_announce_without_parameter() {
-        let track_namespace = "live.example.com/meeting/123/member/alice/".to_string();
+        let track_namespace = "live.example.com".to_string();
         let number_of_parameters = 0;
         let parameters = vec![];
         let announce_message =
@@ -172,34 +161,33 @@ mod success {
         let mut buf = bytes::BytesMut::new();
         announce_message.packetize(&mut buf);
 
-        // Track Namespace Length
-        let mut combined_bytes = Vec::from((track_namespace.len() as u8).to_be_bytes());
-        // Track Namespace
-        combined_bytes.extend(track_namespace.as_bytes().to_vec());
-        // Number of Parameters
-        combined_bytes.extend(0u8.to_be_bytes());
+        let expected_bytes_array = [
+            16, // track_namespace length
+            108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
+            109, // track_namespace bytes("live.example.com")
+            0,   // number_of_parameters
+        ];
 
-        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+        assert_eq!(buf.as_ref(), expected_bytes_array);
     }
 
     #[test]
     fn depacketize_announce_without_parameter() {
-        let track_namespace = "live.example.com/meeting/123/member/alice/".to_string();
-        let number_of_parameters = 0;
+        let bytes_array = [
+            16, // track_namespace length
+            108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
+            109, // track_namespace bytes("live.example.com")
+            0,   // number_of_parameters
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
+        let depacketized_announce_message = Announce::depacketize(&mut buf).unwrap();
 
+        let track_namespace = "live.example.com".to_string();
+        let number_of_parameters = 0;
         let parameters = vec![];
         let expected_announce_message =
             Announce::new(track_namespace.clone(), number_of_parameters, parameters);
-
-        // Track Namespace Length
-        let mut combined_bytes = Vec::from((track_namespace.len() as u8).to_be_bytes());
-        // Track Namespace
-        combined_bytes.extend(track_namespace.as_bytes().to_vec());
-        // Number of Parameters
-        combined_bytes.extend(0u8.to_be_bytes());
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
-        let depacketized_announce_message = Announce::depacketize(&mut buf).unwrap();
 
         assert_eq!(depacketized_announce_message, expected_announce_message);
     }

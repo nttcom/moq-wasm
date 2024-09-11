@@ -179,164 +179,116 @@ mod success {
     use crate::modules::messages::moqt_payload::MOQTPayload;
     use crate::modules::messages::version_specific_parameters::{
         AuthorizationInfo, GroupSequence, ObjectSequence, VersionSpecificParameter,
-        VersionSpecificParameterType,
     };
-    use crate::variable_bytes::write_fixed_length_bytes;
-    use crate::variable_integer::write_variable_integer;
 
     #[test]
     fn packetize_group_sequence() {
         let parameter_value = 0x01;
-        let parameter_length = 1;
-
         let parameter =
             VersionSpecificParameter::GroupSequence(GroupSequence::new(parameter_value));
-
         let mut buf = bytes::BytesMut::new();
         parameter.packetize(&mut buf);
 
-        // Parameter Type
-        let mut combined_bytes =
-            Vec::from((VersionSpecificParameterType::GroupSequence as u8).to_be_bytes());
-        // Parameter Length
-        combined_bytes.extend(write_variable_integer(parameter_length as u64));
-        // Parameter Value
-        combined_bytes.extend(write_variable_integer(parameter_value));
+        let expected_bytes_array = [
+            0, // Parameter Type(GroupSequence)
+            1, // Parameter Length
+            1, // Parameter Value
+        ];
 
-        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+        assert_eq!(buf.as_ref(), expected_bytes_array);
     }
 
     #[test]
     fn packetize_object_sequence() {
         let parameter_value = 0x01;
-        let parameter_length = 1;
-
         let parameter =
             VersionSpecificParameter::ObjectSequence(ObjectSequence::new(parameter_value));
-
         let mut buf = bytes::BytesMut::new();
         parameter.packetize(&mut buf);
 
-        // Parameter Type
-        let mut combined_bytes =
-            Vec::from((VersionSpecificParameterType::ObjectSequence as u8).to_be_bytes());
-        // Parameter Length
-        combined_bytes.extend(write_variable_integer(parameter_length as u64));
-        // Parameter Value
-        combined_bytes.extend(write_variable_integer(parameter_value));
+        let expected_bytes_array = [
+            1, // Parameter Type(ObjectSequence)
+            1, // Parameter Length
+            1, // Parameter Value
+        ];
 
-        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+        assert_eq!(buf.as_ref(), expected_bytes_array);
     }
 
     #[test]
     fn packetize_authorization_info() {
         let parameter_value = "test".to_string();
-        let parameter_length = parameter_value.len() as u8;
-
         let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
             parameter_value.clone(),
         ));
-
         let mut buf = bytes::BytesMut::new();
         parameter.packetize(&mut buf);
 
-        // Parameter Type
-        let mut combined_bytes =
-            Vec::from((VersionSpecificParameterType::AuthorizationInfo as u8).to_be_bytes());
-        // Parameter Length
-        combined_bytes.extend(write_variable_integer(parameter_length as u64));
-        // Parameter Value
-        combined_bytes.extend(write_fixed_length_bytes(
-            &parameter_value.as_bytes().to_vec(),
-        ));
+        let expected_bytes_array = [
+            2, // Parameter Type(AuthorizationInfo)
+            4, // Parameter Length
+            116, 101, 115, 116, // Parameter Value
+        ];
 
-        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+        assert_eq!(buf.as_ref(), expected_bytes_array);
     }
 
     #[test]
     fn depacketize_group_sequence() {
-        let parameter_value = 0x01;
-        let parameter_length = 1;
-
-        let expected_parameter =
-            VersionSpecificParameter::GroupSequence(GroupSequence::new(parameter_value));
-
-        // Parameter Type
-        let mut combined_bytes =
-            Vec::from((VersionSpecificParameterType::GroupSequence as u8).to_be_bytes());
-        // Parameter Length
-        combined_bytes.extend(write_variable_integer(parameter_length as u64));
-        // Parameter Value
-        combined_bytes.extend(write_variable_integer(parameter_value));
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let bytes_array = [
+            0, // Parameter Type(GroupSequence)
+            1, // Parameter Length
+            1, // Parameter Value
+        ];
+        let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
         let depacketized_parameter = VersionSpecificParameter::depacketize(&mut buf).unwrap();
 
+        let expected_parameter = VersionSpecificParameter::GroupSequence(GroupSequence::new(1));
         assert_eq!(depacketized_parameter, expected_parameter);
     }
 
     #[test]
     fn depacketize_object_sequence() {
-        let parameter_value = 0x01;
-        let parameter_length = 1;
-
-        let expected_parameter =
-            VersionSpecificParameter::ObjectSequence(ObjectSequence::new(parameter_value));
-
-        // Parameter Type
-        let mut combined_bytes =
-            Vec::from((VersionSpecificParameterType::ObjectSequence as u8).to_be_bytes());
-        // Parameter Length
-        combined_bytes.extend(write_variable_integer(parameter_length as u64));
-        // Parameter Value
-        combined_bytes.extend(write_variable_integer(parameter_value));
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let bytes_array = [
+            1, // Parameter Type(ObjectSequence)
+            1, // Parameter Length
+            1, // Parameter Value
+        ];
+        let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
         let depacketized_parameter = VersionSpecificParameter::depacketize(&mut buf).unwrap();
 
+        let expected_parameter = VersionSpecificParameter::ObjectSequence(ObjectSequence::new(1));
         assert_eq!(depacketized_parameter, expected_parameter);
     }
 
     #[test]
     fn depacketize_authorization_info() {
-        let parameter_value = "test".to_string();
-        let parameter_length = parameter_value.len() as u8;
-
-        let expected_parameter = VersionSpecificParameter::AuthorizationInfo(
-            AuthorizationInfo::new(parameter_value.clone()),
-        );
-
-        // Parameter Type
-        let mut combined_bytes =
-            Vec::from((VersionSpecificParameterType::AuthorizationInfo as u8).to_be_bytes());
-        // Parameter Length
-        combined_bytes.extend(write_variable_integer(parameter_length as u64));
-        // Parameter Value
-        combined_bytes.extend(write_fixed_length_bytes(
-            &parameter_value.as_bytes().to_vec(),
-        ));
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let bytes_array = [
+            2, // Parameter Type(AuthorizationInfo)
+            4, // Parameter Length
+            116, 101, 115, 116, // Parameter Value("test")
+        ];
+        let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
         let depacketized_parameter = VersionSpecificParameter::depacketize(&mut buf).unwrap();
 
+        let expected_parameter =
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         assert_eq!(depacketized_parameter, expected_parameter);
     }
 
     #[test]
     fn depacketize_unknown() {
-        let parameter_value = "test".to_string();
-        let parameter_length = parameter_value.len() as u8;
-
-        // Unknown
-        let mut combined_bytes = Vec::from(write_variable_integer(0x99));
-        // Parameter Length
-        combined_bytes.extend(write_variable_integer(parameter_length as u64));
-        // Parameter Value
-        combined_bytes.extend(write_fixed_length_bytes(
-            &parameter_value.as_bytes().to_vec(),
-        ));
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let bytes_array = [
+            64, // Unknownを99とすると2MSBでは01で表現する必要があるため、64(0b01000000)とする
+            99, // Parameter Type(Unknown): 2MSBによって14bitで表現される
+            4,  // Parameter Length
+            116, 101, 115, 116, // Parameter Value("test")
+        ];
+        let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
         let depacketized_version_specific_parameter =
             VersionSpecificParameter::depacketize(&mut buf);
 

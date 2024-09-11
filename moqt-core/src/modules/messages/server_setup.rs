@@ -65,7 +65,6 @@ impl MOQTPayload for ServerSetup {
 
 #[cfg(test)]
 mod success {
-    use crate::modules::variable_integer::write_variable_integer;
     use crate::{
         constants::MOQ_TRANSPORT_VERSION,
         messages::moqt_payload::MOQTPayload,
@@ -74,55 +73,46 @@ mod success {
             setup_parameters::{RoleCase, RoleParameter, SetupParameter},
         },
     };
+    use bytes::BytesMut;
     #[test]
     fn packetize_server_setup() {
         let selected_version = MOQ_TRANSPORT_VERSION;
-
         let role_parameter = RoleParameter::new(RoleCase::Both);
         let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
-        let setup_parameters_length = setup_parameters.len() as u8;
-
         let server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
         let mut buf = bytes::BytesMut::new();
         server_setup.packetize(&mut buf);
 
-        // Selected Version (i)
-        let mut combined_bytes = Vec::from(write_variable_integer(selected_version as u64));
-        // Number of Parameters (i)
-        combined_bytes.extend(setup_parameters_length.to_be_bytes());
-        // SETUP Parameters (..)
-        combined_bytes.extend(vec![
-            role_parameter.key as u8,
-            role_parameter.value_length,
-            role_parameter.value as u8,
-        ]);
+        let expected_bytes_array = [
+            192, // Selected Supported Version: Supported Versionは32bitなので、2MSBにおいて11を使って62bitで表現する
+            0, 0, 0, 255, 0, 0, 1, // Supported Version(0xff000001) 62bitで表現された値
+            1, // Number of Parameters
+            0, // Role Parameter Key(Role)
+            1, // Role Parameter Value Length
+            3, // Role Parameter Value(Both)
+        ];
 
-        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+        assert_eq!(buf.as_ref(), expected_bytes_array);
     }
 
     #[test]
     fn depacketize_server_setup() {
-        let selected_version = MOQ_TRANSPORT_VERSION;
+        let bytes_array = [
+            192, // Selected Supported Version Length: Supported Versionは32bitなので、2MSBにおいて11を使って62bitで表現する
+            0, 0, 0, 255, 0, 0, 1, // Supported Version(0xff000001) 62bitで表現された値
+            1, // Number of Parameters
+            0, // Role Parameter Key(Role)
+            1, // Role Parameter Value Length
+            3, // Role Parameter Value(Both)
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
+        let depacketized_server_setup = ServerSetup::depacketize(&mut buf).unwrap();
 
+        let selected_version = MOQ_TRANSPORT_VERSION;
         let role_parameter = RoleParameter::new(RoleCase::Both);
         let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
-        let setup_parameters_length = setup_parameters.len() as u8;
-
         let expected_server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
-
-        // Selected Version (i)
-        let mut combined_bytes = Vec::from(write_variable_integer(selected_version as u64));
-        // Number of Parameters (i)
-        combined_bytes.extend(setup_parameters_length.to_be_bytes());
-        // SETUP Parameters (..)
-        combined_bytes.extend(vec![
-            role_parameter.key as u8,
-            role_parameter.value_length,
-            role_parameter.value as u8,
-        ]);
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
-        let depacketized_server_setup = ServerSetup::depacketize(&mut buf).unwrap();
 
         assert_eq!(depacketized_server_setup, expected_server_setup);
     }

@@ -9,7 +9,7 @@ use crate::modules::{
 
 use super::moqt_payload::MOQTPayload;
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeOk {
     track_namespace: String,
     track_name: String,
@@ -74,5 +74,69 @@ impl MOQTPayload for SubscribeOk {
     /// Method to enable downcasting from MOQTPayload to SubscribeOk
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod success {
+    use crate::{
+        messages::moqt_payload::MOQTPayload, modules::messages::subscribe_ok::SubscribeOk,
+    };
+    use bytes::BytesMut;
+
+    #[test]
+    fn packetize_subscribe_ok() {
+        let track_namespace = "track_namespace".to_string();
+        let track_name = "track_name".to_string();
+        let track_id = 1;
+        let expires = 2;
+        let subscribe_ok = SubscribeOk::new(
+            track_namespace.clone(),
+            track_name.clone(),
+            track_id,
+            expires,
+        );
+        let mut buf = bytes::BytesMut::new();
+        subscribe_ok.packetize(&mut buf);
+
+        let expected_bytes_array = [
+            15, // track_namespace length
+            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
+            101, // track_namespace bytes("track_namespace")
+            10,  // track_name length
+            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, // track_name bytes("track_name")
+            1,   // track_id
+            2,   // expires
+        ];
+        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+    }
+
+    #[test]
+    fn depacketize_subscribe_ok() {
+        let bytes_array = [
+            15, // track_namespace length
+            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
+            101, // track_namespace bytes("track_namespace")
+            10,  // track_name length
+            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, // track_name bytes("track_name")
+            1,   // track_id
+            2,   // expires
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
+        let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf).unwrap();
+
+        let track_namespace = "track_namespace".to_string();
+        let track_name = "track_name".to_string();
+        let track_id = 1;
+        let expires = 2;
+        let expected_subscribe_ok = SubscribeOk::new(
+            track_namespace.clone(),
+            track_name.clone(),
+            track_id,
+            expires,
+        );
+
+        assert_eq!(depacketized_subscribe_ok, expected_subscribe_ok);
     }
 }

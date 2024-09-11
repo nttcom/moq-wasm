@@ -37,3 +37,45 @@ impl MOQTPayload for UnAnnounce {
         self
     }
 }
+
+#[cfg(test)]
+mod success {
+    use crate::messages::moqt_payload::MOQTPayload;
+    use crate::messages::unannounce::UnAnnounce;
+    use bytes::BytesMut;
+
+    #[test]
+    fn packetize_unannounce() {
+        let unannounce = UnAnnounce {
+            track_namespace: "track_namespace".to_string(),
+        };
+
+        let mut buf = BytesMut::new();
+        unannounce.packetize(&mut buf);
+
+        let expected_bytes_array = [
+            15, // track_namespace length
+            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
+            101, // track_namespace bytes("track_namespace")
+        ];
+        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+    }
+
+    #[test]
+    fn depacketize_unannounce() {
+        let bytes_array = [
+            15, // track_namespace length
+            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
+            101, // track_namespace bytes("track_namespace")
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
+        let depacketized_unannounce = UnAnnounce::depacketize(&mut buf).unwrap();
+
+        let expected_unannounce = UnAnnounce {
+            track_namespace: "track_namespace".to_string(),
+        };
+
+        assert_eq!(depacketized_unannounce, expected_unannounce);
+    }
+}
