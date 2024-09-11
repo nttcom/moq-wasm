@@ -52,27 +52,24 @@ mod success {
         let mut buf = BytesMut::new();
         announce_ok.packetize(&mut buf);
 
-        // Track Namespace bytes Length
-        let mut combined_bytes = Vec::from((track_namespace.len() as u8).to_be_bytes());
-        // Track Namespace bytes
-        combined_bytes.extend(track_namespace.as_bytes().to_vec());
-
-        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+        let expected_bytes_array = [
+            4, // track_namespace length
+            116, 101, 115, 116, // track_namespace bytes("test")
+        ];
+        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
 
     #[test]
     fn depacketize() {
-        let track_namespace = "test".to_string();
-        let mut buf = BytesMut::new();
-        // Track Namespace bytes Length
-        buf.extend((track_namespace.len() as u8).to_be_bytes());
-        // Track Namespace bytes
-        buf.extend(track_namespace.as_bytes().to_vec());
-
+        let bytes_array = [
+            4, // track_namespace length
+            116, 101, 115, 116, // track_namespace bytes("test")
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
         let announce_ok = AnnounceOk::depacketize(&mut buf).unwrap();
 
-        let expected_announce_ok = AnnounceOk::new(track_namespace.clone());
-
+        let expected_announce_ok = AnnounceOk::new("test".to_string());
         assert_eq!(announce_ok, expected_announce_ok);
     }
 }

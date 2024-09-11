@@ -174,3 +174,96 @@ impl MOQTPayload for Location {
         self
     }
 }
+
+#[cfg(test)]
+mod success {
+    use crate::messages::moqt_payload::MOQTPayload;
+    use crate::messages::subscribe::Subscribe;
+    use crate::messages::version_specific_parameters::GroupSequence;
+    use crate::messages::{
+        subscribe::Location, version_specific_parameters::VersionSpecificParameter,
+    };
+    use bytes::BytesMut;
+
+    #[test]
+    fn packetize_subscribe_ok() {
+        let track_namespace = "track_namespace".to_string();
+        let track_name = "track_name".to_string();
+        let start_group = Location::None;
+        let start_object = Location::None;
+        let end_group = Location::None;
+        let end_object = Location::None;
+        let version_specific_parameter =
+            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
+        let track_request_parameters = vec![version_specific_parameter];
+
+        let subscribe = Subscribe::new(
+            track_namespace,
+            track_name,
+            start_group,
+            start_object,
+            end_group,
+            end_object,
+            track_request_parameters,
+        );
+
+        let mut buf = BytesMut::new();
+        subscribe.packetize(&mut buf);
+
+        let expected_bytes_array = [
+            15, // track_namespace length
+            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
+            101, // track_namespace bytes("track_namespace")
+            10,  // track_name length
+            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, // track_name bytes("track_name")
+            0,   // start_group
+            0,   // start_object
+            0,   // end_group
+            0,   // end_object
+            1,   // number_of_parameters
+            0, 1, 0, // VersionSpecificParameter::GroupSequence
+        ];
+        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+    }
+
+    #[test]
+    fn depacketize_subscribe() {
+        let bytes_array = [
+            15, // track_namespace length
+            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
+            101, // track_namespace bytes("track_namespace")
+            10,  // track_name length
+            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, // track_name bytes("track_name")
+            0,   // start_group
+            0,   // start_object
+            0,   // end_group
+            0,   // end_object
+            1,   // number_of_parameters
+            0, 1, 0, // VersionSpecificParameter::GroupSequence
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
+        let depacketized_subscribe = Subscribe::depacketize(&mut buf).unwrap();
+
+        let track_namespace = "track_namespace".to_string();
+        let track_name = "track_name".to_string();
+        let start_group = Location::None;
+        let start_object = Location::None;
+        let end_group = Location::None;
+        let end_object = Location::None;
+        let version_specific_parameter =
+            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
+        let track_request_parameters = vec![version_specific_parameter];
+        let expected_subscribe = Subscribe::new(
+            track_namespace,
+            track_name,
+            start_group,
+            start_object,
+            end_group,
+            end_object,
+            track_request_parameters,
+        );
+
+        assert_eq!(depacketized_subscribe, expected_subscribe);
+    }
+}
