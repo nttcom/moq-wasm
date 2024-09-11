@@ -40,4 +40,5 @@ pub trait TrackNamespaceManagerRepository: Send + Sync {
         track_name: &str,
     ) -> Option<Vec<usize>>;
     async fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>>;
+    async fn delete_client(&self, session_id: usize) -> Result<()>;
 }

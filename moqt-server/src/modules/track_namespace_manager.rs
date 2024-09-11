@@ -724,6 +724,10 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
             Err(anyhow::anyhow!("not found"))
         }
     }
+
+    async fn delete_client(&self, session_id: usize) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
