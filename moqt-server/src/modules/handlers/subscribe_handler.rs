@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use moqt_core::{
     messages::{moqt_payload::MOQTPayload, subscribe::Subscribe},
@@ -33,7 +33,7 @@ pub(crate) async fn subscribe_handler(
             {
                 Ok(_) => {}
                 Err(e) => {
-                    return Err(anyhow::anyhow!("cannot register subscriber: {:?}", e));
+                    bail!("cannot register subscriber: {:?}", e);
                 }
             }
             // Notify the publisher about the SUBSCRIBE message
@@ -60,9 +60,9 @@ pub(crate) async fn subscribe_handler(
                     tracing::trace!("subscribe_handler complete.");
                     Ok(())
                 }
-                Err(e) => Err(anyhow::anyhow!("relay subscribe failed: {:?}", e)),
+                Err(e) => bail!("relay subscribe failed: {:?}", e),
             }
         }
-        None => Err(anyhow::anyhow!("publisher session id not found")),
+        None => bail!("publisher session id not found"),
     }
 }

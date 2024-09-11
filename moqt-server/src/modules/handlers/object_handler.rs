@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use moqt_core::{
     messages::{
@@ -29,8 +29,6 @@ pub(crate) async fn object_with_payload_length_handler(
 
     match subscriber_session_ids {
         Some(session_ids) => {
-            let mut result: Result<(), anyhow::Error> = Ok(());
-
             // Relay the object_with_payload_length message to all active subscribers
             for session_id in session_ids.iter() {
                 let message: Box<dyn MOQTPayload> =
@@ -46,21 +44,22 @@ pub(crate) async fn object_with_payload_length_handler(
                 {
                     Ok(_) => {}
                     Err(e) => {
-                        result = Err(anyhow::anyhow!("relay object message failed: {:?}", e));
                         tracing::error!(
                             "relay object message failed at session id {:?}:  {:?}",
                             session_id,
                             e
                         );
+                        bail!("relay object message failed: {:?}", e);
                     }
                 }
             }
+
             tracing::trace!("object_with_payload_length_handler complete.");
-            result
+            Ok(())
         }
         None => {
             tracing::error!("active subscriber session ids not found");
-            Err(anyhow::anyhow!("active subscriber session ids not found"))
+            bail!("active subscriber session ids not found");
         }
     }
 }
@@ -83,8 +82,6 @@ pub(crate) async fn object_without_payload_length_handler(
         .await;
     match subscriber_session_ids {
         Some(session_ids) => {
-            let mut result: Result<(), anyhow::Error> = Ok(());
-
             // Relay the object_without_payload_length message to all active subscribers
             for session_id in session_ids.iter() {
                 let message: Box<dyn MOQTPayload> =
@@ -100,21 +97,22 @@ pub(crate) async fn object_without_payload_length_handler(
                 {
                     Ok(_) => {}
                     Err(e) => {
-                        result = Err(anyhow::anyhow!("relay object message failed: {:?}", e));
                         tracing::error!(
                             "relay object message failed at session id {:?}:  {:?}",
                             session_id,
                             e
                         );
+                        bail!("relay object message failed: {:?}", e);
                     }
                 }
             }
+
             tracing::trace!("object_without_payload_length_handler complete.");
-            result
+            Ok(())
         }
         None => {
             tracing::error!("active subscriber session ids not found");
-            Err(anyhow::anyhow!("active subscriber session ids not found"))
+            bail!("active subscriber session ids not found");
         }
     }
 }
