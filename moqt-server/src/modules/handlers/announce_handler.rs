@@ -1,10 +1,8 @@
 use anyhow::Result;
 
-use crate::{
-    modules::{
-        messages::{announce::Announce, announce_error::AnnounceError, announce_ok::AnnounceOk},
-        track_namespace_manager_repository::TrackNamespaceManagerRepository,
-    },
+use moqt_core::{
+    messages::{announce::Announce, announce_error::AnnounceError, announce_ok::AnnounceOk},
+    track_namespace_manager_repository::TrackNamespaceManagerRepository,
     MOQTClient,
 };
 

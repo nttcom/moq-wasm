@@ -6,12 +6,12 @@ use anyhow::{Context, Result};
 use std::any::Any;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct UnAnnounce {
+pub struct UnAnnounce {
     track_namespace: String,
 }
 
 impl UnAnnounce {
-    pub(crate) fn track_namespace(&self) -> &str {
+    pub fn track_namespace(&self) -> &str {
         &self.track_namespace
     }
 }
