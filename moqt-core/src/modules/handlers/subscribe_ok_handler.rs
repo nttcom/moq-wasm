@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use crate::{
     message_handler::StreamType,
@@ -28,8 +28,6 @@ pub(crate) async fn subscribe_ok_handler(
         .await;
     match subscriber_session_ids {
         Some(session_ids) => {
-            let mut result: Result<(), anyhow::Error> = Ok(());
-
             // Notify all waiting subscribers with the SUBSCRIBE_OK message
             for session_id in session_ids.iter() {
                 let message: Box<dyn MOQTPayload> = Box::new(subscribe_ok_message.clone());
@@ -60,18 +58,19 @@ pub(crate) async fn subscribe_ok_handler(
                             .await;
                     }
                     Err(e) => {
-                        result = Err(anyhow::anyhow!("relay subscribe ok failed: {:?}", e));
                         tracing::error!(
                             "relay subscribe ok failed at session id {:?}:  {:?}",
                             session_id,
                             e
                         );
+                        bail!("relay subscribe ok failed: {:?}", e);
                     }
                 }
             }
+
             tracing::trace!("subscribe_ok_handler complete.");
-            result
+            Ok(())
         }
-        None => Err(anyhow::anyhow!("waiting subscriber session ids not found")),
+        None => bail!("waiting subscriber session ids not found"),
     }
 }
