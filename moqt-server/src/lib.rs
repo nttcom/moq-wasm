@@ -350,7 +350,7 @@ async fn handle_incoming_uni_stream(
 
     let bytes_read = match recv_stream.read(&mut buffer).await? {
         Some(bytes_read) => bytes_read,
-        None => return Err(anyhow::anyhow!("Failed to read from stream")),
+        None => bail!("Failed to read from stream"),
     };
 
     tracing::debug!("bytes_read: {}", bytes_read);
@@ -380,7 +380,7 @@ async fn handle_incoming_uni_stream(
             close_tx
                 .send((u8::from(code) as u64, message.clone()))
                 .await?;
-            return Err(anyhow::anyhow!(message));
+            bail!(message);
         }
         MessageProcessResult::Fragment => (),
         MessageProcessResult::Success(_) => {
@@ -391,7 +391,7 @@ async fn handle_incoming_uni_stream(
                     message.clone(),
                 ))
                 .await?;
-            return Err(anyhow::anyhow!(message));
+            bail!(message);
         }
     };
 
