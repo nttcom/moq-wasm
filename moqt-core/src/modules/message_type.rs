@@ -1,6 +1,6 @@
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-#[derive(Debug, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
+#[derive(Debug, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Clone)]
 #[repr(u8)]
 pub enum MessageType {
     ObjectWithPayloadLength = 0x00,

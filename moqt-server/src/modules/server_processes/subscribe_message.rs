@@ -1,11 +1,11 @@
-use crate::{
-    handlers::subscribe_handler::subscribe_handler,
+use crate::modules::handlers::subscribe_handler::subscribe_handler;
+use anyhow::{bail, Result};
+use bytes::BytesMut;
+use moqt_core::{
     messages::{moqt_payload::MOQTPayload, subscribe::Subscribe},
     moqt_client::MOQTClientStatus,
     MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
-use anyhow::{bail, Result};
-use bytes::BytesMut;
 
 pub(crate) async fn process_subscribe_message(
     payload_buf: &mut BytesMut,
@@ -22,7 +22,7 @@ pub(crate) async fn process_subscribe_message(
     let subscribe_request_message = match Subscribe::depacketize(payload_buf) {
         Ok(subscribe_request_message) => subscribe_request_message,
         Err(err) => {
-            tracing::info!("{:#?}", err);
+            tracing::error!("{:#?}", err);
             bail!(err.to_string());
         }
     };

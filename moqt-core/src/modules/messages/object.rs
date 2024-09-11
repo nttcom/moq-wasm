@@ -66,6 +66,8 @@ impl MOQTPayload for ObjectWithPayloadLength {
             read_fixed_length_bytes_from_buffer(buf, object_payload_length as usize)
                 .context("object payload")?;
 
+        tracing::trace!("Depacketized Object With Payload Length message.");
+
         Ok(ObjectWithPayloadLength {
             track_id,
             group_sequence,
@@ -83,6 +85,8 @@ impl MOQTPayload for ObjectWithPayloadLength {
         buf.extend(write_variable_integer(self.object_send_order));
         buf.extend(write_variable_integer(self.object_payload_length));
         buf.extend(write_variable_bytes(&self.object_payload));
+
+        tracing::trace!("Packetized Object With Payload Length message.");
     }
     /// Method to enable downcasting from MOQTPayload to ObjectWithPayloadLength
     fn as_any(&self) -> &dyn Any {
@@ -137,6 +141,8 @@ impl MOQTPayload for ObjectWithoutPayloadLength {
         let object_payload =
             read_variable_bytes_to_end_from_buffer(buf).context("object payload")?;
 
+        tracing::trace!("Depacketized Object Without Payload Length message.");
+
         Ok(ObjectWithoutPayloadLength {
             track_id,
             group_sequence,
@@ -152,6 +158,8 @@ impl MOQTPayload for ObjectWithoutPayloadLength {
         buf.extend(write_variable_integer(self.object_sequence));
         buf.extend(write_variable_integer(self.object_send_order));
         buf.extend(write_variable_bytes(&self.object_payload));
+
+        tracing::trace!("Packetized Object Without Payload Length message.");
     }
     /// Method to enable downcasting from MOQTPayload to ObjectWithoutPayloadLength
     fn as_any(&self) -> &dyn Any {

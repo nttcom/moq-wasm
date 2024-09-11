@@ -1,13 +1,9 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 
-use crate::{
-    message_handler::StreamType,
-    messages::moqt_payload::MOQTPayload,
-    modules::{
-        messages::subscribe::Subscribe,
-        track_namespace_manager_repository::TrackNamespaceManagerRepository,
-    },
-    MOQTClient, SendStreamDispatcherRepository,
+use moqt_core::{
+    messages::{moqt_payload::MOQTPayload, subscribe::Subscribe},
+    stream_type::StreamType,
+    MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
 pub(crate) async fn subscribe_handler(
@@ -16,16 +12,10 @@ pub(crate) async fn subscribe_handler(
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
-    tracing::info!("subscribe_handler!");
+    tracing::trace!("subscribe_handler start.");
 
-    tracing::info!(
-        "subscribe_handler: track_namespace: \"{}\"",
-        subscribe_message.track_namespace()
-    );
-    tracing::info!(
-        "subscribe_handler: track_name: \"{}\"",
-        subscribe_message.track_name()
-    );
+    tracing::debug!("subscribe_message: {:#?}", subscribe_message);
+
     // Since only the track_namespace is recorded in ANNOUNCE, use track_namespace to determine the publisher
     let publisher_session_id = track_namespace_manager_repository
         .get_publisher_session_id_by_track_namespace(subscribe_message.track_namespace())
@@ -43,12 +33,12 @@ pub(crate) async fn subscribe_handler(
             {
                 Ok(_) => {}
                 Err(e) => {
-                    return Err(anyhow::anyhow!("cannot register subscriber: {:?}", e));
+                    bail!("cannot register subscriber: {:?}", e);
                 }
             }
             // Notify the publisher about the SUBSCRIBE message
             let message: Box<dyn MOQTPayload> = Box::new(subscribe_message.clone());
-            tracing::info!(
+            tracing::debug!(
                 "message: {:#?} is sent to relay handler for client {:?}",
                 subscribe_message,
                 session_id
@@ -58,10 +48,21 @@ pub(crate) async fn subscribe_handler(
                 .send_message_to_send_stream_thread(session_id, message, StreamType::Bi)
                 .await
             {
-                Ok(_) => Ok(()),
-                Err(e) => Err(anyhow::anyhow!("relay subscribe failed: {:?}", e)),
+                Ok(_) => {
+                    tracing::info!(
+                        "subscribed track_namespace: {:?}",
+                        subscribe_message.track_namespace(),
+                    );
+                    tracing::info!(
+                        "subscribed track_name: {:?}",
+                        subscribe_message.track_name()
+                    );
+                    tracing::trace!("subscribe_handler complete.");
+                    Ok(())
+                }
+                Err(e) => bail!("relay subscribe failed: {:?}", e),
             }
         }
-        None => Err(anyhow::anyhow!("publisher session id not found")),
+        None => bail!("publisher session id not found"),
     }
 }

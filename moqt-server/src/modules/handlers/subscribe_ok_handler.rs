@@ -1,13 +1,9 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 
-use crate::{
-    message_handler::StreamType,
-    messages::moqt_payload::MOQTPayload,
-    modules::{
-        messages::subscribe_ok::SubscribeOk,
-        track_namespace_manager_repository::TrackNamespaceManagerRepository,
-    },
-    SendStreamDispatcherRepository,
+use moqt_core::{
+    messages::{moqt_payload::MOQTPayload, subscribe_ok::SubscribeOk},
+    stream_type::StreamType,
+    SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
 pub(crate) async fn subscribe_ok_handler(
@@ -15,20 +11,10 @@ pub(crate) async fn subscribe_ok_handler(
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
-    tracing::info!("subscribe_ok_handler!");
+    tracing::trace!("subscribe_ok_handler start.");
 
-    tracing::info!(
-        "subscribe_ok_handler: track_namespace: \"{}\"",
-        subscribe_ok_message.track_namespace()
-    );
-    tracing::info!(
-        "subscribe_ok_handler: track_name: \"{}\"",
-        subscribe_ok_message.track_name()
-    );
-    tracing::info!(
-        "subscribe_ok_handler: track_id: \"{}\"",
-        subscribe_ok_message.track_id()
-    );
+    tracing::debug!("subscribe_ok_message: {:#?}", subscribe_ok_message);
+
     // Determine the SUBSCRIBER who sent the SUBSCRIBE using the track_namespace and track_name
     let subscriber_session_ids = track_namespace_manager_repository
         .get_subscriber_session_ids_by_track_namespace_and_track_name(
@@ -38,12 +24,10 @@ pub(crate) async fn subscribe_ok_handler(
         .await;
     match subscriber_session_ids {
         Some(session_ids) => {
-            let mut result: Result<(), anyhow::Error> = Ok(());
-
             // Notify all waiting subscribers with the SUBSCRIBE_OK message
             for session_id in session_ids.iter() {
                 let message: Box<dyn MOQTPayload> = Box::new(subscribe_ok_message.clone());
-                tracing::info!(
+                tracing::debug!(
                     "message: {:#?} is sent to relay handler for client {:?}",
                     subscribe_ok_message,
                     session_id
@@ -70,17 +54,19 @@ pub(crate) async fn subscribe_ok_handler(
                             .await;
                     }
                     Err(e) => {
-                        result = Err(anyhow::anyhow!("relay subscribe ok failed: {:?}", e));
                         tracing::error!(
                             "relay subscribe ok failed at session id {:?}:  {:?}",
                             session_id,
                             e
                         );
+                        bail!("relay subscribe ok failed: {:?}", e);
                     }
                 }
             }
-            result
+
+            tracing::trace!("subscribe_ok_handler complete.");
+            Ok(())
         }
-        None => Err(anyhow::anyhow!("waiting subscriber session ids not found")),
+        None => bail!("waiting subscriber session ids not found"),
     }
 }

@@ -6,7 +6,6 @@ use anyhow::Result;
 use bytes::{BufMut, BytesMut};
 #[cfg(web_sys_unstable_apis)]
 use moqt_core::{
-    message_handler::StreamType,
     message_type::MessageType,
     messages::{
         announce::Announce,
@@ -15,6 +14,7 @@ use moqt_core::{
         setup_parameters::{RoleCase, RoleParameter, SetupParameter},
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
+    stream_type::StreamType,
     variable_bytes::write_variable_bytes,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
@@ -25,12 +25,6 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 #[cfg(web_sys_unstable_apis)]
 use web_sys::ReadableStreamDefaultReader;
-
-// When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
-// allocator.
-#[cfg(feature = "wee_alloc")]
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[wasm_bindgen]
 extern "C" {

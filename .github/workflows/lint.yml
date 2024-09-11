@@ -9,7 +9,7 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     container:
-      image: rust:1.79
+      image: rust:latest
     steps:
       - uses: actions/checkout@v4
       - name: Install Clippy and Rustfmt

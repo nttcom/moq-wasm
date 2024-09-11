@@ -2,11 +2,10 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use std::any::Any;
 
+use super::moqt_payload::MOQTPayload;
 use crate::{
     modules::variable_bytes::write_variable_bytes, variable_bytes::read_variable_bytes_from_buffer,
 };
-
-use super::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct AnnounceOk {
@@ -14,7 +13,7 @@ pub struct AnnounceOk {
 }
 
 impl AnnounceOk {
-    pub(crate) fn new(track_namespace: String) -> Self {
+    pub fn new(track_namespace: String) -> Self {
         Self { track_namespace }
     }
 }
@@ -24,6 +23,8 @@ impl MOQTPayload for AnnounceOk {
         let track_namespace =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
 
+        tracing::trace!("Depacketized Announce OK message.");
+
         Ok(AnnounceOk { track_namespace })
     }
 
@@ -32,6 +33,8 @@ impl MOQTPayload for AnnounceOk {
         buf.extend(write_variable_bytes(
             &self.track_namespace.as_bytes().to_vec(),
         ));
+
+        tracing::trace!("Packetized Announce OK message.");
     }
     /// Method to enable downcasting from MOQTPayload to AnnounceOk
     fn as_any(&self) -> &dyn Any {
