@@ -130,9 +130,9 @@ pub enum SetupParameterType {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::{moqt_payload::MOQTPayload, setup_parameters::SetupParameterType};
+    use crate::messages::moqt_payload::MOQTPayload;
     use crate::modules::messages::setup_parameters::{RoleCase, RoleParameter, SetupParameter};
-    use crate::modules::variable_integer::write_variable_integer;
+    use bytes::BytesMut;
     #[test]
     fn packetize_role() {
         let role_parameter = RoleParameter::new(RoleCase::Injection);
@@ -141,62 +141,58 @@ mod success {
         let mut buf = bytes::BytesMut::new();
         setup_parameter.packetize(&mut buf);
 
-        // Role 0x00
-        let mut combined_bytes = Vec::from((SetupParameterType::Role as u8).to_be_bytes());
-        // parameter length
-        combined_bytes.extend(write_variable_integer(1));
-        // Injection 0x01
-        combined_bytes.extend((RoleCase::Injection as u8).to_be_bytes());
+        let expected_bytes_array = [
+            0, // Parameter Type (i): Type(Role)
+            1, // Parameter Type (i): Length
+            1, // Parameter Type (i): Role(Injection)
+        ];
 
-        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+        assert_eq!(buf.as_ref(), expected_bytes_array);
     }
 
     #[test]
     fn depacketize_role() {
-        let role_parameter = RoleParameter::new(RoleCase::Delivery);
-        let expected_setup_parameter = SetupParameter::RoleParameter(role_parameter);
-
-        // Role 0x00
-        let mut combined_bytes = Vec::from((SetupParameterType::Role as u8).to_be_bytes());
-        // parameter length
-        combined_bytes.extend(write_variable_integer(1));
-        // Delivery 0x02
-        combined_bytes.extend((RoleCase::Delivery as u8).to_be_bytes());
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let bytes_array = [
+            0, // Parameter Type (i): Type(Role)
+            1, // Parameter Type (i): Length
+            2, // Parameter Type (i): Role(Delivery)
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
         let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf).unwrap();
 
+        let role_parameter = RoleParameter::new(RoleCase::Delivery);
+        let expected_setup_parameter = SetupParameter::RoleParameter(role_parameter);
         assert_eq!(depacketized_setup_parameter, expected_setup_parameter);
     }
 
     #[test]
     fn depacketize_unknown() {
-        // Unknown
-        let combined_bytes = Vec::from(write_variable_integer(0x99));
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let bytes_array = [
+            2, // Parameter Type (i): Type(Unknown)
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
         let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
-
         assert!(depacketized_setup_parameter.is_ok());
     }
 }
 
 #[cfg(test)]
 mod failure {
-    use crate::messages::{moqt_payload::MOQTPayload, setup_parameters::SetupParameterType};
-    use crate::modules::messages::setup_parameters::{PathParameter, RoleCase, SetupParameter};
-    use crate::modules::variable_integer::write_variable_integer;
+    use crate::messages::moqt_payload::MOQTPayload;
+    use crate::modules::messages::setup_parameters::{PathParameter, SetupParameter};
+    use bytes::BytesMut;
 
     #[test]
     fn depacketize_role_invalid_value_length() {
-        // Role 0x00
-        let mut combined_bytes = Vec::from((SetupParameterType::Role as u8).to_be_bytes());
-        // wrong length
-        combined_bytes.extend(write_variable_integer(99));
-        // Injection 0x01
-        combined_bytes.extend((RoleCase::Injection as u8).to_be_bytes());
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let bytes_array = [
+            0,  // Parameter Type (i): Type(Role)
+            99, // Parameter Type (i): Length(Wrong)
+            1,  // Parameter Type (i): Role(Injection)
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
         let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
 
         assert!(depacketized_setup_parameter.is_err());
@@ -204,14 +200,13 @@ mod failure {
 
     #[test]
     fn depacketize_role_invalid_value() {
-        // Role 0x00
-        let mut combined_bytes = Vec::from((SetupParameterType::Role as u8).to_be_bytes());
-        // parameter length
-        combined_bytes.extend(write_variable_integer(1));
-        // wrong value
-        combined_bytes.extend((0x99_u8).to_be_bytes());
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let bytes_array = [
+            0,  // Parameter Type (i): Type(Role)
+            1,  // Parameter Type (i): Length
+            99, // Parameter Type (i): Role(Wrong)
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
         let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
 
         assert!(depacketized_setup_parameter.is_err());
@@ -230,14 +225,13 @@ mod failure {
     #[test]
     #[should_panic]
     fn depacketize_path() {
-        // Path 0x01
-        let mut combined_bytes = Vec::from((SetupParameterType::Path as u8).to_be_bytes());
-        // parameter length
-        combined_bytes.extend(write_variable_integer("test".len() as u64));
-        // Path value
-        combined_bytes.extend("test".as_bytes());
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
+        let bytes_array = [
+            1, // Parameter Type (i): Type(Path)
+            4, // Parameter Type (i): Length
+            116, 101, 115, 116, // Parameter Type (i): Value("test")
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
         let _ = SetupParameter::depacketize(&mut buf).unwrap();
     }
 

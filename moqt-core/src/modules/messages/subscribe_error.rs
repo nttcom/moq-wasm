@@ -15,7 +15,6 @@ pub struct SubscribeError {
     track_namespace: String,
     track_name: String,
     error_code: u64,
-    reason_phrase_length: u64,
     reason_phrase: String,
 }
 
@@ -26,13 +25,10 @@ impl SubscribeError {
         error_code: u64,
         reason_phrase: String,
     ) -> SubscribeError {
-        let reason_phrase_length = reason_phrase.len() as u64;
-
         SubscribeError {
             track_namespace,
             track_name,
             error_code,
-            reason_phrase_length,
             reason_phrase,
         }
     }
@@ -55,8 +51,6 @@ impl MOQTPayload for SubscribeError {
         let track_name =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track name")?;
         let error_code = read_variable_integer_from_buffer(buf).context("error code")?;
-        let reason_phrase_length =
-            read_variable_integer_from_buffer(buf).context("reason phrase length")?;
         let reason_phrase =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
 
@@ -66,7 +60,6 @@ impl MOQTPayload for SubscribeError {
             track_namespace,
             track_name,
             error_code,
-            reason_phrase_length,
             reason_phrase,
         })
     }
@@ -77,7 +70,6 @@ impl MOQTPayload for SubscribeError {
         ));
         buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
         buf.extend(write_variable_integer(self.error_code));
-        buf.extend(write_variable_integer(self.reason_phrase_length));
         buf.extend(write_variable_bytes(
             &self.reason_phrase.as_bytes().to_vec(),
         ));
@@ -87,5 +79,59 @@ impl MOQTPayload for SubscribeError {
     /// Method to enable downcasting from MOQTPayload to SubscribeError
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod success {
+    use crate::{
+        messages::moqt_payload::MOQTPayload, modules::messages::subscribe_error::SubscribeError,
+    };
+    use bytes::BytesMut;
+
+    #[test]
+    fn packetize() {
+        let track_namespace = "tests".to_string();
+        let track_name = "test".to_string();
+        let error_code = 1;
+        let reason_phrase = "error".to_string();
+        let subscribe_error = SubscribeError::new(
+            track_namespace.clone(),
+            track_name.clone(),
+            error_code,
+            reason_phrase.clone(),
+        );
+        let mut buf = BytesMut::new();
+        subscribe_error.packetize(&mut buf);
+
+        let expected_bytes_array = [
+            5, // Track Namespace (b): Length
+            116, 101, 115, 116, 115, // Track Namespace (b): Value("tests")
+            4,   // Track Name (b): Length
+            116, 101, 115, 116, // Track Name (b): Value("test")
+            1,   // Error Code (i)
+            5,   // Reason Phrase Length (i)
+            101, 114, 114, 111, 114, // Reason Phrase (...): Value("error")
+        ];
+        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+    }
+
+    #[test]
+    fn depacketize() {
+        let bytes_array = [
+            4, // Track Namespace (b): Length
+            116, 101, 115, 116, // Track Namespace (b): Value("test")
+            4,   // Track Name (b): Length
+            116, 101, 115, 116, // Track Name (b): Value("test")
+            1,   // Error Code (i)
+            5,   // Reason Phrase Length (i)
+            101, 114, 114, 111, 114, // Reason Phrase (...): Value("error")
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
+        let subscribe_error = SubscribeError::depacketize(&mut buf).unwrap();
+
+        assert_eq!(subscribe_error.track_namespace(), "test");
+        assert_eq!(subscribe_error.track_name(), "test");
     }
 }
