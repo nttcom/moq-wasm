@@ -94,13 +94,12 @@ mod success {
         let mut buf = bytes::BytesMut::new();
         announce_error.packetize(&mut buf);
         let expected_bytes_array = [
-            4, // track_namespace length
-            116, 101, 115, 116, // track_namespace bytes("test")
-            1,   // error_code
-            13,  // reason_phrase length
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            1,   // Error Code (i)
+            13,  // Reason Phrase (b): length
             97, 108, 114, 101, 97, 100, 121, 32, 101, 120, 105, 115,
-            116,
-            // reason_phrase bytes("already exist")
+            116, // Reason Phrase (b): Value("already exist")
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
@@ -108,13 +107,12 @@ mod success {
     #[test]
     fn depacketize_announce_error() {
         let bytes_array = [
-            4, // track_namespace length
-            116, 101, 115, 116, // track_namespace bytes("test")
-            1,   // error_code
-            13,  // reason_phrase length
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            1,   // Error Code (i)
+            13,  // Reason Phrase (b): length
             97, 108, 114, 101, 97, 100, 121, 32, 101, 120, 105, 115,
-            116,
-            // reason_phrase bytes("already exist")
+            116, // Reason Phrase (b): Value("already exist")
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);

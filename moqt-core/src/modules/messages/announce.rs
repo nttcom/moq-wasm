@@ -114,13 +114,13 @@ mod success {
         announce_message.packetize(&mut buf);
 
         let expected_bytes_array = [
-            16, // track_namespace length
+            16, // Track Namespace(b): Length
             108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
-            109, // track_namespace bytes("live.example.com")
-            1,   // number_of_parameters
-            2,   // parameter type
-            4,   // parameter length
-            116, 101, 115, 116, // parameter bytes("test")
+            109, // Track Namespace(b): Value("live.example.com")
+            1,   // Number of Parameters (i)
+            2,   // Parameters (..): Parameter Type(AuthorizationInfo)
+            4,   // Parameters (..): Length
+            116, 101, 115, 116, // Parameters (..): Value("test")
         ];
 
         assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -129,13 +129,13 @@ mod success {
     #[test]
     fn depacketize_announce_with_parameter() {
         let bytes_array = [
-            16, // track_namespace length
+            16, // Track Namespace(b): Length
             108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
-            109, // track_namespace bytes("live.example.com")
-            1,   // number_of_parameters
-            2,   // parameter type
-            4,   // parameter length
-            116, 101, 115, 116, // parameter bytes("test")
+            109, // Track Namespace(b): Value("live.example.com")
+            1,   // Number of Parameters (i)
+            2,   // Parameters (..): Parameter Type(AuthorizationInfo)
+            4,   // Parameters (..): Length
+            116, 101, 115, 116, // Parameters (..): Value("test")
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
@@ -165,10 +165,10 @@ mod success {
         announce_message.packetize(&mut buf);
 
         let expected_bytes_array = [
-            16, // track_namespace length
+            16, // Track Namespace(b): Length
             108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
-            109, // track_namespace bytes("live.example.com")
-            0,   // number_of_parameters
+            109, // Track Namespace(b): Value("live.example.com")
+            0,   // Number of Parameters (i)
         ];
 
         assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -177,10 +177,10 @@ mod success {
     #[test]
     fn depacketize_announce_without_parameter() {
         let bytes_array = [
-            16, // track_namespace length
+            16, // Track Namespace(b): Length
             108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
-            109, // track_namespace bytes("live.example.com")
-            0,   // number_of_parameters
+            109, // Track Namespace(b): Value("live.example.com")
+            0,   // Number of Parameters (i)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);

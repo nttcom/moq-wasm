@@ -104,13 +104,13 @@ mod success {
         client_setup.packetize(&mut buf);
 
         let expected_bytes_array = [
-            1,   // Number of Supported Versions
-            192, // Supported Version Length: Supported Versionは32bitなので、2MSBにおいて11を使って62bitで表現する
-            0, 0, 0, 255, 0, 0, 1, // Supported Version(0xff000001) 62bitで表現された値
-            1, // Number of Parameters
-            0, // Setup Parameter Type(Role)
-            1, // Parameter Length
-            2, // Role(Delivery)
+            1,   // Number of Supported Versions (i)
+            192, // Supported Version (i): Length(11 of 2MSB)
+            0, 0, 0, 255, 0, 0, 1, // Supported Version(i): Value(0xff000001) in 62bit
+            1, // Number of Parameters (i)
+            0, // SETUP Parameters (..): Type(Role)
+            1, // SETUP Parameters (..): Length
+            2, // SETUP Parameters (..): Role(Delivery)
         ];
 
         assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -119,13 +119,13 @@ mod success {
     #[test]
     fn depacketize_client_setup() {
         let bytes_array = [
-            1,   // Number of Supported Versions
-            192, // Supported Version Length: Supported Versionは32bitなので、2MSBにおいて11を使って62bitで表現する
-            0, 0, 0, 255, 0, 0, 1, // Supported Version(0xff000001) 62bitで表現された値
-            1, // Number of Parameters
-            0, // Setup Parameter Type(Role)
-            1, // Parameter Length
-            2, // Role(Delivery)
+            1,   // Number of Supported Versions (i)
+            192, // Supported Version (i): Length(11 of 2MSB)
+            0, 0, 0, 255, 0, 0, 1, // Supported Version(i): Value(0xff000001) in 62bit
+            1, // Number of Parameters (i)
+            0, // SETUP Parameters (..): Type(Role)
+            1, // SETUP Parameters (..): Length
+            2, // SETUP Parameters (..): Role(Delivery)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
