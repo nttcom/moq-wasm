@@ -104,13 +104,14 @@ mod success {
         subscribe_ok.packetize(&mut buf);
 
         let expected_bytes_array = [
-            15, // track_namespace length
+            15, // Track Namespace (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // track_namespace bytes("track_namespace")
-            10,  // track_name length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, // track_name bytes("track_name")
-            1,   // track_id
-            2,   // expires
+            101, // Track Namespace (b): Value("track_namespace")
+            10,  // Track Name (b): Length
+            116, 114, 97, 99, 107, 95, 110, 97, 109,
+            101, // Track Name (b): Value("track_name")
+            1,   // Track ID (i)
+            2,   // Expires (i)
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
@@ -118,13 +119,14 @@ mod success {
     #[test]
     fn depacketize_subscribe_ok() {
         let bytes_array = [
-            15, // track_namespace length
+            15, // Track Namespace (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // track_namespace bytes("track_namespace")
-            10,  // track_name length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, // track_name bytes("track_name")
-            1,   // track_id
-            2,   // expires
+            101, // Track Namespace (b): Value("track_namespace")
+            10,  // Track Name (b): Length
+            116, 114, 97, 99, 107, 95, 110, 97, 109,
+            101, // Track Name (b): Value("track_name")
+            1,   // Track ID (i)
+            2,   // Expires (i)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);

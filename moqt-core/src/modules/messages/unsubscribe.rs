@@ -77,22 +77,24 @@ mod success {
         unsubscribe.packetize(&mut buf);
 
         let expected_bytes_array = [
-            15, // track_namespace length
+            15, // Track Namespace(b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // track_namespace bytes("track_namespace")
-            10,  // track_name length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, // track_name bytes("track_name")
+            101, // Track Namespace(b): Value("track_namespace")
+            10,  // Track Name (b): Length
+            116, 114, 97, 99, 107, 95, 110, 97, 109,
+            101, // Track Name (b): Value("track_name")
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
     #[test]
     fn depacketize_unsubscribe() {
         let bytes_array = [
-            15, // track_namespace length
+            15, // Track Namespace(b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // track_namespace bytes("track_namespace")
-            10,  // track_name length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, // track_name bytes("track_name")
+            101, // Track Namespace(b): Value("track_namespace")
+            10,  // Track Name (b): Length
+            116, 114, 97, 99, 107, 95, 110, 97, 109,
+            101, // Track Name (b): Value("track_name")
         ];
         let mut buf = BytesMut::new();
         buf.extend_from_slice(&bytes_array);

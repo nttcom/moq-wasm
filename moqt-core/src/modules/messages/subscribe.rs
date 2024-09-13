@@ -190,7 +190,7 @@ mod success {
     use bytes::BytesMut;
 
     #[test]
-    fn packetize_subscribe_ok() {
+    fn packetize_subscribe() {
         let track_namespace = "track_namespace".to_string();
         let track_name = "track_name".to_string();
         let start_group = Location::None;
@@ -215,17 +215,20 @@ mod success {
         subscribe.packetize(&mut buf);
 
         let expected_bytes_array = [
-            15, // track_namespace length
+            15, // Track Namespace (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // track_namespace bytes("track_namespace")
-            10,  // track_name length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, // track_name bytes("track_name")
-            0,   // start_group
-            0,   // start_object
-            0,   // end_group
-            0,   // end_object
-            1,   // number_of_parameters
-            0, 1, 0, // VersionSpecificParameter::GroupSequence
+            101, // Track Namespace (b): Value("track_namespace")
+            10,  // Track Name (b): Length
+            116, 114, 97, 99, 107, 95, 110, 97, 109,
+            101, // Track Name (b): Value("track_name")
+            0,   // StartGroup (Location): Location(None)
+            0,   // StartObject (Location): Location(None)
+            0,   // EndGroup (Location): Location(None)
+            0,   // EndObject (Location): Location(None)
+            1,   // Track Request Parameters (..): Number of Parameters
+            0,   // Parameter Type (i)
+            1,   // Parameter Length (i)
+            0,   // Parameter Value (..): GroupSequence
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
@@ -233,17 +236,20 @@ mod success {
     #[test]
     fn depacketize_subscribe() {
         let bytes_array = [
-            15, // track_namespace length
+            15, // Track Namespace (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // track_namespace bytes("track_namespace")
-            10,  // track_name length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, // track_name bytes("track_name")
-            0,   // start_group
-            0,   // start_object
-            0,   // end_group
-            0,   // end_object
-            1,   // number_of_parameters
-            0, 1, 0, // VersionSpecificParameter::GroupSequence
+            101, // Track Namespace (b): Value("track_namespace")
+            10,  // Track Name (b): Length
+            116, 114, 97, 99, 107, 95, 110, 97, 109,
+            101, // Track Name (b): Value("track_name")
+            0,   // StartGroup (Location): Location(None)
+            0,   // StartObject (Location): Location(None)
+            0,   // EndGroup (Location): Location(None)
+            0,   // EndObject (Location): Location(None)
+            1,   // Track Request Parameters (..): Number of Parameters
+            0,   // Parameter Type (i)
+            1,   // Parameter Length (i)
+            0,   // Parameter Value (..): GroupSequence
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);

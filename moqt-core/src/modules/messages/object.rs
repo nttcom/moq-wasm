@@ -192,13 +192,13 @@ mod success {
         object_with_payload_length.packetize(&mut buf);
 
         let expected_bytes_array = [
-            0, // Track ID
-            1, // Group Sequence
-            2, // Object Sequence
-            3, // Object Send Order
-            3, // Object Payload Length
-            3, // Object Payload Length
-            0, 1, 2, // Object Payload
+            0, // Track ID (i)
+            1, // Group Sequence (i)
+            2, // Object Sequence (i)
+            3, // Object Send Order (i)
+            3, // Object Payload Length (i)
+            3, // Object Payload (b): Length
+            0, 1, 2, // Object Payload (b): Value
         ];
 
         assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -207,13 +207,13 @@ mod success {
     #[test]
     fn depacketize_object_with_payload_length() {
         let bytes_array = [
-            0, // Track ID
-            1, // Group Sequence
-            2, // Object Sequence
-            3, // Object Send Order
-            3, // Object Payload Length
-            3, // Object Payload Length
-            0, 1, 2, // Object Payload
+            0, // Track ID (i)
+            1, // Group Sequence (i)
+            2, // Object Sequence (i)
+            3, // Object Send Order (i)
+            3, // Object Payload Length (i)
+            3, // Object Payload (b): Length
+            0, 1, 2, // Object Payload (b): Value
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
@@ -260,12 +260,12 @@ mod success {
         object_without_payload_length.packetize(&mut buf);
 
         let expected_bytes_array = [
-            0, // Track ID
-            1, // Group Sequence
-            2, // Object Sequence
-            3, // Object Send Order
-            3, // Object Payload Length
-            0, 1, 2, // Object Payload
+            0, // Track ID (i)
+            1, // Group Sequence (i)
+            2, // Object Sequence (i)
+            3, // Object Send Order (i)
+            3, // Object Payload (b): Length
+            0, 1, 2, // Object Payload (b): Value
         ];
 
         assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -274,12 +274,12 @@ mod success {
     #[test]
     fn depacketize_object_without_payload_length() {
         let bytes_array = [
-            0, // Track ID
-            1, // Group Sequence
-            2, // Object Sequence
-            3, // Object Send Order
-            3, // Object Payload Length
-            0, 1, 2, // Object Payload
+            0, // Track ID (i)
+            1, // Group Sequence (i)
+            2, // Object Sequence (i)
+            3, // Object Send Order (i)
+            3, // Object Payload (b): Length
+            0, 1, 2, // Object Payload (b): Value
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);

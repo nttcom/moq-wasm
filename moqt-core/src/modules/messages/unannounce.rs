@@ -58,9 +58,9 @@ mod success {
         unannounce.packetize(&mut buf);
 
         let expected_bytes_array = [
-            15, // track_namespace length
+            15, // Track Namespace(b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // track_namespace bytes("track_namespace")
+            101, // Track Namespace(b): Value("track_namespace")
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
@@ -68,9 +68,9 @@ mod success {
     #[test]
     fn depacketize_unannounce() {
         let bytes_array = [
-            15, // track_namespace length
+            15, // Track Namespace(b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // track_namespace bytes("track_namespace")
+            101, // Track Namespace(b): Value("track_namespace")
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);

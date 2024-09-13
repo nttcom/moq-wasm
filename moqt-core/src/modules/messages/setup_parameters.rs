@@ -142,9 +142,9 @@ mod success {
         setup_parameter.packetize(&mut buf);
 
         let expected_bytes_array = [
-            0, // Set Up Parameter Type(Role)
-            1, // Value Length
-            1, // Role(Injection)
+            0, // Parameter Type (i): Type(Role)
+            1, // Parameter Type (i): Length
+            1, // Parameter Type (i): Role(Injection)
         ];
 
         assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -153,9 +153,9 @@ mod success {
     #[test]
     fn depacketize_role() {
         let bytes_array = [
-            0, // Set Up Parameter Type(Role)
-            1, // Value Length
-            2, // Role(Delivery)
+            0, // Parameter Type (i): Type(Role)
+            1, // Parameter Type (i): Length
+            2, // Parameter Type (i): Role(Delivery)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
@@ -169,7 +169,7 @@ mod success {
     #[test]
     fn depacketize_unknown() {
         let bytes_array = [
-            2, // Set Up Parameter Type (Unknown)
+            2, // Parameter Type (i): Type(Unknown)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
@@ -187,9 +187,9 @@ mod failure {
     #[test]
     fn depacketize_role_invalid_value_length() {
         let bytes_array = [
-            0,  // Set Up Parameter Type
-            99, // Wrong Value Length
-            1,  // Role(Injection)
+            0,  // Parameter Type (i): Type(Role)
+            99, // Parameter Type (i): Length(Wrong)
+            1,  // Parameter Type (i): Role(Injection)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
@@ -201,9 +201,9 @@ mod failure {
     #[test]
     fn depacketize_role_invalid_value() {
         let bytes_array = [
-            0,  // Set Up Parameter Type(Role)
-            1,  // Value Length
-            99, // Role(Wrong)
+            0,  // Parameter Type (i): Type(Role)
+            1,  // Parameter Type (i): Length
+            99, // Parameter Type (i): Role(Wrong)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
@@ -226,9 +226,9 @@ mod failure {
     #[should_panic]
     fn depacketize_path() {
         let bytes_array = [
-            1, // Set Up Parameter Type(Path)
-            4, // Value Length
-            116, 101, 115, 116, // Value("test")
+            1, // Parameter Type (i): Type(Path)
+            4, // Parameter Type (i): Length
+            116, 101, 115, 116, // Parameter Type (i): Value("test")
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);

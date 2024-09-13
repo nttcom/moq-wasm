@@ -105,13 +105,13 @@ mod success {
         subscribe_error.packetize(&mut buf);
 
         let expected_bytes_array = [
-            5, // track_namespace length
-            116, 101, 115, 116, 115, // track_namespace bytes("tests")
-            4,   // track_name length
-            116, 101, 115, 116, // track_name bytes("test")
-            1,   // error_code
-            5,   // reason_phrase length
-            101, 114, 114, 111, 114, // reason_phrase bytes("error")
+            5, // Track Namespace (b): Length
+            116, 101, 115, 116, 115, // Track Namespace (b): Value("tests")
+            4,   // Track Name (b): Length
+            116, 101, 115, 116, // Track Name (b): Value("test")
+            1,   // Error Code (i)
+            5,   // Reason Phrase Length (i)
+            101, 114, 114, 111, 114, // Reason Phrase (...): Value("error")
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
@@ -119,13 +119,13 @@ mod success {
     #[test]
     fn depacketize() {
         let bytes_array = [
-            4, // track_namespace length
-            116, 101, 115, 116, // track_namespace bytes("test")
-            4,   // track_name length
-            116, 101, 115, 116, // track_name bytes("test")
-            1,   // error_code
-            4,   // reason_phrase length
-            116, 101, 115, 116, // reason_phrase bytes("test")
+            4, // Track Namespace (b): Length
+            116, 101, 115, 116, // Track Namespace (b): Value("test")
+            4,   // Track Name (b): Length
+            116, 101, 115, 116, // Track Name (b): Value("test")
+            1,   // Error Code (i)
+            5,   // Reason Phrase Length (i)
+            101, 114, 114, 111, 114, // Reason Phrase (...): Value("error")
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);

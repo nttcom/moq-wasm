@@ -190,9 +190,9 @@ mod success {
         parameter.packetize(&mut buf);
 
         let expected_bytes_array = [
-            0, // Parameter Type(GroupSequence)
-            1, // Parameter Length
-            1, // Parameter Value
+            0, // Parameter Type (i): GroupSequence
+            1, // Parameter Length (i)
+            1, // Parameter Value (..)
         ];
 
         assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -207,9 +207,9 @@ mod success {
         parameter.packetize(&mut buf);
 
         let expected_bytes_array = [
-            1, // Parameter Type(ObjectSequence)
-            1, // Parameter Length
-            1, // Parameter Value
+            1, // Parameter Type (i): ObjectSequence
+            1, // Parameter Length (i)
+            1, // Parameter Value (..)
         ];
 
         assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -225,9 +225,9 @@ mod success {
         parameter.packetize(&mut buf);
 
         let expected_bytes_array = [
-            2, // Parameter Type(AuthorizationInfo)
-            4, // Parameter Length
-            116, 101, 115, 116, // Parameter Value
+            2, // Parameter Type (i): AuthorizationInfo
+            4, // Parameter Length (i)
+            116, 101, 115, 116, // Parameter Value (..): test
         ];
 
         assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -236,9 +236,9 @@ mod success {
     #[test]
     fn depacketize_group_sequence() {
         let bytes_array = [
-            0, // Parameter Type(GroupSequence)
+            0, // Parameter Type (i): GroupSequence
             1, // Parameter Length
-            1, // Parameter Value
+            1, // Parameter Value (..)
         ];
         let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
@@ -251,9 +251,9 @@ mod success {
     #[test]
     fn depacketize_object_sequence() {
         let bytes_array = [
-            1, // Parameter Type(ObjectSequence)
+            1, // Parameter Type (i): ObjectSequence
             1, // Parameter Length
-            1, // Parameter Value
+            1, // Parameter Value (..)
         ];
         let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
@@ -266,9 +266,9 @@ mod success {
     #[test]
     fn depacketize_authorization_info() {
         let bytes_array = [
-            2, // Parameter Type(AuthorizationInfo)
+            2, // Parameter Type (i): AuthorizationInfo
             4, // Parameter Length
-            116, 101, 115, 116, // Parameter Value("test")
+            116, 101, 115, 116, // Parameter Value (..): test
         ];
         let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
@@ -282,10 +282,10 @@ mod success {
     #[test]
     fn depacketize_unknown() {
         let bytes_array = [
-            64, // Unknownを99とすると2MSBでは01で表現する必要があるため、64(0b01000000)とする
-            99, // Parameter Type(Unknown): 2MSBによって14bitで表現される
-            4,  // Parameter Length
-            116, 101, 115, 116, // Parameter Value("test")
+            64, // Parameter Type (i): Length. 64(0b01000000) equals to Length=2 and Usable Bits is 14bit in 2MSB.
+            99, // Parameter Type (i): Unknown. this value is represented in 14bit.
+            4,  // Parameter Length (i)
+            116, 101, 115, 116, // PParameter Value (..): test"
         ];
         let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
