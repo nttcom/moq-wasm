@@ -85,7 +85,6 @@ impl MOQTPayload for ClientSetup {
 
 #[cfg(test)]
 mod success {
-    use crate::modules::variable_integer::write_variable_integer;
     use crate::{
         constants::MOQ_TRANSPORT_VERSION,
         messages::moqt_payload::MOQTPayload,
@@ -94,61 +93,48 @@ mod success {
             setup_parameters::{RoleCase, RoleParameter, SetupParameter},
         },
     };
+    use bytes::BytesMut;
     #[test]
     fn packetize_client_setup() {
         let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-        let supported_versions_length = supported_versions.len() as u8;
-
         let role_parameter = RoleParameter::new(RoleCase::Delivery);
         let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
-        let setup_parameters_length = setup_parameters.len() as u8;
-
         let client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
         let mut buf = bytes::BytesMut::new();
         client_setup.packetize(&mut buf);
 
-        // Number of Supported Versions (i)
-        let mut combined_bytes = Vec::from(supported_versions_length.to_be_bytes());
-        // Supported Version (i)
-        combined_bytes.extend(write_variable_integer(MOQ_TRANSPORT_VERSION as u64));
-        // Number of Parameters (i)
-        combined_bytes.extend(setup_parameters_length.to_be_bytes());
-        // SETUP Parameters (..)
-        combined_bytes.extend(vec![
-            role_parameter.key as u8,
-            role_parameter.value_length,
-            role_parameter.value as u8,
-        ]);
+        let expected_bytes_array = [
+            1,   // Number of Supported Versions (i)
+            192, // Supported Version (i): Length(11 of 2MSB)
+            0, 0, 0, 255, 0, 0, 1, // Supported Version(i): Value(0xff000001) in 62bit
+            1, // Number of Parameters (i)
+            0, // SETUP Parameters (..): Type(Role)
+            1, // SETUP Parameters (..): Length
+            2, // SETUP Parameters (..): Role(Delivery)
+        ];
 
-        assert_eq!(buf.as_ref(), combined_bytes.as_slice());
+        assert_eq!(buf.as_ref(), expected_bytes_array);
     }
 
     #[test]
     fn depacketize_client_setup() {
-        let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-        let supported_versions_length = supported_versions.len() as u8;
+        let bytes_array = [
+            1,   // Number of Supported Versions (i)
+            192, // Supported Version (i): Length(11 of 2MSB)
+            0, 0, 0, 255, 0, 0, 1, // Supported Version(i): Value(0xff000001) in 62bit
+            1, // Number of Parameters (i)
+            0, // SETUP Parameters (..): Type(Role)
+            1, // SETUP Parameters (..): Length
+            2, // SETUP Parameters (..): Role(Delivery)
+        ];
+        let mut buf = BytesMut::with_capacity(bytes_array.len());
+        buf.extend_from_slice(&bytes_array);
+        let depacketized_client_setup = ClientSetup::depacketize(&mut buf).unwrap();
 
+        let supported_versions = vec![MOQ_TRANSPORT_VERSION];
         let role_parameter = RoleParameter::new(RoleCase::Delivery);
         let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
-        let setup_parameters_length = setup_parameters.len() as u8;
-
         let expected_client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
-
-        // Number of Supported Versions (i)
-        let mut combined_bytes = Vec::from(supported_versions_length.to_be_bytes());
-        // Supported Version (i)
-        combined_bytes.extend(write_variable_integer(MOQ_TRANSPORT_VERSION as u64));
-        // Number of Parameters (i)
-        combined_bytes.extend(setup_parameters_length.to_be_bytes());
-        // SETUP Parameters (..)
-        combined_bytes.extend(vec![
-            role_parameter.key as u8,
-            role_parameter.value_length,
-            role_parameter.value as u8,
-        ]);
-
-        let mut buf = bytes::BytesMut::from(combined_bytes.as_slice());
-        let depacketized_client_setup = ClientSetup::depacketize(&mut buf).unwrap();
 
         assert_eq!(depacketized_client_setup, expected_client_setup);
     }
