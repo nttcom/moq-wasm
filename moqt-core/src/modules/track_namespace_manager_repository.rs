@@ -4,8 +4,10 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait TrackNamespaceManagerRepository: Send + Sync {
     async fn set_publisher(&self, track_namespace: &str, session_id: usize) -> Result<()>;
-    async fn delete_publisher(&self, track_namespace: &str) -> Result<()>;
-    async fn has_namespace(&self, track_namespace: &str) -> bool;
+    async fn delete_publisher_by_namespace(&self, track_namespace: &str) -> Result<()>;
+    async fn delete_publisher_by_session_id(&self, publisher_session_id: usize) -> Result<()>;
+    async fn has_track_namespace(&self, track_namespace: &str) -> bool;
+    async fn has_track_name(&self, track_namespace: &str, track_name: &str) -> bool;
     async fn get_publisher_session_id_by_track_namespace(
         &self,
         track_namespace: &str,
@@ -22,6 +24,7 @@ pub trait TrackNamespaceManagerRepository: Send + Sync {
         track_name: &str,
         subscriber_session_id: usize,
     ) -> Result<()>;
+    async fn delete_subscribers_by_session_id(&self, subscriber_session_id: usize) -> Result<()>;
     async fn set_track_id(
         &self,
         track_namespace: &str,
