@@ -3,7 +3,7 @@ use num_enum::IntoPrimitive;
 // for draft-ietf-moq-transport-01
 pub const MOQ_TRANSPORT_VERSION: u32 = 0xff000001;
 
-#[derive(Debug, IntoPrimitive)]
+#[derive(Debug, IntoPrimitive, PartialEq)]
 #[repr(u8)]
 pub enum TerminationErrorCode {
     NoError = 0x0,

@@ -75,24 +75,23 @@ pub async fn message_handler(
         }
     };
     tracing::info!("Received Message Type: {:?}", message_type);
-    if message_type.is_setup_message() {
-        // Setup message must be sent on bidirectional stream
-        if stream_type == StreamType::Uni {
-            read_buf.advance(read_cur.position() as usize);
 
-            let message = String::from("Setup message must be sent on bidirectional stream");
-            tracing::debug!(message);
-            return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
-        }
-    } else if message_type.is_control_message() {
-        // TODO: Drop with Protocol Violation if it is a different stream from the SETUP message
-    } else {
+    if message_type.is_object_message() {
         // Object message must be sent on unidirectional stream
         if stream_type == StreamType::Bi {
             read_buf.advance(read_cur.position() as usize);
 
             let message = String::from("Object message must be sent on unidirectional stream");
-            tracing::debug!(message);
+            tracing::error!(message);
+            return MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, message);
+        }
+    } else {
+        // Control message must be sent on bidirectional stream
+        if stream_type == StreamType::Uni {
+            read_buf.advance(read_cur.position() as usize);
+
+            let message = String::from("Control message must be sent on bidirectional stream");
+            tracing::error!(message);
             return MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, message);
         }
     }
@@ -110,9 +109,17 @@ pub async fn message_handler(
 
     let return_message_type = match message_type {
         MessageType::ObjectWithPayloadLength => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::ProtocolViolation,
+                    message,
+                );
+            }
+
             match process_object_with_payload_length(
                 &mut payload_buf,
-                client,
                 track_namespace_manager_repository,
                 send_stream_dispatcher_repository,
             )
@@ -130,9 +137,17 @@ pub async fn message_handler(
             }
         }
         MessageType::ObjectWithoutPayloadLength => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::ProtocolViolation,
+                    message,
+                );
+            }
+
             match process_object_without_payload_length(
                 &mut payload_buf,
-                client,
                 track_namespace_manager_repository,
                 send_stream_dispatcher_repository,
             )
@@ -150,6 +165,15 @@ pub async fn message_handler(
             }
         }
         MessageType::ClientSetup => {
+            if client.status() != MOQTClientStatus::Connected {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::ProtocolViolation,
+                    message,
+                );
+            }
+
             match process_client_setup_message(
                 &mut payload_buf,
                 client,
@@ -167,6 +191,15 @@ pub async fn message_handler(
             }
         }
         MessageType::Subscribe => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::ProtocolViolation,
+                    message,
+                );
+            }
+
             match process_subscribe_message(
                 &mut payload_buf,
                 client,
@@ -187,9 +220,17 @@ pub async fn message_handler(
             }
         }
         MessageType::SubscribeOk => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::ProtocolViolation,
+                    message,
+                );
+            }
+
             match process_subscribe_ok_message(
                 &mut payload_buf,
-                client,
                 track_namespace_manager_repository,
                 send_stream_dispatcher_repository,
             )
@@ -215,7 +256,10 @@ pub async fn message_handler(
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
-                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::ProtocolViolation,
+                    message,
+                );
             }
 
             let unsubscribe_message = UnAnnounce::depacketize(&mut payload_buf);
@@ -238,6 +282,15 @@ pub async fn message_handler(
             return MessageProcessResult::Success(BytesMut::with_capacity(0));
         }
         MessageType::Announce => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::ProtocolViolation,
+                    message,
+                );
+            }
+
             match process_announce_message(
                 &mut payload_buf,
                 client,
@@ -272,7 +325,10 @@ pub async fn message_handler(
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
-                return MessageProcessResult::Failure(TerminationErrorCode::GenericError, message);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::ProtocolViolation,
+                    message,
+                );
             }
 
             let unannounce_message = UnAnnounce::depacketize(&mut payload_buf);

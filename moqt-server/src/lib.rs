@@ -33,8 +33,7 @@ use tokio::sync::{
 use tracing::{self, Instrument};
 use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
 use wtransport::{
-    RecvStream, SendStream,
-    {endpoint::IncomingSession, Endpoint, Identity, ServerConfig},
+    endpoint::IncomingSession, Endpoint, Identity, RecvStream, SendStream, ServerConfig,
 };
 
 // Callback to validate the Auth parameter
@@ -388,20 +387,16 @@ async fn handle_incoming_uni_stream(
     match message_result {
         MessageProcessResult::SuccessWithoutResponse => {}
         MessageProcessResult::Failure(code, message) => {
-            close_tx
-                .send((u8::from(code) as u64, message.clone()))
-                .await?;
+            tracing::warn!("Uni-stream handling failed: {:?} ({:?})", message, code);
+            if code == TerminationErrorCode::ProtocolViolation {
+                close_tx.send((code as u64, message.clone())).await?;
+            }
             bail!(message);
         }
         MessageProcessResult::Fragment => (),
         MessageProcessResult::Success(_) => {
             let message = "Unsuported message type for uni-directional stream".to_string();
-            close_tx
-                .send((
-                    u8::from(TerminationErrorCode::GenericError) as u64,
-                    message.clone(),
-                ))
-                .await?;
+            tracing::warn!("Uni-stream handling failed: {:?}", message);
             bail!(message);
         }
     };
@@ -413,7 +408,7 @@ async fn handle_incoming_uni_stream(
         })
         .await?;
 
-    Ok::<()>(())
+    Ok(())
 }
 
 struct BiStream {
@@ -494,7 +489,7 @@ async fn handle_incoming_bi_stream(
         })
         .await?;
 
-    Ok::<()>(())
+    Ok(())
 }
 
 async fn relay_object_message(mut send_stream: SendStream, message: Arc<Box<dyn MOQTPayload>>) {
@@ -527,14 +522,15 @@ async fn relay_object_message(mut send_stream: SendStream, message: Arc<Box<dyn 
             MessageType::ObjectWithoutPayloadLength
         );
     } else {
-        tracing::error!("Unsupported message type for uni-directional stream");
+        tracing::warn!("Unsupported message type for uni-directional stream");
+
         return;
     }
 
     message_buf.extend(write_buf);
 
     if let Err(e) = send_stream.write_all(&message_buf).await {
-        tracing::error!("Failed to write to stream: {:?}", e);
+        tracing::warn!("Failed to write to stream: {:?}", e);
         return;
     }
 
@@ -568,7 +564,7 @@ async fn wait_and_relay_control_message(
             ));
             tracing::info!("Relayed Message Type: {:?}", MessageType::SubscribeError);
         } else {
-            tracing::error!("Unsupported message type for bi-directional stream");
+            tracing::warn!("Unsupported message type for bi-directional stream");
             continue;
         }
 
@@ -576,7 +572,7 @@ async fn wait_and_relay_control_message(
 
         let mut shread_send_stream = send_stream.lock().await;
         if let Err(e) = shread_send_stream.write_all(&message_buf).await {
-            tracing::error!("Failed to write to stream: {:?}", e);
+            tracing::warn!("Failed to write to stream: {:?}", e);
             break;
         }
 
