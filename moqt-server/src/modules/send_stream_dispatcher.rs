@@ -19,7 +19,7 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
     //     "bidirectional_stream" : tx,
     //   }
     // }
-    let mut relay_senders = HashMap::<usize, HashMap<String, SenderToSendStreamThread>>::new();
+    let mut dispatcher = HashMap::<usize, HashMap<String, SenderToSendStreamThread>>::new();
 
     while let Some(cmd) = rx.recv().await {
         tracing::debug!("command received: {:#?}", cmd);
@@ -29,9 +29,9 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
                 stream_type,
                 sender,
             } => {
-                let inner_map = relay_senders.entry(session_id).or_default();
+                let inner_map = dispatcher.entry(session_id).or_default();
                 inner_map.insert(stream_type.to_string(), sender);
-                tracing::debug!("set: {:?}", relay_senders);
+                tracing::debug!("set: {:?} of {:?}", stream_type, session_id);
             }
             List {
                 stream_type,
@@ -39,7 +39,7 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
                 resp,
             } => {
                 let mut senders = Vec::new();
-                for (session_id, inner_map) in &relay_senders {
+                for (session_id, inner_map) in &dispatcher {
                     if let Some(exclude_session_id) = exclude_session_id {
                         if *session_id == exclude_session_id {
                             continue;
@@ -56,12 +56,16 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
                 stream_type,
                 resp,
             } => {
-                let sender = relay_senders
+                let sender = dispatcher
                     .get(&session_id)
                     .and_then(|inner_map| inner_map.get(&stream_type))
                     .cloned();
                 tracing::debug!("get: {:?}", sender);
                 let _ = resp.send(sender);
+            }
+            Delete { session_id } => {
+                dispatcher.remove(&session_id);
+                tracing::debug!("delete: {:?}", session_id);
             }
         }
     }
@@ -86,20 +90,23 @@ pub(crate) enum SendStreamDispatchCommand {
         stream_type: String,
         resp: oneshot::Sender<Option<SenderToSendStreamThread>>,
     },
+    Delete {
+        session_id: usize,
+    },
 }
 
-pub(crate) struct RelayHandlerManager {
+pub(crate) struct SendStreamDispatcher {
     tx: mpsc::Sender<SendStreamDispatchCommand>,
 }
 
-impl RelayHandlerManager {
+impl SendStreamDispatcher {
     pub fn new(tx: mpsc::Sender<SendStreamDispatchCommand>) -> Self {
         Self { tx }
     }
 }
 
 #[async_trait]
-impl SendStreamDispatcherRepository for RelayHandlerManager {
+impl SendStreamDispatcherRepository for SendStreamDispatcher {
     async fn broadcast_message_to_send_stream_threads(
         &self,
         session_id: Option<usize>,
