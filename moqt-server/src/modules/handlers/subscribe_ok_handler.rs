@@ -79,7 +79,7 @@ pub(crate) async fn subscribe_ok_handler(
 mod success {
     use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
     use crate::modules::send_stream_dispatcher::{
-        send_stream_dispatcher, RelayHandlerManager, SendStreamDispatchCommand,
+        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
@@ -125,8 +125,8 @@ mod success {
         let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
 
         tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: RelayHandlerManager =
-            RelayHandlerManager::new(send_stream_tx.clone());
+        let mut send_stream_dispatcher: SendStreamDispatcher =
+            SendStreamDispatcher::new(send_stream_tx.clone());
 
         let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
@@ -153,7 +153,7 @@ mod success {
 mod failure {
     use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
     use crate::modules::send_stream_dispatcher::{
-        send_stream_dispatcher, RelayHandlerManager, SendStreamDispatchCommand,
+        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
@@ -199,8 +199,8 @@ mod failure {
         let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
 
         tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: RelayHandlerManager =
-            RelayHandlerManager::new(send_stream_tx.clone());
+        let mut send_stream_dispatcher: SendStreamDispatcher =
+            SendStreamDispatcher::new(send_stream_tx.clone());
 
         // Execute subscribe_ok_handler and get result
         let result = subscribe_ok_handler(
@@ -246,8 +246,8 @@ mod failure {
         let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
 
         tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: RelayHandlerManager =
-            RelayHandlerManager::new(send_stream_tx.clone());
+        let mut send_stream_dispatcher: SendStreamDispatcher =
+            SendStreamDispatcher::new(send_stream_tx.clone());
 
         let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
