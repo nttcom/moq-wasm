@@ -21,7 +21,7 @@ use moqt_core::{
     },
     stream_type::StreamType,
     variable_integer::write_variable_integer,
-    MOQTClient,
+    MOQTClient, TrackNamespaceManagerRepository,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -323,12 +323,26 @@ async fn handle_connection(
         }
     }
 
+    // Delete pub/sub information related to the client
+    let track_namespace_manager =
+        modules::track_namespace_manager::TrackNamespaceManager::new(track_namespace_tx.clone());
+    let _ = track_namespace_manager.delete_client(stable_id).await;
+
+    // Delete senders to the client
+    send_stream_tx
+        .send(SendStreamDispatchCommand::Delete {
+            session_id: stable_id,
+        })
+        .await?;
+
     // FIXME: Do not remove if storing QUIC-level sessions
     buffer_tx
         .send(BufferCommand::ReleaseSession {
             session_id: stable_id,
         })
         .await?;
+
+    tracing::info!("session terminated");
 
     Ok(())
 }
@@ -356,7 +370,7 @@ async fn handle_incoming_uni_stream(
     let mut track_namespace_manager =
         modules::track_namespace_manager::TrackNamespaceManager::new(track_namespace_tx.clone());
     let mut send_stream_dispatcher =
-        modules::send_stream_dispatcher::RelayHandlerManager::new(send_stream_tx.clone());
+        modules::send_stream_dispatcher::SendStreamDispatcher::new(send_stream_tx.clone());
 
     let bytes_read = match recv_stream.read(&mut buffer).await? {
         Some(bytes_read) => bytes_read,
@@ -436,7 +450,7 @@ async fn handle_incoming_bi_stream(
     let mut track_namespace_manager =
         modules::track_namespace_manager::TrackNamespaceManager::new(track_namespace_tx.clone());
     let mut send_stream_dispatcher =
-        modules::send_stream_dispatcher::RelayHandlerManager::new(send_stream_tx.clone());
+        modules::send_stream_dispatcher::SendStreamDispatcher::new(send_stream_tx.clone());
 
     loop {
         let bytes_read = match recv_stream.read(&mut buffer).await? {

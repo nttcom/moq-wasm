@@ -62,7 +62,6 @@ impl TrackNameObject {
     fn is_exist_subscriber(&self, subscriber_session_id: usize) -> bool {
         self.subscribers.contains_key(&subscriber_session_id)
     }
-
     fn is_subscriber_empty(&self) -> bool {
         self.subscribers.is_empty()
     }
@@ -102,6 +101,12 @@ impl TrackNamespaceObject {
     fn delete_track(&mut self, track_name: String) {
         self.tracks.remove(&track_name);
     }
+
+    fn delete_subscriber_from_all_tracks(&mut self, subscriber_session_id: SubscriberSessionId) {
+        for track in self.tracks.values_mut() {
+            track.delete_subscriber(subscriber_session_id);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -120,6 +125,15 @@ impl TrackNamespaces {
         self.publishers.contains_key(&track_namespace)
     }
 
+    fn is_exist_track_name(&mut self, track_namespace: String, track_name: String) -> bool {
+        if !self.is_exist_track_namespace(track_namespace.clone()) {
+            return false;
+        }
+        let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
+
+        track_namespace_object.is_exist_track_name(track_name)
+    }
+
     fn set_publisher(
         &mut self,
         track_namespace: String,
@@ -134,12 +148,20 @@ impl TrackNamespaces {
         Ok(())
     }
 
-    fn delete_publisher(&mut self, track_namespace: String) -> Result<()> {
+    fn delete_publisher_by_namespace(&mut self, track_namespace: String) -> Result<()> {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
             bail!("not found");
         }
 
         self.publishers.remove(&track_namespace);
+        Ok(())
+    }
+
+    fn delete_publisher_by_session_id(&mut self, publisher_session_id: usize) -> Result<()> {
+        // Retain elements other than the specified publisher_session_id
+        //   = Delete the element specified publisher_session_id
+        self.publishers
+            .retain(|_, namespace| namespace.publisher_session_id != publisher_session_id);
         Ok(())
     }
 
@@ -200,8 +222,32 @@ impl TrackNamespaces {
             bail!("subscriber not found");
         }
         track_name_object.delete_subscriber(subscriber_session_id);
+
+        // Delete track with no subscribers
         if track_name_object.is_subscriber_empty() {
             track_namespace_object.delete_track(track_name);
+        }
+
+        Ok(())
+    }
+
+    fn delete_subscriber_from_all_publishers(
+        &mut self,
+        subscriber_session_id: SubscriberSessionId,
+    ) -> Result<()> {
+        for track_namespace_object in self.publishers.values_mut() {
+            track_namespace_object.delete_subscriber_from_all_tracks(subscriber_session_id);
+
+            // Delete track with no subscribers
+            let mut empty_tracks = Vec::new();
+            for (track_name, track_name_object) in track_namespace_object.tracks.iter_mut() {
+                if track_name_object.is_subscriber_empty() {
+                    empty_tracks.push(track_name.to_string());
+                }
+            }
+            for track_name in empty_tracks {
+                track_namespace_object.delete_track(track_name);
+            }
         }
 
         Ok(())
@@ -345,21 +391,39 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
                     resp.send(false).unwrap();
                 }
             },
-            DeletePublisher {
+            DeletePublisherByNamespace {
                 track_namespace,
                 resp,
-            } => match namespaces.delete_publisher(track_namespace) {
+            } => match namespaces.delete_publisher_by_namespace(track_namespace) {
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
-                    tracing::error!("set_publisher: err: {:?}", err.to_string());
+                    tracing::error!("delete_publisher_by_namespace: err: {:?}", err.to_string());
                     resp.send(false).unwrap();
                 }
             },
-            HasNamespace {
+            DeletePublisherBySessionId {
+                publisher_session_id,
+                resp,
+            } => match namespaces.delete_publisher_by_session_id(publisher_session_id) {
+                Ok(_) => resp.send(true).unwrap(),
+                Err(err) => {
+                    tracing::error!("delete_publisher_by_session_id: err: {:?}", err.to_string());
+                    resp.send(false).unwrap();
+                }
+            },
+            HasTrackNamespace {
                 track_namespace,
                 resp,
             } => {
                 let result = namespaces.is_exist_track_namespace(track_namespace);
+                resp.send(result).unwrap();
+            }
+            HasTrackName {
+                track_namespace,
+                track_name,
+                resp,
+            } => {
+                let result = namespaces.is_exist_track_name(track_namespace, track_name);
                 resp.send(result).unwrap();
             }
             GetPublisherSessionId {
@@ -398,6 +462,19 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
                 Ok(_) => resp.send(true).unwrap(),
                 Err(err) => {
                     tracing::error!("delete_subscriber: err: {:?}", err.to_string());
+                    resp.send(false).unwrap();
+                }
+            },
+            DeleteSubscliberBySessionId {
+                subscriber_session_id,
+                resp,
+            } => match namespaces.delete_subscriber_from_all_publishers(subscriber_session_id) {
+                Ok(_) => resp.send(true).unwrap(),
+                Err(err) => {
+                    tracing::error!(
+                        "delete_subscriber_from_all_publishers: err: {:?}",
+                        err.to_string()
+                    );
                     resp.send(false).unwrap();
                 }
             },
@@ -460,12 +537,21 @@ pub(crate) enum TrackCommand {
         publisher_session_id: usize,
         resp: oneshot::Sender<bool>,
     },
-    DeletePublisher {
+    DeletePublisherByNamespace {
         track_namespace: String,
         resp: oneshot::Sender<bool>,
     },
-    HasNamespace {
+    DeletePublisherBySessionId {
+        publisher_session_id: usize,
+        resp: oneshot::Sender<bool>,
+    },
+    HasTrackNamespace {
         track_namespace: String,
+        resp: oneshot::Sender<bool>,
+    },
+    HasTrackName {
+        track_namespace: String,
+        track_name: String,
         resp: oneshot::Sender<bool>,
     },
     GetPublisherSessionId {
@@ -481,6 +567,10 @@ pub(crate) enum TrackCommand {
     DeleteSubscliber {
         track_namespace: String,
         track_name: String,
+        subscriber_session_id: usize,
+        resp: oneshot::Sender<bool>,
+    },
+    DeleteSubscliberBySessionId {
         subscriber_session_id: usize,
         resp: oneshot::Sender<bool>,
     },
@@ -543,10 +633,10 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
         }
     }
 
-    async fn delete_publisher(&self, track_namespace: &str) -> Result<()> {
+    async fn delete_publisher_by_namespace(&self, track_namespace: &str) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
-        let cmd = TrackCommand::DeletePublisher {
+        let cmd = TrackCommand::DeletePublisherByNamespace {
             track_namespace: track_namespace.to_string(),
             resp: resp_tx,
         };
@@ -560,11 +650,42 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
         }
     }
 
-    async fn has_namespace(&self, track_namespace: &str) -> bool {
+    async fn delete_publisher_by_session_id(&self, publisher_session_id: usize) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
-        let cmd = TrackCommand::HasNamespace {
+        let cmd = TrackCommand::DeletePublisherBySessionId {
+            publisher_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            true => Ok(()),
+            false => bail!("unknown error"),
+        }
+    }
+
+    async fn has_track_namespace(&self, track_namespace: &str) -> bool {
+        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
+
+        let cmd = TrackCommand::HasTrackNamespace {
             track_namespace: track_namespace.to_string(),
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+        return result;
+    }
+
+    async fn has_track_name(&self, track_namespace: &str, track_name: &str) -> bool {
+        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
+
+        let cmd = TrackCommand::HasTrackName {
+            track_namespace: track_namespace.to_string(),
+            track_name: track_name.to_string(),
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -634,6 +755,23 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
         match result {
             true => Ok(()),
             false => bail!("not found"),
+        }
+    }
+
+    async fn delete_subscribers_by_session_id(&self, subscriber_session_id: usize) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
+
+        let cmd = TrackCommand::DeleteSubscliberBySessionId {
+            subscriber_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            true => Ok(()),
+            false => bail!("unknown error"),
         }
     }
 
@@ -718,6 +856,13 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
             false => bail!("not found"),
         }
     }
+
+    async fn delete_client(&self, session_id: usize) -> Result<()> {
+        self.delete_publisher_by_session_id(session_id).await?;
+        self.delete_subscribers_by_session_id(session_id).await?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -745,7 +890,32 @@ mod success {
     }
 
     #[tokio::test]
-    async fn delete_publisher() {
+    async fn delete_publisher_by_namespace() {
+        let track_namespace = "test";
+        let publisher_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+
+        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let _ = track_namespace_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+
+        let _ = track_namespace_manager
+            .delete_publisher_by_namespace(track_namespace)
+            .await;
+
+        let result = track_namespace_manager
+            .get_publisher_session_id_by_track_namespace(track_namespace)
+            .await;
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn has_track_namespace() {
         let track_namespace = "test";
         let publisher_session_id = 1;
 
@@ -759,27 +929,8 @@ mod success {
             .await;
 
         let result = track_namespace_manager
-            .delete_publisher(track_namespace)
+            .has_track_namespace(track_namespace)
             .await;
-
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn has_namespace() {
-        let track_namespace = "test";
-        let publisher_session_id = 1;
-
-        // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
-
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
-            .await;
-
-        let result = track_namespace_manager.has_namespace(track_namespace).await;
 
         assert!(result);
     }
@@ -861,32 +1012,6 @@ mod success {
     async fn delete_subscriber() {
         let track_namespace = "test_namespace";
         let publisher_session_id = 1;
-        let subscriber_session_id = 2;
-        let track_name = "test_name";
-
-        // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
-
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
-            .await;
-        let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id, track_name)
-            .await;
-
-        let result = track_namespace_manager
-            .delete_subscriber(track_namespace, track_name, subscriber_session_id)
-            .await;
-
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn delete_last_subscriber() {
-        let track_namespace = "test_namespace";
-        let publisher_session_id = 1;
         let subscriber_session_id_1 = 2;
         let subscriber_session_id_2 = 3;
         let track_name = "test_name";
@@ -906,11 +1031,50 @@ mod success {
             .set_subscriber(track_namespace, subscriber_session_id_2, track_name)
             .await;
 
-        let result = track_namespace_manager
+        let _ = track_namespace_manager
             .delete_subscriber(track_namespace, track_name, subscriber_session_id_1)
             .await;
 
-        assert!(result.is_ok());
+        let result = track_namespace_manager
+            .get_subscriber_session_ids_by_track_namespace_and_track_name(
+                track_namespace,
+                track_name,
+            )
+            .await
+            .unwrap();
+        let expected_result = vec![subscriber_session_id_2];
+
+        assert_eq!(result, expected_result);
+    }
+
+    #[tokio::test]
+    async fn delete_last_subscriber() {
+        let track_namespace = "test_namespace";
+        let publisher_session_id = 1;
+        let subscriber_session_id = 2;
+        let track_name = "test_name";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+
+        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let _ = track_namespace_manager
+            .set_publisher(track_namespace, publisher_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_subscriber(track_namespace, subscriber_session_id, track_name)
+            .await;
+
+        let _ = track_namespace_manager
+            .delete_subscriber(track_namespace, track_name, subscriber_session_id)
+            .await;
+
+        let result = track_namespace_manager
+            .has_track_name(track_namespace, track_name)
+            .await;
+
+        assert!(!result);
     }
 
     #[tokio::test]
@@ -954,6 +1118,134 @@ mod success {
 
         assert_eq!(result, subscriber_session_ids);
     }
+
+    #[tokio::test]
+    async fn delete_client() {
+        let track_namespaces = ["test_namespace_1", "test_namespace_2"];
+        let publisher_session_ids = [1, 2];
+        let mut subscriber_session_ids = vec![2, 3, 4];
+        let track_id = 0;
+        let track_name = "test_name";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+
+        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+
+        // Register:
+        //   pub 1 <- sub 2, 3, 4
+        //   pub 2 <- sub 3, 4
+        for i in [0, 1] {
+            let _ = track_namespace_manager
+                .set_publisher(track_namespaces[i], publisher_session_ids[i])
+                .await;
+        }
+        let _ = track_namespace_manager
+            .set_subscriber(track_namespaces[0], subscriber_session_ids[0], track_name)
+            .await;
+        for i in [0, 1] {
+            let _ = track_namespace_manager
+                .set_subscriber(track_namespaces[i], subscriber_session_ids[1], track_name)
+                .await;
+            let _ = track_namespace_manager
+                .set_subscriber(track_namespaces[i], subscriber_session_ids[2], track_name)
+                .await;
+
+            let _ = track_namespace_manager
+                .set_track_id(track_namespaces[i], track_name, track_id)
+                .await;
+
+            let _ = track_namespace_manager
+                .activate_subscriber(track_namespaces[i], track_name, subscriber_session_ids[1])
+                .await;
+            let _ = track_namespace_manager
+                .activate_subscriber(track_namespaces[i], track_name, subscriber_session_ids[2])
+                .await;
+        }
+        let _ = track_namespace_manager
+            .activate_subscriber(track_namespaces[0], track_name, subscriber_session_ids[0])
+            .await;
+
+        // Delete: pub 2, sub 2
+        // Remain: pub 1 <- sub 3, 4
+        let _ = track_namespace_manager
+            .delete_client(subscriber_session_ids[0])
+            .await;
+
+        // Test for subscriber
+        // Remain: sub 3, 4
+        subscriber_session_ids.remove(0);
+        let mut delete_subscriber_result = track_namespace_manager
+            .get_subscriber_session_ids_by_track_id(track_id)
+            .await
+            .unwrap();
+
+        delete_subscriber_result.sort();
+
+        assert_eq!(delete_subscriber_result, subscriber_session_ids);
+
+        // Test for subscriber
+        // Remain: pub 1
+        let delete_publisher_result_1 = track_namespace_manager
+            .get_publisher_session_id_by_track_namespace(track_namespaces[0])
+            .await
+            .unwrap();
+        let delete_publisher_result_2 = track_namespace_manager
+            .get_publisher_session_id_by_track_namespace(track_namespaces[1])
+            .await;
+
+        assert_eq!(delete_publisher_result_1, publisher_session_ids[0]);
+        assert!(delete_publisher_result_2.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_client_as_last_subscriber() {
+        let track_namespaces = ["test_namespace_1", "test_namespace_2"];
+        let publisher_session_ids = [1, 2];
+        let subscriber_session_id = 2;
+        let track_id = 0;
+        let track_name = "test_name";
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+
+        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+
+        // Register:
+        //   pub 1 <- sub 2
+        //   pub 2
+        for i in [0, 1] {
+            let _ = track_namespace_manager
+                .set_publisher(track_namespaces[i], publisher_session_ids[i])
+                .await;
+        }
+
+        let _ = track_namespace_manager
+            .set_subscriber(track_namespaces[0], subscriber_session_id, track_name)
+            .await;
+
+        let _ = track_namespace_manager
+            .set_track_id(track_namespaces[0], track_name, track_id)
+            .await;
+
+        let _ = track_namespace_manager
+            .activate_subscriber(track_namespaces[0], track_name, subscriber_session_id)
+            .await;
+
+        // Delete: pub 2, sub 2
+        // Remain: pub 1
+        let _ = track_namespace_manager
+            .delete_client(subscriber_session_id)
+            .await;
+
+        let result = track_namespace_manager
+            .has_track_name(track_namespaces[0], track_name)
+            .await;
+
+        assert!(!result);
+    }
 }
 
 #[cfg(test)]
@@ -985,7 +1277,7 @@ mod failure {
     }
 
     #[tokio::test]
-    async fn delete_publisher_not_found() {
+    async fn delete_publisher_by_namespace_not_found() {
         let track_namespace = "test";
 
         // Start track management thread
@@ -995,7 +1287,7 @@ mod failure {
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
 
         let result = track_namespace_manager
-            .delete_publisher(track_namespace)
+            .delete_publisher_by_namespace(track_namespace)
             .await;
 
         assert!(result.is_err());
