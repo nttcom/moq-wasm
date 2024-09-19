@@ -123,7 +123,7 @@ mod success {
         object_with_payload_length_handler, object_without_payload_length_handler,
     };
     use crate::modules::send_stream_dispatcher::{
-        send_stream_dispatcher, SendStreamDispatcher, SendStreamDispatchCommand,
+        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
@@ -279,7 +279,7 @@ mod failure {
         object_with_payload_length_handler, object_without_payload_length_handler,
     };
     use crate::modules::send_stream_dispatcher::{
-        send_stream_dispatcher, SendStreamDispatcher, SendStreamDispatchCommand,
+        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
