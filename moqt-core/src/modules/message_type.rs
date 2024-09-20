@@ -24,13 +24,13 @@ impl MessageType {
     pub fn is_setup_message(&self) -> bool {
         matches!(self, MessageType::ClientSetup | MessageType::ServerSetup)
     }
-    pub fn is_object(&self) -> bool {
+    pub fn is_object_message(&self) -> bool {
         matches!(
             self,
             MessageType::ObjectWithPayloadLength | MessageType::ObjectWithoutPayloadLength
         )
     }
     pub fn is_control_message(&self) -> bool {
-        !self.is_setup_message() && !self.is_object()
+        !self.is_setup_message() && !self.is_object_message()
     }
 }

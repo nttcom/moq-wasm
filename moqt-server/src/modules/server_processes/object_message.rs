@@ -8,22 +8,14 @@ use moqt_core::{
         moqt_payload::MOQTPayload,
         object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
     },
-    moqt_client::MOQTClientStatus,
-    MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
+    SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
 pub(crate) async fn process_object_with_payload_length(
     payload_buf: &mut BytesMut,
-    client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
-    if client.status() != MOQTClientStatus::SetUp {
-        let message = String::from("Invalid timing");
-        tracing::error!(message);
-        bail!(message);
-    }
-
     let object_message = match ObjectWithPayloadLength::depacketize(payload_buf) {
         Ok(object_message) => object_message,
         Err(err) => {
@@ -42,16 +34,9 @@ pub(crate) async fn process_object_with_payload_length(
 
 pub(crate) async fn process_object_without_payload_length(
     payload_buf: &mut BytesMut,
-    client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<()> {
-    if client.status() != MOQTClientStatus::SetUp {
-        let message = String::from("Invalid timing");
-        tracing::error!(message);
-        bail!(message);
-    }
-
     let object_message = match ObjectWithoutPayloadLength::depacketize(payload_buf) {
         Ok(object_message) => object_message,
         Err(err) => {

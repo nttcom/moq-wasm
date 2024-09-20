@@ -5,7 +5,6 @@ use anyhow::{bail, Result};
 use moqt_core::{
     constants::UnderlayType,
     messages::{client_setup::ClientSetup, moqt_payload::MOQTPayload},
-    moqt_client::MOQTClientStatus,
     MOQTClient,
 };
 
@@ -15,11 +14,6 @@ pub(crate) fn process_client_setup_message(
     underlay_type: UnderlayType,
     write_buf: &mut BytesMut,
 ) -> Result<()> {
-    if client.status() != MOQTClientStatus::Connected {
-        let message = String::from("Invalid timing");
-        tracing::error!(message);
-        bail!(message);
-    }
     let client_setup_message = match ClientSetup::depacketize(payload_buf) {
         Ok(client_setup_message) => client_setup_message,
         Err(err) => {
