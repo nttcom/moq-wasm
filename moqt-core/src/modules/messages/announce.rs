@@ -47,8 +47,12 @@ impl MOQTPayload for Announce {
             .context("number of parameters")?;
         let mut parameters = vec![];
         for _ in 0..number_of_parameters {
-            let param = VersionSpecificParameter::depacketize(buf)?;
-            parameters.push(param);
+            let version_specific_parameter = VersionSpecificParameter::depacketize(buf)?;
+            if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
+                tracing::warn!("unknown track request parameter {}", code);
+            } else {
+                parameters.push(version_specific_parameter);
+            }
         }
 
         let announce_message = Announce {

@@ -3,7 +3,6 @@ use anyhow::{bail, Result};
 use bytes::BytesMut;
 use moqt_core::{
     messages::{announce::Announce, moqt_payload::MOQTPayload},
-    moqt_client::MOQTClientStatus,
     MOQTClient, TrackNamespaceManagerRepository,
 };
 
@@ -13,12 +12,6 @@ pub(crate) async fn process_announce_message(
     write_buf: &mut BytesMut,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<AnnounceResponse> {
-    if client.status() != MOQTClientStatus::SetUp {
-        let message = String::from("Invalid timing");
-        tracing::error!(message);
-        bail!(message);
-    }
-
     let announce_message = match Announce::depacketize(payload_buf) {
         Ok(announce_message) => announce_message,
         Err(err) => {

@@ -68,7 +68,6 @@ pub(crate) fn setup_handler(
     Ok(server_setup_message)
 }
 
-// TODO: Add tests of supported version
 #[cfg(test)]
 mod success {
     use std::vec;
@@ -121,12 +120,12 @@ mod failure {
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
     use moqt_core::messages::{
         client_setup::ClientSetup,
-        setup_parameters::{PathParameter, SetupParameter},
+        setup_parameters::{PathParameter, RoleCase, RoleParameter, SetupParameter},
     };
     use moqt_core::moqt_client::MOQTClient;
 
     #[test]
-    fn no_setup_parameter() {
+    fn no_role_parameter() {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![];
         let client_setup_message =
@@ -159,11 +158,45 @@ mod failure {
         let setup_parameters = vec![SetupParameter::PathParameter(PathParameter::new(
             String::from("test"),
         ))];
-        let client_setup_message = ClientSetup::new(vec![1], setup_parameters);
+        let client_setup_message =
+            ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
         let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
 
         assert!(server_setup_message.is_err());
+    }
+
+    #[test]
+    fn include_unsupported_version() {
+        let mut client = MOQTClient::new(33);
+        let setup_parameters = vec![SetupParameter::RoleParameter(RoleParameter::new(
+            RoleCase::Delivery,
+        ))];
+
+        let unsupported_version = 8888;
+        let client_setup_message = ClientSetup::new(vec![unsupported_version], setup_parameters);
+        let underlay_type = crate::constants::UnderlayType::WebTransport;
+
+        let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
+
+        assert_ne!(unsupported_version, constants::MOQ_TRANSPORT_VERSION); // assert unsupported_version is unsupport
+        assert!(server_setup_message.is_err());
+    }
+
+    #[test]
+    fn include_unknown_parameter() {
+        let mut client = MOQTClient::new(33);
+        let setup_parameters = vec![
+            SetupParameter::RoleParameter(RoleParameter::new(RoleCase::Injection)),
+            SetupParameter::Unknown(0),
+        ];
+        let client_setup_message =
+            ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
+        let underlay_type = crate::constants::UnderlayType::WebTransport;
+
+        let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
+
+        assert!(server_setup_message.is_ok());
     }
 }
