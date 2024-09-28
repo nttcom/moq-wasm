@@ -44,10 +44,6 @@ init().then(async () => {
       console.log({ subscribeResponse })
     })
 
-    client.onObject(async (object) => {
-      console.log({ object })
-    })
-
     const sendBtn = document.getElementById('sendBtn')
 
     const send = async () => {
@@ -66,14 +62,6 @@ init().then(async () => {
       switch (messageType) {
         case 'setup':
           await client.sendSetupMessage(role, versions)
-          break
-        case 'object':
-          // FIXME: Set these values from form or state
-          await client.sendObjectWithPayloadLengthMessage(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
-          break
-        case 'object-wo-length':
-          // FIXME: Set these values from form or state
-          await client.sendObjectWithoutPayloadLengthMessage(0n, 0n, 0n, 0n, new Uint8Array([0xde, 0xad, 0xbe, 0xef]))
           break
         case 'announce':
           await client.sendAnnounceMessage(trackNamespace, 1, authInfo)
