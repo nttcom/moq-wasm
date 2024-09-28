@@ -129,6 +129,7 @@ mod success {
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
+    use moqt_core::constants::StreamDirection;
     use moqt_core::messages::{
         moqt_payload::MOQTPayload,
         object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
@@ -189,7 +190,7 @@ mod success {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: subscriber_session_id,
-                stream_direction: "unidirectional_stream".to_string(),
+                stream_direction: StreamDirection::Uni,
                 sender: uni_relay_tx,
             })
             .await;
@@ -257,7 +258,7 @@ mod success {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: subscriber_session_id,
-                stream_direction: "unidirectional_stream".to_string(),
+                stream_direction: StreamDirection::Uni,
                 sender: uni_relay_tx,
             })
             .await;
@@ -285,6 +286,7 @@ mod failure {
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
+    use moqt_core::constants::StreamDirection;
     use moqt_core::messages::{
         moqt_payload::MOQTPayload,
         object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
@@ -335,7 +337,7 @@ mod failure {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: subscriber_session_id,
-                stream_direction: "unidirectional_stream".to_string(),
+                stream_direction: StreamDirection::Uni,
                 sender: uni_relay_tx,
             })
             .await;
@@ -393,7 +395,7 @@ mod failure {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: subscriber_session_id,
-                stream_direction: "unidirectional_stream".to_string(),
+                stream_direction: StreamDirection::Uni,
                 sender: uni_relay_tx,
             })
             .await;
