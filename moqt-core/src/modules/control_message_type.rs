@@ -2,9 +2,8 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 #[derive(Debug, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Clone)]
 #[repr(u8)]
-pub enum MessageType {
-    ObjectWithPayloadLength = 0x00,
-    ObjectWithoutPayloadLength = 0x02,
+pub enum ControlMessageType {
+    SubscribeUpdate = 0x02,
     Subscribe = 0x03,
     SubscribeOk = 0x04,
     SubscribeError = 0x05,
@@ -13,24 +12,28 @@ pub enum MessageType {
     AnnounceError = 0x08,
     UnAnnounce = 0x09,
     UnSubscribe = 0x0a,
-    SubscribeFin = 0x0b,
-    SubscribeRst = 0x0c,
+    SubscribeDone = 0x0b,
+    AnnounceCancel = 0x0c,
+    TrackStatusRequest = 0x0d,
+    TrackStatus = 0x0e,
     GoAway = 0x10,
+    SubscribeNamespace = 0x11,
+    SubscribeNamespaceOk = 0x12,
+    SubscribeNamespaceError = 0x13,
+    UnSubscribeNamespace = 0x14,
+    MaxSubscribeId = 0x15,
     ClientSetup = 0x40,
     ServerSetup = 0x41,
 }
 
-impl MessageType {
+impl ControlMessageType {
     pub fn is_setup_message(&self) -> bool {
-        matches!(self, MessageType::ClientSetup | MessageType::ServerSetup)
-    }
-    pub fn is_object_message(&self) -> bool {
         matches!(
             self,
-            MessageType::ObjectWithPayloadLength | MessageType::ObjectWithoutPayloadLength
+            ControlMessageType::ClientSetup | ControlMessageType::ServerSetup
         )
     }
     pub fn is_control_message(&self) -> bool {
-        !self.is_setup_message() && !self.is_object_message()
+        !self.is_setup_message()
     }
 }
