@@ -1,8 +1,8 @@
 use anyhow::{bail, Result};
 
 use moqt_core::{
-    messages::{moqt_payload::MOQTPayload, subscribe::Subscribe},
     constants::StreamDirection,
+    messages::{moqt_payload::MOQTPayload, subscribe::Subscribe},
     MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
@@ -85,7 +85,7 @@ mod success {
     use moqt_core::messages::{
         moqt_payload::MOQTPayload,
         subscribe::{Location, Subscribe},
-        version_specific_parameters::{GroupSequence, VersionSpecificParameter},
+        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     };
     use moqt_core::MOQTClient;
     use moqt_core::TrackNamespaceManagerRepository;
@@ -102,7 +102,7 @@ mod success {
         let end_group = Location::None;
         let end_object = Location::None;
         let version_specific_parameter =
-            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let track_request_parameters = vec![version_specific_parameter];
 
         let subscribe = Subscribe::new(
@@ -171,7 +171,7 @@ mod failure {
     use moqt_core::messages::{
         moqt_payload::MOQTPayload,
         subscribe::{Location, Subscribe},
-        version_specific_parameters::{GroupSequence, VersionSpecificParameter},
+        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     };
     use moqt_core::MOQTClient;
     use moqt_core::TrackNamespaceManagerRepository;
@@ -188,7 +188,7 @@ mod failure {
         let end_group = Location::None;
         let end_object = Location::None;
         let version_specific_parameter =
-            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let track_request_parameters = vec![version_specific_parameter];
 
         let subscribe = Subscribe::new(
@@ -265,7 +265,7 @@ mod failure {
         let end_group = Location::None;
         let end_object = Location::None;
         let version_specific_parameter =
-            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let track_request_parameters = vec![version_specific_parameter];
 
         let subscribe = Subscribe::new(
@@ -322,7 +322,7 @@ mod failure {
         let end_group = Location::None;
         let end_object = Location::None;
         let version_specific_parameter =
-            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let track_request_parameters = vec![version_specific_parameter];
 
         let subscribe = Subscribe::new(
