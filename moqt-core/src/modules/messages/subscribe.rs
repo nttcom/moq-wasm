@@ -183,7 +183,7 @@ impl MOQTPayload for Location {
 mod success {
     use crate::messages::moqt_payload::MOQTPayload;
     use crate::messages::subscribe::Subscribe;
-    use crate::messages::version_specific_parameters::GroupSequence;
+    use crate::messages::version_specific_parameters::AuthorizationInfo;
     use crate::messages::{
         subscribe::Location, version_specific_parameters::VersionSpecificParameter,
     };
@@ -198,7 +198,7 @@ mod success {
         let end_group = Location::None;
         let end_object = Location::None;
         let version_specific_parameter =
-            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let track_request_parameters = vec![version_specific_parameter];
 
         let subscribe = Subscribe::new(
@@ -226,9 +226,9 @@ mod success {
             0,   // EndGroup (Location): Location(None)
             0,   // EndObject (Location): Location(None)
             1,   // Track Request Parameters (..): Number of Parameters
-            0,   // Parameter Type (i)
-            1,   // Parameter Length (i)
-            0,   // Parameter Value (..): GroupSequence
+            2,   // Parameter Type (i): AuthorizationInfo
+            4,   // Parameter Length (i)
+            116, 101, 115, 116, // Parameter Value (..): test
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
@@ -247,9 +247,9 @@ mod success {
             0,   // EndGroup (Location): Location(None)
             0,   // EndObject (Location): Location(None)
             1,   // Track Request Parameters (..): Number of Parameters
-            0,   // Parameter Type (i)
-            1,   // Parameter Length (i)
-            0,   // Parameter Value (..): GroupSequence
+            2,   // Parameter Type (i): AuthorizationInfo
+            4,   // Parameter Length (i)
+            116, 101, 115, 116, // Parameter Value (..): test
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
@@ -262,7 +262,7 @@ mod success {
         let end_group = Location::None;
         let end_object = Location::None;
         let version_specific_parameter =
-            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let track_request_parameters = vec![version_specific_parameter];
         let expected_subscribe = Subscribe::new(
             track_namespace,
