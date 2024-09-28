@@ -1,15 +1,16 @@
 use anyhow::{bail, Result};
 
 use moqt_core::{
+    constants::StreamDirection,
     messages::{
         moqt_payload::MOQTPayload,
         object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
     },
-    stream_type::StreamType,
     track_namespace_manager_repository::TrackNamespaceManagerRepository,
     SendStreamDispatcherRepository,
 };
 
+#[allow(dead_code)]
 pub(crate) async fn object_with_payload_length_handler(
     object_with_payload_length_message: ObjectWithPayloadLength,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
@@ -39,7 +40,7 @@ pub(crate) async fn object_with_payload_length_handler(
                     session_id
                 );
                 match send_stream_dispatcher_repository
-                    .send_message_to_send_stream_thread(*session_id, message, StreamType::Uni)
+                    .send_message_to_send_stream_thread(*session_id, message, StreamDirection::Uni)
                     .await
                 {
                     Ok(_) => {}
@@ -92,7 +93,7 @@ pub(crate) async fn object_without_payload_length_handler(
                     session_id
                 );
                 match send_stream_dispatcher_repository
-                    .send_message_to_send_stream_thread(*session_id, message, StreamType::Uni)
+                    .send_message_to_send_stream_thread(*session_id, message, StreamDirection::Uni)
                     .await
                 {
                     Ok(_) => {}
@@ -188,7 +189,7 @@ mod success {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: subscriber_session_id,
-                stream_type: "unidirectional_stream".to_string(),
+                stream_direction: "unidirectional_stream".to_string(),
                 sender: uni_relay_tx,
             })
             .await;
@@ -256,7 +257,7 @@ mod success {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: subscriber_session_id,
-                stream_type: "unidirectional_stream".to_string(),
+                stream_direction: "unidirectional_stream".to_string(),
                 sender: uni_relay_tx,
             })
             .await;
@@ -334,7 +335,7 @@ mod failure {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: subscriber_session_id,
-                stream_type: "unidirectional_stream".to_string(),
+                stream_direction: "unidirectional_stream".to_string(),
                 sender: uni_relay_tx,
             })
             .await;
@@ -392,7 +393,7 @@ mod failure {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: subscriber_session_id,
-                stream_type: "unidirectional_stream".to_string(),
+                stream_direction: "unidirectional_stream".to_string(),
                 sender: uni_relay_tx,
             })
             .await;
