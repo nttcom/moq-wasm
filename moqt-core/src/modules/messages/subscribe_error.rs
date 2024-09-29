@@ -65,8 +65,9 @@ impl MOQTPayload for SubscribeError {
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
         let track_name =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track name")?;
-        let error_code_u64 = read_variable_integer_from_buffer(buf).context("error code")?;
-        let error_code = SubscribeErrorCode::try_from(error_code_u64 as u8)?;
+        let error_code_u64 = read_variable_integer_from_buffer(buf)?;
+        let error_code =
+            SubscribeErrorCode::try_from(error_code_u64 as u8).context("error code")?;
         let reason_phrase =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
 
