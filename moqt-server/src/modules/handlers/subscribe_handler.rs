@@ -1,8 +1,8 @@
 use anyhow::{bail, Result};
 
 use moqt_core::{
-    messages::{moqt_payload::MOQTPayload, subscribe::Subscribe},
     constants::StreamDirection,
+    messages::{moqt_payload::MOQTPayload, subscribe::Subscribe},
     MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
@@ -15,6 +15,8 @@ pub(crate) async fn subscribe_handler(
     tracing::trace!("subscribe_handler start.");
 
     tracing::debug!("subscribe_message: {:#?}", subscribe_message);
+
+    // TODO: If the track exists, return it as it is
 
     // Since only the track_namespace is recorded in ANNOUNCE, use track_namespace to determine the publisher
     let publisher_session_id = track_namespace_manager_repository
@@ -84,8 +86,8 @@ mod success {
     };
     use moqt_core::messages::{
         moqt_payload::MOQTPayload,
-        subscribe::{Location, Subscribe},
-        version_specific_parameters::{GroupSequence, VersionSpecificParameter},
+        subscribe::{FilterType, GroupOrder, Subscribe},
+        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     };
     use moqt_core::MOQTClient;
     use moqt_core::TrackNamespaceManagerRepository;
@@ -95,25 +97,36 @@ mod success {
     #[tokio::test]
     async fn normal_case() {
         // Generate SUBSCRIBE message
+        let subscribe_id = 0;
+        let track_alias = 0;
         let track_namespace = "track_namespace";
         let track_name = "track_name".to_string();
-        let start_group = Location::None;
-        let start_object = Location::None;
-        let end_group = Location::None;
-        let end_object = Location::None;
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::LatestGroup;
+        let start_group = None;
+        let start_object = None;
+        let end_group = None;
+        let end_object = None;
         let version_specific_parameter =
-            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
-        let track_request_parameters = vec![version_specific_parameter];
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
 
         let subscribe = Subscribe::new(
+            subscribe_id,
+            track_alias,
             track_namespace.to_string(),
             track_name,
+            subscriber_priority,
+            group_order,
+            filter_type,
             start_group,
             start_object,
             end_group,
             end_object,
-            track_request_parameters,
-        );
+            subscribe_parameters,
+        )
+        .unwrap();
 
         // Generate client
         let subscriber_sessin_id = 0;
@@ -170,8 +183,8 @@ mod failure {
     };
     use moqt_core::messages::{
         moqt_payload::MOQTPayload,
-        subscribe::{Location, Subscribe},
-        version_specific_parameters::{GroupSequence, VersionSpecificParameter},
+        subscribe::{FilterType, GroupOrder, Subscribe},
+        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     };
     use moqt_core::MOQTClient;
     use moqt_core::TrackNamespaceManagerRepository;
@@ -181,25 +194,36 @@ mod failure {
     #[tokio::test]
     async fn cannot_register() {
         // Generate SUBSCRIBE message
+        let subscribe_id = 0;
+        let track_alias = 0;
         let track_namespace = "track_namespace";
         let track_name = "track_name";
-        let start_group = Location::None;
-        let start_object = Location::None;
-        let end_group = Location::None;
-        let end_object = Location::None;
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::LatestGroup;
+        let start_group = None;
+        let start_object = None;
+        let end_group = None;
+        let end_object = None;
         let version_specific_parameter =
-            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
-        let track_request_parameters = vec![version_specific_parameter];
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
 
         let subscribe = Subscribe::new(
+            subscribe_id,
+            track_alias,
             track_namespace.to_string(),
             track_name.to_string(),
+            subscriber_priority,
+            group_order,
+            filter_type,
             start_group,
             start_object,
             end_group,
             end_object,
-            track_request_parameters,
-        );
+            subscribe_parameters,
+        )
+        .unwrap();
 
         // Generate client
         let subscriber_session_id = 0;
@@ -258,25 +282,36 @@ mod failure {
     #[tokio::test]
     async fn relay_fail() {
         // Generate SUBSCRIBE message
+        let subscribe_id = 0;
+        let track_alias = 0;
         let track_namespace = "track_namespace";
         let track_name = "track_name";
-        let start_group = Location::None;
-        let start_object = Location::None;
-        let end_group = Location::None;
-        let end_object = Location::None;
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::LatestGroup;
+        let start_group = None;
+        let start_object = None;
+        let end_group = None;
+        let end_object = None;
         let version_specific_parameter =
-            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
-        let track_request_parameters = vec![version_specific_parameter];
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
 
         let subscribe = Subscribe::new(
+            subscribe_id,
+            track_alias,
             track_namespace.to_string(),
             track_name.to_string(),
+            subscriber_priority,
+            group_order,
+            filter_type,
             start_group,
             start_object,
             end_group,
             end_object,
-            track_request_parameters,
-        );
+            subscribe_parameters,
+        )
+        .unwrap();
 
         // Generate client
         let subscriber_session_id = 0;
@@ -315,25 +350,36 @@ mod failure {
     #[tokio::test]
     async fn publisher_not_found() {
         // Generate SUBSCRIBE message
+        let subscribe_id = 0;
+        let track_alias = 0;
         let track_namespace = "track_namespace";
         let track_name = "track_name";
-        let start_group = Location::None;
-        let start_object = Location::None;
-        let end_group = Location::None;
-        let end_object = Location::None;
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::LatestGroup;
+        let start_group = None;
+        let start_object = None;
+        let end_group = None;
+        let end_object = None;
         let version_specific_parameter =
-            VersionSpecificParameter::GroupSequence(GroupSequence::new(0));
-        let track_request_parameters = vec![version_specific_parameter];
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
 
         let subscribe = Subscribe::new(
+            subscribe_id,
+            track_alias,
             track_namespace.to_string(),
             track_name.to_string(),
+            subscriber_priority,
+            group_order,
+            filter_type,
             start_group,
             start_object,
             end_group,
             end_object,
-            track_request_parameters,
-        );
+            subscribe_parameters,
+        )
+        .unwrap();
 
         // Generate client
         let subscriber_session_id = 0;
