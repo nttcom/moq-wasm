@@ -165,7 +165,8 @@ impl MOQTPayload for Subscribe {
             ),
             _ => (None, None),
         };
-        let number_of_parameters = read_variable_integer_from_buffer(buf)?;
+        let number_of_parameters =
+            read_variable_integer_from_buffer(buf).context("number of parameters")?;
         let mut subscribe_parameters = Vec::new();
         for _ in 0..number_of_parameters {
             let version_specific_parameter = VersionSpecificParameter::depacketize(buf)?;
