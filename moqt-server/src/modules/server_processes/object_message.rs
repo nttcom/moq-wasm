@@ -11,6 +11,7 @@ use moqt_core::{
     SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
+#[allow(dead_code)]
 pub(crate) async fn process_object_with_payload_length(
     payload_buf: &mut BytesMut,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
@@ -32,6 +33,7 @@ pub(crate) async fn process_object_with_payload_length(
     .await
 }
 
+#[allow(dead_code)]
 pub(crate) async fn process_object_without_payload_length(
     payload_buf: &mut BytesMut,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,

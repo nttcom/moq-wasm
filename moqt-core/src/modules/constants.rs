@@ -19,3 +19,9 @@ pub enum UnderlayType {
     WebTransport,
     Both,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamDirection {
+    Uni,
+    Bi,
+}
