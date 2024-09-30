@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 
 use moqt_core::{
     messages::{moqt_payload::MOQTPayload, subscribe::Subscribe},
-    stream_type::StreamType,
+    constants::StreamDirection,
     MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
@@ -45,7 +45,7 @@ pub(crate) async fn subscribe_handler(
             );
 
             match send_stream_dispatcher_repository
-                .send_message_to_send_stream_thread(session_id, message, StreamType::Bi)
+                .send_message_to_send_stream_thread(session_id, message, StreamDirection::Bi)
                 .await
             {
                 Ok(_) => {
@@ -141,7 +141,7 @@ mod success {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: publisher_session_id,
-                stream_type: "bidirectional_stream".to_string(),
+                stream_direction: "bidirectional_stream".to_string(),
                 sender: uni_relay_tx,
             })
             .await;
@@ -238,7 +238,7 @@ mod failure {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: publisher_session_id,
-                stream_type: "bidirectional_stream".to_string(),
+                stream_direction: "bidirectional_stream".to_string(),
                 sender: uni_relay_tx,
             })
             .await;
@@ -358,7 +358,7 @@ mod failure {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: publisher_session_id,
-                stream_type: "bidirectional_stream".to_string(),
+                stream_direction: "bidirectional_stream".to_string(),
                 sender: uni_relay_tx,
             })
             .await;

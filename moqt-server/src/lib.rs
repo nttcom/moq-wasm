@@ -2,7 +2,7 @@ mod modules;
 use crate::modules::{
     buffer_manager,
     buffer_manager::{buffer_manager, BufferCommand},
-    message_handler::*,
+    control_message_handler::*,
     send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
     track_namespace_manager::{track_namespace_manager, TrackCommand},
 };
@@ -10,16 +10,12 @@ use anyhow::{bail, Context, Ok, Result};
 use bytes::BytesMut;
 pub use moqt_core::constants;
 use moqt_core::{
-    constants::{TerminationErrorCode, UnderlayType},
-    message_type::MessageType,
+    constants::UnderlayType,
+    control_message_type::ControlMessageType,
     messages::{
-        moqt_payload::MOQTPayload,
-        object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
-        subscribe::Subscribe,
-        subscribe_error::SubscribeError,
+        moqt_payload::MOQTPayload, subscribe::Subscribe, subscribe_error::SubscribeError,
         subscribe_ok::SubscribeOk,
     },
-    stream_type::StreamType,
     variable_integer::write_variable_integer,
     MOQTClient, TrackNamespaceManagerRepository,
 };
@@ -194,11 +190,11 @@ async fn handle_connection(
 
     let (close_tx, mut close_rx) = mpsc::channel::<(u64, String)>(32);
 
-    let (uni_relay_tx, mut uni_relay_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+    let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
     send_stream_tx
         .send(SendStreamDispatchCommand::Set {
             session_id: stable_id,
-            stream_type: "unidirectional_stream".to_string(),
+            stream_direction: "unidirectional_stream".to_string(),
             sender: uni_relay_tx,
         })
         .await?;
@@ -240,7 +236,7 @@ async fn handle_connection(
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
                 send_stream_tx.send(SendStreamDispatchCommand::Set {
                     session_id: stable_id,
-                    stream_type: "bidirectional_stream".to_string(),
+                    stream_direction: "bidirectional_stream".to_string(),
                     sender: message_tx,
                 }).await?;
 
@@ -268,49 +264,6 @@ async fn handle_connection(
 
                 // Propagate the current span (Connection)
                 }.in_current_span());
-            },
-            // Waiting for a uni-directional recv stream and processing the received message
-            stream = connection.accept_uni() => {
-                let recv_stream = stream.unwrap();
-
-                let session_span = tracing::info_span!("Session", stable_id); // TODO: Not implemented yet
-                session_span.in_scope(|| {
-                    tracing::info!("Accepted UNI Recv stream");
-                });
-                let stream_id = recv_stream.id().into_u64();
-
-                let buffer_tx = buffer_tx.clone();
-                let track_namespace_tx = track_namespace_tx.clone();
-                let send_stream_tx = send_stream_tx.clone();
-                let close_tx = close_tx.clone();
-                let client = client.clone();
-
-                let mut stream = UniRecvStream {
-                    stable_id,
-                    stream_id,
-                    recv_stream,
-                };
-                let _ = handle_incoming_uni_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_tx, send_stream_tx)
-                        .instrument(session_span)
-                        .await;
-
-            },
-            // Waiting for a uni-directional relay request and relaying the message
-            Some(message) = uni_relay_rx.recv() => {
-
-                let session_span = tracing::info_span!("Session", stable_id);
-                session_span.in_scope(|| {
-                    tracing::info!("Open UNI Send stream");
-                });
-                // A sender MUST send each object over a dedicated stream.
-                let send_stream = connection.open_uni().await?.await?;
-
-                // Send relayed messages (OBJECT) from the server
-                relay_object_message(send_stream, message).instrument(session_span).await;
-            },
-            _ = connection.closed() => {
-                tracing::info!("Connection closed, rtt={:?}", connection.rtt());
-                break;
             },
             // TODO: Not implemented yet
             Some((_code, _reason)) = close_rx.recv() => {
@@ -343,84 +296,6 @@ async fn handle_connection(
         .await?;
 
     tracing::info!("session terminated");
-
-    Ok(())
-}
-
-struct UniRecvStream {
-    stable_id: usize,
-    stream_id: u64,
-    recv_stream: RecvStream,
-}
-
-async fn handle_incoming_uni_stream(
-    stream: &mut UniRecvStream,
-    client: Arc<Mutex<MOQTClient>>,
-    buffer_tx: Sender<BufferCommand>,
-    track_namespace_tx: Sender<TrackCommand>,
-    close_tx: Sender<(u64, String)>,
-    send_stream_tx: Sender<SendStreamDispatchCommand>,
-) -> Result<()> {
-    let mut buffer = vec![0; 65536].into_boxed_slice();
-
-    let stable_id = stream.stable_id;
-    let stream_id = stream.stream_id;
-    let recv_stream = &mut stream.recv_stream;
-
-    let mut track_namespace_manager =
-        modules::track_namespace_manager::TrackNamespaceManager::new(track_namespace_tx.clone());
-    let mut send_stream_dispatcher =
-        modules::send_stream_dispatcher::SendStreamDispatcher::new(send_stream_tx.clone());
-
-    let bytes_read = match recv_stream.read(&mut buffer).await? {
-        Some(bytes_read) => bytes_read,
-        None => bail!("Failed to read from stream"),
-    };
-
-    tracing::debug!("bytes_read: {}", bytes_read);
-
-    let read_buf = BytesMut::from(&buffer[..bytes_read]);
-    let buf = buffer_manager::request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
-    let mut buf = buf.lock().await;
-    buf.extend_from_slice(&read_buf);
-
-    let mut client = client.lock().await;
-    // TODO: Move the implementation of message_handler to the server side since it is only used by the server
-    let message_result = message_handler(
-        &mut buf,
-        StreamType::Uni,
-        UnderlayType::WebTransport,
-        &mut client,
-        &mut track_namespace_manager,
-        &mut send_stream_dispatcher,
-    )
-    .await;
-
-    tracing::debug!("message_result: {:?}", message_result);
-
-    match message_result {
-        MessageProcessResult::SuccessWithoutResponse => {}
-        MessageProcessResult::Failure(code, message) => {
-            tracing::warn!("Uni-stream handling failed: {:?} ({:?})", message, code);
-            if code == TerminationErrorCode::ProtocolViolation {
-                close_tx.send((code as u64, message.clone())).await?;
-            }
-            bail!(message);
-        }
-        MessageProcessResult::Fragment => (),
-        MessageProcessResult::Success(_) => {
-            let message = "Unsuported message type for uni-directional stream".to_string();
-            tracing::warn!("Uni-stream handling failed: {:?}", message);
-            bail!(message);
-        }
-    };
-
-    buffer_tx
-        .send(BufferCommand::ReleaseStream {
-            session_id: stable_id,
-            stream_id,
-        })
-        .await?;
 
     Ok(())
 }
@@ -466,10 +341,9 @@ async fn handle_incoming_bi_stream(
         buf.extend_from_slice(&read_buf);
 
         let mut client = client.lock().await;
-        // TODO: Move the implementation of message_handler to the server side since it is only used by the server
-        let message_result = message_handler(
+        // TODO: Move the implementation of control_message_handler to the server side since it is only used by the server
+        let message_result = control_message_handler(
             &mut buf,
-            StreamType::Bi,
             UnderlayType::WebTransport,
             &mut client,
             &mut track_namespace_manager,
@@ -506,53 +380,6 @@ async fn handle_incoming_bi_stream(
     Ok(())
 }
 
-async fn relay_object_message(mut send_stream: SendStream, message: Arc<Box<dyn MOQTPayload>>) {
-    let mut write_buf = BytesMut::new();
-    message.packetize(&mut write_buf);
-    let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
-
-    if message
-        .as_any()
-        .downcast_ref::<ObjectWithPayloadLength>()
-        .is_some()
-    {
-        message_buf.extend(write_variable_integer(
-            u8::from(MessageType::ObjectWithPayloadLength) as u64,
-        ));
-        tracing::info!(
-            "Relayed Message Type: {:?}",
-            MessageType::ObjectWithPayloadLength
-        );
-    } else if message
-        .as_any()
-        .downcast_ref::<ObjectWithoutPayloadLength>()
-        .is_some()
-    {
-        message_buf.extend(write_variable_integer(
-            u8::from(MessageType::ObjectWithoutPayloadLength) as u64,
-        ));
-        tracing::info!(
-            "Relayed Message Type: {:?}",
-            MessageType::ObjectWithoutPayloadLength
-        );
-    } else {
-        tracing::warn!("Unsupported message type for uni-directional stream");
-
-        return;
-    }
-
-    message_buf.extend(write_buf);
-
-    if let Err(e) = send_stream.write_all(&message_buf).await {
-        tracing::warn!("Failed to write to stream: {:?}", e);
-        return;
-    }
-
-    tracing::info!("Object message is relayed.");
-    tracing::debug!("relayed message: {:?}", message_buf.to_vec());
-    let _ = send_stream.finish().await;
-}
-
 async fn wait_and_relay_control_message(
     send_stream: Arc<Mutex<SendStream>>,
     mut message_rx: Receiver<Arc<Box<dyn MOQTPayload>>>,
@@ -564,19 +391,25 @@ async fn wait_and_relay_control_message(
 
         if message.as_any().downcast_ref::<Subscribe>().is_some() {
             message_buf.extend(write_variable_integer(
-                u8::from(MessageType::Subscribe) as u64
+                u8::from(ControlMessageType::Subscribe) as u64,
             ));
-            tracing::info!("Relayed Message Type: {:?}", MessageType::Subscribe);
+            tracing::info!("Relayed Message Type: {:?}", ControlMessageType::Subscribe);
         } else if message.as_any().downcast_ref::<SubscribeOk>().is_some() {
             message_buf.extend(write_variable_integer(
-                u8::from(MessageType::SubscribeOk) as u64
+                u8::from(ControlMessageType::SubscribeOk) as u64,
             ));
-            tracing::info!("Relayed Message Type: {:?}", MessageType::SubscribeOk);
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::SubscribeOk
+            );
         } else if message.as_any().downcast_ref::<SubscribeError>().is_some() {
             message_buf.extend(write_variable_integer(
-                u8::from(MessageType::SubscribeError) as u64,
+                u8::from(ControlMessageType::SubscribeError) as u64,
             ));
-            tracing::info!("Relayed Message Type: {:?}", MessageType::SubscribeError);
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::SubscribeError
+            );
         } else {
             tracing::warn!("Unsupported message type for bi-directional stream");
             continue;

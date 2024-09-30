@@ -5,9 +5,7 @@ use crate::modules::handlers::{
     announce_handler::AnnounceResponse, unannounce_handler::unannounce_handler,
 };
 use crate::modules::server_processes::{
-    announce_message::process_announce_message,
-    client_setup_message::process_client_setup_message,
-    object_message::{process_object_with_payload_length, process_object_without_payload_length},
+    announce_message::process_announce_message, client_setup_message::process_client_setup_message,
     subscribe_message::process_subscribe_message,
     subscribe_ok_message::process_subscribe_ok_message,
 };
@@ -15,10 +13,9 @@ use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
 use moqt_core::{
     constants::UnderlayType,
-    message_type::MessageType,
+    control_message_type::ControlMessageType,
     messages::{moqt_payload::MOQTPayload, unannounce::UnAnnounce},
     moqt_client::MOQTClientStatus,
-    stream_type::StreamType,
     variable_integer::{read_variable_integer, write_variable_integer},
     MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
@@ -31,7 +28,7 @@ pub enum MessageProcessResult {
     Fragment,
 }
 
-fn read_message_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<MessageType> {
+fn read_message_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<ControlMessageType> {
     let type_value = match read_variable_integer(read_cur) {
         Ok(v) => v as u8,
         Err(err) => {
@@ -39,7 +36,7 @@ fn read_message_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<MessageTyp
         }
     };
 
-    let message_type: MessageType = match MessageType::try_from(type_value) {
+    let message_type: ControlMessageType = match ControlMessageType::try_from(type_value) {
         Ok(v) => v,
         Err(err) => {
             bail!(err.to_string());
@@ -48,15 +45,14 @@ fn read_message_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<MessageTyp
     Ok(message_type)
 }
 
-pub async fn message_handler(
+pub async fn control_message_handler(
     read_buf: &mut BytesMut,
-    stream_type: StreamType,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> MessageProcessResult {
-    tracing::trace!("message_handler! {}", read_buf.len());
+    tracing::trace!("control_message_handler! {}", read_buf.len());
 
     let mut read_cur = Cursor::new(&read_buf[..]);
     tracing::debug!("read_cur! {:?}", read_cur);
@@ -69,32 +65,12 @@ pub async fn message_handler(
 
             tracing::error!("message_type is wrong {:?}", err);
             return MessageProcessResult::Failure(
-                TerminationErrorCode::GenericError,
+                TerminationErrorCode::ProtocolViolation,
                 err.to_string(),
             );
         }
     };
     tracing::info!("Received Message Type: {:?}", message_type);
-
-    if message_type.is_object_message() {
-        // Object message must be sent on unidirectional stream
-        if stream_type == StreamType::Bi {
-            read_buf.advance(read_cur.position() as usize);
-
-            let message = String::from("Object message must be sent on unidirectional stream");
-            tracing::error!(message);
-            return MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, message);
-        }
-    } else {
-        // Control message must be sent on bidirectional stream
-        if stream_type == StreamType::Uni {
-            read_buf.advance(read_cur.position() as usize);
-
-            let message = String::from("Control message must be sent on bidirectional stream");
-            tracing::error!(message);
-            return MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, message);
-        }
-    }
 
     if read_cur.remaining() == 0 {
         // The length is insufficient, so do nothing. Do not synchronize with the cursor.
@@ -108,63 +84,7 @@ pub async fn message_handler(
     let mut write_buf = BytesMut::new();
 
     let return_message_type = match message_type {
-        MessageType::ObjectWithPayloadLength => {
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::ProtocolViolation,
-                    message,
-                );
-            }
-
-            match process_object_with_payload_length(
-                &mut payload_buf,
-                track_namespace_manager_repository,
-                send_stream_dispatcher_repository,
-            )
-            .await
-            {
-                Ok(_) => {
-                    return MessageProcessResult::SuccessWithoutResponse;
-                }
-                Err(err) => {
-                    return MessageProcessResult::Failure(
-                        TerminationErrorCode::GenericError,
-                        err.to_string(),
-                    );
-                }
-            }
-        }
-        MessageType::ObjectWithoutPayloadLength => {
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::ProtocolViolation,
-                    message,
-                );
-            }
-
-            match process_object_without_payload_length(
-                &mut payload_buf,
-                track_namespace_manager_repository,
-                send_stream_dispatcher_repository,
-            )
-            .await
-            {
-                Ok(_) => {
-                    return MessageProcessResult::SuccessWithoutResponse;
-                }
-                Err(err) => {
-                    return MessageProcessResult::Failure(
-                        TerminationErrorCode::GenericError,
-                        err.to_string(),
-                    );
-                }
-            }
-        }
-        MessageType::ClientSetup => {
+        ControlMessageType::ClientSetup => {
             if client.status() != MOQTClientStatus::Connected {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
@@ -180,7 +100,7 @@ pub async fn message_handler(
                 underlay_type,
                 &mut write_buf,
             ) {
-                Ok(_) => MessageType::ServerSetup,
+                Ok(_) => ControlMessageType::ServerSetup,
                 Err(err) => {
                     // TODO: To ensure future extensibility of MOQT, the peers MUST ignore unknown setup parameters.
                     return MessageProcessResult::Failure(
@@ -190,7 +110,7 @@ pub async fn message_handler(
                 }
             }
         }
-        MessageType::Subscribe => {
+        ControlMessageType::Subscribe => {
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
@@ -200,6 +120,7 @@ pub async fn message_handler(
                 );
             }
 
+            // TODO: Wait for subscribe_ok from the original publisher if the upstream subscription does not exist.
             match process_subscribe_message(
                 &mut payload_buf,
                 client,
@@ -219,7 +140,7 @@ pub async fn message_handler(
                 }
             }
         }
-        MessageType::SubscribeOk => {
+        ControlMessageType::SubscribeOk => {
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
@@ -229,6 +150,7 @@ pub async fn message_handler(
                 );
             }
 
+            // TODO: Merge to process_subscribe_message.
             match process_subscribe_ok_message(
                 &mut payload_buf,
                 track_namespace_manager_repository,
@@ -247,12 +169,12 @@ pub async fn message_handler(
                 }
             }
         }
-        // MessageType::SubscribeError => {
+        // ControlMessageType::SubscribeError => {
         //     if client.status() != MOQTClientStatus::SetUp {
         //         return MessageProcessResult::Failure;
         //     }
         // }
-        MessageType::UnSubscribe => {
+        ControlMessageType::UnSubscribe => {
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
@@ -281,7 +203,7 @@ pub async fn message_handler(
 
             return MessageProcessResult::Success(BytesMut::with_capacity(0));
         }
-        MessageType::Announce => {
+        ControlMessageType::Announce => {
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
@@ -300,8 +222,8 @@ pub async fn message_handler(
             .await
             {
                 Ok(announce_result) => match announce_result {
-                    AnnounceResponse::Success(_) => MessageType::AnnounceOk,
-                    AnnounceResponse::Failure(_) => MessageType::AnnounceError,
+                    AnnounceResponse::Success(_) => ControlMessageType::AnnounceOk,
+                    AnnounceResponse::Failure(_) => ControlMessageType::AnnounceError,
                 },
                 Err(err) => {
                     return MessageProcessResult::Failure(
@@ -311,17 +233,17 @@ pub async fn message_handler(
                 }
             }
         }
-        // MessageType::AnnounceOk => {
+        // ControlMessageType::AnnounceOk => {
         //     if client.status() != MOQTClientStatus::SetUp {
         //         return MessageProcessResult::Failure;
         //     }
         // }
-        // MessageType::AnnounceError => {
+        // ControlMessageType::AnnounceError => {
         //     if client.status() != MOQTClientStatus::SetUp {
         //         return MessageProcessResult::Failure;
         //     }
         // }
-        MessageType::UnAnnounce => {
+        ControlMessageType::UnAnnounce => {
             if client.status() != MOQTClientStatus::SetUp {
                 let message = String::from("Invalid timing");
                 tracing::error!(message);
@@ -351,12 +273,12 @@ pub async fn message_handler(
 
             return MessageProcessResult::Success(BytesMut::with_capacity(0));
         }
-        MessageType::GoAway => {
+        ControlMessageType::GoAway => {
             todo!("GoAway");
         }
         unknown => {
             return MessageProcessResult::Failure(
-                TerminationErrorCode::GenericError,
+                TerminationErrorCode::ProtocolViolation,
                 format!("Unknown message type: {:?}", unknown),
             );
         }
@@ -377,8 +299,8 @@ pub async fn message_handler(
 #[cfg(test)]
 pub(crate) mod test_fn {
 
-    use crate::modules::message_handler::message_handler;
-    use crate::modules::message_handler::MessageProcessResult;
+    use crate::modules::control_message_handler::control_message_handler;
+    use crate::modules::control_message_handler::MessageProcessResult;
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
@@ -387,19 +309,14 @@ pub(crate) mod test_fn {
     };
     use bytes::BytesMut;
     use moqt_core::constants::UnderlayType;
-    use moqt_core::messages::moqt_payload::MOQTPayload;
-    use moqt_core::stream_type::StreamType;
     use moqt_core::variable_integer::write_variable_integer;
-    use moqt_core::TrackNamespaceManagerRepository;
     use moqt_core::{moqt_client::MOQTClientStatus, MOQTClient};
-    use std::sync::Arc;
     use tokio::sync::mpsc;
 
-    pub async fn packetize_buf_and_execute_message_handler(
+    pub async fn packetize_buf_and_execute_control_message_handler(
         message_type_u8: u8,
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
-        stream_type: StreamType,
     ) -> MessageProcessResult {
         let mut buf = BytesMut::with_capacity(bytes_array.len() + 8);
         buf.extend(write_variable_integer(message_type_u8 as u64));
@@ -423,78 +340,9 @@ pub(crate) mod test_fn {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        // Execute message_handler and get result
-        message_handler(
+        // Execute control_message_handler and get result
+        control_message_handler(
             &mut buf,
-            stream_type,
-            UnderlayType::WebTransport,
-            &mut client,
-            &mut track_namespace_manager,
-            &mut send_stream_dispatcher,
-        )
-        .await
-    }
-
-    pub async fn packetize_buf_and_execute_message_handler_with_subscriber(
-        message_type_u8: u8,
-        bytes_array: &[u8],
-        client_status: MOQTClientStatus,
-        stream_type: StreamType,
-    ) -> MessageProcessResult {
-        let mut buf = BytesMut::with_capacity(bytes_array.len() + 8);
-        buf.extend(write_variable_integer(message_type_u8 as u64));
-        buf.extend_from_slice(bytes_array);
-
-        // Generate client
-        let subscriber_sessin_id = 0;
-        let mut client = MOQTClient::new(subscriber_sessin_id);
-        client.update_status(client_status);
-
-        // Generate TrackNamespaceManager
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
-
-        let track_namespace = "test_namespace";
-        let publisher_session_id = 1;
-        let subscriber_session_id = 2;
-        let track_name = "test_name";
-        let track_id = 0;
-
-        let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
-            .await;
-        let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id, track_name)
-            .await;
-        let _ = track_namespace_manager
-            .set_track_id(track_namespace, track_name, track_id)
-            .await;
-        let _ = track_namespace_manager
-            .activate_subscriber(track_namespace, track_name, subscriber_session_id)
-            .await;
-
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
-
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
-
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
-                session_id: subscriber_session_id,
-                stream_type: "unidirectional_stream".to_string(),
-                sender: uni_relay_tx,
-            })
-            .await;
-
-        // Execute message_handler and get result
-        message_handler(
-            &mut buf,
-            stream_type,
             UnderlayType::WebTransport,
             &mut client,
             &mut track_namespace_manager,
@@ -506,24 +354,21 @@ pub(crate) mod test_fn {
 
 #[cfg(test)]
 mod success {
-    use crate::modules::message_handler::MessageProcessResult;
-    use moqt_core::message_type::MessageType;
+    use crate::modules::control_message_handler::MessageProcessResult;
+    use moqt_core::control_message_type::ControlMessageType;
     use moqt_core::moqt_client::MOQTClientStatus;
-    use moqt_core::stream_type::StreamType;
 
-    use crate::modules::message_handler::test_fn;
+    use crate::modules::control_message_handler::test_fn;
 
     async fn assert_success(
         message_type_u8: u8,
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
-        stream_type: StreamType,
     ) {
-        let result = test_fn::packetize_buf_and_execute_message_handler(
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,
-            stream_type,
         )
         .await;
 
@@ -534,26 +379,9 @@ mod success {
         };
     }
 
-    async fn assert_success_without_response(
-        message_type_u8: u8,
-        bytes_array: &[u8],
-        client_status: MOQTClientStatus,
-        stream_type: StreamType,
-    ) {
-        let result = test_fn::packetize_buf_and_execute_message_handler_with_subscriber(
-            message_type_u8,
-            bytes_array,
-            client_status,
-            stream_type,
-        )
-        .await;
-
-        assert_eq!(result, MessageProcessResult::SuccessWithoutResponse);
-    }
-
     #[tokio::test]
     async fn client_setup_succsess() {
-        let message_type = MessageType::ClientSetup;
+        let message_type = ControlMessageType::ClientSetup;
         let bytes_array = [
             1,   // Number of Supported Versions (i)
             192, // Supported Version (i): Length(11 of 2MSB)
@@ -564,57 +392,46 @@ mod success {
             2, // SETUP Parameters (..): Role(Delivery)
         ];
         let client_status = MOQTClientStatus::Connected;
-        let stream_type = StreamType::Bi;
 
-        assert_success(message_type as u8, &bytes_array, client_status, stream_type).await;
+        assert_success(message_type as u8, &bytes_array, client_status).await;
     }
 
     #[tokio::test]
-    async fn object_with_payload_length_success_without_response() {
-        let message_type = MessageType::ObjectWithPayloadLength;
+    async fn subscribe_succsess() {
+        let message_type = ControlMessageType::ClientSetup;
         let bytes_array = [
-            0, // Track ID (i)
-            1, // Group Sequence (i)
-            2, // Object Sequence (i)
-            3, // Object Send Order (i)
-            3, // Object Payload Length (i)
-            3, // Object Payload (b): Length
-            0, 1, 2, // Object Payload (b): Value
+            1,   // Number of Supported Versions (i)
+            192, // Supported Version (i): Length(11 of 2MSB)
+            0, 0, 0, 255, 0, 0, 1, // Supported Version(i): Value(0xff000001) in 62bit
+            1, // Number of Parameters (i)
+            0, // SETUP Parameters (..): Type(Role)
+            1, // SETUP Parameters (..): Length
+            2, // SETUP Parameters (..): Role(Delivery)
         ];
-        let client_status = MOQTClientStatus::SetUp;
-        let stream_type = StreamType::Uni;
+        let client_status = MOQTClientStatus::Connected;
 
-        assert_success_without_response(
-            message_type as u8,
-            &bytes_array,
-            client_status,
-            stream_type,
-        )
-        .await;
+        assert_success(message_type as u8, &bytes_array, client_status).await;
     }
 }
 
 #[cfg(test)]
 mod failure {
     use crate::constants::TerminationErrorCode;
-    use crate::modules::message_handler::MessageProcessResult;
-    use moqt_core::message_type::MessageType;
+    use crate::modules::control_message_handler::MessageProcessResult;
+    use moqt_core::control_message_type::ControlMessageType;
     use moqt_core::moqt_client::MOQTClientStatus;
-    use moqt_core::stream_type::StreamType;
 
-    use crate::modules::message_handler::test_fn;
+    use crate::modules::control_message_handler::test_fn;
 
     async fn assert_protocol_violation(
         message_type_u8: u8,
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
-        stream_type: StreamType,
     ) {
-        let result = test_fn::packetize_buf_and_execute_message_handler(
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,
-            stream_type,
         )
         .await;
 
@@ -630,13 +447,11 @@ mod failure {
         message_type_u8: u8,
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
-        stream_type: StreamType,
     ) {
-        let result = test_fn::packetize_buf_and_execute_message_handler(
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,
-            stream_type,
         )
         .await;
 
@@ -652,13 +467,11 @@ mod failure {
         message_type_u8: u8,
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
-        stream_type: StreamType,
     ) {
-        let result = test_fn::packetize_buf_and_execute_message_handler(
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,
-            stream_type,
         )
         .await;
 
@@ -666,104 +479,8 @@ mod failure {
     }
 
     #[tokio::test]
-    async fn object_on_bidirectional_stream() {
-        let message_type = MessageType::ObjectWithPayloadLength;
-        let bytes_array = [
-            0, // Track ID (i)
-            1, // Group Sequence (i)
-            2, // Object Sequence (i)
-            3, // Object Send Order (i)
-            3, // Object Payload Length (i)
-            3, // Object Payload (b): Length
-            0, 1, 2, // Object Payload (b): Value
-        ];
-        let client_status = MOQTClientStatus::SetUp;
-        let wrong_stream_type = StreamType::Bi; // Correct direction is Uni
-
-        assert_protocol_violation(
-            message_type as u8,
-            &bytes_array,
-            client_status,
-            wrong_stream_type,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn control_on_unidirectional_stream() {
-        let message_type = MessageType::ClientSetup;
-        let bytes_array = [
-            1,   // Number of Supported Versions (i)
-            192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 1, // Supported Version(i): Value(0xff000001) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Delivery)
-        ];
-        let client_status = MOQTClientStatus::Connected;
-        let wrong_stream_type = StreamType::Uni; // Correct direction is Bi
-
-        assert_protocol_violation(
-            message_type as u8,
-            &bytes_array,
-            client_status,
-            wrong_stream_type,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn object_with_payload_length_invalid_timing() {
-        let message_type = MessageType::ObjectWithPayloadLength;
-        let bytes_array = [
-            0, // Track ID (i)
-            1, // Group Sequence (i)
-            2, // Object Sequence (i)
-            3, // Object Send Order (i)
-            3, // Object Payload Length (i)
-            3, // Object Payload (b): Length
-            0, 1, 2, // Object Payload (b): Value
-        ];
-        let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
-        let stream_type = StreamType::Uni;
-
-        assert_protocol_violation(
-            message_type as u8,
-            &bytes_array,
-            wrong_client_status,
-            stream_type,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn object_without_payload_length_invalid_timing() {
-        let message_type = MessageType::ObjectWithoutPayloadLength;
-        let bytes_array = [
-            2, // Message Type: Object without payload length
-            0, // Track ID (i)
-            1, // Group Sequence (i)
-            2, // Object Sequence (i)
-            3, // Object Send Order (i)
-            3, // Object Payload (b): Length
-            0, 1, 2, // Object Payload (b): Value
-        ];
-        let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
-        let stream_type = StreamType::Uni;
-
-        assert_protocol_violation(
-            message_type as u8,
-            &bytes_array,
-            wrong_client_status,
-            stream_type,
-        )
-        .await;
-    }
-
-    #[tokio::test]
     async fn client_setup_invalid_timing() {
-        let message_type = MessageType::ClientSetup;
+        let message_type = ControlMessageType::ClientSetup;
         let bytes_array = [
             1,   // Number of Supported Versions (i)
             192, // Supported Version (i): Length(11 of 2MSB)
@@ -774,20 +491,13 @@ mod failure {
             2, // SETUP Parameters (..): Role(Delivery)
         ];
         let wrong_client_status = MOQTClientStatus::SetUp; // Correct Status is Connected
-        let stream_type = StreamType::Bi;
 
-        assert_protocol_violation(
-            message_type as u8,
-            &bytes_array,
-            wrong_client_status,
-            stream_type,
-        )
-        .await;
+        assert_protocol_violation(message_type as u8, &bytes_array, wrong_client_status).await;
     }
 
     #[tokio::test]
     async fn subscribe_invalid_timing() {
-        let message_type = MessageType::Subscribe;
+        let message_type = ControlMessageType::Subscribe;
         let bytes_array = [
             15, // Track Namespace (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
@@ -805,20 +515,13 @@ mod failure {
             0,   // Parameter Value (..): GroupSequence
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
-        let stream_type = StreamType::Bi;
 
-        assert_protocol_violation(
-            message_type as u8,
-            &bytes_array,
-            wrong_client_status,
-            stream_type,
-        )
-        .await;
+        assert_protocol_violation(message_type as u8, &bytes_array, wrong_client_status).await;
     }
 
     #[tokio::test]
     async fn subscribe_ok_invalid_timing() {
-        let message_type = MessageType::SubscribeOk;
+        let message_type = ControlMessageType::SubscribeOk;
         let bytes_array = [
             15, // Track Namespace (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
@@ -830,20 +533,13 @@ mod failure {
             2,   // Expires (i)
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
-        let stream_type = StreamType::Bi;
 
-        assert_protocol_violation(
-            message_type as u8,
-            &bytes_array,
-            wrong_client_status,
-            stream_type,
-        )
-        .await;
+        assert_protocol_violation(message_type as u8, &bytes_array, wrong_client_status).await;
     }
 
     #[tokio::test]
     async fn unsubscribe_invalid_timing() {
-        let message_type = MessageType::UnSubscribe;
+        let message_type = ControlMessageType::UnSubscribe;
         let bytes_array = [
             15, // Track Namespace(b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
@@ -853,20 +549,13 @@ mod failure {
             101, // Track Name (b): Value("track_name")
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
-        let stream_type = StreamType::Bi;
 
-        assert_protocol_violation(
-            message_type as u8,
-            &bytes_array,
-            wrong_client_status,
-            stream_type,
-        )
-        .await;
+        assert_protocol_violation(message_type as u8, &bytes_array, wrong_client_status).await;
     }
 
     #[tokio::test]
     async fn announce_invalid_timing() {
-        let message_type = MessageType::Announce;
+        let message_type = ControlMessageType::Announce;
         let bytes_array = [
             16, // Track Namespace(b): Length
             108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
@@ -877,121 +566,53 @@ mod failure {
             116, 101, 115, 116, // Parameters (..): Value("test")
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
-        let stream_type = StreamType::Bi;
 
-        assert_protocol_violation(
-            message_type as u8,
-            &bytes_array,
-            wrong_client_status,
-            stream_type,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn object_with_payload_length_generic_error() {
-        let message_type = MessageType::ObjectWithPayloadLength;
-        let wrong_bytes_array = [0];
-        let client_status = MOQTClientStatus::SetUp;
-        let stream_type = StreamType::Uni;
-
-        assert_generic_error(
-            message_type as u8,
-            &wrong_bytes_array,
-            client_status,
-            stream_type,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn object_without_payload_length_generic_error() {
-        let message_type = MessageType::ObjectWithoutPayloadLength;
-        let wrong_bytes_array = [0];
-        let client_status = MOQTClientStatus::SetUp;
-        let stream_type = StreamType::Uni;
-
-        assert_generic_error(
-            message_type as u8,
-            &wrong_bytes_array,
-            client_status,
-            stream_type,
-        )
-        .await;
+        assert_protocol_violation(message_type as u8, &bytes_array, wrong_client_status).await;
     }
 
     #[tokio::test]
     async fn client_setup_generic_error() {
-        let message_type = MessageType::ClientSetup;
+        let message_type = ControlMessageType::ClientSetup;
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::Connected;
-        let stream_type = StreamType::Bi;
 
-        assert_generic_error(
-            message_type as u8,
-            &wrong_bytes_array,
-            client_status,
-            stream_type,
-        )
-        .await;
+        assert_generic_error(message_type as u8, &wrong_bytes_array, client_status).await;
     }
 
     #[tokio::test]
     async fn subscribe_generic_error() {
-        let message_type = MessageType::Subscribe;
+        let message_type = ControlMessageType::Subscribe;
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
-        let stream_type = StreamType::Bi;
 
-        assert_generic_error(
-            message_type as u8,
-            &wrong_bytes_array,
-            client_status,
-            stream_type,
-        )
-        .await;
+        assert_generic_error(message_type as u8, &wrong_bytes_array, client_status).await;
     }
 
     #[tokio::test]
     async fn subscribe_ok_generic_error() {
-        let message_type = MessageType::SubscribeOk;
+        let message_type = ControlMessageType::SubscribeOk;
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
-        let stream_type = StreamType::Bi;
 
-        assert_generic_error(
-            message_type as u8,
-            &wrong_bytes_array,
-            client_status,
-            stream_type,
-        )
-        .await;
+        assert_generic_error(message_type as u8, &wrong_bytes_array, client_status).await;
     }
 
     // #[tokio::test]
     // async fn unsubscribe_generic_error() {
-    //     let message_type = MessageType::UnSubscribe;
+    //     let message_type = ControlMessageType::UnSubscribe;
     //     let wrong_bytes_array = [0];
     //     let client_status = MOQTClientStatus::SetUp;
-    //     let stream_type = StreamType::Bi;
 
-    //     assert_generic_error(message_type as u8, &wrong_bytes_array, client_status, stream_type).await;
+    //     assert_generic_error(message_type as u8, &wrong_bytes_array, client_status).await;
     // }
 
     #[tokio::test]
     async fn announce_generic_error() {
-        let message_type = MessageType::Announce;
+        let message_type = ControlMessageType::Announce;
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
-        let stream_type = StreamType::Bi;
 
-        assert_generic_error(
-            message_type as u8,
-            &wrong_bytes_array,
-            client_status,
-            stream_type,
-        )
-        .await;
+        assert_generic_error(message_type as u8, &wrong_bytes_array, client_status).await;
     }
 
     #[tokio::test]
@@ -999,18 +620,16 @@ mod failure {
         let message_type = 99;
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
-        let stream_type = StreamType::Bi;
 
-        assert_generic_error(message_type, &wrong_bytes_array, client_status, stream_type).await;
+        assert_protocol_violation(message_type, &wrong_bytes_array, client_status).await;
     }
 
     #[tokio::test]
     async fn fragment() {
-        let message_type = MessageType::Subscribe;
+        let message_type = ControlMessageType::Subscribe;
         let bytes_array = [];
         let client_status = MOQTClientStatus::SetUp;
-        let stream_type = StreamType::Bi;
 
-        assert_fragment(message_type as u8, &bytes_array, client_status, stream_type).await;
+        assert_fragment(message_type as u8, &bytes_array, client_status).await;
     }
 }
