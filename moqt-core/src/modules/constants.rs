@@ -20,7 +20,7 @@ pub enum UnderlayType {
     Both,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StreamDirection {
     Uni,
     Bi,
