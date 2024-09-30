@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Ok, Result};
 use bytes::BytesMut;
 pub use moqt_core::constants;
 use moqt_core::{
-    constants::UnderlayType,
+    constants::{StreamDirection, UnderlayType},
     control_message_type::ControlMessageType,
     messages::{
         moqt_payload::MOQTPayload, subscribe::Subscribe, subscribe_error::SubscribeError,
@@ -194,7 +194,7 @@ async fn handle_connection(
     send_stream_tx
         .send(SendStreamDispatchCommand::Set {
             session_id: stable_id,
-            stream_direction: "unidirectional_stream".to_string(),
+            stream_direction: StreamDirection::Uni,
             sender: uni_relay_tx,
         })
         .await?;
@@ -236,7 +236,7 @@ async fn handle_connection(
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
                 send_stream_tx.send(SendStreamDispatchCommand::Set {
                     session_id: stable_id,
-                    stream_direction: "bidirectional_stream".to_string(),
+                    stream_direction: StreamDirection::Bi,
                     sender: message_tx,
                 }).await?;
 
