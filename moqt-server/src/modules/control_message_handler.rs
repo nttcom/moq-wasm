@@ -104,7 +104,7 @@ pub async fn control_message_handler(
                 Err(err) => {
                     // TODO: To ensure future extensibility of MOQT, the peers MUST ignore unknown setup parameters.
                     return MessageProcessResult::Failure(
-                        TerminationErrorCode::GenericError,
+                        TerminationErrorCode::InternalError,
                         err.to_string(),
                     );
                 }
@@ -134,7 +134,7 @@ pub async fn control_message_handler(
                 }
                 Err(err) => {
                     return MessageProcessResult::Failure(
-                        TerminationErrorCode::GenericError,
+                        TerminationErrorCode::InternalError,
                         err.to_string(),
                     );
                 }
@@ -163,7 +163,7 @@ pub async fn control_message_handler(
                 }
                 Err(err) => {
                     return MessageProcessResult::Failure(
-                        TerminationErrorCode::GenericError,
+                        TerminationErrorCode::InternalError,
                         err.to_string(),
                     );
                 }
@@ -189,7 +189,7 @@ pub async fn control_message_handler(
             if let Err(err) = unsubscribe_message {
                 tracing::error!("{:#?}", err);
                 return MessageProcessResult::Failure(
-                    TerminationErrorCode::GenericError,
+                    TerminationErrorCode::InternalError,
                     err.to_string(),
                 );
             }
@@ -227,7 +227,7 @@ pub async fn control_message_handler(
                 },
                 Err(err) => {
                     return MessageProcessResult::Failure(
-                        TerminationErrorCode::GenericError,
+                        TerminationErrorCode::InternalError,
                         err.to_string(),
                     );
                 }
@@ -258,7 +258,7 @@ pub async fn control_message_handler(
             if let Err(err) = unannounce_message {
                 tracing::error!("{:#?}", err);
                 return MessageProcessResult::Failure(
-                    TerminationErrorCode::GenericError,
+                    TerminationErrorCode::InternalError,
                     err.to_string(),
                 );
             }
@@ -372,7 +372,7 @@ mod success {
         )
         .await;
 
-        // Check if MessageProcessResult::Failure(TerminationErrorCode::GenericError, _)
+        // Check if MessageProcessResult::Failure(TerminationErrorCode::InternalError, _)
         if let MessageProcessResult::Success(..) = result {
         } else {
             panic!("result is not MessageProcessResult::Succsess");
@@ -443,7 +443,7 @@ mod failure {
         };
     }
 
-    async fn assert_generic_error(
+    async fn assert_internal_error(
         message_type_u8: u8,
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
@@ -455,9 +455,9 @@ mod failure {
         )
         .await;
 
-        // Check if MessageProcessResult::Failure(TerminationErrorCode::GenericError, _)
+        // Check if MessageProcessResult::Failure(TerminationErrorCode::InternalError, _)
         if let MessageProcessResult::Failure(code, _) = result {
-            assert_eq!(code, TerminationErrorCode::GenericError);
+            assert_eq!(code, TerminationErrorCode::InternalError);
         } else {
             panic!("result is not MessageProcessResult::Failure");
         };
@@ -571,48 +571,48 @@ mod failure {
     }
 
     #[tokio::test]
-    async fn client_setup_generic_error() {
+    async fn client_setup_internal_error() {
         let message_type = ControlMessageType::ClientSetup;
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::Connected;
 
-        assert_generic_error(message_type as u8, &wrong_bytes_array, client_status).await;
+        assert_internal_error(message_type as u8, &wrong_bytes_array, client_status).await;
     }
 
     #[tokio::test]
-    async fn subscribe_generic_error() {
+    async fn subscribe_internal_error() {
         let message_type = ControlMessageType::Subscribe;
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        assert_generic_error(message_type as u8, &wrong_bytes_array, client_status).await;
+        assert_internal_error(message_type as u8, &wrong_bytes_array, client_status).await;
     }
 
     #[tokio::test]
-    async fn subscribe_ok_generic_error() {
+    async fn subscribe_ok_internal_error() {
         let message_type = ControlMessageType::SubscribeOk;
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        assert_generic_error(message_type as u8, &wrong_bytes_array, client_status).await;
+        assert_internal_error(message_type as u8, &wrong_bytes_array, client_status).await;
     }
 
     // #[tokio::test]
-    // async fn unsubscribe_generic_error() {
+    // async fn unsubscribe_internal_error() {
     //     let message_type = ControlMessageType::UnSubscribe;
     //     let wrong_bytes_array = [0];
     //     let client_status = MOQTClientStatus::SetUp;
 
-    //     assert_generic_error(message_type as u8, &wrong_bytes_array, client_status).await;
+    //     assert_internal_error(message_type as u8, &wrong_bytes_array, client_status).await;
     // }
 
     #[tokio::test]
-    async fn announce_generic_error() {
+    async fn announce_internal_error() {
         let message_type = ControlMessageType::Announce;
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        assert_generic_error(message_type as u8, &wrong_bytes_array, client_status).await;
+        assert_internal_error(message_type as u8, &wrong_bytes_array, client_status).await;
     }
 
     #[tokio::test]

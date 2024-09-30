@@ -1,8 +1,8 @@
 use anyhow::Result;
 
 use moqt_core::{
-    messages::{moqt_payload::MOQTPayload, subscribe_ok::SubscribeOk},
     constants::StreamDirection,
+    messages::{moqt_payload::MOQTPayload, subscribe_ok::SubscribeOk},
     SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
@@ -84,6 +84,7 @@ mod success {
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
+    use moqt_core::constants::StreamDirection;
     use moqt_core::messages::{moqt_payload::MOQTPayload, subscribe_ok::SubscribeOk};
     use moqt_core::TrackNamespaceManagerRepository;
     use std::sync::Arc;
@@ -132,7 +133,7 @@ mod success {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: subscriber_session_id,
-                stream_direction: "bidirectional_stream".to_string(),
+                stream_direction: StreamDirection::Bi,
                 sender: uni_relay_tx,
             })
             .await;
@@ -158,6 +159,7 @@ mod failure {
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
+    use moqt_core::constants::StreamDirection;
     use moqt_core::messages::{moqt_payload::MOQTPayload, subscribe_ok::SubscribeOk};
     use moqt_core::TrackNamespaceManagerRepository;
     use std::sync::Arc;
@@ -253,7 +255,7 @@ mod failure {
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: subscriber_session_id,
-                stream_direction: "bidirectional_stream".to_string(),
+                stream_direction: StreamDirection::Bi,
                 sender: uni_relay_tx,
             })
             .await;
