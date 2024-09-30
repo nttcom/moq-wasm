@@ -292,7 +292,7 @@ mod success {
             1,   // Filter Type (i): LatestGroup
             1,   // Track Request Parameters (..): Number of Parameters
             2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length
+            4,   // Parameter Length (i)
             116, 101, 115, 116, // Parameter Value (..): test
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
@@ -432,7 +432,7 @@ mod success {
             1,   // Filter Type (i): LatestGroup
             1,   // Track Request Parameters (..): Number of Parameters
             2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length
+            4,   // Parameter Length (i)
             116, 101, 115, 116, // Parameter Value (..): test
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
