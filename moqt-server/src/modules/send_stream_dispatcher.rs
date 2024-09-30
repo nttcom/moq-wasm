@@ -15,11 +15,12 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
     tracing::trace!("send_stream_dispatcher start");
     // {
     //   "${session_id}" : {
-    //     "unidirectional_stream" : tx,
-    //     "bidirectional_stream" : tx,
+    //     "StreamDirection::Uni" : tx,
+    //     "StreamDirection::Bi" : tx,
     //   }
     // }
-    let mut dispatcher = HashMap::<usize, HashMap<String, SenderToSendStreamThread>>::new();
+    let mut dispatcher =
+        HashMap::<usize, HashMap<StreamDirection, SenderToSendStreamThread>>::new();
 
     while let Some(cmd) = rx.recv().await {
         tracing::debug!("command received: {:#?}", cmd);
@@ -30,7 +31,7 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
                 sender,
             } => {
                 let inner_map = dispatcher.entry(session_id).or_default();
-                inner_map.insert(stream_direction.to_string(), sender);
+                inner_map.insert(stream_direction, sender);
                 tracing::debug!("set: {:?} of {:?}", stream_direction, session_id);
             }
             List {
@@ -77,17 +78,17 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
 pub(crate) enum SendStreamDispatchCommand {
     Set {
         session_id: usize,
-        stream_direction: String,
+        stream_direction: StreamDirection,
         sender: SenderToSendStreamThread,
     },
     List {
-        stream_direction: String,
+        stream_direction: StreamDirection,
         exclude_session_id: Option<usize>, // Currently, exclude_session_id is only used in broadcast for List
         resp: oneshot::Sender<Vec<SenderToSendStreamThread>>,
     },
     Get {
         session_id: usize,
-        stream_direction: String,
+        stream_direction: StreamDirection,
         resp: oneshot::Sender<Option<SenderToSendStreamThread>>,
     },
     Delete {
@@ -114,7 +115,7 @@ impl SendStreamDispatcherRepository for SendStreamDispatcher {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Vec<SenderToSendStreamThread>>();
         let cmd = SendStreamDispatchCommand::List {
-            stream_direction: "bidirectional_stream".to_string(),
+            stream_direction: StreamDirection::Bi,
             exclude_session_id: session_id,
             resp: resp_tx,
         };
@@ -136,13 +137,9 @@ impl SendStreamDispatcherRepository for SendStreamDispatcher {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Option<SenderToSendStreamThread>>();
 
-        let stream_direction_str = match stream_direction {
-            StreamDirection::Uni => "unidirectional_stream",
-            StreamDirection::Bi => "bidirectional_stream",
-        };
         let cmd = SendStreamDispatchCommand::Get {
             session_id,
-            stream_direction: stream_direction_str.to_string(),
+            stream_direction,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
