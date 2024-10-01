@@ -10,7 +10,7 @@ use std::any::Any;
 use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ObjectTrackStream {
+pub struct ObjectStreamTrack {
     group_id: u64,
     object_id: u64,
     object_payload_length: u64,
@@ -18,7 +18,7 @@ pub struct ObjectTrackStream {
     object_payload: Vec<u8>,
 }
 
-impl ObjectTrackStream {
+impl ObjectStreamTrack {
     pub fn new(
         group_id: u64,
         object_id: u64,
@@ -35,7 +35,7 @@ impl ObjectTrackStream {
             }
         }
 
-        Ok(ObjectTrackStream {
+        Ok(ObjectStreamTrack {
             group_id,
             object_id,
             object_payload_length,
@@ -45,7 +45,7 @@ impl ObjectTrackStream {
     }
 }
 
-impl MOQTPayload for ObjectTrackStream {
+impl MOQTPayload for ObjectStreamTrack {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self>
     where
         Self: Sized,
@@ -86,9 +86,9 @@ impl MOQTPayload for ObjectTrackStream {
             vec![]
         };
 
-        tracing::trace!("Depacketized Object Track Stream message.");
+        tracing::trace!("Depacketized Object Stream Track message.");
 
-        Ok(ObjectTrackStream {
+        Ok(ObjectStreamTrack {
             group_id,
             object_id,
             object_payload_length,
@@ -108,9 +108,9 @@ impl MOQTPayload for ObjectTrackStream {
         }
         buf.extend(&self.object_payload);
 
-        tracing::trace!("Packetized Object Track Stream message.");
+        tracing::trace!("Packetized Object Stream Track message.");
     }
-    /// Method to enable downcasting from MOQTPayload to ObjectTrackStream
+    /// Method to enable downcasting from MOQTPayload to ObjectStreamTrack
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -119,23 +119,23 @@ impl MOQTPayload for ObjectTrackStream {
 #[cfg(test)]
 mod success {
     use crate::messages::data_streams::{
-        object_status::ObjectStatus, object_track_stream::ObjectTrackStream,
+        object_status::ObjectStatus, object_stream_track::ObjectStreamTrack,
     };
     use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
 
     #[test]
-    fn packetize_object_track_stream_normal() {
+    fn packetize_object_stream_track_normal() {
         let group_id = 0;
         let object_id = 1;
         let object_status = Some(ObjectStatus::Normal);
         let object_payload = vec![0, 1, 2];
 
-        let object_track_stream =
-            ObjectTrackStream::new(group_id, object_id, object_status, object_payload).unwrap();
+        let object_stream_track =
+            ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
         let mut buf = bytes::BytesMut::new();
-        object_track_stream.packetize(&mut buf);
+        object_stream_track.packetize(&mut buf);
 
         let expected_bytes_array = [
             0, // Group ID (i)
@@ -149,17 +149,17 @@ mod success {
     }
 
     #[test]
-    fn packetize_object_track_stream_normal_and_empty_payload() {
+    fn packetize_object_stream_track_normal_and_empty_payload() {
         let group_id = 0;
         let object_id = 1;
         let object_status = Some(ObjectStatus::Normal);
         let object_payload = vec![];
 
-        let object_track_stream =
-            ObjectTrackStream::new(group_id, object_id, object_status, object_payload).unwrap();
+        let object_stream_track =
+            ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
         let mut buf = bytes::BytesMut::new();
-        object_track_stream.packetize(&mut buf);
+        object_stream_track.packetize(&mut buf);
 
         let expected_bytes_array = [
             0, // Group ID (i)
@@ -172,17 +172,17 @@ mod success {
     }
 
     #[test]
-    fn packetize_object_track_stream_not_normal() {
+    fn packetize_object_stream_track_not_normal() {
         let group_id = 0;
         let object_id = 1;
         let object_status = Some(ObjectStatus::EndOfGroup);
         let object_payload = vec![];
 
-        let object_track_stream =
-            ObjectTrackStream::new(group_id, object_id, object_status, object_payload).unwrap();
+        let object_stream_track =
+            ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
         let mut buf = bytes::BytesMut::new();
-        object_track_stream.packetize(&mut buf);
+        object_stream_track.packetize(&mut buf);
 
         let expected_bytes_array = [
             0, // Group ID (i)
@@ -195,7 +195,7 @@ mod success {
     }
 
     #[test]
-    fn depacketize_object_track_stream_normal() {
+    fn depacketize_object_stream_track_normal() {
         let bytes_array = [
             0, // Group ID (i)
             1, // Object ID (i)
@@ -205,24 +205,24 @@ mod success {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let depacketized_object_track_stream = ObjectTrackStream::depacketize(&mut buf).unwrap();
+        let depacketized_object_stream_track = ObjectStreamTrack::depacketize(&mut buf).unwrap();
 
         let group_id = 0;
         let object_id = 1;
         let object_status = Some(ObjectStatus::Normal);
         let object_payload = vec![0, 1, 2];
 
-        let expected_object_track_stream =
-            ObjectTrackStream::new(group_id, object_id, object_status, object_payload).unwrap();
+        let expected_object_stream_track =
+            ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
         assert_eq!(
-            depacketized_object_track_stream,
-            expected_object_track_stream
+            depacketized_object_stream_track,
+            expected_object_stream_track
         );
     }
 
     #[test]
-    fn depacketize_object_track_stream_normal_and_empty_payload() {
+    fn depacketize_object_stream_track_normal_and_empty_payload() {
         let bytes_array = [
             0, // Group ID (i)
             1, // Object ID (i)
@@ -231,24 +231,24 @@ mod success {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let depacketized_object_track_stream = ObjectTrackStream::depacketize(&mut buf).unwrap();
+        let depacketized_object_stream_track = ObjectStreamTrack::depacketize(&mut buf).unwrap();
 
         let group_id = 0;
         let object_id = 1;
         let object_status = Some(ObjectStatus::Normal);
         let object_payload = vec![];
 
-        let expected_object_track_stream =
-            ObjectTrackStream::new(group_id, object_id, object_status, object_payload).unwrap();
+        let expected_object_stream_track =
+            ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
         assert_eq!(
-            depacketized_object_track_stream,
-            expected_object_track_stream
+            depacketized_object_stream_track,
+            expected_object_stream_track
         );
     }
 
     #[test]
-    fn depacketize_object_track_stream_not_normal() {
+    fn depacketize_object_stream_track_not_normal() {
         let bytes_array = [
             0, // Group ID (i)
             1, // Object ID (i)
@@ -257,44 +257,44 @@ mod success {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let depacketized_object_track_stream = ObjectTrackStream::depacketize(&mut buf).unwrap();
+        let depacketized_object_stream_track = ObjectStreamTrack::depacketize(&mut buf).unwrap();
 
         let group_id = 0;
         let object_id = 1;
         let object_status = Some(ObjectStatus::DoesNotExist);
         let object_payload = vec![];
 
-        let expected_object_track_stream =
-            ObjectTrackStream::new(group_id, object_id, object_status, object_payload).unwrap();
+        let expected_object_stream_track =
+            ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
         assert_eq!(
-            depacketized_object_track_stream,
-            expected_object_track_stream
+            depacketized_object_stream_track,
+            expected_object_stream_track
         );
     }
 }
 
 #[cfg(test)]
 mod failure {
-    use crate::messages::data_streams::object_track_stream::{ObjectStatus, ObjectTrackStream};
+    use crate::messages::data_streams::object_stream_track::{ObjectStatus, ObjectStreamTrack};
     use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
 
     #[test]
-    fn packetize_object_track_stream_not_normal_and_not_empty_payload() {
+    fn packetize_object_stream_track_not_normal_and_not_empty_payload() {
         let group_id = 0;
         let object_id = 1;
         let object_status = Some(ObjectStatus::EndOfTrackAndGroup);
         let object_payload = vec![0, 1, 2];
 
-        let object_track_stream =
-            ObjectTrackStream::new(group_id, object_id, object_status, object_payload);
+        let object_stream_track =
+            ObjectStreamTrack::new(group_id, object_id, object_status, object_payload);
 
-        assert!(object_track_stream.is_err());
+        assert!(object_stream_track.is_err());
     }
 
     #[test]
-    fn depacketize_object_track_stream_not_normal_and_not_empty_payload() {
+    fn depacketize_object_stream_track_not_normal_and_not_empty_payload() {
         let bytes_array = [
             0, // Group ID (i)
             1, // Object ID (i)
@@ -304,14 +304,14 @@ mod failure {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let depacketized_object_track_stream = ObjectTrackStream::depacketize(&mut buf);
+        let depacketized_object_stream_track = ObjectStreamTrack::depacketize(&mut buf);
 
-        assert!(depacketized_object_track_stream.is_err());
+        assert!(depacketized_object_stream_track.is_err());
     }
 
     #[test]
     #[should_panic]
-    fn depacketize_object_track_stream_wrong_parameter_length() {
+    fn depacketize_object_stream_track_wrong_parameter_length() {
         let bytes_array = [
             0, // Group ID (i)
             1, // Object ID (i)
@@ -322,11 +322,11 @@ mod failure {
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
 
-        let _ = ObjectTrackStream::depacketize(&mut buf);
+        let _ = ObjectStreamTrack::depacketize(&mut buf);
     }
 
     #[test]
-    fn depacketize_object_track_stream_wrong_object_status() {
+    fn depacketize_object_stream_track_wrong_object_status() {
         let bytes_array = [
             0, // Group ID (i)
             1, // Object ID (i)
@@ -335,8 +335,8 @@ mod failure {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let depacketized_object_track_stream = ObjectTrackStream::depacketize(&mut buf);
+        let depacketized_object_stream_track = ObjectStreamTrack::depacketize(&mut buf);
 
-        assert!(depacketized_object_track_stream.is_err());
+        assert!(depacketized_object_stream_track.is_err());
     }
 }
