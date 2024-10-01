@@ -1,23 +1,13 @@
+use crate::messages::data_streams::object_status::ObjectStatus;
 use crate::{
     variable_bytes::read_fixed_length_bytes_from_buffer,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 use anyhow::{bail, Context, Result};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
 use std::any::Any;
 
 use crate::messages::moqt_payload::MOQTPayload;
-
-#[derive(Debug, Serialize, Clone, PartialEq, TryFromPrimitive, IntoPrimitive, Copy)]
-#[repr(u8)]
-pub enum ObjectStatus {
-    Normal = 0x0,
-    DoesNotExist = 0x1,
-    EndOfGroup = 0x3,
-    EndOfTrackAndGroup = 0x4,
-    EndOfSubgroup = 0x5,
-}
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ObjectDatagram {
@@ -108,8 +98,7 @@ impl MOQTPayload for ObjectDatagram {
 
         let object_payload = if object_payload_length > 0 {
             read_fixed_length_bytes_from_buffer(buf, object_payload_length as usize)
-                .context("object payload")
-                .expect("error reading object payload")
+                .context("object payload")?
         } else {
             vec![]
         };
@@ -152,7 +141,9 @@ impl MOQTPayload for ObjectDatagram {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::data_streams::object_datagram::{ObjectDatagram, ObjectStatus};
+    use crate::messages::data_streams::{
+        object_datagram::ObjectDatagram, object_status::ObjectStatus,
+    };
     use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
 
