@@ -2,12 +2,11 @@ use anyhow::Context;
 use serde::Serialize;
 use std::any::Any;
 
+use crate::messages::moqt_payload::MOQTPayload;
 use crate::modules::{
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-
-use super::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeOk {
@@ -84,7 +83,8 @@ impl MOQTPayload for SubscribeOk {
 #[cfg(test)]
 mod success {
     use crate::{
-        messages::moqt_payload::MOQTPayload, modules::messages::subscribe_ok::SubscribeOk,
+        messages::moqt_payload::MOQTPayload,
+        modules::messages::control_messages::subscribe_ok::SubscribeOk,
     };
     use bytes::BytesMut;
 

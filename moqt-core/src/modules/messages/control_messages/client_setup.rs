@@ -1,4 +1,5 @@
-use super::{moqt_payload::MOQTPayload, setup_parameters::SetupParameter};
+use super::setup_parameters::SetupParameter;
+use crate::messages::moqt_payload::MOQTPayload;
 use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 use anyhow::{Context, Result};
 use std::{any::Any, vec};
@@ -88,7 +89,7 @@ mod success {
     use crate::{
         constants::MOQ_TRANSPORT_VERSION,
         messages::moqt_payload::MOQTPayload,
-        modules::messages::{
+        modules::messages::control_messages::{
             client_setup::ClientSetup,
             setup_parameters::{RoleCase, RoleParameter, SetupParameter},
         },

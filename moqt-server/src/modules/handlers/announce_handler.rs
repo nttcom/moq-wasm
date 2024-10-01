@@ -1,7 +1,9 @@
 use anyhow::Result;
 
 use moqt_core::{
-    messages::{announce::Announce, announce_error::AnnounceError, announce_ok::AnnounceOk},
+    messages::control_messages::{
+        announce::Announce, announce_error::AnnounceError, announce_ok::AnnounceOk,
+    },
     track_namespace_manager_repository::TrackNamespaceManagerRepository,
     MOQTClient,
 };
@@ -55,11 +57,11 @@ mod success {
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
+    use moqt_core::messages::moqt_payload::MOQTPayload;
     use moqt_core::{
-        messages::{
+        messages::control_messages::{
             announce::Announce,
             announce_ok::AnnounceOk,
-            moqt_payload::MOQTPayload,
             version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
         },
         moqt_client::MOQTClient,
@@ -110,11 +112,11 @@ mod failure {
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
+    use moqt_core::messages::moqt_payload::MOQTPayload;
     use moqt_core::{
-        messages::{
+        messages::control_messages::{
             announce::Announce,
             announce_error::AnnounceError,
-            moqt_payload::MOQTPayload,
             version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
         },
         moqt_client::MOQTClient,

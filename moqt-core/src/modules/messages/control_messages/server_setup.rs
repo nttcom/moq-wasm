@@ -4,7 +4,8 @@ use std::any::Any;
 
 use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 
-use super::{moqt_payload::MOQTPayload, setup_parameters::SetupParameter};
+use super::setup_parameters::SetupParameter;
+use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ServerSetup {
@@ -72,7 +73,7 @@ mod success {
     use crate::{
         constants::MOQ_TRANSPORT_VERSION,
         messages::moqt_payload::MOQTPayload,
-        modules::messages::{
+        modules::messages::control_messages::{
             server_setup::ServerSetup,
             setup_parameters::{RoleCase, RoleParameter, SetupParameter},
         },
