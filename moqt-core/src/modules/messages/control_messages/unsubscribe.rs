@@ -1,4 +1,4 @@
-use super::moqt_payload::MOQTPayload;
+use crate::messages::moqt_payload::MOQTPayload;
 use crate::{
     modules::variable_bytes::read_variable_bytes_from_buffer, variable_bytes::write_variable_bytes,
 };
@@ -63,8 +63,8 @@ impl MOQTPayload for Unsubscribe {
 
 #[cfg(test)]
 mod success {
+    use crate::messages::control_messages::unsubscribe::Unsubscribe;
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::messages::unsubscribe::Unsubscribe;
     use bytes::BytesMut;
     #[test]
     fn packetize_unsubscribe() {

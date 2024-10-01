@@ -8,7 +8,7 @@ use crate::{
     variable_integer::read_variable_integer_from_buffer,
 };
 
-use super::moqt_payload::MOQTPayload;
+use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct AnnounceError {
@@ -80,7 +80,8 @@ impl MOQTPayload for AnnounceError {
 #[cfg(test)]
 mod success {
     use crate::{
-        messages::moqt_payload::MOQTPayload, modules::messages::announce_error::AnnounceError,
+        messages::moqt_payload::MOQTPayload,
+        modules::messages::control_messages::announce_error::AnnounceError,
     };
     use bytes::BytesMut;
     #[test]

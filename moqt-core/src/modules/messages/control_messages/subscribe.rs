@@ -1,4 +1,5 @@
-use super::{moqt_payload::MOQTPayload, version_specific_parameters::VersionSpecificParameter};
+use super::version_specific_parameters::VersionSpecificParameter;
+use crate::messages::moqt_payload::MOQTPayload;
 use crate::{
     modules::{
         variable_bytes::{read_fixed_length_bytes_from_buffer, read_variable_bytes_from_buffer},
@@ -236,10 +237,10 @@ impl MOQTPayload for Subscribe {
 
 #[cfg(test)]
 mod success {
+    use crate::messages::control_messages::subscribe::{FilterType, GroupOrder, Subscribe};
+    use crate::messages::control_messages::version_specific_parameters::AuthorizationInfo;
+    use crate::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::messages::subscribe::{FilterType, GroupOrder, Subscribe};
-    use crate::messages::version_specific_parameters::AuthorizationInfo;
-    use crate::messages::version_specific_parameters::VersionSpecificParameter;
     use bytes::BytesMut;
 
     #[test]
@@ -593,10 +594,10 @@ mod success {
 
 #[cfg(test)]
 mod failure {
+    use crate::messages::control_messages::subscribe::{FilterType, GroupOrder, Subscribe};
+    use crate::messages::control_messages::version_specific_parameters::AuthorizationInfo;
+    use crate::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::messages::subscribe::{FilterType, GroupOrder, Subscribe};
-    use crate::messages::version_specific_parameters::AuthorizationInfo;
-    use crate::messages::version_specific_parameters::VersionSpecificParameter;
     use bytes::BytesMut;
 
     #[test]
