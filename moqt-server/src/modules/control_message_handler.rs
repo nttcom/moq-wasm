@@ -389,7 +389,7 @@ mod success {
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Delivery)
+            2, // SETUP Parameters (..): Role(Subscriber)
         ];
         let client_status = MOQTClientStatus::Connected;
 
@@ -406,7 +406,7 @@ mod success {
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Delivery)
+            2, // SETUP Parameters (..): Role(Subscriber)
         ];
         let client_status = MOQTClientStatus::Connected;
 
@@ -488,7 +488,7 @@ mod failure {
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Delivery)
+            2, // SETUP Parameters (..): Role(Subscriber)
         ];
         let wrong_client_status = MOQTClientStatus::SetUp; // Correct Status is Connected
 

@@ -7,7 +7,7 @@ use moqt_core::{
         client_setup::ClientSetup,
         server_setup::ServerSetup,
         setup_parameters::SetupParameter,
-        setup_parameters::{RoleCase, RoleParameter},
+        setup_parameters::{Role, RoleCase},
     },
     moqt_client::MOQTClientStatus,
     MOQTClient,
@@ -37,13 +37,16 @@ pub(crate) fn setup_handler(
 
     for setup_parameter in &client_setup_message.setup_parameters {
         match setup_parameter {
-            SetupParameter::RoleParameter(role) => {
+            SetupParameter::Role(role) => {
                 client.set_role(role.value)?;
             }
-            SetupParameter::PathParameter(_) => {
+            SetupParameter::Path(_) => {
                 if underlay_type == UnderlayType::WebTransport {
                     bail!("PATH parameter is not allowed on WebTransport.");
                 }
+            }
+            SetupParameter::MaxSubscribeID(_) => {
+                // TODO: handle MaxSubscribeID
             }
             SetupParameter::Unknown(v) => {
                 tracing::warn!("Ignore unknown SETUP parameter {}", v);
@@ -57,7 +60,7 @@ pub(crate) fn setup_handler(
 
     // Create a setup parameter with role set to 3 and assign it.
     // Normally, the server should determine the role here, but for now, let's set it to 3.
-    let role_parameter = SetupParameter::RoleParameter(RoleParameter::new(RoleCase::Both));
+    let role_parameter = SetupParameter::Role(Role::new(RoleCase::PubSub));
     let server_setup_message =
         ServerSetup::new(constants::MOQ_TRANSPORT_VERSION, vec![role_parameter]);
     // State: Connected -> Setup
@@ -75,16 +78,14 @@ mod success {
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
     use moqt_core::messages::{
         client_setup::ClientSetup,
-        setup_parameters::{PathParameter, RoleCase, RoleParameter, SetupParameter},
+        setup_parameters::{Path, Role, RoleCase, SetupParameter},
     };
     use moqt_core::moqt_client::MOQTClient;
 
     #[test]
     fn only_role() {
         let mut client = MOQTClient::new(33);
-        let setup_parameters = vec![SetupParameter::RoleParameter(RoleParameter::new(
-            RoleCase::Injection,
-        ))];
+        let setup_parameters = vec![SetupParameter::Role(Role::new(RoleCase::Publisher))];
         let client_setup_message =
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
@@ -99,8 +100,8 @@ mod success {
     fn role_and_path_on_quic() {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![
-            SetupParameter::RoleParameter(RoleParameter::new(RoleCase::Injection)),
-            SetupParameter::PathParameter(PathParameter::new(String::from("test"))),
+            SetupParameter::Role(Role::new(RoleCase::Publisher)),
+            SetupParameter::Path(Path::new(String::from("test"))),
         ];
         let client_setup_message =
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
@@ -120,7 +121,7 @@ mod failure {
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
     use moqt_core::messages::{
         client_setup::ClientSetup,
-        setup_parameters::{PathParameter, RoleCase, RoleParameter, SetupParameter},
+        setup_parameters::{Path, Role, RoleCase, SetupParameter},
     };
     use moqt_core::moqt_client::MOQTClient;
 
@@ -140,9 +141,7 @@ mod failure {
     #[test]
     fn include_path_on_wt() {
         let mut client = MOQTClient::new(33);
-        let setup_parameters = vec![SetupParameter::PathParameter(PathParameter::new(
-            String::from("test"),
-        ))];
+        let setup_parameters = vec![SetupParameter::Path(Path::new(String::from("test")))];
         let client_setup_message =
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
@@ -155,9 +154,7 @@ mod failure {
     #[test]
     fn include_only_path_on_quic() {
         let mut client = MOQTClient::new(33);
-        let setup_parameters = vec![SetupParameter::PathParameter(PathParameter::new(
-            String::from("test"),
-        ))];
+        let setup_parameters = vec![SetupParameter::Path(Path::new(String::from("test")))];
         let client_setup_message =
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::QUIC;
@@ -170,9 +167,7 @@ mod failure {
     #[test]
     fn include_unsupported_version() {
         let mut client = MOQTClient::new(33);
-        let setup_parameters = vec![SetupParameter::RoleParameter(RoleParameter::new(
-            RoleCase::Delivery,
-        ))];
+        let setup_parameters = vec![SetupParameter::Role(Role::new(RoleCase::Subscriber))];
 
         let unsupported_version = 8888;
         let client_setup_message = ClientSetup::new(vec![unsupported_version], setup_parameters);
@@ -188,7 +183,7 @@ mod failure {
     fn include_unknown_parameter() {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![
-            SetupParameter::RoleParameter(RoleParameter::new(RoleCase::Injection)),
+            SetupParameter::Role(Role::new(RoleCase::Publisher)),
             SetupParameter::Unknown(0),
         ];
         let client_setup_message =

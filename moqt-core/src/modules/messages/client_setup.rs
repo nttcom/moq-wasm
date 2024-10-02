@@ -90,15 +90,15 @@ mod success {
         messages::moqt_payload::MOQTPayload,
         modules::messages::{
             client_setup::ClientSetup,
-            setup_parameters::{RoleCase, RoleParameter, SetupParameter},
+            setup_parameters::{Role, RoleCase, SetupParameter},
         },
     };
     use bytes::BytesMut;
     #[test]
     fn packetize_client_setup() {
         let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-        let role_parameter = RoleParameter::new(RoleCase::Delivery);
-        let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
+        let role_parameter = Role::new(RoleCase::Subscriber);
+        let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
         let client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
         let mut buf = bytes::BytesMut::new();
         client_setup.packetize(&mut buf);
@@ -110,7 +110,7 @@ mod success {
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Delivery)
+            2, // SETUP Parameters (..): Role(Subscriber)
         ];
 
         assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -125,15 +125,15 @@ mod success {
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Delivery)
+            2, // SETUP Parameters (..): Role(Subscriber)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
         let depacketized_client_setup = ClientSetup::depacketize(&mut buf).unwrap();
 
         let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-        let role_parameter = RoleParameter::new(RoleCase::Delivery);
-        let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
+        let role_parameter = Role::new(RoleCase::Subscriber);
+        let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
         let expected_client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
 
         assert_eq!(depacketized_client_setup, expected_client_setup);
