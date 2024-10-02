@@ -4,7 +4,7 @@ use crate::modules::handlers::server_setup_handler::setup_handler;
 use anyhow::{bail, Result};
 use moqt_core::{
     constants::UnderlayType,
-    messages::{client_setup::ClientSetup, moqt_payload::MOQTPayload},
+    messages::{control_messages::client_setup::ClientSetup, moqt_payload::MOQTPayload},
     MOQTClient,
 };
 

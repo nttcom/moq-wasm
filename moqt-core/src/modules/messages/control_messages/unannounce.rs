@@ -1,4 +1,4 @@
-use super::moqt_payload::MOQTPayload;
+use crate::messages::moqt_payload::MOQTPayload;
 use crate::{
     modules::variable_bytes::read_variable_bytes_from_buffer, variable_bytes::write_variable_bytes,
 };
@@ -44,8 +44,8 @@ impl MOQTPayload for UnAnnounce {
 
 #[cfg(test)]
 mod success {
+    use crate::messages::control_messages::unannounce::UnAnnounce;
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::messages::unannounce::UnAnnounce;
     use bytes::BytesMut;
 
     #[test]

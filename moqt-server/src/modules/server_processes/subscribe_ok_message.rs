@@ -2,7 +2,7 @@ use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
 use anyhow::{bail, Result};
 use bytes::BytesMut;
 use moqt_core::{
-    messages::{moqt_payload::MOQTPayload, subscribe_ok::SubscribeOk},
+    messages::{control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload},
     SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
