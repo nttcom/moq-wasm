@@ -74,15 +74,15 @@ mod success {
         messages::moqt_payload::MOQTPayload,
         modules::messages::{
             server_setup::ServerSetup,
-            setup_parameters::{RoleCase, RoleParameter, SetupParameter},
+            setup_parameters::{Role, RoleCase, SetupParameter},
         },
     };
     use bytes::BytesMut;
     #[test]
     fn packetize_server_setup() {
         let selected_version = MOQ_TRANSPORT_VERSION;
-        let role_parameter = RoleParameter::new(RoleCase::Both);
-        let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
+        let role_parameter = Role::new(RoleCase::PubSub);
+        let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
         let server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
         let mut buf = bytes::BytesMut::new();
         server_setup.packetize(&mut buf);
@@ -93,7 +93,7 @@ mod success {
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
-            3, // SETUP Parameters (..): Value(Both)
+            3, // SETUP Parameters (..): Value(PubSub)
         ];
 
         assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -107,15 +107,15 @@ mod success {
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
-            3, // SETUP Parameters (..): Value(Both)
+            3, // SETUP Parameters (..): Value(PubSub)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
         let depacketized_server_setup = ServerSetup::depacketize(&mut buf).unwrap();
 
         let selected_version = MOQ_TRANSPORT_VERSION;
-        let role_parameter = RoleParameter::new(RoleCase::Both);
-        let setup_parameters = vec![SetupParameter::RoleParameter(role_parameter.clone())];
+        let role_parameter = Role::new(RoleCase::PubSub);
+        let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
         let expected_server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
 
         assert_eq!(depacketized_server_setup, expected_server_setup);
