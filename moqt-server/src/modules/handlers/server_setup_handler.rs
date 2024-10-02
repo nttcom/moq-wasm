@@ -3,7 +3,7 @@ use anyhow::{bail, Result};
 
 use moqt_core::{
     constants::UnderlayType,
-    messages::{
+    messages::control_messages::{
         client_setup::ClientSetup,
         server_setup::ServerSetup,
         setup_parameters::SetupParameter,
@@ -73,7 +73,7 @@ mod success {
     use std::vec;
 
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
-    use moqt_core::messages::{
+    use moqt_core::messages::control_messages::{
         client_setup::ClientSetup,
         setup_parameters::{PathParameter, RoleCase, RoleParameter, SetupParameter},
     };
@@ -118,7 +118,7 @@ mod failure {
     use std::vec;
 
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
-    use moqt_core::messages::{
+    use moqt_core::messages::control_messages::{
         client_setup::ClientSetup,
         setup_parameters::{PathParameter, RoleCase, RoleParameter, SetupParameter},
     };

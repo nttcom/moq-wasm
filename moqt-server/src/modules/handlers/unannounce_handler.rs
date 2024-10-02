@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use moqt_core::{
-    messages::unannounce::UnAnnounce,
+    messages::control_messages::unannounce::UnAnnounce,
     track_namespace_manager_repository::TrackNamespaceManagerRepository, MOQTClient,
 };
 

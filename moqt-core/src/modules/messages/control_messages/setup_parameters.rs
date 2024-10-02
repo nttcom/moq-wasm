@@ -1,7 +1,7 @@
 use crate::modules::variable_integer::read_variable_integer_from_buffer;
 use std::any::Any;
 
-use super::moqt_payload::MOQTPayload;
+use crate::messages::moqt_payload::MOQTPayload;
 use anyhow::{bail, ensure, Context, Result};
 use bytes::BufMut;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
@@ -131,7 +131,9 @@ pub enum SetupParameterType {
 #[cfg(test)]
 mod success {
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::setup_parameters::{RoleCase, RoleParameter, SetupParameter};
+    use crate::modules::messages::control_messages::setup_parameters::{
+        RoleCase, RoleParameter, SetupParameter,
+    };
     use bytes::BytesMut;
     #[test]
     fn packetize_role() {
@@ -181,7 +183,9 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::setup_parameters::{PathParameter, SetupParameter};
+    use crate::modules::messages::control_messages::setup_parameters::{
+        PathParameter, SetupParameter,
+    };
     use bytes::BytesMut;
 
     #[test]

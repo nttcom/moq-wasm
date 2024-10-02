@@ -2,7 +2,7 @@ use crate::modules::handlers::announce_handler::{announce_handler, AnnounceRespo
 use anyhow::{bail, Result};
 use bytes::BytesMut;
 use moqt_core::{
-    messages::{announce::Announce, moqt_payload::MOQTPayload},
+    messages::{control_messages::announce::Announce, moqt_payload::MOQTPayload},
     MOQTClient, TrackNamespaceManagerRepository,
 };
 

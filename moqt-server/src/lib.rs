@@ -13,8 +13,10 @@ use moqt_core::{
     constants::{StreamDirection, UnderlayType},
     control_message_type::ControlMessageType,
     messages::{
-        moqt_payload::MOQTPayload, subscribe::Subscribe, subscribe_error::SubscribeError,
-        subscribe_ok::SubscribeOk,
+        control_messages::{
+            subscribe::Subscribe, subscribe_error::SubscribeError, subscribe_ok::SubscribeOk,
+        },
+        moqt_payload::MOQTPayload,
     },
     variable_integer::write_variable_integer,
     MOQTClient, TrackNamespaceManagerRepository,
