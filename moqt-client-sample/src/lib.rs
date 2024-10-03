@@ -12,7 +12,7 @@ use moqt_core::{
         announce::Announce,
         client_setup::ClientSetup,
         moqt_payload::MOQTPayload,
-        setup_parameters::{RoleCase, Role, SetupParameter},
+        setup_parameters::{Role, RoleCase, SetupParameter},
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     variable_bytes::write_variable_bytes,
@@ -106,10 +106,8 @@ impl MOQTClient {
             let role = RoleCase::try_from(role_value).unwrap();
             let versions = versions.iter().map(|v| *v as u32).collect::<Vec<u32>>();
 
-            let client_setup_message = ClientSetup::new(
-                versions,
-                vec![SetupParameter::Role(Role::new(role))],
-            );
+            let client_setup_message =
+                ClientSetup::new(versions, vec![SetupParameter::Role(Role::new(role))]);
             let mut client_setup_message_buf = BytesMut::new();
             client_setup_message.packetize(&mut client_setup_message_buf);
 
