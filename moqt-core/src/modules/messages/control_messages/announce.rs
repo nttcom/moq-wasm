@@ -4,14 +4,14 @@ use anyhow::{Context, Result};
 
 use crate::{
     modules::{
-        messages::version_specific_parameters::VersionSpecificParameter,
+        messages::control_messages::version_specific_parameters::VersionSpecificParameter,
         variable_integer::read_variable_integer_from_buffer,
     },
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::write_variable_integer,
 };
 
-use super::moqt_payload::MOQTPayload;
+use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Announce {
@@ -96,10 +96,10 @@ impl MOQTPayload for Announce {
 
 #[cfg(test)]
 mod success {
+    use crate::messages::control_messages::version_specific_parameters::AuthorizationInfo;
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::messages::version_specific_parameters::AuthorizationInfo;
-    use crate::modules::messages::announce::Announce;
-    use crate::modules::messages::version_specific_parameters::VersionSpecificParameter;
+    use crate::modules::messages::control_messages::announce::Announce;
+    use crate::modules::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
     use bytes::BytesMut;
 
     #[test]

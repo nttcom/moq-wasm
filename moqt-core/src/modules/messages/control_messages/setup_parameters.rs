@@ -1,7 +1,7 @@
 use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 use std::any::Any;
 
-use super::moqt_payload::MOQTPayload;
+use crate::messages::moqt_payload::MOQTPayload;
 use anyhow::{bail, ensure, Context, Result};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
@@ -169,10 +169,11 @@ impl MaxSubscribeID {
 #[cfg(test)]
 mod success {
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::setup_parameters::{
+    use crate::modules::messages::control_messages::setup_parameters::{
         MaxSubscribeID, Role, RoleCase, SetupParameter,
     };
     use bytes::BytesMut;
+
     #[test]
     fn packetize_role() {
         let role_parameter = Role::new(RoleCase::Publisher);
@@ -256,7 +257,7 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::setup_parameters::{Path, SetupParameter};
+    use crate::modules::messages::control_messages::setup_parameters::{Path, SetupParameter};
     use bytes::BytesMut;
 
     #[test]

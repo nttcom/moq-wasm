@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use moqt_core::{
     constants::StreamDirection,
-    messages::{moqt_payload::MOQTPayload, subscribe_ok::SubscribeOk},
+    messages::{control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload},
     SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
@@ -85,7 +85,9 @@ mod success {
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
     use moqt_core::constants::StreamDirection;
-    use moqt_core::messages::{moqt_payload::MOQTPayload, subscribe_ok::SubscribeOk};
+    use moqt_core::messages::{
+        control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
+    };
     use moqt_core::TrackNamespaceManagerRepository;
     use std::sync::Arc;
     use tokio::sync::mpsc;
@@ -160,7 +162,9 @@ mod failure {
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
     use moqt_core::constants::StreamDirection;
-    use moqt_core::messages::{moqt_payload::MOQTPayload, subscribe_ok::SubscribeOk};
+    use moqt_core::messages::{
+        control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
+    };
     use moqt_core::TrackNamespaceManagerRepository;
     use std::sync::Arc;
     use tokio::sync::mpsc;

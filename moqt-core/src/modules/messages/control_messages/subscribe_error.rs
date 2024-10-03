@@ -9,7 +9,7 @@ use crate::modules::{
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
-use super::moqt_payload::MOQTPayload;
+use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, IntoPrimitive, TryFromPrimitive, Serialize, Clone, Copy, PartialEq)]
 #[repr(u8)]
@@ -103,7 +103,9 @@ impl MOQTPayload for SubscribeError {
 mod success {
     use crate::{
         messages::moqt_payload::MOQTPayload,
-        modules::messages::subscribe_error::{SubscribeError, SubscribeErrorCode},
+        modules::messages::control_messages::subscribe_error::{
+            SubscribeError, SubscribeErrorCode,
+        },
     };
     use bytes::BytesMut;
 
