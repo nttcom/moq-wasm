@@ -15,14 +15,14 @@ use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Announce {
-    pub(crate) track_namespace: String,
+    pub(crate) track_namespace: Vec<String>,
     pub(crate) number_of_parameters: u8,
     pub(crate) parameters: Vec<VersionSpecificParameter>,
 }
 
 impl Announce {
     pub fn new(
-        track_namespace: String,
+        track_namespace: Vec<String>,
         number_of_parameters: u8,
         parameters: Vec<VersionSpecificParameter>,
     ) -> Self {
@@ -32,7 +32,7 @@ impl Announce {
             parameters,
         }
     }
-    pub fn track_namespace(&self) -> &str {
+    pub fn track_namespace(&self) -> &Vec<String> {
         &self.track_namespace
     }
 }
@@ -41,8 +41,14 @@ impl MOQTPayload for Announce {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let read_cur = Cursor::new(&buf[..]);
         tracing::debug!("read_cur! {:?}", read_cur);
-        let track_namespace =
-            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
+        let track_namespace_tuple_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
+            .context("track namespace length")?;
+        let mut track_namespace_tuple: Vec<String> = Vec::new();
+        for _ in 0..track_namespace_tuple_length {
+            let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)
+                .context("track namespace")?;
+            track_namespace_tuple.push(track_namespace);
+        }
         let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("number of parameters")?;
         let mut parameters = vec![];
@@ -56,7 +62,7 @@ impl MOQTPayload for Announce {
         }
 
         let announce_message = Announce {
-            track_namespace,
+            track_namespace: track_namespace_tuple,
             number_of_parameters,
             parameters,
         };
@@ -75,10 +81,13 @@ impl MOQTPayload for Announce {
             }
         */
 
-        // Track Namespace
-        buf.extend(write_variable_bytes(
-            &self.track_namespace.as_bytes().to_vec(),
-        ));
+        // Track Namespace Number of elements
+        let track_namespace_tuple_length = self.track_namespace.len();
+        buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
+        for track_namespace in &self.track_namespace {
+            // Track Namespace
+            buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
+        }
         // Number of Parameters
         buf.extend(write_variable_integer(self.number_of_parameters as u64));
         // Parameters
@@ -104,7 +113,7 @@ mod success {
 
     #[test]
     fn packetize_announce_with_parameter() {
-        let track_namespace = "live.example.com".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let number_of_parameters = 1;
 
         let parameter_value = "test".to_string();
@@ -118,9 +127,11 @@ mod success {
         announce_message.packetize(&mut buf);
 
         let expected_bytes_array = [
-            16, // Track Namespace(b): Length
-            108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
-            109, // Track Namespace(b): Value("live.example.com")
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             1,   // Number of Parameters (i)
             2,   // Parameters (..): Parameter Type(AuthorizationInfo)
             4,   // Parameters (..): Length
@@ -133,9 +144,11 @@ mod success {
     #[test]
     fn depacketize_announce_with_parameter() {
         let bytes_array = [
-            16, // Track Namespace(b): Length
-            108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
-            109, // Track Namespace(b): Value("live.example.com")
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             1,   // Number of Parameters (i)
             2,   // Parameters (..): Parameter Type(AuthorizationInfo)
             4,   // Parameters (..): Length
@@ -145,7 +158,7 @@ mod success {
         buf.extend_from_slice(&bytes_array);
         let depacketized_announce_message = Announce::depacketize(&mut buf).unwrap();
 
-        let track_namespace = "live.example.com".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let number_of_parameters = 1;
         let parameter_value = "test".to_string();
         let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
@@ -160,7 +173,7 @@ mod success {
 
     #[test]
     fn packetize_announce_without_parameter() {
-        let track_namespace = "live.example.com".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let number_of_parameters = 0;
         let parameters = vec![];
         let announce_message =
@@ -169,9 +182,11 @@ mod success {
         announce_message.packetize(&mut buf);
 
         let expected_bytes_array = [
-            16, // Track Namespace(b): Length
-            108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
-            109, // Track Namespace(b): Value("live.example.com")
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             0,   // Number of Parameters (i)
         ];
 
@@ -181,16 +196,18 @@ mod success {
     #[test]
     fn depacketize_announce_without_parameter() {
         let bytes_array = [
-            16, // Track Namespace(b): Length
-            108, 105, 118, 101, 46, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111,
-            109, // Track Namespace(b): Value("live.example.com")
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             0,   // Number of Parameters (i)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
         let depacketized_announce_message = Announce::depacketize(&mut buf).unwrap();
 
-        let track_namespace = "live.example.com".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let number_of_parameters = 0;
         let parameters = vec![];
         let expected_announce_message =

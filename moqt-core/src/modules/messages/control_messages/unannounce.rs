@@ -1,4 +1,5 @@
 use crate::messages::moqt_payload::MOQTPayload;
+use crate::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 use crate::{
     modules::variable_bytes::read_variable_bytes_from_buffer, variable_bytes::write_variable_bytes,
 };
@@ -7,21 +8,31 @@ use std::any::Any;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnAnnounce {
-    track_namespace: String,
+    track_namespace: Vec<String>,
 }
 
 impl UnAnnounce {
-    pub fn track_namespace(&self) -> &str {
+    pub fn new(track_namespace: Vec<String>) -> Self {
+        UnAnnounce { track_namespace }
+    }
+    pub fn track_namespace(&self) -> &Vec<String> {
         &self.track_namespace
     }
 }
 
 impl MOQTPayload for UnAnnounce {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        let track_namespace = read_variable_bytes_from_buffer(buf).context("track namespace")?;
+        let track_namespace_tuple_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
+            .context("track namespace length")?;
+        let mut track_namespace_tuple: Vec<String> = Vec::new();
+        for _ in 0..track_namespace_tuple_length {
+            let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)
+                .context("track namespace")?;
+            track_namespace_tuple.push(track_namespace);
+        }
 
         let unannounce_message = UnAnnounce {
-            track_namespace: String::from_utf8(track_namespace)?,
+            track_namespace: track_namespace_tuple,
         };
 
         tracing::trace!("Depacketized Unannounce message.");
@@ -30,9 +41,13 @@ impl MOQTPayload for UnAnnounce {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        buf.extend(write_variable_bytes(
-            &self.track_namespace.as_bytes().to_vec(),
-        ));
+        // Track Namespace Number of elements
+        let track_namespace_tuple_length = self.track_namespace.len();
+        buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
+        for track_namespace in &self.track_namespace {
+            // Track Namespace
+            buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
+        }
 
         tracing::trace!("Packetized Unannounce message.");
     }
@@ -51,16 +66,18 @@ mod success {
     #[test]
     fn packetize_unannounce() {
         let unannounce = UnAnnounce {
-            track_namespace: "track_namespace".to_string(),
+            track_namespace: Vec::from(["test".to_string(), "test".to_string()]),
         };
 
         let mut buf = BytesMut::new();
         unannounce.packetize(&mut buf);
 
         let expected_bytes_array = [
-            15, // Track Namespace(b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace(b): Value("track_namespace")
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
@@ -68,16 +85,18 @@ mod success {
     #[test]
     fn depacketize_unannounce() {
         let bytes_array = [
-            15, // Track Namespace(b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace(b): Value("track_namespace")
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
         let depacketized_unannounce = UnAnnounce::depacketize(&mut buf).unwrap();
 
         let expected_unannounce = UnAnnounce {
-            track_namespace: "track_namespace".to_string(),
+            track_namespace: Vec::from(["test".to_string(), "test".to_string()]),
         };
 
         assert_eq!(depacketized_unannounce, expected_unannounce);
