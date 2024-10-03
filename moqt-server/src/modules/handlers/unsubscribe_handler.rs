@@ -1,6 +1,9 @@
 use anyhow::Result;
 
-use moqt_core::{messages::unsubscribe::Unsubscribe, MOQTClient, TrackNamespaceManagerRepository};
+use moqt_core::{
+    messages::control_messages::unsubscribe::Unsubscribe, MOQTClient,
+    TrackNamespaceManagerRepository,
+};
 
 // TODO: Not implemented yet
 #[allow(dead_code)]

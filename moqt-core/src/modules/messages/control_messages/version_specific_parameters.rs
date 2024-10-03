@@ -1,4 +1,4 @@
-use super::moqt_payload::MOQTPayload;
+use crate::messages::moqt_payload::MOQTPayload;
 use crate::{
     modules::variable_integer::{
         get_length_from_variable_integer_first_byte, read_variable_integer_from_buffer,
@@ -181,10 +181,10 @@ impl MaxCacheDuration {
 
 #[cfg(test)]
 mod success {
-    use crate::modules::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::version_specific_parameters::{
+    use crate::modules::messages::control_messages::version_specific_parameters::{
         AuthorizationInfo, DeliveryTimeout, MaxCacheDuration, VersionSpecificParameter,
     };
+    use crate::modules::messages::moqt_payload::MOQTPayload;
 
     #[test]
     fn packetize_authorization_info() {
@@ -304,8 +304,8 @@ mod success {
 
 #[cfg(test)]
 mod failure {
+    use crate::modules::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
     use crate::modules::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::version_specific_parameters::VersionSpecificParameter;
 
     #[test]
     #[should_panic]

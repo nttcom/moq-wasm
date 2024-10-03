@@ -1,4 +1,4 @@
-use super::messages::setup_parameters::RoleCase;
+use super::messages::control_messages::setup_parameters::RoleCase;
 use anyhow::{bail, Ok, Result};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

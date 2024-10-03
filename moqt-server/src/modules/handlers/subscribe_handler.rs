@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 
 use moqt_core::{
     constants::StreamDirection,
-    messages::{moqt_payload::MOQTPayload, subscribe::Subscribe},
+    messages::{control_messages::subscribe::Subscribe, moqt_payload::MOQTPayload},
     MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
@@ -86,9 +86,11 @@ mod success {
     };
     use moqt_core::constants::StreamDirection;
     use moqt_core::messages::{
+        control_messages::{
+            subscribe::{FilterType, GroupOrder, Subscribe},
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
         moqt_payload::MOQTPayload,
-        subscribe::{FilterType, GroupOrder, Subscribe},
-        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     };
     use moqt_core::MOQTClient;
     use moqt_core::TrackNamespaceManagerRepository;
@@ -184,9 +186,11 @@ mod failure {
     };
     use moqt_core::constants::StreamDirection;
     use moqt_core::messages::{
+        control_messages::{
+            subscribe::{FilterType, GroupOrder, Subscribe},
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
         moqt_payload::MOQTPayload,
-        subscribe::{FilterType, GroupOrder, Subscribe},
-        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     };
     use moqt_core::MOQTClient;
     use moqt_core::TrackNamespaceManagerRepository;
