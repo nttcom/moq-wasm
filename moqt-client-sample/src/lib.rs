@@ -14,7 +14,7 @@ use moqt_core::{
         announce_ok::AnnounceOk,
         client_setup::ClientSetup,
         server_setup::ServerSetup,
-        setup_parameters::{RoleCase, RoleParameter, SetupParameter},
+        setup_parameters::{Role, RoleCase, SetupParameter},
         subscribe::{FilterType, GroupOrder, Subscribe},
         subscribe_error::{SubscribeError, SubscribeErrorCode},
         subscribe_ok::SubscribeOk,
@@ -113,10 +113,8 @@ impl MOQTClient {
             let role = RoleCase::try_from(role_value).unwrap();
             let versions = versions.iter().map(|v| *v as u32).collect::<Vec<u32>>();
 
-            let client_setup_message = ClientSetup::new(
-                versions,
-                vec![SetupParameter::RoleParameter(RoleParameter::new(role))],
-            );
+            let client_setup_message =
+                ClientSetup::new(versions, vec![SetupParameter::Role(Role::new(role))]);
             let mut client_setup_message_buf = BytesMut::new();
             client_setup_message.packetize(&mut client_setup_message_buf);
 
