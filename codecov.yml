@@ -1,0 +1,36 @@
+comment:
+  layout: "header, diff, flags, components" # show component info in the PR comment
+
+coverage:
+  status:
+    project:
+      default:
+        target: 70%
+        threshold: 10%
+    patch:
+      default:
+        target: 80%
+        threshold: 10%
+
+component_management:
+  individual_components:
+    - component_id: core
+      name: moqt-core
+      paths:
+        - moqt-core/
+      statuses:
+        - type: project
+          target: 90%
+          threshold: 5%
+        - type: patch
+          target: 90%
+    - component_id: server
+      name: moqt-server
+      paths:
+        - moqt-server/
+      statuses:
+        - type: project
+          target: 60%
+          threshold: 5%
+        - type: patch
+          target: 80%
