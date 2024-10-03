@@ -1,5 +1,12 @@
 import init, { MOQTClient } from './pkg/moqt_client_sample'
 
+function isAnnouncedTrackNamespaceIncludes(announcedTrackNamespaces, trackNamespace) {
+  return announcedTrackNamespaces.some(
+    (subArr) =>
+      subArr.length === trackNamespace.length && subArr.every((value, index) => value === trackNamespace[index])
+  )
+}
+
 // TODO: impl close
 init().then(async () => {
   console.log('init wasm-pack')
@@ -32,7 +39,7 @@ init().then(async () => {
       console.log({ subscribeResponse })
 
       // TODO: Move error handling to lib.rs
-      if (announcedTrackNamespaces.includes(subscribeResponse.track_namespace)) {
+      if (isAnnouncedTrackNamespaceIncludes(announcedTrackNamespaces, subscribeResponse.track_namespace)) {
         client.sendSubscribeOkMessage(subscribeResponse.track_namespace, subscribeResponse.track_name, 0n, 0n)
         console.log('send subscribe ok')
       } else {
@@ -50,7 +57,7 @@ init().then(async () => {
       console.log('send btn clicked')
       const streamDatagram = Array.from(form['stream-datagram']).filter((elem) => elem.checked)[0].value
       const messageType = form['message-type'].value
-      const trackNamespace = form['track-namespace'].value
+      const trackNamespace = form['track-namespace'].value.split('/')
       const trackName = form['track-name'].value
       const authInfo = form['auth-info'].value
       const versions = form['versions'].value.split(',').map(BigInt)

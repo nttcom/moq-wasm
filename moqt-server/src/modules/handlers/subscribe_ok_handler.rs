@@ -18,7 +18,7 @@ pub(crate) async fn subscribe_ok_handler(
     // Determine the SUBSCRIBER who sent the SUBSCRIBE using the track_namespace and track_name
     let subscriber_session_ids = track_namespace_manager_repository
         .get_subscriber_session_ids_by_track_namespace_and_track_name(
-            subscribe_ok_message.track_namespace(),
+            subscribe_ok_message.track_namespace().clone(),
             subscribe_ok_message.track_name(),
         )
         .await;
@@ -40,14 +40,14 @@ pub(crate) async fn subscribe_ok_handler(
                         // Record the track_id upon success and activate the subscriber
                         let _ = track_namespace_manager_repository
                             .set_track_id(
-                                subscribe_ok_message.track_namespace(),
+                                subscribe_ok_message.track_namespace().clone(),
                                 subscribe_ok_message.track_name(),
                                 subscribe_ok_message.track_id(),
                             )
                             .await;
                         let _ = track_namespace_manager_repository
                             .activate_subscriber(
-                                subscribe_ok_message.track_namespace(),
+                                subscribe_ok_message.track_namespace().clone(),
                                 subscribe_ok_message.track_name(),
                                 *session_id,
                             )
@@ -95,12 +95,12 @@ mod success {
     #[tokio::test]
     async fn normal_case() {
         // Generate SUBSCRIBE_OK message
-        let track_namespace = "track_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name";
         let track_id = 1;
         let expires = 2;
         let subscribe_ok = SubscribeOk::new(
-            track_namespace.to_string(),
+            track_namespace.clone(),
             track_name.to_string(),
             track_id,
             expires,
@@ -118,10 +118,10 @@ mod success {
         let subscriber_session_id = 2;
 
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id, track_name)
             .await;
 
         // Generate SendStreamDispacher
@@ -172,12 +172,12 @@ mod failure {
     #[tokio::test]
     async fn relay_fail() {
         // Generate SUBSCRIBE_OK message
-        let track_namespace = "track_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name";
         let track_id = 1;
         let expires = 2;
         let subscribe_ok = SubscribeOk::new(
-            track_namespace.to_string(),
+            track_namespace.clone(),
             track_name.to_string(),
             track_id,
             expires,
@@ -195,10 +195,10 @@ mod failure {
         let subscriber_session_id = 2;
 
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id, track_name)
             .await;
 
         // Generate SendStreamDispacher (without set sender)
@@ -222,12 +222,12 @@ mod failure {
     #[tokio::test]
     async fn subscriber_not_found() {
         // Generate SUBSCRIBE_OK message
-        let track_namespace = "track_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name";
         let track_id = 1;
         let expires = 2;
         let subscribe_ok = SubscribeOk::new(
-            track_namespace.to_string(),
+            track_namespace.clone(),
             track_name.to_string(),
             track_id,
             expires,
@@ -245,7 +245,7 @@ mod failure {
         let subscriber_session_id = 2;
 
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
 
         // Generate SendStreamDispacher

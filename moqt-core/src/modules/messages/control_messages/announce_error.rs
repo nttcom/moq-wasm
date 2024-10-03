@@ -4,7 +4,7 @@ use std::any::Any;
 
 use crate::{
     modules::{variable_bytes::write_variable_bytes, variable_integer::write_variable_integer},
-    variable_bytes::{read_fixed_length_bytes_from_buffer, read_variable_bytes_from_buffer},
+    variable_bytes::read_variable_bytes_from_buffer,
     variable_integer::read_variable_integer_from_buffer,
 };
 
@@ -12,14 +12,14 @@ use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct AnnounceError {
-    track_namespace: String,
+    track_namespace: Vec<String>,
     error_code: u64,
     reason_phrase: String,
 }
 
 // draft-03
 impl AnnounceError {
-    pub fn new(track_namespace: String, error_code: u64, reason_phrase: String) -> Self {
+    pub fn new(track_namespace: Vec<String>, error_code: u64, reason_phrase: String) -> Self {
         AnnounceError {
             track_namespace,
             error_code,
@@ -30,13 +30,14 @@ impl AnnounceError {
 
 impl MOQTPayload for AnnounceError {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        let track_namespace_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
+        let track_namespace_tuple_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("track namespace length")?;
-        let track_namespace = String::from_utf8(read_fixed_length_bytes_from_buffer(
-            buf,
-            track_namespace_length as usize,
-        )?)
-        .context("track namespace")?;
+        let mut track_namespace_tuple: Vec<String> = Vec::new();
+        for _ in 0..track_namespace_tuple_length {
+            let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)
+                .context("track namespace")?;
+            track_namespace_tuple.push(track_namespace);
+        }
         let error_code = read_variable_integer_from_buffer(buf).context("error code")?;
         let reason_phrase =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
@@ -44,7 +45,7 @@ impl MOQTPayload for AnnounceError {
         tracing::trace!("Depacketized Announce Error message.");
 
         Ok(AnnounceError {
-            track_namespace,
+            track_namespace: track_namespace_tuple,
             error_code,
             reason_phrase,
         })
@@ -58,10 +59,13 @@ impl MOQTPayload for AnnounceError {
                 Reason Phrase (b),
             }
         */
-        // Track Namespace
-        buf.extend(write_variable_bytes(
-            &self.track_namespace.as_bytes().to_vec(),
-        ));
+        // Track Namespace Number of elements
+        let track_namespace_tuple_length = self.track_namespace.len();
+        buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
+        for track_namespace in &self.track_namespace {
+            // Track Namespace
+            buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
+        }
         // Error Code
         buf.extend(write_variable_integer(self.error_code));
         //　Reason Phrase
@@ -86,7 +90,7 @@ mod success {
     use bytes::BytesMut;
     #[test]
     fn packetize_announce_error() {
-        let track_namespace = "test".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let error_code: u64 = 1;
         let reason_phrase = "already exist".to_string();
 
@@ -95,7 +99,10 @@ mod success {
         let mut buf = bytes::BytesMut::new();
         announce_error.packetize(&mut buf);
         let expected_bytes_array = [
+            2, // Track Namespace(tuple): Number of elements
             4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
             116, 101, 115, 116, // Track Namespace(b): Value("test")
             1,   // Error Code (i)
             13,  // Reason Phrase (b): length
@@ -108,7 +115,10 @@ mod success {
     #[test]
     fn depacketize_announce_error() {
         let bytes_array = [
+            2, // Track Namespace(tuple): Number of elements
             4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
             116, 101, 115, 116, // Track Namespace(b): Value("test")
             1,   // Error Code (i)
             13,  // Reason Phrase (b): length
@@ -119,7 +129,7 @@ mod success {
         buf.extend_from_slice(&bytes_array);
         let depacketized_announce_error = AnnounceError::depacketize(&mut buf).unwrap();
 
-        let track_namespace = "test".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let error_code: u64 = 1;
         let reason_phrase = "already exist".to_string();
         let expected_announce_error =
