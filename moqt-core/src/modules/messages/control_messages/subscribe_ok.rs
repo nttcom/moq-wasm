@@ -10,7 +10,7 @@ use crate::modules::{
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeOk {
-    track_namespace: String,
+    track_namespace: Vec<String>,
     track_name: String,
     track_id: u64,
     expires: u64,
@@ -18,7 +18,7 @@ pub struct SubscribeOk {
 
 impl SubscribeOk {
     pub fn new(
-        track_namespace: String,
+        track_namespace: Vec<String>,
         track_name: String,
         track_id: u64,
         expires: u64,
@@ -31,7 +31,7 @@ impl SubscribeOk {
         }
     }
 
-    pub fn track_namespace(&self) -> &str {
+    pub fn track_namespace(&self) -> &Vec<String> {
         &self.track_namespace
     }
     pub fn track_name(&self) -> &str {
@@ -47,9 +47,15 @@ impl MOQTPayload for SubscribeOk {
     where
         Self: Sized,
     {
-        let full_track_namespace =
-            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
-        let full_track_name =
+        let track_namespace_tuple_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
+            .context("track namespace length")?;
+        let mut track_namespace_tuple: Vec<String> = Vec::new();
+        for _ in 0..track_namespace_tuple_length {
+            let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)
+                .context("track namespace")?;
+            track_namespace_tuple.push(track_namespace);
+        }
+        let track_name =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track name")?;
         let track_id = read_variable_integer_from_buffer(buf).context("track id")?;
         let expires = read_variable_integer_from_buffer(buf).context("expires")?;
@@ -57,17 +63,21 @@ impl MOQTPayload for SubscribeOk {
         tracing::trace!("Depacketized Subscribe OK message.");
 
         Ok(SubscribeOk {
-            track_namespace: full_track_namespace,
-            track_name: full_track_name,
+            track_namespace: track_namespace_tuple,
+            track_name,
             track_id,
             expires,
         })
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        buf.extend(write_variable_bytes(
-            &self.track_namespace.as_bytes().to_vec(),
-        ));
+        // Track Namespace Number of elements
+        let track_namespace_tuple_length = self.track_namespace.len();
+        buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
+        for track_namespace in &self.track_namespace {
+            // Track Namespace
+            buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
+        }
         buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
         buf.extend(write_variable_integer(self.track_id));
         buf.extend(write_variable_integer(self.expires));
@@ -90,7 +100,7 @@ mod success {
 
     #[test]
     fn packetize_subscribe_ok() {
-        let track_namespace = "track_namespace".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let track_id = 1;
         let expires = 2;
@@ -104,9 +114,11 @@ mod success {
         subscribe_ok.packetize(&mut buf);
 
         let expected_bytes_array = [
-            15, // Track Namespace (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace (b): Value("track_namespace")
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")
@@ -119,9 +131,11 @@ mod success {
     #[test]
     fn depacketize_subscribe_ok() {
         let bytes_array = [
-            15, // Track Namespace (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace (b): Value("track_namespace")
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")
@@ -132,7 +146,7 @@ mod success {
         buf.extend_from_slice(&bytes_array);
         let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf).unwrap();
 
-        let track_namespace = "track_namespace".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let track_id = 1;
         let expires = 2;

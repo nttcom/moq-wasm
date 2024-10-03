@@ -20,14 +20,14 @@ pub(crate) async fn subscribe_handler(
 
     // Since only the track_namespace is recorded in ANNOUNCE, use track_namespace to determine the publisher
     let publisher_session_id = track_namespace_manager_repository
-        .get_publisher_session_id_by_track_namespace(subscribe_message.track_namespace())
+        .get_publisher_session_id_by_track_namespace(subscribe_message.track_namespace().clone())
         .await;
     match publisher_session_id {
         Some(session_id) => {
             // Record the SUBSCRIBER who sent the SUBSCRIBE message
             match track_namespace_manager_repository
                 .set_subscriber(
-                    subscribe_message.track_namespace(),
+                    subscribe_message.track_namespace().clone(),
                     client.id,
                     subscribe_message.track_name(),
                 )
@@ -102,7 +102,7 @@ mod success {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -118,7 +118,7 @@ mod success {
         let subscribe = Subscribe::new(
             subscribe_id,
             track_alias,
-            track_namespace.to_string(),
+            track_namespace.clone(),
             track_name,
             subscriber_priority,
             group_order,
@@ -143,7 +143,7 @@ mod success {
 
         let publisher_session_id = 1;
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
 
         // Generate SendStreamDispacher
@@ -202,7 +202,7 @@ mod failure {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name";
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -218,7 +218,7 @@ mod failure {
         let subscribe = Subscribe::new(
             subscribe_id,
             track_alias,
-            track_namespace.to_string(),
+            track_namespace.clone(),
             track_name.to_string(),
             subscriber_priority,
             group_order,
@@ -245,16 +245,16 @@ mod failure {
         let track_id = 0;
 
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id, track_name)
             .await;
         let _ = track_namespace_manager
-            .set_track_id(track_namespace, track_name, track_id)
+            .set_track_id(track_namespace.clone(), track_name, track_id)
             .await;
         let _ = track_namespace_manager
-            .activate_subscriber(track_namespace, track_name, subscriber_session_id)
+            .activate_subscriber(track_namespace.clone(), track_name, subscriber_session_id)
             .await;
 
         // Generate SendStreamDispacher
@@ -290,7 +290,7 @@ mod failure {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name";
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -306,7 +306,7 @@ mod failure {
         let subscribe = Subscribe::new(
             subscribe_id,
             track_alias,
-            track_namespace.to_string(),
+            track_namespace.clone(),
             track_name.to_string(),
             subscriber_priority,
             group_order,
@@ -331,7 +331,7 @@ mod failure {
 
         let publisher_session_id = 1;
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
 
         // Generate SendStreamDispacher (without set sender)
@@ -358,7 +358,7 @@ mod failure {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name";
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -374,7 +374,7 @@ mod failure {
         let subscribe = Subscribe::new(
             subscribe_id,
             track_alias,
-            track_namespace.to_string(),
+            track_namespace,
             track_name.to_string(),
             subscriber_priority,
             group_order,

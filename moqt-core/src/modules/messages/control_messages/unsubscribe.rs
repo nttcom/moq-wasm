@@ -1,4 +1,5 @@
 use crate::messages::moqt_payload::MOQTPayload;
+use crate::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 use crate::{
     modules::variable_bytes::read_variable_bytes_from_buffer, variable_bytes::write_variable_bytes,
 };
@@ -7,12 +8,12 @@ use std::any::Any;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unsubscribe {
-    track_namespace: String,
+    track_namespace: Vec<String>,
     track_name: String,
 }
 
 impl Unsubscribe {
-    pub fn new(track_namespace: String, track_name: String) -> Unsubscribe {
+    pub fn new(track_namespace: Vec<String>, track_name: String) -> Unsubscribe {
         Unsubscribe {
             track_namespace,
             track_name,
@@ -21,7 +22,7 @@ impl Unsubscribe {
 
     // TODO: Not implemented yet
     #[allow(dead_code)]
-    pub(crate) fn track_namespace(&self) -> &str {
+    pub(crate) fn track_namespace(&self) -> &Vec<String> {
         &self.track_namespace
     }
 
@@ -34,11 +35,18 @@ impl Unsubscribe {
 
 impl MOQTPayload for Unsubscribe {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        let track_namespace = read_variable_bytes_from_buffer(buf).context("track namespace")?;
+        let track_namespace_tuple_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
+            .context("track namespace length")?;
+        let mut track_namespace_tuple: Vec<String> = Vec::new();
+        for _ in 0..track_namespace_tuple_length {
+            let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)
+                .context("track namespace")?;
+            track_namespace_tuple.push(track_namespace);
+        }
         let track_name = read_variable_bytes_from_buffer(buf).context("track name")?;
 
         let unsubscribe_message = Unsubscribe {
-            track_namespace: String::from_utf8(track_namespace)?,
+            track_namespace: track_namespace_tuple,
             track_name: String::from_utf8(track_name)?,
         };
 
@@ -48,9 +56,13 @@ impl MOQTPayload for Unsubscribe {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        buf.extend(write_variable_bytes(
-            &self.track_namespace.as_bytes().to_vec(),
-        ));
+        // Track Namespace Number of elements
+        let track_namespace_tuple_length = self.track_namespace.len();
+        buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
+        for track_namespace in &self.track_namespace {
+            // Track Namespace
+            buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
+        }
         buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
 
         tracing::trace!("Packetized Unsubscribe message.");
@@ -69,7 +81,7 @@ mod success {
     #[test]
     fn packetize_unsubscribe() {
         let unsubscribe = Unsubscribe {
-            track_namespace: "track_namespace".to_string(),
+            track_namespace: Vec::from(["test".to_string(), "test".to_string()]),
             track_name: "track_name".to_string(),
         };
 
@@ -77,9 +89,11 @@ mod success {
         unsubscribe.packetize(&mut buf);
 
         let expected_bytes_array = [
-            15, // Track Namespace(b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace(b): Value("track_namespace")
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")
@@ -89,9 +103,11 @@ mod success {
     #[test]
     fn depacketize_unsubscribe() {
         let bytes_array = [
-            15, // Track Namespace(b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace(b): Value("track_namespace")
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")
@@ -101,7 +117,7 @@ mod success {
         let depacketized_unsubscribe = Unsubscribe::depacketize(&mut buf).unwrap();
 
         let expected_unsubscribe = Unsubscribe {
-            track_namespace: "track_namespace".to_string(),
+            track_namespace: Vec::from(["test".to_string(), "test".to_string()]),
             track_name: "track_name".to_string(),
         };
 
