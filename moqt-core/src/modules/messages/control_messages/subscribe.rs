@@ -33,7 +33,7 @@ pub enum FilterType {
 pub struct Subscribe {
     subscribe_id: u64,
     track_alias: u64,
-    track_namespace: String,
+    track_namespace: Vec<String>,
     track_name: String,
     subscriber_priority: u8,
     group_order: GroupOrder,
@@ -51,7 +51,7 @@ impl Subscribe {
     pub fn new(
         subscribe_id: u64,
         track_alias: u64,
-        track_namespace: String,
+        track_namespace: Vec<String>,
         track_name: String,
         subscriber_priority: u8,
         group_order: GroupOrder,
@@ -109,7 +109,7 @@ impl Subscribe {
         })
     }
 
-    pub fn track_namespace(&self) -> &str {
+    pub fn track_namespace(&self) -> &Vec<String> {
         &self.track_namespace
     }
     pub fn track_name(&self) -> &str {
@@ -124,8 +124,14 @@ impl MOQTPayload for Subscribe {
     {
         let subscribe_id = read_variable_integer_from_buffer(buf).context("subscribe id")?;
         let track_alias = read_variable_integer_from_buffer(buf).context("track alias")?;
-        let track_namespace =
-            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track namespace")?;
+        let track_namespace_tuple_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
+            .context("track namespace length")?;
+        let mut track_namespace_tuple: Vec<String> = Vec::new();
+        for _ in 0..track_namespace_tuple_length {
+            let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)
+                .context("track namespace")?;
+            track_namespace_tuple.push(track_namespace);
+        }
         let track_name =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track name")?;
         let subscriber_priority =
@@ -183,7 +189,7 @@ impl MOQTPayload for Subscribe {
         Ok(Subscribe {
             subscribe_id,
             track_alias,
-            track_namespace,
+            track_namespace: track_namespace_tuple,
             track_name,
             subscriber_priority,
             group_order,
@@ -200,9 +206,13 @@ impl MOQTPayload for Subscribe {
     fn packetize(&self, buf: &mut bytes::BytesMut) {
         buf.extend(write_variable_integer(self.subscribe_id));
         buf.extend(write_variable_integer(self.track_alias));
-        buf.extend(write_variable_bytes(
-            &self.track_namespace.as_bytes().to_vec(),
-        ));
+        // Track Namespace Number of elements
+        let track_namespace_tuple_length = self.track_namespace.len();
+        buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
+        for track_namespace in &self.track_namespace {
+            // Track Namespace
+            buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
+        }
         buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
         buf.extend(self.subscriber_priority.to_be_bytes());
         buf.extend(u8::from(self.group_order).to_be_bytes());
@@ -247,7 +257,7 @@ mod success {
     fn packetize_subscribe_latest_group() {
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -280,11 +290,13 @@ mod success {
         subscribe.packetize(&mut buf);
 
         let expected_bytes_array = [
-            0,  // Subscribe ID (i)
-            0,  // Track Alias (i)
-            15, // Track Namespace (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace (b): Value("track_namespace")
+            0, // Subscribe ID (i)
+            0, // Track Alias (i)
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")
@@ -303,7 +315,7 @@ mod success {
     fn packetize_subscribe_absolute_start() {
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Descending;
@@ -336,11 +348,13 @@ mod success {
         subscribe.packetize(&mut buf);
 
         let expected_bytes_array = [
-            0,  // Subscribe ID (i)
-            0,  // Track Alias (i)
-            15, // Track Namespace (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace (b): Value("track_namespace")
+            0, // Subscribe ID (i)
+            0, // Track Alias (i)
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")
@@ -361,7 +375,7 @@ mod success {
     fn packetize_subscribe_absolute_range() {
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -394,11 +408,13 @@ mod success {
         subscribe.packetize(&mut buf);
 
         let expected_bytes_array = [
-            0,  // Subscribe ID (i)
-            0,  // Track Alias (i)
-            15, // Track Namespace (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace (b): Value("track_namespace")
+            0, // Subscribe ID (i)
+            0, // Track Alias (i)
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")
@@ -420,11 +436,13 @@ mod success {
     #[test]
     fn depacketize_subscribe_latest_group() {
         let bytes_array = [
-            0,  // Subscribe ID (i)
-            0,  // Track Alias (i)
-            15, // Track Namespace (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace (b): Value("track_namespace")
+            0, // Subscribe ID (i)
+            0, // Track Alias (i)
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")
@@ -442,7 +460,7 @@ mod success {
 
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -476,11 +494,13 @@ mod success {
     #[test]
     fn depacketize_subscribe_absolute_start() {
         let bytes_array = [
-            0,  // Subscribe ID (i)
-            0,  // Track Alias (i)
-            15, // Track Namespace (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace (b): Value("track_namespace")
+            0, // Subscribe ID (i)
+            0, // Track Alias (i)
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")
@@ -500,7 +520,7 @@ mod success {
 
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -534,11 +554,13 @@ mod success {
     #[test]
     fn depacketize_subscribe_absolute_range() {
         let bytes_array = [
-            0,  // Subscribe ID (i)
-            0,  // Track Alias (i)
-            15, // Track Namespace (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace (b): Value("track_namespace")
+            0, // Subscribe ID (i)
+            0, // Track Alias (i)
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")
@@ -560,7 +582,7 @@ mod success {
 
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -604,7 +626,7 @@ mod failure {
     fn packetize_subscribe_latest_group_with_start_parameter() {
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -639,7 +661,7 @@ mod failure {
     fn packetize_subscribe_latest_group_with_end_parameter() {
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -674,7 +696,7 @@ mod failure {
     fn packetize_subscribe_absolute_start_with_end_parameter() {
         let subscribe_id = 0;
         let track_alias = 0;
-        let track_namespace = "track_namespace".to_string();
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
@@ -708,11 +730,13 @@ mod failure {
     #[test]
     fn depacketize_unknown_filter_type() {
         let bytes_array = [
-            0,  // Subscribe ID (i)
-            0,  // Track Alias (i)
-            15, // Track Namespace (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace (b): Value("track_namespace")
+            0, // Subscribe ID (i)
+            0, // Track Alias (i)
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")
@@ -736,11 +760,13 @@ mod failure {
     #[test]
     fn depacketize_unknown_group_order() {
         let bytes_array = [
-            0,  // Subscribe ID (i)
-            0,  // Track Alias (i)
-            15, // Track Namespace (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109, 101, 115, 112, 97, 99,
-            101, // Track Namespace (b): Value("track_namespace")
+            0, // Subscribe ID (i)
+            0, // Track Alias (i)
+            2, // Track Namespace(tuple): Number of elements
+            4, // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
+            4,   // Track Namespace(b): Length
+            116, 101, 115, 116, // Track Namespace(b): Value("test")
             10,  // Track Name (b): Length
             116, 114, 97, 99, 107, 95, 110, 97, 109,
             101, // Track Name (b): Value("track_name")

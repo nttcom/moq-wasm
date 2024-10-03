@@ -8,7 +8,7 @@ use TrackCommand::*;
 
 type SubscriberSessionId = usize;
 type TrackName = String;
-type TrackNamespace = String;
+type TrackNamespace = Vec<String>;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum SubscriberStatus {
@@ -121,11 +121,11 @@ impl TrackNamespaces {
         }
     }
 
-    fn is_exist_track_namespace(&self, track_namespace: String) -> bool {
+    fn is_exist_track_namespace(&self, track_namespace: Vec<String>) -> bool {
         self.publishers.contains_key(&track_namespace)
     }
 
-    fn is_exist_track_name(&mut self, track_namespace: String, track_name: String) -> bool {
+    fn is_exist_track_name(&mut self, track_namespace: Vec<String>, track_name: String) -> bool {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
             return false;
         }
@@ -136,7 +136,7 @@ impl TrackNamespaces {
 
     fn set_publisher(
         &mut self,
-        track_namespace: String,
+        track_namespace: Vec<String>,
         publisher_session_id: usize,
     ) -> Result<()> {
         if self.is_exist_track_namespace(track_namespace.clone()) {
@@ -148,7 +148,7 @@ impl TrackNamespaces {
         Ok(())
     }
 
-    fn delete_publisher_by_namespace(&mut self, track_namespace: String) -> Result<()> {
+    fn delete_publisher_by_namespace(&mut self, track_namespace: Vec<String>) -> Result<()> {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
             bail!("not found");
         }
@@ -167,7 +167,7 @@ impl TrackNamespaces {
 
     fn get_publisher_session_id_by_track_namespace(
         &self,
-        track_namespace: String,
+        track_namespace: Vec<String>,
     ) -> Option<usize> {
         self.publishers
             .get(&track_namespace)
@@ -176,7 +176,7 @@ impl TrackNamespaces {
 
     fn set_subscriber(
         &mut self,
-        track_namespace: String,
+        track_namespace: Vec<String>,
         subscriber_session_id: usize,
         track_name: String,
     ) -> Result<()> {
@@ -204,7 +204,7 @@ impl TrackNamespaces {
 
     fn delete_subscriber(
         &mut self,
-        track_namespace: String,
+        track_namespace: Vec<String>,
         track_name: String,
         subscriber_session_id: usize,
     ) -> Result<()> {
@@ -255,7 +255,7 @@ impl TrackNamespaces {
 
     fn get_subscriber_session_ids_by_track_namespace_and_track_name(
         &mut self,
-        track_namespace: String,
+        track_namespace: Vec<String>,
         track_name: String,
     ) -> Option<Vec<usize>> {
         if !self.is_exist_track_namespace(track_namespace.clone()) {
@@ -308,7 +308,7 @@ impl TrackNamespaces {
 
     fn set_track_id(
         &mut self,
-        track_namespace: String,
+        track_namespace: Vec<String>,
         track_name: String,
         track_id: u64,
     ) -> Result<()> {
@@ -329,7 +329,7 @@ impl TrackNamespaces {
 
     fn set_status(
         &mut self,
-        track_namespace: String,
+        track_namespace: Vec<String>,
         track_name: String,
         subscriber_session_id: usize,
         status: SubscriberStatus,
@@ -533,12 +533,12 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
 #[derive(Debug)]
 pub(crate) enum TrackCommand {
     SetPublisher {
-        track_namespace: String,
+        track_namespace: Vec<String>,
         publisher_session_id: usize,
         resp: oneshot::Sender<bool>,
     },
     DeletePublisherByNamespace {
-        track_namespace: String,
+        track_namespace: Vec<String>,
         resp: oneshot::Sender<bool>,
     },
     DeletePublisherBySessionId {
@@ -546,26 +546,26 @@ pub(crate) enum TrackCommand {
         resp: oneshot::Sender<bool>,
     },
     HasTrackNamespace {
-        track_namespace: String,
+        track_namespace: Vec<String>,
         resp: oneshot::Sender<bool>,
     },
     HasTrackName {
-        track_namespace: String,
+        track_namespace: Vec<String>,
         track_name: String,
         resp: oneshot::Sender<bool>,
     },
     GetPublisherSessionId {
-        track_namespace: String,
+        track_namespace: Vec<String>,
         resp: oneshot::Sender<Option<usize>>,
     },
     SetSubscliber {
-        track_namespace: String,
+        track_namespace: Vec<String>,
         subscriber_session_id: usize,
         track_name: String,
         resp: oneshot::Sender<bool>,
     },
     DeleteSubscliber {
-        track_namespace: String,
+        track_namespace: Vec<String>,
         track_name: String,
         subscriber_session_id: usize,
         resp: oneshot::Sender<bool>,
@@ -575,20 +575,20 @@ pub(crate) enum TrackCommand {
         resp: oneshot::Sender<bool>,
     },
     SetTrackId {
-        track_namespace: String,
+        track_namespace: Vec<String>,
         track_name: String,
         track_id: u64,
         resp: oneshot::Sender<bool>,
     },
     SetStatus {
-        track_namespace: String,
+        track_namespace: Vec<String>,
         track_name: String,
         subscriber_session_id: usize,
         status: SubscriberStatus,
         resp: oneshot::Sender<bool>,
     },
     GetSubscliberSessionIdsByNamespaceAndName {
-        track_namespace: String,
+        track_namespace: Vec<String>,
         track_name: String,
         resp: oneshot::Sender<Option<Vec<usize>>>,
     },
@@ -613,13 +613,13 @@ impl TrackNamespaceManager {
 impl TrackNamespaceManagerRepository for TrackNamespaceManager {
     async fn set_publisher(
         &self,
-        track_namespace: &str,
+        track_namespace: Vec<String>,
         publisher_session_id: usize,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::SetPublisher {
-            track_namespace: track_namespace.to_string(),
+            track_namespace,
             publisher_session_id,
             resp: resp_tx,
         };
@@ -633,11 +633,11 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
         }
     }
 
-    async fn delete_publisher_by_namespace(&self, track_namespace: &str) -> Result<()> {
+    async fn delete_publisher_by_namespace(&self, track_namespace: Vec<String>) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::DeletePublisherByNamespace {
-            track_namespace: track_namespace.to_string(),
+            track_namespace,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -667,11 +667,11 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
         }
     }
 
-    async fn has_track_namespace(&self, track_namespace: &str) -> bool {
+    async fn has_track_namespace(&self, track_namespace: Vec<String>) -> bool {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::HasTrackNamespace {
-            track_namespace: track_namespace.to_string(),
+            track_namespace,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -680,11 +680,11 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
         return result;
     }
 
-    async fn has_track_name(&self, track_namespace: &str, track_name: &str) -> bool {
+    async fn has_track_name(&self, track_namespace: Vec<String>, track_name: &str) -> bool {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::HasTrackName {
-            track_namespace: track_namespace.to_string(),
+            track_namespace,
             track_name: track_name.to_string(),
             resp: resp_tx,
         };
@@ -696,11 +696,11 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
     async fn get_publisher_session_id_by_track_namespace(
         &self,
-        track_namespace: &str,
+        track_namespace: Vec<String>,
     ) -> Option<usize> {
         let (resp_tx, resp_rx) = oneshot::channel::<Option<usize>>();
         let cmd = TrackCommand::GetPublisherSessionId {
-            track_namespace: track_namespace.to_string(),
+            track_namespace,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -712,14 +712,14 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
     async fn set_subscriber(
         &self,
-        track_namespace: &str,
+        track_namespace: Vec<String>,
         subscriber_session_id: usize,
         track_name: &str,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::SetSubscliber {
-            track_namespace: track_namespace.to_string(),
+            track_namespace,
             subscriber_session_id,
             track_name: track_name.to_string(),
             resp: resp_tx,
@@ -736,14 +736,14 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
     async fn delete_subscriber(
         &self,
-        track_namespace: &str,
+        track_namespace: Vec<String>,
         track_name: &str,
         subscriber_session_id: usize,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::DeleteSubscliber {
-            track_namespace: track_namespace.to_string(),
+            track_namespace,
             track_name: track_name.to_string(),
             subscriber_session_id,
             resp: resp_tx,
@@ -777,14 +777,14 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
     async fn set_track_id(
         &self,
-        track_namespace: &str,
+        track_namespace: Vec<String>,
         track_name: &str,
         track_id: u64,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::SetTrackId {
-            track_namespace: track_namespace.to_string(),
+            track_namespace,
             track_name: track_name.to_string(),
             track_id,
             resp: resp_tx,
@@ -801,13 +801,13 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
     async fn get_subscriber_session_ids_by_track_namespace_and_track_name(
         &self,
-        track_namespace: &str,
+        track_namespace: Vec<String>,
         track_name: &str,
     ) -> Option<Vec<usize>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Option<Vec<usize>>>();
 
         let cmd = TrackCommand::GetSubscliberSessionIdsByNamespaceAndName {
-            track_namespace: track_namespace.to_string(),
+            track_namespace,
             track_name: track_name.to_string(),
             resp: resp_tx,
         };
@@ -834,14 +834,14 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
     async fn activate_subscriber(
         &self,
-        track_namespace: &str,
+        track_namespace: Vec<String>,
         track_name: &str,
         subscriber_session_id: usize,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
         let cmd = TrackCommand::SetStatus {
-            track_namespace: track_namespace.to_string(),
+            track_namespace,
             track_name: track_name.to_string(),
             subscriber_session_id,
             status: SubscriberStatus::Activate,
@@ -874,7 +874,7 @@ mod success {
     use tokio::sync::mpsc;
     #[tokio::test]
     async fn set_publisher() {
-        let track_namespace = "test";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
 
         // Start track management thread
@@ -891,7 +891,7 @@ mod success {
 
     #[tokio::test]
     async fn delete_publisher_by_namespace() {
-        let track_namespace = "test";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
 
         // Start track management thread
@@ -900,15 +900,15 @@ mod success {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
 
         let _ = track_namespace_manager
-            .delete_publisher_by_namespace(track_namespace)
+            .delete_publisher_by_namespace(track_namespace.clone())
             .await;
 
         let result = track_namespace_manager
-            .get_publisher_session_id_by_track_namespace(track_namespace)
+            .get_publisher_session_id_by_track_namespace(track_namespace.clone())
             .await;
 
         assert!(result.is_none());
@@ -916,7 +916,7 @@ mod success {
 
     #[tokio::test]
     async fn has_track_namespace() {
-        let track_namespace = "test";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
 
         // Start track management thread
@@ -925,11 +925,11 @@ mod success {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
 
         let result = track_namespace_manager
-            .has_track_namespace(track_namespace)
+            .has_track_namespace(track_namespace.clone())
             .await;
 
         assert!(result);
@@ -937,7 +937,7 @@ mod success {
 
     #[tokio::test]
     async fn get_publisher_session_id_by_track_namespace() {
-        let track_namespace = "test";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
 
         // Start track management thread
@@ -946,11 +946,11 @@ mod success {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
 
         let result = track_namespace_manager
-            .get_publisher_session_id_by_track_namespace(track_namespace)
+            .get_publisher_session_id_by_track_namespace(track_namespace.clone())
             .await;
 
         assert_eq!(result, Some(publisher_session_id));
@@ -958,7 +958,7 @@ mod success {
 
     #[tokio::test]
     async fn set_subscriber_track_not_existed() {
-        let track_namespace = "test_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
         let subscriber_session_id = 2;
         let track_name = "test_name";
@@ -969,12 +969,12 @@ mod success {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
 
         // Register a new subscriber with a new track
         let result = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id, track_name)
             .await;
 
         assert!(result.is_ok());
@@ -982,7 +982,7 @@ mod success {
 
     #[tokio::test]
     async fn set_subscriber_track_already_existed() {
-        let track_namespace = "test_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
         let subscriber_session_id_1 = 1;
         let subscriber_session_id_2 = 2;
@@ -994,15 +994,15 @@ mod success {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id_1, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id_1, track_name)
             .await;
 
         // Register a new subscriber with the same track
         let result = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id_2, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id_2, track_name)
             .await;
 
         assert!(result.is_ok());
@@ -1010,7 +1010,7 @@ mod success {
 
     #[tokio::test]
     async fn delete_subscriber() {
-        let track_namespace = "test_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
         let subscriber_session_id_1 = 2;
         let subscriber_session_id_2 = 3;
@@ -1022,22 +1022,22 @@ mod success {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id_1, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id_1, track_name)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id_2, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id_2, track_name)
             .await;
 
         let _ = track_namespace_manager
-            .delete_subscriber(track_namespace, track_name, subscriber_session_id_1)
+            .delete_subscriber(track_namespace.clone(), track_name, subscriber_session_id_1)
             .await;
 
         let result = track_namespace_manager
             .get_subscriber_session_ids_by_track_namespace_and_track_name(
-                track_namespace,
+                track_namespace.clone(),
                 track_name,
             )
             .await
@@ -1049,7 +1049,7 @@ mod success {
 
     #[tokio::test]
     async fn delete_last_subscriber() {
-        let track_namespace = "test_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
         let subscriber_session_id = 2;
         let track_name = "test_name";
@@ -1060,18 +1060,18 @@ mod success {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id, track_name)
             .await;
 
         let _ = track_namespace_manager
-            .delete_subscriber(track_namespace, track_name, subscriber_session_id)
+            .delete_subscriber(track_namespace.clone(), track_name, subscriber_session_id)
             .await;
 
         let result = track_namespace_manager
-            .has_track_name(track_namespace, track_name)
+            .has_track_name(track_namespace.clone(), track_name)
             .await;
 
         assert!(!result);
@@ -1079,7 +1079,7 @@ mod success {
 
     #[tokio::test]
     async fn get_subscriber_session_ids_by_track_id() {
-        let track_namespace = "test_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
         let subscriber_session_ids = vec![2, 3];
         let track_id = 0;
@@ -1091,22 +1091,38 @@ mod success {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_ids[0], track_name)
+            .set_subscriber(
+                track_namespace.clone(),
+                subscriber_session_ids[0],
+                track_name,
+            )
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_ids[1], track_name)
+            .set_subscriber(
+                track_namespace.clone(),
+                subscriber_session_ids[1],
+                track_name,
+            )
             .await;
         let _ = track_namespace_manager
-            .set_track_id(track_namespace, track_name, track_id)
+            .set_track_id(track_namespace.clone(), track_name, track_id)
             .await;
         let _ = track_namespace_manager
-            .activate_subscriber(track_namespace, track_name, subscriber_session_ids[0])
+            .activate_subscriber(
+                track_namespace.clone(),
+                track_name,
+                subscriber_session_ids[0],
+            )
             .await;
         let _ = track_namespace_manager
-            .activate_subscriber(track_namespace, track_name, subscriber_session_ids[1])
+            .activate_subscriber(
+                track_namespace.clone(),
+                track_name,
+                subscriber_session_ids[1],
+            )
             .await;
 
         let mut result = track_namespace_manager
@@ -1121,7 +1137,10 @@ mod success {
 
     #[tokio::test]
     async fn delete_client() {
-        let track_namespaces = ["test_namespace_1", "test_namespace_2"];
+        let track_namespaces = [
+            Vec::from(["test1".to_string(), "test1".to_string()]),
+            Vec::from(["test2".to_string(), "test2".to_string()]),
+        ];
         let publisher_session_ids = [1, 2];
         let mut subscriber_session_ids = vec![2, 3, 4];
         let track_id = 0;
@@ -1138,33 +1157,57 @@ mod success {
         //   pub 2 <- sub 3, 4
         for i in [0, 1] {
             let _ = track_namespace_manager
-                .set_publisher(track_namespaces[i], publisher_session_ids[i])
+                .set_publisher(track_namespaces[i].clone(), publisher_session_ids[i])
                 .await;
         }
         let _ = track_namespace_manager
-            .set_subscriber(track_namespaces[0], subscriber_session_ids[0], track_name)
+            .set_subscriber(
+                track_namespaces[0].clone(),
+                subscriber_session_ids[0],
+                track_name,
+            )
             .await;
         for i in [0, 1] {
             let _ = track_namespace_manager
-                .set_subscriber(track_namespaces[i], subscriber_session_ids[1], track_name)
+                .set_subscriber(
+                    track_namespaces[i].clone(),
+                    subscriber_session_ids[1],
+                    track_name,
+                )
                 .await;
             let _ = track_namespace_manager
-                .set_subscriber(track_namespaces[i], subscriber_session_ids[2], track_name)
+                .set_subscriber(
+                    track_namespaces[i].clone(),
+                    subscriber_session_ids[2],
+                    track_name,
+                )
                 .await;
 
             let _ = track_namespace_manager
-                .set_track_id(track_namespaces[i], track_name, track_id)
+                .set_track_id(track_namespaces[i].clone(), track_name, track_id)
                 .await;
 
             let _ = track_namespace_manager
-                .activate_subscriber(track_namespaces[i], track_name, subscriber_session_ids[1])
+                .activate_subscriber(
+                    track_namespaces[i].clone(),
+                    track_name,
+                    subscriber_session_ids[1],
+                )
                 .await;
             let _ = track_namespace_manager
-                .activate_subscriber(track_namespaces[i], track_name, subscriber_session_ids[2])
+                .activate_subscriber(
+                    track_namespaces[i].clone(),
+                    track_name,
+                    subscriber_session_ids[2],
+                )
                 .await;
         }
         let _ = track_namespace_manager
-            .activate_subscriber(track_namespaces[0], track_name, subscriber_session_ids[0])
+            .activate_subscriber(
+                track_namespaces[0].clone(),
+                track_name,
+                subscriber_session_ids[0],
+            )
             .await;
 
         // Delete: pub 2, sub 2
@@ -1188,11 +1231,11 @@ mod success {
         // Test for subscriber
         // Remain: pub 1
         let delete_publisher_result_1 = track_namespace_manager
-            .get_publisher_session_id_by_track_namespace(track_namespaces[0])
+            .get_publisher_session_id_by_track_namespace(track_namespaces[0].clone())
             .await
             .unwrap();
         let delete_publisher_result_2 = track_namespace_manager
-            .get_publisher_session_id_by_track_namespace(track_namespaces[1])
+            .get_publisher_session_id_by_track_namespace(track_namespaces[1].clone())
             .await;
 
         assert_eq!(delete_publisher_result_1, publisher_session_ids[0]);
@@ -1201,7 +1244,10 @@ mod success {
 
     #[tokio::test]
     async fn delete_client_as_last_subscriber() {
-        let track_namespaces = ["test_namespace_1", "test_namespace_2"];
+        let track_namespaces = [
+            Vec::from(["test1".to_string(), "test1".to_string()]),
+            Vec::from(["test2".to_string(), "test2".to_string()]),
+        ];
         let publisher_session_ids = [1, 2];
         let subscriber_session_id = 2;
         let track_id = 0;
@@ -1218,20 +1264,28 @@ mod success {
         //   pub 2
         for i in [0, 1] {
             let _ = track_namespace_manager
-                .set_publisher(track_namespaces[i], publisher_session_ids[i])
+                .set_publisher(track_namespaces[i].clone(), publisher_session_ids[i])
                 .await;
         }
 
         let _ = track_namespace_manager
-            .set_subscriber(track_namespaces[0], subscriber_session_id, track_name)
+            .set_subscriber(
+                track_namespaces[0].clone(),
+                subscriber_session_id,
+                track_name,
+            )
             .await;
 
         let _ = track_namespace_manager
-            .set_track_id(track_namespaces[0], track_name, track_id)
+            .set_track_id(track_namespaces[0].clone(), track_name, track_id)
             .await;
 
         let _ = track_namespace_manager
-            .activate_subscriber(track_namespaces[0], track_name, subscriber_session_id)
+            .activate_subscriber(
+                track_namespaces[0].clone(),
+                track_name,
+                subscriber_session_id,
+            )
             .await;
 
         // Delete: pub 2, sub 2
@@ -1241,7 +1295,7 @@ mod success {
             .await;
 
         let result = track_namespace_manager
-            .has_track_name(track_namespaces[0], track_name)
+            .has_track_name(track_namespaces[0].clone(), track_name)
             .await;
 
         assert!(!result);
@@ -1257,7 +1311,7 @@ mod failure {
     use tokio::sync::mpsc;
     #[tokio::test]
     async fn set_publisher_already_exist() {
-        let track_namespace = "test";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
 
         // Start track management thread
@@ -1266,11 +1320,11 @@ mod failure {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
 
         let result = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
 
         assert!(result.is_err());
@@ -1278,7 +1332,7 @@ mod failure {
 
     #[tokio::test]
     async fn delete_publisher_by_namespace_not_found() {
-        let track_namespace = "test";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
@@ -1295,7 +1349,7 @@ mod failure {
 
     #[tokio::test]
     async fn get_publisher_session_id_by_track_namespace_not_found() {
-        let track_namespace = "test";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
@@ -1312,7 +1366,7 @@ mod failure {
 
     #[tokio::test]
     async fn set_subscriber_already_exist() {
-        let track_namespace = "test_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
         let subscriber_session_id = 2;
         let track_name = "test_name";
@@ -1323,15 +1377,15 @@ mod failure {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id, track_name)
             .await;
 
         // Register the same subscriber
         let result = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id, track_name)
             .await;
 
         assert!(result.is_err());
@@ -1339,8 +1393,8 @@ mod failure {
 
     #[tokio::test]
     async fn set_subscriber_track_namespace_not_found() {
-        let track_namespace_1 = "test_namespace";
-        let track_namespace_2 = "unexisted_namespace";
+        let track_namespace_1 = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_namespace_2 = Vec::from(["unexisted".to_string(), "namespace".to_string()]);
         let publisher_session_id = 1;
         let subscriber_session_id = 2;
         let track_name = "test_name";
@@ -1364,7 +1418,7 @@ mod failure {
 
     #[tokio::test]
     async fn delete_subscriber_subscriber_id_not_found() {
-        let track_namespace = "test_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
         let subscriber_session_id_1 = 2;
         let subscriber_session_id_2 = 3;
@@ -1376,14 +1430,14 @@ mod failure {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace, subscriber_session_id_1, track_name)
+            .set_subscriber(track_namespace.clone(), subscriber_session_id_1, track_name)
             .await;
 
         let result = track_namespace_manager
-            .delete_subscriber(track_namespace, track_name, subscriber_session_id_2)
+            .delete_subscriber(track_namespace.clone(), track_name, subscriber_session_id_2)
             .await;
 
         assert!(result.is_err());
@@ -1391,7 +1445,7 @@ mod failure {
 
     #[tokio::test]
     async fn delete_subscriber_track_name_not_found() {
-        let track_namespace = "test_namespace";
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
         let subscriber_session_id = 2;
         let track_name = "test_name";
@@ -1402,11 +1456,11 @@ mod failure {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace, publisher_session_id)
+            .set_publisher(track_namespace.clone(), publisher_session_id)
             .await;
 
         let result = track_namespace_manager
-            .delete_subscriber(track_namespace, track_name, subscriber_session_id)
+            .delete_subscriber(track_namespace.clone(), track_name, subscriber_session_id)
             .await;
 
         assert!(result.is_err());
@@ -1414,8 +1468,8 @@ mod failure {
 
     #[tokio::test]
     async fn delete_subscriber_track_namespace_not_found() {
-        let track_namespace_1 = "test_namespace";
-        let track_namespace_2 = "unexisted_namespace";
+        let track_namespace_1 = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_namespace_2 = Vec::from(["unexisted".to_string(), "namespace".to_string()]);
         let publisher_session_id = 1;
         let subscriber_session_id = 2;
         let track_name = "test_name";
@@ -1426,14 +1480,14 @@ mod failure {
 
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
         let _ = track_namespace_manager
-            .set_publisher(track_namespace_1, publisher_session_id)
+            .set_publisher(track_namespace_1.clone(), publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace_1, subscriber_session_id, track_name)
+            .set_subscriber(track_namespace_1.clone(), subscriber_session_id, track_name)
             .await;
 
         let result = track_namespace_manager
-            .delete_subscriber(track_namespace_2, track_name, subscriber_session_id)
+            .delete_subscriber(track_namespace_2.clone(), track_name, subscriber_session_id)
             .await;
 
         assert!(result.is_err());
