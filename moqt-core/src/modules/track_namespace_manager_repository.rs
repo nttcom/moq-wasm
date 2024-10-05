@@ -1,47 +1,109 @@
+use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
+use crate::subscription_models::subscriptions::Subscription;
 use anyhow::Result;
 use async_trait::async_trait;
 
 #[async_trait]
 pub trait TrackNamespaceManagerRepository: Send + Sync {
-    async fn set_publisher(&self, track_namespace: Vec<String>, session_id: usize) -> Result<()>;
-    async fn delete_publisher_by_namespace(&self, track_namespace: Vec<String>) -> Result<()>;
-    async fn delete_publisher_by_session_id(&self, publisher_session_id: usize) -> Result<()>;
-    async fn has_track_namespace(&self, track_namespace: Vec<String>) -> bool;
-    async fn has_track_name(&self, track_namespace: Vec<String>, track_name: &str) -> bool;
-    async fn get_publisher_session_id_by_track_namespace(
+    async fn setup_publisher(
         &self,
-        track_namespace: Vec<String>,
-    ) -> Option<usize>;
-    async fn set_subscriber(
-        &self,
-        track_namespace: Vec<String>,
-        subscriber_session_id: usize,
-        track_name: &str,
+        max_subscribe_id: u64,
+        publisher_session_id: usize,
     ) -> Result<()>;
-    async fn delete_subscriber(
+    async fn set_publisher_announced_namespace(
         &self,
         track_namespace: Vec<String>,
-        track_name: &str,
+        publisher_session_id: usize,
+    ) -> Result<()>;
+    async fn setup_subscriber(
+        &self,
+        max_subscribe_id: u64,
         subscriber_session_id: usize,
     ) -> Result<()>;
-    async fn delete_subscribers_by_session_id(&self, subscriber_session_id: usize) -> Result<()>;
-    async fn set_track_id(
+    async fn is_valid_subscriber_subscribe_id(
         &self,
-        track_namespace: Vec<String>,
-        track_name: &str,
-        track_id: u64,
-    ) -> Result<()>;
-    async fn activate_subscriber(
-        &self,
-        track_namespace: Vec<String>,
-        track_name: &str,
+        subscribe_id: u64,
         subscriber_session_id: usize,
-    ) -> Result<()>;
-    async fn get_subscriber_session_ids_by_track_namespace_and_track_name(
+    ) -> Result<bool>;
+    async fn is_valid_subscriber_track_alias(
+        &self,
+        track_alias: u64,
+        subscriber_session_id: usize,
+    ) -> Result<bool>;
+    async fn is_track_existing(
         &self,
         track_namespace: Vec<String>,
-        track_name: &str,
-    ) -> Option<Vec<usize>>;
-    async fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>>;
+        track_name: String,
+    ) -> Result<bool>;
+    async fn get_publisher_subscription_by_full_track_name(
+        &self,
+        track_namespace: Vec<String>,
+        track_name: String,
+    ) -> Result<Option<Subscription>>;
+    async fn get_publisher_session_id(&self, track_namespace: Vec<String>)
+        -> Result<Option<usize>>;
+    async fn get_requesting_subscriber_session_ids_and_subscribe_ids(
+        &self,
+        published_subscribe_id: u64,
+        publisher_session_id: usize,
+    ) -> Result<Option<Vec<(usize, u64)>>>;
+    async fn get_publisher_subscribe_id(
+        &self,
+        track_namespace: Vec<String>,
+        track_name: String,
+        publisher_session_id: usize,
+    ) -> Result<Option<u64>>;
+    #[allow(clippy::too_many_arguments)]
+    async fn set_subscriber_subscription(
+        &self,
+        subscriber_session_id: usize,
+        subscribe_id: u64,
+        track_alias: u64,
+        track_namespace: Vec<String>,
+        track_name: String,
+        subscriber_priority: u8,
+        group_order: GroupOrder,
+        filter_type: FilterType,
+        start_group: Option<u64>,
+        start_object: Option<u64>,
+        end_group: Option<u64>,
+        end_object: Option<u64>,
+    ) -> Result<()>;
+    #[allow(clippy::too_many_arguments)]
+    async fn set_publisher_subscription(
+        &self,
+        publisher_session_id: usize,
+        track_namespace: Vec<String>,
+        track_name: String,
+        subscriber_priority: u8,
+        group_order: GroupOrder,
+        filter_type: FilterType,
+        start_group: Option<u64>,
+        start_object: Option<u64>,
+        end_group: Option<u64>,
+        end_object: Option<u64>,
+    ) -> Result<(u64, u64)>;
+    async fn register_pubsup_relation(
+        &self,
+        publisher_session_id: usize,
+        published_subscribe_id: u64,
+        subscriber_session_id: usize,
+        subscribed_subscribe_id: u64,
+    ) -> Result<()>;
+    async fn activate_subscriber_subscription(
+        &self,
+        subscriber_session_id: usize,
+        subscribe_id: u64,
+    ) -> Result<()>;
+    async fn activate_publisher_subscription(
+        &self,
+        publisher_session_id: usize,
+        subscribe_id: u64,
+    ) -> Result<()>;
+    async fn delete_publisher_announced_namespace(
+        &self,
+        track_namespace: Vec<String>,
+        publisher_session_id: usize,
+    ) -> Result<()>;
     async fn delete_client(&self, session_id: usize) -> Result<()>;
 }
