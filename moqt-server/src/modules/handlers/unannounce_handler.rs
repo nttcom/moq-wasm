@@ -16,7 +16,10 @@ pub(crate) async fn unannounce_handler(
 
     // Remove the announced Track Namespace
     let delete_result = track_namespace_manager_repository
-        .delete_publisher_by_namespace(unannounce_message.track_namespace().clone())
+        .delete_publisher_announced_namespace(
+            unannounce_message.track_namespace().clone(),
+            _client.id,
+        )
         .await;
 
     match delete_result {

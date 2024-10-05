@@ -10,13 +10,14 @@ use moqt_core::{
         setup_parameters::{Role, RoleCase},
     },
     moqt_client::MOQTClientStatus,
-    MOQTClient,
+    MOQTClient, TrackNamespaceManagerRepository,
 };
 
 pub(crate) fn setup_handler(
     client_setup_message: ClientSetup,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<ServerSetup> {
     tracing::trace!("setup_handler start.");
 
@@ -35,18 +36,20 @@ pub(crate) fn setup_handler(
         bail!("Supported version is not included");
     }
 
+    let mut max_subscribe_id: u64 = 0;
+
     for setup_parameter in &client_setup_message.setup_parameters {
         match setup_parameter {
-            SetupParameter::Role(role) => {
-                client.set_role(role.value)?;
+            SetupParameter::Role(param) => {
+                client.set_role(param.value)?;
             }
             SetupParameter::Path(_) => {
                 if underlay_type == UnderlayType::WebTransport {
                     bail!("PATH parameter is not allowed on WebTransport.");
                 }
             }
-            SetupParameter::MaxSubscribeID(_) => {
-                // TODO: handle MaxSubscribeID
+            SetupParameter::MaxSubscribeID(param) => {
+                max_subscribe_id = param.value;
             }
             SetupParameter::Unknown(v) => {
                 tracing::warn!("Ignore unknown SETUP parameter {}", v);
@@ -54,7 +57,14 @@ pub(crate) fn setup_handler(
         }
     }
 
-    if client.role().is_none() {
+    if client.role() == Some(RoleCase::Subscriber) {
+        // Generate producer that manages namespaces and subscriptions with subscribers.
+        // FIXME: max_subscribe_id for subscriber is fixed at 100 for now.
+        track_namespace_manager_repository.setup_subscriber(100, client.id);
+    } else if client.role() == Some(RoleCase::Publisher) {
+        // Generate consumer that manages namespaces and subscriptions with producers.
+        track_namespace_manager_repository.setup_publisher(max_subscribe_id, client.id);
+    } else if client.role().is_none() {
         bail!("Role parameter is required in SETUP parameter from client.");
     }
 
@@ -73,14 +83,17 @@ pub(crate) fn setup_handler(
 
 #[cfg(test)]
 mod success {
-    use std::vec;
-
+    use crate::modules::track_namespace_manager::{
+        track_namespace_manager, TrackCommand, TrackNamespaceManager,
+    };
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
     use moqt_core::messages::control_messages::{
         client_setup::ClientSetup,
         setup_parameters::{Path, Role, RoleCase, SetupParameter},
     };
     use moqt_core::moqt_client::MOQTClient;
+    use std::vec;
+    use tokio::sync::mpsc;
 
     #[test]
     fn only_role() {
@@ -90,7 +103,18 @@ mod success {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
+
+        let server_setup_message = setup_handler(
+            client_setup_message,
+            underlay_type,
+            &mut client,
+            &mut track_namespace_manager,
+        );
 
         assert!(server_setup_message.is_ok());
         let _server_setup_message = server_setup_message.unwrap(); // TODO: Not implemented yet
@@ -107,7 +131,18 @@ mod success {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
-        let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
+
+        let server_setup_message = setup_handler(
+            client_setup_message,
+            underlay_type,
+            &mut client,
+            &mut track_namespace_manager,
+        );
 
         assert!(server_setup_message.is_ok());
         let _server_setup_message = server_setup_message.unwrap(); // TODO: Not implemented yet
@@ -116,14 +151,17 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use std::vec;
-
+    use crate::modules::track_namespace_manager::{
+        track_namespace_manager, TrackCommand, TrackNamespaceManager,
+    };
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
     use moqt_core::messages::control_messages::{
         client_setup::ClientSetup,
         setup_parameters::{Path, Role, RoleCase, SetupParameter},
     };
     use moqt_core::moqt_client::MOQTClient;
+    use std::vec;
+    use tokio::sync::mpsc;
 
     #[test]
     fn no_role_parameter() {
@@ -133,7 +171,18 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
+
+        let server_setup_message = setup_handler(
+            client_setup_message,
+            underlay_type,
+            &mut client,
+            &mut track_namespace_manager,
+        );
 
         assert!(server_setup_message.is_err());
     }
@@ -146,7 +195,18 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
+
+        let server_setup_message = setup_handler(
+            client_setup_message,
+            underlay_type,
+            &mut client,
+            &mut track_namespace_manager,
+        );
 
         assert!(server_setup_message.is_err());
     }
@@ -159,7 +219,18 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
-        let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
+
+        let server_setup_message = setup_handler(
+            client_setup_message,
+            underlay_type,
+            &mut client,
+            &mut track_namespace_manager,
+        );
 
         assert!(server_setup_message.is_err());
     }
@@ -173,7 +244,18 @@ mod failure {
         let client_setup_message = ClientSetup::new(vec![unsupported_version], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
+
+        let server_setup_message = setup_handler(
+            client_setup_message,
+            underlay_type,
+            &mut client,
+            &mut track_namespace_manager,
+        );
 
         assert_ne!(unsupported_version, constants::MOQ_TRANSPORT_VERSION); // assert unsupported_version is unsupport
         assert!(server_setup_message.is_err());
@@ -190,7 +272,18 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        let server_setup_message = setup_handler(client_setup_message, underlay_type, &mut client);
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
+
+        let server_setup_message = setup_handler(
+            client_setup_message,
+            underlay_type,
+            &mut client,
+            &mut track_namespace_manager,
+        );
 
         assert!(server_setup_message.is_ok());
     }

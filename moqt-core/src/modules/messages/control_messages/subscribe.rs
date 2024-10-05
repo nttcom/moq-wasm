@@ -109,11 +109,52 @@ impl Subscribe {
         })
     }
 
+    pub fn subscribe_id(&self) -> u64 {
+        self.subscribe_id
+    }
+
+    pub fn track_alias(&self) -> u64 {
+        self.track_alias
+    }
+
     pub fn track_namespace(&self) -> &Vec<String> {
         &self.track_namespace
     }
     pub fn track_name(&self) -> &str {
         &self.track_name
+    }
+
+    pub fn subscriber_priority(&self) -> u8 {
+        self.subscriber_priority
+    }
+
+    pub fn group_order(&self) -> GroupOrder {
+        self.group_order
+    }
+
+    pub fn filter_type(&self) -> FilterType {
+        self.filter_type
+    }
+
+    pub fn start_group(&self) -> Option<u64> {
+        self.start_group
+    }
+
+    pub fn start_object(&self) -> Option<u64> {
+        self.start_object
+    }
+
+    pub fn end_group(&self) -> Option<u64> {
+        self.end_group
+    }
+
+    pub fn end_object(&self) -> Option<u64> {
+        self.end_object
+    }
+
+    pub fn replace_subscribe_id_and_track_alias(&mut self, subscribe_id: u64, track_alias: u64) {
+        self.subscribe_id = subscribe_id;
+        self.track_alias = track_alias;
     }
 }
 

@@ -3,53 +3,58 @@ use anyhow::Result;
 use moqt_core::{
     constants::StreamDirection,
     messages::{control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload},
-    SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
+    MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
 pub(crate) async fn subscribe_ok_handler(
     subscribe_ok_message: SubscribeOk,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    client: &mut MOQTClient,
 ) -> Result<()> {
     tracing::trace!("subscribe_ok_handler start.");
 
     tracing::debug!("subscribe_ok_message: {:#?}", subscribe_ok_message);
 
+    let publisher_session_id = client.id;
+    let publisher_subscribe_id = subscribe_ok_message.subscribe_id();
+
     // Determine the SUBSCRIBER who sent the SUBSCRIBE using the track_namespace and track_name
-    let subscriber_session_ids = track_namespace_manager_repository
-        .get_subscriber_session_ids_by_track_namespace_and_track_name(
-            subscribe_ok_message.track_namespace().clone(),
-            subscribe_ok_message.track_name(),
+    let ids = track_namespace_manager_repository
+        .get_requesting_subscriber_session_ids_and_subscribe_ids(
+            publisher_subscribe_id,
+            publisher_session_id,
         )
-        .await;
-    match subscriber_session_ids {
-        Some(session_ids) => {
+        .await?;
+    match ids {
+        Some(ids) => {
+            let _ = track_namespace_manager_repository
+                .activate_publisher_subscription(publisher_session_id, publisher_subscribe_id);
+
             // Notify all waiting subscribers with the SUBSCRIBE_OK message
-            for session_id in session_ids.iter() {
+            for (subscriber_session_id, subscriber_subscribe_id) in ids.iter() {
                 let message: Box<dyn MOQTPayload> = Box::new(subscribe_ok_message.clone());
+                // TODO: replace subscribe_id and track_alias
+
                 tracing::debug!(
                     "message: {:#?} is sent to relay handler for client {:?}",
                     subscribe_ok_message,
-                    session_id
+                    subscriber_session_id
                 );
+
                 match send_stream_dispatcher_repository
-                    .send_message_to_send_stream_thread(*session_id, message, StreamDirection::Bi)
+                    .send_message_to_send_stream_thread(
+                        *subscriber_session_id,
+                        message,
+                        StreamDirection::Bi,
+                    )
                     .await
                 {
                     Ok(_) => {
-                        // Record the track_id upon success and activate the subscriber
                         let _ = track_namespace_manager_repository
-                            .set_track_id(
-                                subscribe_ok_message.track_namespace().clone(),
-                                subscribe_ok_message.track_name(),
-                                subscribe_ok_message.track_id(),
-                            )
-                            .await;
-                        let _ = track_namespace_manager_repository
-                            .activate_subscriber(
-                                subscribe_ok_message.track_namespace().clone(),
-                                subscribe_ok_message.track_name(),
-                                *session_id,
+                            .activate_subscriber_subscription(
+                                *subscriber_session_id,
+                                *subscriber_subscribe_id,
                             )
                             .await;
 
@@ -58,7 +63,7 @@ pub(crate) async fn subscribe_ok_handler(
                     Err(e) => {
                         tracing::warn!(
                             "relay subscribe ok failed at session id {:?}:  {:?}",
-                            session_id,
+                            subscriber_session_id,
                             e
                         );
                         // Failure on SUBSCRIBE_OK relay doesn't turn into closing connection

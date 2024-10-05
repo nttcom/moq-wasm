@@ -99,6 +99,7 @@ pub async fn control_message_handler(
                 client,
                 underlay_type,
                 &mut write_buf,
+                track_namespace_manager_repository,
             ) {
                 Ok(_) => ControlMessageType::ServerSetup,
                 Err(err) => {
@@ -124,13 +125,20 @@ pub async fn control_message_handler(
             match process_subscribe_message(
                 &mut payload_buf,
                 client,
+                &mut write_buf,
                 track_namespace_manager_repository,
                 send_stream_dispatcher_repository,
             )
             .await
             {
-                Ok(_) => {
-                    return MessageProcessResult::SuccessWithoutResponse;
+                Ok(result) => {
+                    match result {
+                        Some(_) => (),
+                        None => {
+                            return MessageProcessResult::SuccessWithoutResponse;
+                        }
+                    }
+                    ControlMessageType::SubscribeOk
                 }
                 Err(err) => {
                     return MessageProcessResult::Failure(
@@ -155,6 +163,7 @@ pub async fn control_message_handler(
                 &mut payload_buf,
                 track_namespace_manager_repository,
                 send_stream_dispatcher_repository,
+                client,
             )
             .await
             {

@@ -2,7 +2,13 @@ use anyhow::{bail, Result};
 
 use moqt_core::{
     constants::StreamDirection,
-    messages::{control_messages::subscribe::Subscribe, moqt_payload::MOQTPayload},
+    messages::{
+        control_messages::{
+            subscribe::{self, Subscribe},
+            subscribe_ok::SubscribeOk,
+        },
+        moqt_payload::MOQTPayload,
+    },
     MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
 };
 
@@ -11,41 +17,85 @@ pub(crate) async fn subscribe_handler(
     client: &mut MOQTClient,
     track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
-) -> Result<()> {
+) -> Result<Option<SubscribeOk>> {
     tracing::trace!("subscribe_handler start.");
 
     tracing::debug!("subscribe_message: {:#?}", subscribe_message);
 
-    // TODO: If the track exists, return it as it is
+    if !track_namespace_manager_repository
+        .is_valid_subscriber_subscribe_id(subscribe_message.subscribe_id(), client.id)
+        .await?
+    {
+        // TODO: return TerminationErrorCode
+        bail!("TooManySubscribers");
+    }
+    if !track_namespace_manager_repository
+        .is_valid_subscriber_track_alias(subscribe_message.track_alias(), client.id)
+        .await?
+    {
+        // TODO: return TerminationErrorCode
+        bail!("DuplicateTrackAlias");
+    }
+
+    // If the track exists, return ther track as it is
+    if track_namespace_manager_repository
+        .is_track_existing(
+            subscribe_message.track_namespace().to_vec(),
+            subscribe_message.track_name().to_string(),
+        )
+        .await
+        .unwrap()
+    {
+        set_only_subscriber_subscription(
+            track_namespace_manager_repository,
+            &subscribe_message,
+            client,
+        )
+        .await;
+
+        // TODO: generate and return subscribe_ok message
+    }
 
     // Since only the track_namespace is recorded in ANNOUNCE, use track_namespace to determine the publisher
+    // TODO: multiple publishers for the same track_namespace
     let publisher_session_id = track_namespace_manager_repository
-        .get_publisher_session_id_by_track_namespace(subscribe_message.track_namespace().clone())
-        .await;
+        .get_publisher_session_id(subscribe_message.track_namespace().clone())
+        .await
+        .unwrap();
     match publisher_session_id {
         Some(session_id) => {
-            // Record the SUBSCRIBER who sent the SUBSCRIBE message
-            match track_namespace_manager_repository
-                .set_subscriber(
-                    subscribe_message.track_namespace().clone(),
-                    client.id,
-                    subscribe_message.track_name(),
+            let (upstream_subscribe_id, upstream_track_alias) =
+                match set_subscriber_and_publisher_subscription(
+                    track_namespace_manager_repository,
+                    &subscribe_message,
+                    client,
+                    session_id,
                 )
                 .await
-            {
-                Ok(_) => {}
-                Err(e) => {
-                    bail!("cannot register subscriber: {:?}", e);
-                }
-            }
-            // Notify the publisher about the SUBSCRIBE message
-            let message: Box<dyn MOQTPayload> = Box::new(subscribe_message.clone());
+                {
+                    Ok((upstream_subscribe_id, upstream_track_alias)) => {
+                        (upstream_subscribe_id, upstream_track_alias)
+                    }
+                    Err(e) => {
+                        bail!("cannot register publisher and subscriber: {:?}", e);
+                    }
+                };
+
+            let mut relaying_subscribe_message = subscribe_message.clone();
+
+            // Replace the subscribe_id and track_alias in the SUBSCRIBE message to request to the upstream publisher
+            relaying_subscribe_message
+                .replace_subscribe_id_and_track_alias(upstream_subscribe_id, upstream_track_alias);
+            let message: Box<dyn MOQTPayload> = Box::new(relaying_subscribe_message.clone());
+
             tracing::debug!(
                 "message: {:#?} is sent to relay handler for client {:?}",
-                subscribe_message,
+                relaying_subscribe_message,
                 session_id
             );
 
+            // Notify to the publisher about the SUBSCRIBE message
+            // TODO: Wait for the SUBSCRIBE_OK message to be returned on a transaction
             match send_stream_dispatcher_repository
                 .send_message_to_send_stream_thread(session_id, message, StreamDirection::Bi)
                 .await
@@ -53,11 +103,11 @@ pub(crate) async fn subscribe_handler(
                 Ok(_) => {
                     tracing::info!(
                         "subscribed track_namespace: {:?}",
-                        subscribe_message.track_namespace(),
+                        relaying_subscribe_message.track_namespace(),
                     );
                     tracing::info!(
                         "subscribed track_name: {:?}",
-                        subscribe_message.track_name()
+                        relaying_subscribe_message.track_name()
                     );
                     tracing::trace!("subscribe_handler complete.");
                 }
@@ -67,12 +117,150 @@ pub(crate) async fn subscribe_handler(
                 }
             }
 
-            Ok(())
+            Ok(None)
         }
 
         // TODO: Check if “publisher not found” should turn into closing connection
         None => bail!("publisher session id not found"),
     }
+}
+
+async fn set_only_subscriber_subscription(
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    subscribe_message: &Subscribe,
+    client: &MOQTClient,
+) -> Result<()> {
+    let subscriber_client_id = client.id;
+    let subscriber_subscribe_id = subscribe_message.subscribe_id();
+    let subscriber_track_alias = subscribe_message.track_alias();
+    let subscriber_track_namespace = subscribe_message.track_namespace().to_vec();
+    let subscriber_track_name = subscribe_message.track_name().to_string();
+    let subscriber_priority = subscribe_message.subscriber_priority();
+    let subscriber_group_order = subscribe_message.group_order();
+    let subscriber_filter_type = subscribe_message.filter_type();
+    let subscriber_start_group = subscribe_message.start_group();
+    let subscriber_start_object = subscribe_message.start_object();
+    let subscriber_end_group = subscribe_message.end_group();
+    let subscriber_end_object = subscribe_message.end_object();
+
+    let publisher_subscription = track_namespace_manager_repository
+        .get_publisher_subscription_by_full_track_name(
+            subscriber_track_namespace.clone(),
+            subscriber_track_name.clone(),
+        )
+        .await?
+        .unwrap();
+
+    track_namespace_manager_repository
+        .set_subscriber_subscription(
+            subscriber_client_id,
+            subscriber_subscribe_id,
+            subscriber_track_alias,
+            subscriber_track_namespace.clone(),
+            subscriber_track_name.clone(),
+            subscriber_priority,
+            subscriber_group_order,
+            subscriber_filter_type,
+            subscriber_start_group,
+            subscriber_start_object,
+            subscriber_end_group,
+            subscriber_end_object,
+        )
+        .await?;
+
+    let publisher_session_id = track_namespace_manager_repository
+        .get_publisher_session_id(subscriber_track_namespace)
+        .await?
+        .unwrap();
+
+    let (publisher_track_namespace, publisher_track_name) =
+        publisher_subscription.get_track_namespace_and_name();
+
+    let publisher_subscribe_id = track_namespace_manager_repository
+        .get_publisher_subscribe_id(
+            publisher_track_namespace,
+            publisher_track_name,
+            publisher_session_id,
+        )
+        .await?
+        .unwrap();
+
+    track_namespace_manager_repository
+        .register_pubsup_relation(
+            publisher_session_id,
+            publisher_subscribe_id,
+            subscriber_client_id,
+            subscriber_subscribe_id,
+        )
+        .await?;
+
+    track_namespace_manager_repository
+        .activate_subscriber_subscription(subscriber_client_id, subscriber_subscribe_id);
+
+    Ok(())
+}
+
+async fn set_subscriber_and_publisher_subscription(
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    subscribe_message: &Subscribe,
+    client: &MOQTClient,
+    publisher_session_id: usize,
+) -> Result<(u64, u64)> {
+    let subscriber_client_id = client.id;
+    let subscriber_subscribe_id = subscribe_message.subscribe_id();
+    let subscriber_track_alias = subscribe_message.track_alias();
+    let subscriber_track_namespace = subscribe_message.track_namespace().to_vec();
+    let subscriber_track_name = subscribe_message.track_name().to_string();
+    let subscriber_priority = subscribe_message.subscriber_priority();
+    let subscriber_group_order = subscribe_message.group_order();
+    let subscriber_filter_type = subscribe_message.filter_type();
+    let subscriber_start_group = subscribe_message.start_group();
+    let subscriber_start_object = subscribe_message.start_object();
+    let subscriber_end_group = subscribe_message.end_group();
+    let subscriber_end_object = subscribe_message.end_object();
+
+    track_namespace_manager_repository
+        .set_subscriber_subscription(
+            subscriber_client_id,
+            subscriber_subscribe_id,
+            subscriber_track_alias,
+            subscriber_track_namespace.clone(),
+            subscriber_track_name.clone(),
+            subscriber_priority,
+            subscriber_group_order,
+            subscriber_filter_type,
+            subscriber_start_group,
+            subscriber_start_object,
+            subscriber_end_group,
+            subscriber_end_object,
+        )
+        .await?;
+
+    let (upstream_subscribe_id, upstream_track_alias) = track_namespace_manager_repository
+        .set_publisher_subscription(
+            publisher_session_id,
+            subscriber_track_namespace.clone(),
+            subscriber_track_name.clone(),
+            subscriber_priority,
+            subscriber_group_order,
+            subscriber_filter_type,
+            subscriber_start_group,
+            subscriber_start_object,
+            subscriber_end_group,
+            subscriber_end_object,
+        )
+        .await?;
+
+    track_namespace_manager_repository
+        .register_pubsup_relation(
+            publisher_session_id,
+            upstream_subscribe_id,
+            subscriber_client_id,
+            subscriber_subscribe_id,
+        )
+        .await?;
+
+    Ok((upstream_subscribe_id, upstream_track_alias))
 }
 
 #[cfg(test)]
@@ -142,8 +330,13 @@ mod success {
             TrackNamespaceManager::new(track_namespace_tx);
 
         let publisher_session_id = 1;
+        let max_subscribe_id = 10;
+
         let _ = track_namespace_manager
-            .set_publisher(track_namespace.clone(), publisher_session_id)
+            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
 
         // Generate SendStreamDispacher
@@ -243,9 +436,16 @@ mod failure {
 
         let publisher_session_id = 1;
         let track_id = 0;
+        let max_subscribe_id = 10;
 
         let _ = track_namespace_manager
-            .set_publisher(track_namespace.clone(), publisher_session_id)
+            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .setup_subscriber(max_subscribe_id, subscriber_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
         let _ = track_namespace_manager
             .set_subscriber(track_namespace.clone(), subscriber_session_id, track_name)
@@ -330,8 +530,13 @@ mod failure {
             TrackNamespaceManager::new(track_namespace_tx);
 
         let publisher_session_id = 1;
+        let max_subscribe_id = 10;
+
         let _ = track_namespace_manager
-            .set_publisher(track_namespace.clone(), publisher_session_id)
+            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
 
         // Generate SendStreamDispacher (without set sender)
