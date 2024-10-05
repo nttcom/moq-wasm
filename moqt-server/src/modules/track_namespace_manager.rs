@@ -1,528 +1,348 @@
-use std::collections::HashMap;
-
 use anyhow::{bail, Result};
 use async_trait::async_trait;
+use moqt_core::messages::control_messages::subscribe::{self, FilterType, GroupOrder};
+use moqt_core::subscription_models::subscription_nodes::SubscriptionNodeRegistory;
+use moqt_core::subscription_models::subscription_nodes::{Consumer, Producer};
+use moqt_core::subscription_models::subscriptions::Subscription;
 use moqt_core::TrackNamespaceManagerRepository;
+use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 use TrackCommand::*;
 
 type SubscriberSessionId = usize;
+type PublisherSessionId = usize;
+type PublishedSubscribeId = u64;
+type SubscribedSubscribeId = u64;
 type TrackName = String;
 type TrackNamespace = Vec<String>;
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum SubscriberStatus {
-    Waiting,
-    Activate,
+struct PubSubRelation {
+    records: HashMap<
+        (PublisherSessionId, PublishedSubscribeId),
+        Vec<(SubscriberSessionId, SubscribedSubscribeId)>,
+    >,
 }
 
-#[derive(Debug)]
-struct SubscriberObject {
-    state: SubscriberStatus,
-}
-
-impl SubscriberObject {
+impl PubSubRelation {
     fn new() -> Self {
         Self {
-            state: SubscriberStatus::Waiting,
+            records: HashMap::new(),
         }
     }
 
-    fn set_state(&mut self, state: SubscriberStatus) {
-        self.state = state;
-    }
-
-    fn is_active(&self) -> bool {
-        self.state == SubscriberStatus::Activate
-    }
-
-    fn is_waiting(&self) -> bool {
-        self.state == SubscriberStatus::Waiting
-    }
-}
-
-#[derive(Debug)]
-struct TrackNameObject {
-    track_id: Option<u64>,
-    subscribers: HashMap<SubscriberSessionId, SubscriberObject>,
-}
-
-impl TrackNameObject {
-    fn new() -> Self {
-        Self {
-            track_id: Option::None,
-            subscribers: HashMap::new(),
-        }
-    }
-
-    fn set_track_id(&mut self, track_id: u64) {
-        self.track_id = Some(track_id);
-    }
-
-    fn is_exist_subscriber(&self, subscriber_session_id: usize) -> bool {
-        self.subscribers.contains_key(&subscriber_session_id)
-    }
-    fn is_subscriber_empty(&self) -> bool {
-        self.subscribers.is_empty()
-    }
-
-    fn set_subscriber(&mut self, subscriber_session_id: usize) {
-        self.subscribers
-            .insert(subscriber_session_id, SubscriberObject::new());
-    }
-
-    fn delete_subscriber(&mut self, subscriber_session_id: usize) {
-        self.subscribers.remove(&subscriber_session_id);
-    }
-}
-
-#[derive(Debug)]
-struct TrackNamespaceObject {
-    publisher_session_id: usize,
-    tracks: HashMap<TrackName, TrackNameObject>,
-}
-
-impl TrackNamespaceObject {
-    fn new(publisher_session_id: usize) -> Self {
-        Self {
-            publisher_session_id,
-            tracks: HashMap::new(),
-        }
-    }
-
-    fn is_exist_track_name(&self, track_name: String) -> bool {
-        self.tracks.contains_key(&track_name)
-    }
-
-    fn set_track(&mut self, track_name: String) {
-        self.tracks.insert(track_name, TrackNameObject::new());
-    }
-
-    fn delete_track(&mut self, track_name: String) {
-        self.tracks.remove(&track_name);
-    }
-
-    fn delete_subscriber_from_all_tracks(&mut self, subscriber_session_id: SubscriberSessionId) {
-        for track in self.tracks.values_mut() {
-            track.delete_subscriber(subscriber_session_id);
-        }
-    }
-}
-
-#[derive(Debug)]
-struct TrackNamespaces {
-    publishers: HashMap<TrackNamespace, TrackNamespaceObject>,
-}
-
-impl TrackNamespaces {
-    fn new() -> Self {
-        Self {
-            publishers: HashMap::new(),
-        }
-    }
-
-    fn is_exist_track_namespace(&self, track_namespace: Vec<String>) -> bool {
-        self.publishers.contains_key(&track_namespace)
-    }
-
-    fn is_exist_track_name(&mut self, track_namespace: Vec<String>, track_name: String) -> bool {
-        if !self.is_exist_track_namespace(track_namespace.clone()) {
-            return false;
-        }
-        let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
-
-        track_namespace_object.is_exist_track_name(track_name)
-    }
-
-    fn set_publisher(
+    fn add_relation(
         &mut self,
-        track_namespace: Vec<String>,
-        publisher_session_id: usize,
-    ) -> Result<()> {
-        if self.is_exist_track_namespace(track_namespace.clone()) {
-            bail!("already exist");
-        }
-
-        let publisher = TrackNamespaceObject::new(publisher_session_id);
-        self.publishers.insert(track_namespace, publisher);
-        Ok(())
-    }
-
-    fn delete_publisher_by_namespace(&mut self, track_namespace: Vec<String>) -> Result<()> {
-        if !self.is_exist_track_namespace(track_namespace.clone()) {
-            bail!("not found");
-        }
-
-        self.publishers.remove(&track_namespace);
-        Ok(())
-    }
-
-    fn delete_publisher_by_session_id(&mut self, publisher_session_id: usize) -> Result<()> {
-        // Retain elements other than the specified publisher_session_id
-        //   = Delete the element specified publisher_session_id
-        self.publishers
-            .retain(|_, namespace| namespace.publisher_session_id != publisher_session_id);
-        Ok(())
-    }
-
-    fn get_publisher_session_id_by_track_namespace(
-        &self,
-        track_namespace: Vec<String>,
-    ) -> Option<usize> {
-        self.publishers
-            .get(&track_namespace)
-            .map(|p| p.publisher_session_id)
-    }
-
-    fn set_subscriber(
-        &mut self,
-        track_namespace: Vec<String>,
-        subscriber_session_id: usize,
-        track_name: String,
-    ) -> Result<()> {
-        if !self.is_exist_track_namespace(track_namespace.clone()) {
-            bail!("track_namespace not found");
-        }
-        let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
-
-        if track_namespace_object.is_exist_track_name(track_name.clone()) {
-            let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
-            if track_name_object.is_exist_subscriber(subscriber_session_id) {
-                bail!("already exist");
-            }
-            track_name_object.set_subscriber(subscriber_session_id);
-
-            Ok(())
-        } else {
-            track_namespace_object.set_track(track_name.clone());
-            let new_track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
-            new_track_name_object.set_subscriber(subscriber_session_id);
-
-            Ok(())
-        }
-    }
-
-    fn delete_subscriber(
-        &mut self,
-        track_namespace: Vec<String>,
-        track_name: String,
-        subscriber_session_id: usize,
-    ) -> Result<()> {
-        if !self.is_exist_track_namespace(track_namespace.clone()) {
-            bail!("track_namespace not found");
-        }
-        let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
-
-        if !track_namespace_object.is_exist_track_name(track_name.clone()) {
-            bail!("track_name not found");
-        }
-        let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
-
-        if !track_name_object.is_exist_subscriber(subscriber_session_id) {
-            bail!("subscriber not found");
-        }
-        track_name_object.delete_subscriber(subscriber_session_id);
-
-        // Delete track with no subscribers
-        if track_name_object.is_subscriber_empty() {
-            track_namespace_object.delete_track(track_name);
-        }
-
-        Ok(())
-    }
-
-    fn delete_subscriber_from_all_publishers(
-        &mut self,
+        publisher_session_id: PublisherSessionId,
+        published_subscribe_id: PublishedSubscribeId,
         subscriber_session_id: SubscriberSessionId,
-    ) -> Result<()> {
-        for track_namespace_object in self.publishers.values_mut() {
-            track_namespace_object.delete_subscriber_from_all_tracks(subscriber_session_id);
+        subscribed_subscribe_id: SubscribedSubscribeId,
+    ) {
+        let key = (publisher_session_id, published_subscribe_id);
+        let value = (subscriber_session_id, subscribed_subscribe_id);
 
-            // Delete track with no subscribers
-            let mut empty_tracks = Vec::new();
-            for (track_name, track_name_object) in track_namespace_object.tracks.iter_mut() {
-                if track_name_object.is_subscriber_empty() {
-                    empty_tracks.push(track_name.to_string());
-                }
+        match self.records.get_mut(&key) {
+            // If the key exists, add the value to the existing vector
+            Some(subscribers) => {
+                subscribers.push(value);
             }
-            for track_name in empty_tracks {
-                track_namespace_object.delete_track(track_name);
+            // If the key does not exist, create a new vector and insert the value
+            None => {
+                self.records.insert(key, vec![value]);
             }
         }
-
-        Ok(())
     }
 
-    fn get_subscriber_session_ids_by_track_namespace_and_track_name(
+    fn get_subscribers(
+        &self,
+        publisher_session_id: PublisherSessionId,
+        published_subscribe_id: PublishedSubscribeId,
+    ) -> Option<&Vec<(SubscriberSessionId, SubscribedSubscribeId)>> {
+        let key = (publisher_session_id, published_subscribe_id);
+        self.records.get(&key)
+    }
+
+    fn delete_relarion(
         &mut self,
-        track_namespace: Vec<String>,
-        track_name: String,
-    ) -> Option<Vec<usize>> {
-        if !self.is_exist_track_namespace(track_namespace.clone()) {
-            return None;
+        publisher_session_id: PublisherSessionId,
+        published_subscribe_id: PublishedSubscribeId,
+        subscriber_session_id: SubscriberSessionId,
+        subscribed_subscribe_id: SubscribedSubscribeId,
+    ) {
+        let key = (publisher_session_id, published_subscribe_id);
+        if let Some(subscribers) = self.records.get_mut(&key) {
+            subscribers.retain(|(session_id, subscribe_id)| {
+                *session_id != subscriber_session_id && *subscribe_id != subscribed_subscribe_id
+            });
         }
-        let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
-        if !track_namespace_object.is_exist_track_name(track_name.clone()) {
-            return None;
-        }
-
-        let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
-
-        let waiting_subscribers = track_name_object
-            .subscribers
-            .iter()
-            .filter(|(_, status)| status.is_waiting());
-
-        let waiting_subscriber_session_ids: Vec<usize> = waiting_subscribers
-            .map(|(session_id, _)| *session_id)
-            .collect();
-
-        if waiting_subscriber_session_ids.is_empty() {
-            return None;
-        }
-
-        Some(waiting_subscriber_session_ids)
-    }
-
-    fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>> {
-        let track = self
-            .publishers
-            .values()
-            .flat_map(|publisher| publisher.tracks.values())
-            .find(|track| track.track_id == Some(track_id))?;
-
-        let active_subscribers = track
-            .subscribers
-            .iter()
-            .filter(|(_, status)| status.is_active());
-
-        let active_subscriber_session_ids: Vec<usize> = active_subscribers
-            .map(|(session_id, _)| *session_id)
-            .collect();
-
-        if active_subscriber_session_ids.is_empty() {
-            return None;
-        }
-        Some(active_subscriber_session_ids)
-    }
-
-    fn set_track_id(
-        &mut self,
-        track_namespace: Vec<String>,
-        track_name: String,
-        track_id: u64,
-    ) -> Result<()> {
-        if !self.is_exist_track_namespace(track_namespace.clone()) {
-            bail!("track_namespace not found");
-        }
-
-        let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
-        if !track_namespace_object.is_exist_track_name(track_name.clone()) {
-            bail!("track_name not found");
-        }
-
-        let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
-        track_name_object.set_track_id(track_id);
-
-        Ok(())
-    }
-
-    fn set_status(
-        &mut self,
-        track_namespace: Vec<String>,
-        track_name: String,
-        subscriber_session_id: usize,
-        status: SubscriberStatus,
-    ) -> Result<()> {
-        if !self.is_exist_track_namespace(track_namespace.clone()) {
-            bail!("track_namespace not found");
-        }
-        let track_namespace_object = self.publishers.get_mut(&track_namespace).unwrap();
-        if !track_namespace_object.is_exist_track_name(track_name.clone()) {
-            bail!("track_name not found");
-        }
-
-        let track_name_object = track_namespace_object.tracks.get_mut(&track_name).unwrap();
-        let subscriber = track_name_object
-            .subscribers
-            .get_mut(&subscriber_session_id)
-            .unwrap();
-        subscriber.set_state(status.clone());
-
-        Ok(())
     }
 }
+
+// [Original Publisher: (Producer) ] -> [Relay: (Consumer) - <PubSubRelation> - (Producer) ] -> [End Subscriber: (Consumer)]
 
 // Called as a separate thread
 pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
     tracing::trace!("track_namespace_manager start");
 
-    // TrackNamespaces
-    // {
-    //     "publishers": {
-    //       "${track_namespace}": {
-    //         "publisher_session_id": "usize",
-    //         "tracks": {
-    //           "${track_name}": {
-    //             "track_id": "Option<u64>",
-    //             "subscribers": {
-    //               "${subscriber_session_id}": {
-    //                 "state": "SubscriberStatus"
-    //               }
-    //             }
-    //           }
-    //         }
-    //       }
-    //     }
-    //   }
-    let mut namespaces: TrackNamespaces = TrackNamespaces::new();
+    let mut consumers: HashMap<PublisherSessionId, Consumer> = HashMap::new();
+    let mut producers: HashMap<SubscriberSessionId, Producer> = HashMap::new();
+    let mut pubsub_relation = PubSubRelation::new();
 
     while let Some(cmd) = rx.recv().await {
         tracing::debug!("command received: {:#?}", cmd);
         match cmd {
-            SetPublisher {
-                track_namespace,
+            SetupPublisher {
+                max_subscribe_id,
                 publisher_session_id,
-                resp,
-            } => match namespaces.set_publisher(track_namespace, publisher_session_id) {
-                Ok(_) => resp.send(true).unwrap(),
-                Err(err) => {
-                    tracing::error!("set_publisher: err: {:?}", err.to_string());
-                    resp.send(false).unwrap();
-                }
-            },
-            DeletePublisherByNamespace {
-                track_namespace,
-                resp,
-            } => match namespaces.delete_publisher_by_namespace(track_namespace) {
-                Ok(_) => resp.send(true).unwrap(),
-                Err(err) => {
-                    tracing::error!("delete_publisher_by_namespace: err: {:?}", err.to_string());
-                    resp.send(false).unwrap();
-                }
-            },
-            DeletePublisherBySessionId {
-                publisher_session_id,
-                resp,
-            } => match namespaces.delete_publisher_by_session_id(publisher_session_id) {
-                Ok(_) => resp.send(true).unwrap(),
-                Err(err) => {
-                    tracing::error!("delete_publisher_by_session_id: err: {:?}", err.to_string());
-                    resp.send(false).unwrap();
-                }
-            },
-            HasTrackNamespace {
-                track_namespace,
                 resp,
             } => {
-                let result = namespaces.is_exist_track_namespace(track_namespace);
-                resp.send(result).unwrap();
+                consumers.insert(publisher_session_id, Consumer::new(max_subscribe_id));
+                resp.send(true).unwrap();
             }
-            HasTrackName {
+            SetPublisherAnnouncedNamespace {
                 track_namespace,
-                track_name,
+                publisher_session_id,
                 resp,
             } => {
-                let result = namespaces.is_exist_track_name(track_namespace, track_name);
-                resp.send(result).unwrap();
+                let consumer = consumers.get_mut(&publisher_session_id).unwrap();
+                match consumer.set_namespace(track_namespace) {
+                    Ok(_) => {
+                        resp.send(true).unwrap();
+                    }
+                    Err(err) => {
+                        tracing::error!("set_namespace: err: {:?}", err.to_string());
+                        resp.send(false).unwrap();
+                    }
+                }
+            }
+            SetupSubscriber {
+                max_subscribe_id,
+                subscriber_session_id,
+                resp,
+            } => {
+                producers.insert(subscriber_session_id, Producer::new(max_subscribe_id));
+                resp.send(true).unwrap();
+            }
+            IsValidSubscriberSubscribeId {
+                subscribe_id,
+                subscriber_session_id,
+                resp,
+            } => {
+                let producer = producers.get(&subscriber_session_id).unwrap();
+
+                if producer.is_within_max_subscribe_id(subscribe_id)
+                    && producer.is_subscribe_id_unique(subscribe_id)
+                {
+                    resp.send(true).unwrap();
+                } else {
+                    resp.send(false).unwrap();
+                }
+            }
+            IsValidSubscriberTrackAlias {
+                track_alias,
+                subscriber_session_id,
+                resp,
+            } => {
+                let producer = producers.get(&subscriber_session_id).unwrap();
+                let is_valid = producer.is_track_alias_unique(track_alias);
+                resp.send(is_valid).unwrap();
             }
             GetPublisherSessionId {
                 track_namespace,
                 resp,
             } => {
-                let result =
-                    namespaces.get_publisher_session_id_by_track_namespace(track_namespace);
-                resp.send(result).unwrap();
+                // Find the publisher that has the track namespace from all consumers
+                let publisher_session_id = consumers
+                    .iter()
+                    .find(|(_, consumer)| consumer.has_namespace(track_namespace.clone()))
+                    .map(|(session_id, _)| *session_id);
+                resp.send(publisher_session_id).unwrap();
             }
-            SetSubscliber {
+            GetRequestingSubscriberSessionIdsAndSubscribeIds {
+                published_subscribe_id,
+                publisher_session_id,
+                resp,
+            } => {
+                let subscribers =
+                    pubsub_relation.get_subscribers(publisher_session_id, published_subscribe_id);
+
+                resp.send(subscribers.cloned()).unwrap();
+            }
+            GetPublisherSubscribeId {
                 track_namespace,
-                subscriber_session_id,
+                track_name,
+                publisher_session_id,
+                resp,
+            } => {
+                let consumer = consumers.get_mut(&publisher_session_id).unwrap();
+                let result = consumer.get_subscribe_id(track_namespace, track_name);
+
+                match result {
+                    Ok(subscribe_id) => resp.send(subscribe_id).unwrap(),
+                    Err(_) => resp.send(None).unwrap(),
+                }
+            }
+            IsTrackExisting {
+                track_namespace,
                 track_name,
                 resp,
             } => {
-                match namespaces.set_subscriber(track_namespace, subscriber_session_id, track_name)
-                {
+                let consumer = consumers.iter().find(|(_, consumer)| {
+                    consumer.has_track(track_namespace.clone(), track_name.clone())
+                });
+                let is_existing = consumer.is_some();
+                resp.send(is_existing).unwrap();
+            }
+            GetPublisherSubscription {
+                track_namespace,
+                track_name,
+                resp,
+            } => {
+                let consumer = consumers.iter().find(|(_, consumer)| {
+                    consumer.has_track(track_namespace.clone(), track_name.clone())
+                });
+                let result = consumer
+                    .map(|(_, consumer)| {
+                        consumer.get_subscription_by_full_track_name(track_namespace, track_name)
+                    })
+                    .unwrap();
+
+                match result {
+                    Ok(subscription) => resp.send(subscription).unwrap(),
+                    Err(_) => resp.send(None).unwrap(),
+                }
+            }
+            SetSubscriberSubscription {
+                subscriber_session_id,
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+                resp,
+            } => {
+                let producer = producers.get_mut(&subscriber_session_id).unwrap();
+                match producer.set_subscription(
+                    subscribe_id,
+                    track_alias,
+                    track_namespace,
+                    track_name,
+                    subscriber_priority,
+                    group_order,
+                    filter_type,
+                    start_group,
+                    start_object,
+                    end_group,
+                    end_object,
+                ) {
                     Ok(_) => resp.send(true).unwrap(),
                     Err(err) => {
-                        tracing::error!("set_subscriber: err: {:?}", err.to_string());
+                        tracing::error!("set_subscriber_subscription: err: {:?}", err.to_string());
                         resp.send(false).unwrap();
                     }
                 }
             }
-            DeleteSubscliber {
+            SetPublisherSubscription {
+                publisher_session_id,
                 track_namespace,
                 track_name,
-                subscriber_session_id,
-                resp,
-            } => match namespaces.delete_subscriber(
-                track_namespace,
-                track_name,
-                subscriber_session_id,
-            ) {
-                Ok(_) => resp.send(true).unwrap(),
-                Err(err) => {
-                    tracing::error!("delete_subscriber: err: {:?}", err.to_string());
-                    resp.send(false).unwrap();
-                }
-            },
-            DeleteSubscliberBySessionId {
-                subscriber_session_id,
-                resp,
-            } => match namespaces.delete_subscriber_from_all_publishers(subscriber_session_id) {
-                Ok(_) => resp.send(true).unwrap(),
-                Err(err) => {
-                    tracing::error!(
-                        "delete_subscriber_from_all_publishers: err: {:?}",
-                        err.to_string()
-                    );
-                    resp.send(false).unwrap();
-                }
-            },
-            SetTrackId {
-                track_namespace,
-                track_name,
-                track_id,
-                resp,
-            } => match namespaces.set_track_id(track_namespace, track_name, track_id) {
-                Ok(_) => resp.send(true).unwrap(),
-                Err(err) => {
-                    tracing::error!("set_track_id: err: {:?}", err.to_string());
-                    resp.send(false).unwrap();
-                }
-            },
-            SetStatus {
-                track_namespace,
-                track_name,
-                subscriber_session_id,
-                status,
-                resp,
-            } => match namespaces.set_status(
-                track_namespace,
-                track_name,
-                subscriber_session_id,
-                status,
-            ) {
-                Ok(_) => resp.send(true).unwrap(),
-                Err(err) => {
-                    tracing::error!("set_status: err: {:?}", err.to_string());
-                    resp.send(false).unwrap();
-                }
-            },
-            GetSubscliberSessionIdsByNamespaceAndName {
-                track_namespace,
-                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
                 resp,
             } => {
-                let result = namespaces
-                    .get_subscriber_session_ids_by_track_namespace_and_track_name(
-                        track_namespace,
-                        track_name,
-                    );
-                resp.send(result).unwrap();
+                let consumer = consumers.get_mut(&publisher_session_id).unwrap();
+                let (subscribe_id, track_alias) =
+                    consumer.find_unused_subscribe_id_and_track_alias().unwrap();
+                match consumer.set_subscription(
+                    subscribe_id,
+                    track_alias,
+                    track_namespace,
+                    track_name,
+                    subscriber_priority,
+                    group_order,
+                    filter_type,
+                    start_group,
+                    start_object,
+                    end_group,
+                    end_object,
+                ) {
+                    Ok(_) => resp.send((subscribe_id, track_alias)).unwrap(),
+                    Err(err) => {
+                        tracing::error!("set_publisher_subscription: err: {:?}", err.to_string());
+                        resp.send((0, 0)).unwrap();
+                        continue;
+                    }
+                };
             }
-            GetSubscliberSessionIdsByTrackId { track_id, resp } => {
-                let result = namespaces.get_subscriber_session_ids_by_track_id(track_id);
-                resp.send(result).unwrap();
+            RegisterPubSupRelation {
+                publisher_session_id,
+                published_subscribe_id,
+                subscriber_session_id,
+                subscribed_subscribe_id,
+                resp,
+            } => {
+                pubsub_relation.add_relation(
+                    publisher_session_id,
+                    published_subscribe_id,
+                    subscriber_session_id,
+                    subscribed_subscribe_id,
+                );
+
+                resp.send(true).unwrap();
+            }
+            ActivateSubscriberSubscription {
+                subscriber_session_id,
+                subscribe_id,
+                resp,
+            } => {
+                let producer = producers.get_mut(&subscriber_session_id).unwrap();
+                producer.activate_subscription(subscribe_id);
+                resp.send(true).unwrap();
+            }
+            ActivatePublisherSubscription {
+                publisher_session_id,
+                subscribe_id,
+                resp,
+            } => {
+                let consumer = consumers.get_mut(&publisher_session_id).unwrap();
+                consumer.activate_subscription(subscribe_id);
+                resp.send(true).unwrap();
+            }
+            DeletePublisherAnnouncedNamespace {
+                track_namespace,
+                publisher_session_id,
+                resp,
+            } => {
+                let consumer = consumers.get_mut(&publisher_session_id).unwrap();
+                consumer.delete_namespace(track_namespace);
+                resp.send(true).unwrap();
+            }
+            DeleteClient { session_id, resp } => {
+                // Delete as a publisher
+                consumers.remove(&session_id);
+                pubsub_relation.records.retain(|key, _| key.0 != session_id);
+
+                // Delete as a subscriber
+                producers.remove(&session_id);
+                pubsub_relation
+                    .records
+                    .iter_mut()
+                    .for_each(|(_, subscribers)| {
+                        subscribers.retain(|(subscriber_session_id, _)| {
+                            *subscriber_session_id != session_id
+                        });
+                    });
+
+                resp.send(true).unwrap();
             }
         }
     }
@@ -532,69 +352,109 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
 
 #[derive(Debug)]
 pub(crate) enum TrackCommand {
-    SetPublisher {
+    SetupPublisher {
+        max_subscribe_id: u64,
+        publisher_session_id: usize,
+        resp: oneshot::Sender<bool>,
+    },
+    SetPublisherAnnouncedNamespace {
         track_namespace: Vec<String>,
         publisher_session_id: usize,
         resp: oneshot::Sender<bool>,
     },
-    DeletePublisherByNamespace {
-        track_namespace: Vec<String>,
+    SetupSubscriber {
+        max_subscribe_id: u64,
+        subscriber_session_id: usize,
         resp: oneshot::Sender<bool>,
     },
-    DeletePublisherBySessionId {
-        publisher_session_id: usize,
+    IsValidSubscriberSubscribeId {
+        subscribe_id: u64,
+        subscriber_session_id: usize,
         resp: oneshot::Sender<bool>,
     },
-    HasTrackNamespace {
-        track_namespace: Vec<String>,
+    IsValidSubscriberTrackAlias {
+        track_alias: u64,
+        subscriber_session_id: usize,
         resp: oneshot::Sender<bool>,
     },
-    HasTrackName {
+    IsTrackExisting {
         track_namespace: Vec<String>,
         track_name: String,
         resp: oneshot::Sender<bool>,
+    },
+    GetPublisherSubscription {
+        track_namespace: Vec<String>,
+        track_name: String,
+        resp: oneshot::Sender<Option<Subscription>>,
     },
     GetPublisherSessionId {
         track_namespace: Vec<String>,
         resp: oneshot::Sender<Option<usize>>,
     },
-    SetSubscliber {
+    GetRequestingSubscriberSessionIdsAndSubscribeIds {
+        published_subscribe_id: u64,
+        publisher_session_id: usize,
+        resp: oneshot::Sender<Option<Vec<(usize, u64)>>>,
+    },
+    GetPublisherSubscribeId {
         track_namespace: Vec<String>,
+        track_name: String,
+        publisher_session_id: usize,
+        resp: oneshot::Sender<Option<u64>>,
+    },
+    SetSubscriberSubscription {
         subscriber_session_id: usize,
-        track_name: String,
-        resp: oneshot::Sender<bool>,
-    },
-    DeleteSubscliber {
+        subscribe_id: u64,
+        track_alias: u64,
         track_namespace: Vec<String>,
         track_name: String,
+        subscriber_priority: u8,
+        group_order: GroupOrder,
+        filter_type: FilterType,
+        start_group: Option<u64>,
+        start_object: Option<u64>,
+        end_group: Option<u64>,
+        end_object: Option<u64>,
+        resp: oneshot::Sender<bool>,
+    },
+    SetPublisherSubscription {
+        publisher_session_id: usize,
+        track_namespace: Vec<String>,
+        track_name: String,
+        subscriber_priority: u8,
+        group_order: GroupOrder,
+        filter_type: FilterType,
+        start_group: Option<u64>,
+        start_object: Option<u64>,
+        end_group: Option<u64>,
+        end_object: Option<u64>,
+        resp: oneshot::Sender<(u64, u64)>,
+    },
+    RegisterPubSupRelation {
+        publisher_session_id: usize,
+        published_subscribe_id: u64,
         subscriber_session_id: usize,
+        subscribed_subscribe_id: u64,
         resp: oneshot::Sender<bool>,
     },
-    DeleteSubscliberBySessionId {
+    ActivateSubscriberSubscription {
         subscriber_session_id: usize,
+        subscribe_id: u64,
         resp: oneshot::Sender<bool>,
     },
-    SetTrackId {
-        track_namespace: Vec<String>,
-        track_name: String,
-        track_id: u64,
+    ActivatePublisherSubscription {
+        publisher_session_id: usize,
+        subscribe_id: u64,
         resp: oneshot::Sender<bool>,
     },
-    SetStatus {
+    DeletePublisherAnnouncedNamespace {
         track_namespace: Vec<String>,
-        track_name: String,
-        subscriber_session_id: usize,
-        status: SubscriberStatus,
+        publisher_session_id: usize,
         resp: oneshot::Sender<bool>,
     },
-    GetSubscliberSessionIdsByNamespaceAndName {
-        track_namespace: Vec<String>,
-        track_name: String,
-        resp: oneshot::Sender<Option<Vec<usize>>>,
-    },
-    GetSubscliberSessionIdsByTrackId {
-        track_id: u64,
-        resp: oneshot::Sender<Option<Vec<usize>>>,
+    DeleteClient {
+        session_id: usize,
+        resp: oneshot::Sender<bool>,
     },
 }
 
@@ -611,14 +471,35 @@ impl TrackNamespaceManager {
 
 #[async_trait]
 impl TrackNamespaceManagerRepository for TrackNamespaceManager {
-    async fn set_publisher(
+    async fn setup_publisher(
+        &self,
+        max_subscribe_id: u64,
+        publisher_session_id: usize,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
+
+        let cmd = TrackCommand::SetupPublisher {
+            max_subscribe_id,
+            publisher_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            true => Ok(()),
+            false => bail!("already exist"),
+        }
+    }
+    async fn set_publisher_announced_namespace(
         &self,
         track_namespace: Vec<String>,
         publisher_session_id: usize,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
-        let cmd = TrackCommand::SetPublisher {
+        let cmd = TrackCommand::SetPublisherAnnouncedNamespace {
             track_namespace,
             publisher_session_id,
             resp: resp_tx,
@@ -632,12 +513,16 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
             false => bail!("already exist"),
         }
     }
-
-    async fn delete_publisher_by_namespace(&self, track_namespace: Vec<String>) -> Result<()> {
+    async fn setup_subscriber(
+        &self,
+        max_subscribe_id: u64,
+        subscriber_session_id: usize,
+    ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
 
-        let cmd = TrackCommand::DeletePublisherByNamespace {
-            track_namespace,
+        let cmd = TrackCommand::SetupSubscriber {
+            max_subscribe_id,
+            subscriber_session_id,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -646,58 +531,84 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
         match result {
             true => Ok(()),
-            false => bail!("not found"),
+            false => bail!("already exist"),
         }
     }
-
-    async fn delete_publisher_by_session_id(&self, publisher_session_id: usize) -> Result<()> {
+    async fn is_valid_subscriber_subscribe_id(
+        &self,
+        subscribe_id: u64,
+        subscriber_session_id: usize,
+    ) -> Result<bool> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
-
-        let cmd = TrackCommand::DeletePublisherBySessionId {
-            publisher_session_id,
+        let cmd = TrackCommand::IsValidSubscriberSubscribeId {
+            subscribe_id,
+            subscriber_session_id,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
 
         let result = resp_rx.await.unwrap();
 
-        match result {
-            true => Ok(()),
-            false => bail!("unknown error"),
-        }
+        return Ok(result);
     }
-
-    async fn has_track_namespace(&self, track_namespace: Vec<String>) -> bool {
+    async fn is_valid_subscriber_track_alias(
+        &self,
+        track_alias: u64,
+        subscriber_session_id: usize,
+    ) -> Result<bool> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
-
-        let cmd = TrackCommand::HasTrackNamespace {
-            track_namespace,
+        let cmd = TrackCommand::IsValidSubscriberTrackAlias {
+            track_alias,
+            subscriber_session_id,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
 
         let result = resp_rx.await.unwrap();
-        return result;
+
+        return Ok(result);
     }
-
-    async fn has_track_name(&self, track_namespace: Vec<String>, track_name: &str) -> bool {
-        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
-
-        let cmd = TrackCommand::HasTrackName {
-            track_namespace,
-            track_name: track_name.to_string(),
-            resp: resp_tx,
-        };
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-        return result;
-    }
-
-    async fn get_publisher_session_id_by_track_namespace(
+    async fn is_track_existing(
         &self,
         track_namespace: Vec<String>,
-    ) -> Option<usize> {
+        track_name: String,
+    ) -> Result<bool> {
+        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
+        let cmd = TrackCommand::IsTrackExisting {
+            track_namespace,
+            track_name,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        return Ok(result);
+    }
+    async fn get_publisher_subscription_by_full_track_name(
+        &self,
+        track_namespace: Vec<String>,
+        track_name: String,
+    ) -> Result<Option<Subscription>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Option<Subscription>>();
+        let cmd = TrackCommand::GetPublisherSubscription {
+            track_namespace,
+            track_name,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await;
+
+        match result {
+            Ok(subscription) => Ok(subscription),
+            Err(_) => bail!("not found"),
+        }
+    }
+    async fn get_publisher_session_id(
+        &self,
+        track_namespace: Vec<String>,
+    ) -> Result<Option<usize>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Option<usize>>();
         let cmd = TrackCommand::GetPublisherSessionId {
             track_namespace,
@@ -707,21 +618,73 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
         let session_id = resp_rx.await.unwrap();
 
-        return session_id;
+        return Ok(session_id);
     }
+    async fn get_requesting_subscriber_session_ids_and_subscribe_ids(
+        &self,
+        published_subscribe_id: u64,
+        publisher_session_id: usize,
+    ) -> Result<Option<Vec<(usize, u64)>>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Option<Vec<(usize, u64)>>>();
+        let cmd = TrackCommand::GetRequestingSubscriberSessionIdsAndSubscribeIds {
+            published_subscribe_id,
+            publisher_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
 
-    async fn set_subscriber(
+        let result = resp_rx.await.unwrap();
+
+        return Ok(result);
+    }
+    async fn get_publisher_subscribe_id(
         &self,
         track_namespace: Vec<String>,
+        track_name: String,
+        publisher_session_id: usize,
+    ) -> Result<Option<u64>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Option<u64>>();
+        let cmd = TrackCommand::GetPublisherSubscribeId {
+            track_namespace,
+            track_name,
+            publisher_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let subscribe_id = resp_rx.await.unwrap();
+
+        return Ok(subscribe_id);
+    }
+    async fn set_subscriber_subscription(
+        &self,
         subscriber_session_id: usize,
-        track_name: &str,
+        subscribe_id: u64,
+        track_alias: u64,
+        track_namespace: Vec<String>,
+        track_name: String,
+        subscriber_priority: u8,
+        group_order: GroupOrder,
+        filter_type: FilterType,
+        start_group: Option<u64>,
+        start_object: Option<u64>,
+        end_group: Option<u64>,
+        end_object: Option<u64>,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
-
-        let cmd = TrackCommand::SetSubscliber {
-            track_namespace,
+        let cmd = TrackCommand::SetSubscriberSubscription {
             subscriber_session_id,
-            track_name: track_name.to_string(),
+            subscribe_id,
+            track_alias,
+            track_namespace,
+            track_name,
+            subscriber_priority,
+            group_order,
+            filter_type,
+            start_group,
+            start_object,
+            end_group,
+            end_object,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -733,135 +696,133 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
             false => bail!("already exist"),
         }
     }
-
-    async fn delete_subscriber(
+    #[allow(clippy::too_many_arguments)]
+    async fn set_publisher_subscription(
         &self,
+        publisher_session_id: usize,
         track_namespace: Vec<String>,
-        track_name: &str,
+        track_name: String,
+        subscriber_priority: u8,
+        group_order: GroupOrder,
+        filter_type: FilterType,
+        start_group: Option<u64>,
+        start_object: Option<u64>,
+        end_group: Option<u64>,
+        end_object: Option<u64>,
+    ) -> Result<(u64, u64)> {
+        let (resp_tx, resp_rx) = oneshot::channel::<(u64, u64)>();
+        let cmd = TrackCommand::SetPublisherSubscription {
+            publisher_session_id,
+            track_namespace,
+            track_name,
+            subscriber_priority,
+            group_order,
+            filter_type,
+            start_group,
+            start_object,
+            end_group,
+            end_object,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let (subscribe_id, track_alias) = resp_rx.await.unwrap();
+
+        Ok((subscribe_id, track_alias))
+    }
+    async fn register_pubsup_relation(
+        &self,
+        publisher_session_id: usize,
+        published_subscribe_id: u64,
         subscriber_session_id: usize,
+        subscribed_subscribe_id: u64,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
-
-        let cmd = TrackCommand::DeleteSubscliber {
-            track_namespace,
-            track_name: track_name.to_string(),
+        let cmd = RegisterPubSupRelation {
+            publisher_session_id,
+            published_subscribe_id,
             subscriber_session_id,
+            subscribed_subscribe_id,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
-
         let result = resp_rx.await.unwrap();
 
         match result {
             true => Ok(()),
-            false => bail!("not found"),
+            false => bail!("failure"),
         }
     }
-
-    async fn delete_subscribers_by_session_id(&self, subscriber_session_id: usize) -> Result<()> {
-        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
-
-        let cmd = TrackCommand::DeleteSubscliberBySessionId {
-            subscriber_session_id,
-            resp: resp_tx,
-        };
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            true => Ok(()),
-            false => bail!("unknown error"),
-        }
-    }
-
-    async fn set_track_id(
+    async fn activate_subscriber_subscription(
         &self,
-        track_namespace: Vec<String>,
-        track_name: &str,
-        track_id: u64,
-    ) -> Result<()> {
-        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
-
-        let cmd = TrackCommand::SetTrackId {
-            track_namespace,
-            track_name: track_name.to_string(),
-            track_id,
-            resp: resp_tx,
-        };
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            true => Ok(()),
-            false => bail!("not found"),
-        }
-    }
-
-    async fn get_subscriber_session_ids_by_track_namespace_and_track_name(
-        &self,
-        track_namespace: Vec<String>,
-        track_name: &str,
-    ) -> Option<Vec<usize>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Option<Vec<usize>>>();
-
-        let cmd = TrackCommand::GetSubscliberSessionIdsByNamespaceAndName {
-            track_namespace,
-            track_name: track_name.to_string(),
-            resp: resp_tx,
-        };
-        self.tx.send(cmd).await.unwrap();
-
-        let session_ids = resp_rx.await.unwrap();
-
-        return session_ids;
-    }
-
-    async fn get_subscriber_session_ids_by_track_id(&self, track_id: u64) -> Option<Vec<usize>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Option<Vec<usize>>>();
-
-        let cmd = TrackCommand::GetSubscliberSessionIdsByTrackId {
-            track_id,
-            resp: resp_tx,
-        };
-        self.tx.send(cmd).await.unwrap();
-
-        let session_ids = resp_rx.await.unwrap();
-
-        return session_ids;
-    }
-
-    async fn activate_subscriber(
-        &self,
-        track_namespace: Vec<String>,
-        track_name: &str,
         subscriber_session_id: usize,
+        subscribe_id: u64,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<bool>();
-
-        let cmd = TrackCommand::SetStatus {
-            track_namespace,
-            track_name: track_name.to_string(),
+        let cmd = ActivateSubscriberSubscription {
             subscriber_session_id,
-            status: SubscriberStatus::Activate,
+            subscribe_id,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
-
         let result = resp_rx.await.unwrap();
 
         match result {
             true => Ok(()),
-            false => bail!("not found"),
+            false => bail!("failure"),
         }
     }
+    async fn activate_publisher_subscription(
+        &self,
+        publisher_session_id: usize,
+        subscribe_id: u64,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
+        let cmd = ActivatePublisherSubscription {
+            publisher_session_id,
+            subscribe_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+        let result = resp_rx.await.unwrap();
 
+        match result {
+            true => Ok(()),
+            false => bail!("failure"),
+        }
+    }
+    async fn delete_publisher_announced_namespace(
+        &self,
+        track_namespace: Vec<String>,
+        publisher_session_id: usize,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
+        let cmd = DeletePublisherAnnouncedNamespace {
+            track_namespace,
+            publisher_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            true => Ok(()),
+            false => bail!("failure"),
+        }
+    }
     async fn delete_client(&self, session_id: usize) -> Result<()> {
-        self.delete_publisher_by_session_id(session_id).await?;
-        self.delete_subscribers_by_session_id(session_id).await?;
+        let (resp_tx, resp_rx) = oneshot::channel::<bool>();
+        let cmd = DeleteClient {
+            session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+        let result = resp_rx.await.unwrap();
 
-        Ok(())
+        match result {
+            true => Ok(()),
+            false => bail!("failure"),
+        }
     }
 }
 
@@ -908,7 +869,7 @@ mod success {
             .await;
 
         let result = track_namespace_manager
-            .get_publisher_session_id_by_track_namespace(track_namespace.clone())
+            .get_publisher_session_id(track_namespace.clone())
             .await;
 
         assert!(result.is_none());
@@ -936,7 +897,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn get_publisher_session_id_by_track_namespace() {
+    async fn get_publisher_session_id() {
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let publisher_session_id = 1;
 
@@ -950,7 +911,7 @@ mod success {
             .await;
 
         let result = track_namespace_manager
-            .get_publisher_session_id_by_track_namespace(track_namespace.clone())
+            .get_publisher_session_id(track_namespace.clone())
             .await;
 
         assert_eq!(result, Some(publisher_session_id));
@@ -1231,11 +1192,11 @@ mod success {
         // Test for subscriber
         // Remain: pub 1
         let delete_publisher_result_1 = track_namespace_manager
-            .get_publisher_session_id_by_track_namespace(track_namespaces[0].clone())
+            .get_publisher_session_id(track_namespaces[0].clone())
             .await
             .unwrap();
         let delete_publisher_result_2 = track_namespace_manager
-            .get_publisher_session_id_by_track_namespace(track_namespaces[1].clone())
+            .get_publisher_session_id(track_namespaces[1].clone())
             .await;
 
         assert_eq!(delete_publisher_result_1, publisher_session_ids[0]);
@@ -1348,7 +1309,7 @@ mod failure {
     }
 
     #[tokio::test]
-    async fn get_publisher_session_id_by_track_namespace_not_found() {
+    async fn get_publisher_session_id_not_found() {
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
 
         // Start track management thread
@@ -1358,7 +1319,7 @@ mod failure {
         let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
 
         let result = track_namespace_manager
-            .get_publisher_session_id_by_track_namespace(track_namespace)
+            .get_publisher_session_id(track_namespace)
             .await;
 
         assert_eq!(result, None);
