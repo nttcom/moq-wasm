@@ -24,7 +24,7 @@ pub(crate) async fn announce_handler(
 
     // Record the announced Track Namespace
     let set_result = track_namespace_manager_repository
-        .set_publisher(announce_message.track_namespace().clone(), client.id)
+        .set_publisher_announced_namespace(announce_message.track_namespace().clone(), client.id)
         .await;
 
     match set_result {
@@ -149,7 +149,10 @@ mod failure {
 
         // Set the duplicated publisher in advance
         let _ = track_namespace_manager
-            .set_publisher(announce_message.track_namespace().clone(), client.id)
+            .set_publisher_announced_namespace(
+                announce_message.track_namespace().clone(),
+                client.id,
+            )
             .await;
 
         // Execute announce_handler and get result

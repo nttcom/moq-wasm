@@ -5,7 +5,7 @@ use anyhow::{bail, Result};
 use moqt_core::{
     constants::UnderlayType,
     messages::{control_messages::client_setup::ClientSetup, moqt_payload::MOQTPayload},
-    MOQTClient,
+    MOQTClient, TrackNamespaceManagerRepository,
 };
 
 pub(crate) fn process_client_setup_message(
@@ -13,6 +13,7 @@ pub(crate) fn process_client_setup_message(
     client: &mut MOQTClient,
     underlay_type: UnderlayType,
     write_buf: &mut BytesMut,
+    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
 ) -> Result<()> {
     let client_setup_message = match ClientSetup::depacketize(payload_buf) {
         Ok(client_setup_message) => client_setup_message,
@@ -22,7 +23,12 @@ pub(crate) fn process_client_setup_message(
         }
     };
 
-    let server_setup_message = setup_handler(client_setup_message, underlay_type, client)?;
+    let server_setup_message = setup_handler(
+        client_setup_message,
+        underlay_type,
+        client,
+        track_namespace_manager_repository,
+    )?;
 
     server_setup_message.packetize(write_buf);
 
