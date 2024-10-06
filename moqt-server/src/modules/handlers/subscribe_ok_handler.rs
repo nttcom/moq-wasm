@@ -18,9 +18,9 @@ pub(crate) async fn subscribe_ok_handler(
     // Determine the SUBSCRIBER who sent the SUBSCRIBE using the track_namespace and track_name
     let subscriber_session_ids = track_namespace_manager_repository
         .get_subscriber_session_ids_by_track_namespace_and_track_name(
-            subscribe_ok_message.track_namespace().clone(),
-            subscribe_ok_message.track_name(),
-        )
+            vec!["namespace".to_string()],
+            "name",
+        ) // Fix soon
         .await;
     match subscriber_session_ids {
         Some(session_ids) => {
@@ -39,18 +39,10 @@ pub(crate) async fn subscribe_ok_handler(
                     Ok(_) => {
                         // Record the track_id upon success and activate the subscriber
                         let _ = track_namespace_manager_repository
-                            .set_track_id(
-                                subscribe_ok_message.track_namespace().clone(),
-                                subscribe_ok_message.track_name(),
-                                subscribe_ok_message.track_id(),
-                            )
+                            .set_track_id(vec!["namespace".to_string()], "name", 0) // Fix soon
                             .await;
                         let _ = track_namespace_manager_repository
-                            .activate_subscriber(
-                                subscribe_ok_message.track_namespace().clone(),
-                                subscribe_ok_message.track_name(),
-                                *session_id,
-                            )
+                            .activate_subscriber(vec!["namespace".to_string()], "name", *session_id) // Fix soon
                             .await;
 
                         tracing::trace!("subscribe_ok_handler complete.");
@@ -85,6 +77,10 @@ mod success {
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
     use moqt_core::constants::StreamDirection;
+    use moqt_core::messages::control_messages::subscribe::GroupOrder;
+    use moqt_core::messages::control_messages::version_specific_parameters::{
+        AuthorizationInfo, VersionSpecificParameter,
+    };
     use moqt_core::messages::{
         control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
     };
@@ -95,15 +91,24 @@ mod success {
     #[tokio::test]
     async fn normal_case() {
         // Generate SUBSCRIBE_OK message
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name";
-        let track_id = 1;
-        let expires = 2;
+        let subscribe_id = 0;
+        let expires = 1;
+        let group_order = GroupOrder::Ascending;
+        let content_exists = false;
+        let largest_group_id = None;
+        let largest_object_id = None;
+        let version_specific_parameter =
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
+
         let subscribe_ok = SubscribeOk::new(
-            track_namespace.clone(),
-            track_name.to_string(),
-            track_id,
+            subscribe_id,
             expires,
+            group_order,
+            content_exists,
+            largest_group_id,
+            largest_object_id,
+            subscribe_parameters,
         );
         let mut buf = bytes::BytesMut::new();
         subscribe_ok.packetize(&mut buf);
@@ -118,10 +123,10 @@ mod success {
         let subscriber_session_id = 2;
 
         let _ = track_namespace_manager
-            .set_publisher(track_namespace.clone(), publisher_session_id)
+            .set_publisher(vec!["namespace".to_string()], publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace.clone(), subscriber_session_id, track_name)
+            .set_subscriber(vec!["namespace".to_string()], subscriber_session_id, "name")
             .await;
 
         // Generate SendStreamDispacher
@@ -162,6 +167,10 @@ mod failure {
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
     use moqt_core::constants::StreamDirection;
+    use moqt_core::messages::control_messages::subscribe::GroupOrder;
+    use moqt_core::messages::control_messages::version_specific_parameters::{
+        AuthorizationInfo, VersionSpecificParameter,
+    };
     use moqt_core::messages::{
         control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
     };
@@ -172,15 +181,24 @@ mod failure {
     #[tokio::test]
     async fn relay_fail() {
         // Generate SUBSCRIBE_OK message
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name";
-        let track_id = 1;
-        let expires = 2;
+        let subscribe_id = 0;
+        let expires = 1;
+        let group_order = GroupOrder::Ascending;
+        let content_exists = false;
+        let largest_group_id = None;
+        let largest_object_id = None;
+        let version_specific_parameter =
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
+
         let subscribe_ok = SubscribeOk::new(
-            track_namespace.clone(),
-            track_name.to_string(),
-            track_id,
+            subscribe_id,
             expires,
+            group_order,
+            content_exists,
+            largest_group_id,
+            largest_object_id,
+            subscribe_parameters,
         );
         let mut buf = bytes::BytesMut::new();
         subscribe_ok.packetize(&mut buf);
@@ -195,10 +213,10 @@ mod failure {
         let subscriber_session_id = 2;
 
         let _ = track_namespace_manager
-            .set_publisher(track_namespace.clone(), publisher_session_id)
+            .set_publisher(vec!["namespace".to_string()], publisher_session_id)
             .await;
         let _ = track_namespace_manager
-            .set_subscriber(track_namespace.clone(), subscriber_session_id, track_name)
+            .set_subscriber(vec!["namespace".to_string()], subscriber_session_id, "name")
             .await;
 
         // Generate SendStreamDispacher (without set sender)
@@ -222,15 +240,24 @@ mod failure {
     #[tokio::test]
     async fn subscriber_not_found() {
         // Generate SUBSCRIBE_OK message
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name";
-        let track_id = 1;
-        let expires = 2;
+        let subscribe_id = 0;
+        let expires = 1;
+        let group_order = GroupOrder::Ascending;
+        let content_exists = false;
+        let largest_group_id = None;
+        let largest_object_id = None;
+        let version_specific_parameter =
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
+
         let subscribe_ok = SubscribeOk::new(
-            track_namespace.clone(),
-            track_name.to_string(),
-            track_id,
+            subscribe_id,
             expires,
+            group_order,
+            content_exists,
+            largest_group_id,
+            largest_object_id,
+            subscribe_parameters,
         );
         let mut buf = bytes::BytesMut::new();
         subscribe_ok.packetize(&mut buf);
@@ -245,7 +272,7 @@ mod failure {
         let subscriber_session_id = 2;
 
         let _ = track_namespace_manager
-            .set_publisher(track_namespace.clone(), publisher_session_id)
+            .set_publisher(vec!["namespace".to_string()], publisher_session_id)
             .await;
 
         // Generate SendStreamDispacher
