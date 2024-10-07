@@ -10,7 +10,7 @@ use crate::modules::relation_manager::{
 };
 
 #[derive(Debug)]
-pub(crate) enum TrackCommand {
+pub(crate) enum PubSubRelationCommand {
     SetupPublisher {
         max_subscribe_id: u64,
         publisher_session_id: usize,

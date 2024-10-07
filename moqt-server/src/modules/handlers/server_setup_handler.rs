@@ -88,7 +88,7 @@ pub(crate) async fn setup_handler(
 #[cfg(test)]
 mod success {
     use crate::modules::relation_manager::{
-        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
@@ -109,7 +109,7 @@ mod success {
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
@@ -138,7 +138,7 @@ mod success {
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
@@ -159,7 +159,7 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::modules::relation_manager::{
-        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
@@ -180,7 +180,7 @@ mod failure {
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
@@ -205,7 +205,7 @@ mod failure {
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
@@ -230,7 +230,7 @@ mod failure {
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
@@ -256,7 +256,7 @@ mod failure {
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
@@ -285,7 +285,7 @@ mod failure {
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);

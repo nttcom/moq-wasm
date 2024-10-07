@@ -314,7 +314,7 @@ pub(crate) mod test_utils {
     use crate::modules::control_message_handler::control_message_handler;
     use crate::modules::control_message_handler::MessageProcessResult;
     use crate::modules::relation_manager::{
-        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
     use crate::modules::send_stream_dispatcher::{
@@ -341,7 +341,8 @@ pub(crate) mod test_utils {
         client.update_status(client_status);
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) =
+            mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);

@@ -1,5 +1,5 @@
 use crate::modules::relation_manager::{
-    commands::{TrackCommand, TrackCommand::*},
+    commands::{PubSubRelationCommand, PubSubRelationCommand::*},
     relation::PubSubRelation,
 };
 use anyhow::anyhow;
@@ -17,7 +17,7 @@ pub(crate) type Producers = HashMap<SubscriberSessionId, Producer>;
 // [Original Publisher: (Producer) ] -> [Relay: (Consumer) - <PubSubRelation> - (Producer) ] -> [End Subscriber: (Consumer)]
 
 // Called as a separate thread
-pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
+pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelationCommand>) {
     tracing::trace!("pubsub_relation_manager start");
 
     let mut consumers: Consumers = HashMap::new();

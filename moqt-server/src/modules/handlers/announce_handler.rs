@@ -54,7 +54,7 @@ pub(crate) async fn announce_handler(
 mod success {
     use crate::modules::handlers::announce_handler::{announce_handler, AnnounceResponse};
     use crate::modules::relation_manager::{
-        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
     use moqt_core::messages::moqt_payload::MOQTPayload;
@@ -89,7 +89,7 @@ mod success {
         let mut client = MOQTClient::new(publisher_session_id);
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
@@ -115,7 +115,7 @@ mod success {
 mod failure {
     use crate::modules::handlers::announce_handler::{announce_handler, AnnounceResponse};
     use crate::modules::relation_manager::{
-        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
     use moqt_core::messages::moqt_payload::MOQTPayload;
@@ -150,7 +150,7 @@ mod failure {
         let mut client = MOQTClient::new(publisher_session_id);
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);

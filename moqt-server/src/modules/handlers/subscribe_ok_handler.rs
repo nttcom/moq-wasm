@@ -79,7 +79,7 @@ pub(crate) async fn subscribe_ok_handler(
 mod success {
     use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
     use crate::modules::relation_manager::{
-        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
     use crate::modules::send_stream_dispatcher::{
@@ -137,7 +137,7 @@ mod success {
         let mut client = MOQTClient::new(publisher_session_id);
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
@@ -228,7 +228,7 @@ mod success {
 mod failure {
     use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
     use crate::modules::relation_manager::{
-        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
     use crate::modules::send_stream_dispatcher::{
@@ -286,7 +286,7 @@ mod failure {
         let mut client = MOQTClient::new(publisher_session_id);
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
@@ -401,7 +401,7 @@ mod failure {
         let mut client = MOQTClient::new(publisher_session_id);
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
@@ -498,7 +498,7 @@ mod failure {
         let mut client = MOQTClient::new(publisher_session_id);
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
@@ -627,7 +627,7 @@ mod failure {
         let mut client = MOQTClient::new(publisher_session_id);
 
         // Generate PubSubRelationManagerInterface
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
         let mut pubsub_relation_manager: PubSubRelationManagerInterface =
             PubSubRelationManagerInterface::new(track_namespace_tx);
