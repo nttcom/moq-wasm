@@ -422,8 +422,8 @@ pub(crate) mod test_utils {
 #[cfg(test)]
 mod success {
     use crate::modules::relation_manager::{
-        commands::PubSubRelationCommand, interface::test_utils, interface::PubSubRelationManagerInterface,
-        manager::pubsub_relation_manager,
+        commands::PubSubRelationCommand, interface::test_utils,
+        interface::PubSubRelationManagerInterface, manager::pubsub_relation_manager,
     };
     use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
