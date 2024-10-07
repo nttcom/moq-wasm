@@ -1,659 +1,24 @@
-use anyhow::{anyhow, bail, Result};
+use crate::modules::relation_manager::commands::{TrackCommand, TrackCommand::*};
+use anyhow::{bail, Result};
 use async_trait::async_trait;
 use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use moqt_core::subscription_models::subscription_nodes::SubscriptionNodeRegistory;
-use moqt_core::subscription_models::subscription_nodes::{Consumer, Producer};
+use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::subscription_models::subscriptions::Subscription;
-use moqt_core::TrackNamespaceManagerRepository;
-use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
-use TrackCommand::*;
-
-type SubscriberSessionId = usize;
-type PublisherSessionId = usize;
-type PublisherSubscribeId = u64;
-type SubscriberSubscribeId = u64;
-
-type Consumers = HashMap<PublisherSessionId, Consumer>;
-type Producers = HashMap<SubscriberSessionId, Producer>;
-
-#[derive(Debug, Clone)]
-pub(crate) struct PubSubRelation {
-    records: HashMap<
-        (PublisherSessionId, PublisherSubscribeId),
-        Vec<(SubscriberSessionId, SubscriberSubscribeId)>,
-    >,
-}
-
-impl PubSubRelation {
-    fn new() -> Self {
-        Self {
-            records: HashMap::new(),
-        }
-    }
-
-    fn add_relation(
-        &mut self,
-        publisher_session_id: PublisherSessionId,
-        publisher_subscribe_id: PublisherSubscribeId,
-        subscriber_session_id: SubscriberSessionId,
-        subscriber_subscribe_id: SubscriberSubscribeId,
-    ) -> Result<()> {
-        let key = (publisher_session_id, publisher_subscribe_id);
-        let value = (subscriber_session_id, subscriber_subscribe_id);
-
-        match self.records.get_mut(&key) {
-            // If the key exists, add the value to the existing vector
-            Some(subscribers) => {
-                subscribers.push(value);
-            }
-            // If the key does not exist, create a new vector and insert the value
-            None => {
-                self.records.insert(key, vec![value]);
-            }
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn get_subscribers(
-        &self,
-        publisher_session_id: PublisherSessionId,
-        publisher_subscribe_id: PublisherSubscribeId,
-    ) -> Option<&Vec<(SubscriberSessionId, SubscriberSubscribeId)>> {
-        let key = (publisher_session_id, publisher_subscribe_id);
-        self.records.get(&key)
-    }
-
-    // TODO: Define the behavior if the last subscriber unsubscribes from the track
-    // fn delete_relation
-}
-
-// [Original Publisher: (Producer) ] -> [Relay: (Consumer) - <PubSubRelation> - (Producer) ] -> [End Subscriber: (Consumer)]
-
-// Called as a separate thread
-pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand>) {
-    tracing::trace!("track_namespace_manager start");
-
-    let mut consumers: Consumers = HashMap::new();
-    let mut producers: Producers = HashMap::new();
-    let mut pubsub_relation = PubSubRelation::new();
-
-    while let Some(cmd) = rx.recv().await {
-        tracing::debug!("command received: {:#?}", cmd);
-        match cmd {
-            SetupPublisher {
-                max_subscribe_id,
-                publisher_session_id,
-                resp,
-            } => {
-                // Return an error if it already exists
-                if consumers.contains_key(&publisher_session_id) {
-                    let msg = "publisher already exists";
-                    tracing::error!(msg);
-                    resp.send(Err(anyhow!(msg))).unwrap();
-                    continue;
-                }
-                consumers.insert(publisher_session_id, Consumer::new(max_subscribe_id));
-                resp.send(Ok(())).unwrap();
-            }
-            SetPublisherAnnouncedNamespace {
-                track_namespace,
-                publisher_session_id,
-                resp,
-            } => {
-                let consumer = consumers.get_mut(&publisher_session_id).unwrap();
-                match consumer.set_namespace(track_namespace) {
-                    Ok(_) => {
-                        resp.send(Ok(())).unwrap();
-                    }
-                    Err(err) => {
-                        let msg = format!("set_namespace: err: {:?}", err.to_string());
-                        tracing::error!(msg);
-                        resp.send(Err(anyhow!(msg))).unwrap();
-                    }
-                }
-            }
-            SetupSubscriber {
-                max_subscribe_id,
-                subscriber_session_id,
-                resp,
-            } => {
-                // Return an error if it already exists
-                if producers.contains_key(&subscriber_session_id) {
-                    let msg = "subscriber already exists";
-                    tracing::error!(msg);
-                    resp.send(Err(anyhow!(msg))).unwrap();
-                    continue;
-                }
-
-                producers.insert(subscriber_session_id, Producer::new(max_subscribe_id));
-                resp.send(Ok(())).unwrap();
-            }
-            IsValidSubscriberSubscribeId {
-                subscribe_id,
-                subscriber_session_id,
-                resp,
-            } => {
-                // Return an error if the subscriber does not exist
-                let producer = match producers.get(&subscriber_session_id) {
-                    Some(producer) => producer,
-                    None => {
-                        let msg = "subscriber not found";
-                        tracing::error!(msg);
-                        resp.send(Err(anyhow!(msg))).unwrap();
-                        continue;
-                    }
-                };
-
-                let is_valid = producer.is_within_max_subscribe_id(subscribe_id)
-                    && producer.is_subscribe_id_unique(subscribe_id);
-
-                resp.send(Ok(is_valid)).unwrap();
-            }
-            IsValidSubscriberTrackAlias {
-                track_alias,
-                subscriber_session_id,
-                resp,
-            } => {
-                // Return an error if the subscriber does not exist
-                let producer = match producers.get(&subscriber_session_id) {
-                    Some(producer) => producer,
-                    None => {
-                        let msg = "subscriber not found";
-                        tracing::error!(msg);
-                        resp.send(Err(anyhow!(msg))).unwrap();
-                        continue;
-                    }
-                };
-
-                let is_valid = producer.is_track_alias_unique(track_alias);
-                resp.send(Ok(is_valid)).unwrap();
-            }
-            GetPublisherSessionId {
-                track_namespace,
-                resp,
-            } => {
-                // Find the publisher that has the track namespace from all consumers
-                let publisher_session_id = consumers
-                    .iter()
-                    .find(|(_, consumer)| consumer.has_namespace(track_namespace.clone()))
-                    .map(|(session_id, _)| *session_id);
-                resp.send(Ok(publisher_session_id)).unwrap();
-            }
-            GetRequestingSubscriberSessionIdsAndSubscribeIds {
-                publisher_subscribe_id,
-                publisher_session_id,
-                resp,
-            } => {
-                if !pubsub_relation
-                    .records
-                    .contains_key(&(publisher_session_id, publisher_subscribe_id))
-                {
-                    let msg = "publisher not found in pubsub relation";
-                    tracing::error!(msg);
-                    resp.send(Err(anyhow!(msg))).unwrap();
-                    continue;
-                }
-
-                let subscribers =
-                    pubsub_relation.get_subscribers(publisher_session_id, publisher_subscribe_id);
-
-                // Check if it is in the requesting state
-                let requesting_subscribers: Option<Vec<(usize, u64)>> = match subscribers {
-                    Some(subscribers) => {
-                        let mut requesting_subscribers = vec![];
-
-                        for (subscriber_session_id, subscriber_subscribe_id) in subscribers {
-                            let producer = producers.get(subscriber_session_id).unwrap();
-                            if producer.is_requesting(*subscriber_subscribe_id) {
-                                requesting_subscribers
-                                    .push((*subscriber_session_id, *subscriber_subscribe_id));
-                            }
-                        }
-
-                        Some(requesting_subscribers)
-                    }
-                    None => None,
-                };
-
-                resp.send(Ok(requesting_subscribers)).unwrap();
-            }
-            GetPublisherSubscribeId {
-                track_namespace,
-                track_name,
-                publisher_session_id,
-                resp,
-            } => {
-                // Return an error if the publisher does not exist
-                let consumer = match consumers.get(&publisher_session_id) {
-                    Some(consumer) => consumer,
-                    None => {
-                        let msg = "publisher not found";
-                        tracing::error!(msg);
-                        resp.send(Err(anyhow!(msg))).unwrap();
-                        continue;
-                    }
-                };
-
-                let result = consumer.get_subscribe_id(track_namespace, track_name);
-
-                resp.send(result).unwrap();
-            }
-            IsTrackExisting {
-                track_namespace,
-                track_name,
-                resp,
-            } => {
-                let consumer = consumers.iter().find(|(_, consumer)| {
-                    consumer.has_track(track_namespace.clone(), track_name.clone())
-                });
-                let is_existing = consumer.is_some();
-                resp.send(Ok(is_existing)).unwrap();
-            }
-            GetPublisherSubscription {
-                track_namespace,
-                track_name,
-                resp,
-            } => {
-                let consumer = consumers.iter().find(|(_, consumer)| {
-                    consumer.has_track(track_namespace.clone(), track_name.clone())
-                });
-                let result = consumer
-                    .map(|(_, consumer)| {
-                        consumer.get_subscription_by_full_track_name(track_namespace, track_name)
-                    })
-                    .unwrap();
-
-                resp.send(result).unwrap();
-            }
-            SetSubscriberSubscription {
-                subscriber_session_id,
-                subscribe_id,
-                track_alias,
-                track_namespace,
-                track_name,
-                subscriber_priority,
-                group_order,
-                filter_type,
-                start_group,
-                start_object,
-                end_group,
-                end_object,
-                resp,
-            } => {
-                // Return an error if the subscriber does not exist
-                let producer = match producers.get_mut(&subscriber_session_id) {
-                    Some(producer) => producer,
-                    None => {
-                        let msg = "subscriber not found";
-                        tracing::error!(msg);
-                        resp.send(Err(anyhow!(msg))).unwrap();
-                        continue;
-                    }
-                };
-
-                match producer.set_subscription(
-                    subscribe_id,
-                    track_alias,
-                    track_namespace,
-                    track_name,
-                    subscriber_priority,
-                    group_order,
-                    filter_type,
-                    start_group,
-                    start_object,
-                    end_group,
-                    end_object,
-                ) {
-                    Ok(_) => resp.send(Ok(())).unwrap(),
-                    Err(err) => {
-                        tracing::error!("set_subscriber_subscription: err: {:?}", err.to_string());
-                        resp.send(Err(anyhow!(err))).unwrap();
-                        continue;
-                    }
-                }
-            }
-            SetPublisherSubscription {
-                publisher_session_id,
-                track_namespace,
-                track_name,
-                subscriber_priority,
-                group_order,
-                filter_type,
-                start_group,
-                start_object,
-                end_group,
-                end_object,
-                resp,
-            } => {
-                // Return an error if the publisher does not exist
-                let consumer = match consumers.get_mut(&publisher_session_id) {
-                    Some(consumer) => consumer,
-                    None => {
-                        let msg = "publisher not found";
-                        tracing::error!(msg);
-                        resp.send(Err(anyhow!(msg))).unwrap();
-                        continue;
-                    }
-                };
-
-                let (subscribe_id, track_alias) =
-                    match consumer.find_unused_subscribe_id_and_track_alias() {
-                        Ok(result) => result,
-                        Err(err) => {
-                            tracing::error!(
-                                "find_unused_subscribe_id_and_track_alias: err: {:?}",
-                                err.to_string()
-                            );
-                            resp.send(Err(anyhow!(err))).unwrap();
-                            continue;
-                        }
-                    };
-                match consumer.set_subscription(
-                    subscribe_id,
-                    track_alias,
-                    track_namespace,
-                    track_name,
-                    subscriber_priority,
-                    group_order,
-                    filter_type,
-                    start_group,
-                    start_object,
-                    end_group,
-                    end_object,
-                ) {
-                    Ok(_) => resp.send(Ok((subscribe_id, track_alias))).unwrap(),
-                    Err(err) => {
-                        tracing::error!("set_subscription: err: {:?}", err.to_string());
-                        resp.send(Err(anyhow!(err))).unwrap();
-                        continue;
-                    }
-                };
-            }
-            RegisterPubSubRelation {
-                publisher_session_id,
-                publisher_subscribe_id,
-                subscriber_session_id,
-                subscriber_subscribe_id,
-                resp,
-            } => {
-                let result = pubsub_relation.add_relation(
-                    publisher_session_id,
-                    publisher_subscribe_id,
-                    subscriber_session_id,
-                    subscriber_subscribe_id,
-                );
-
-                match result {
-                    Ok(_) => resp.send(Ok(())).unwrap(),
-                    Err(err) => {
-                        tracing::error!("add_relation: err: {:?}", err.to_string());
-                        resp.send(Err(anyhow!(err))).unwrap();
-                    }
-                }
-            }
-            ActivateSubscriberSubscription {
-                subscriber_session_id,
-                subscribe_id,
-                resp,
-            } => {
-                // Return an error if the subscriber does not exist
-                let producer = match producers.get_mut(&subscriber_session_id) {
-                    Some(producer) => producer,
-                    None => {
-                        let msg = "subscriber not found";
-                        tracing::error!(msg);
-                        resp.send(Err(anyhow!(msg))).unwrap();
-                        continue;
-                    }
-                };
-
-                match producer.activate_subscription(subscribe_id) {
-                    Ok(activation_occured) => {
-                        // Return bool as a activation is occurred or not
-                        resp.send(Ok(activation_occured)).unwrap()
-                    }
-                    Err(err) => {
-                        tracing::error!("activate_subscription: err: {:?}", err.to_string());
-                        resp.send(Err(anyhow!(err))).unwrap();
-                    }
-                }
-            }
-            ActivatePublisherSubscription {
-                publisher_session_id,
-                subscribe_id,
-                resp,
-            } => {
-                // Return an error if the publisher does not exist
-                let consumer = match consumers.get_mut(&publisher_session_id) {
-                    Some(consumer) => consumer,
-                    None => {
-                        let msg = "publisher not found";
-                        tracing::error!(msg);
-                        resp.send(Err(anyhow!(msg))).unwrap();
-                        continue;
-                    }
-                };
-
-                match consumer.activate_subscription(subscribe_id) {
-                    Ok(activation_occured) => {
-                        // Return bool as a activation is occurred or not
-                        resp.send(Ok(activation_occured)).unwrap()
-                    }
-                    Err(err) => {
-                        tracing::error!("activate_subscription: err: {:?}", err.to_string());
-                        resp.send(Err(anyhow!(err))).unwrap();
-                    }
-                }
-            }
-            DeletePublisherAnnouncedNamespace {
-                track_namespace,
-                publisher_session_id,
-                resp,
-            } => {
-                // Return an error if the publisher does not exist
-                let consumer = match consumers.get_mut(&publisher_session_id) {
-                    Some(consumer) => consumer,
-                    None => {
-                        let msg = "publisher not found";
-                        tracing::error!(msg);
-                        resp.send(Err(anyhow!(msg))).unwrap();
-                        continue;
-                    }
-                };
-
-                // Return false if the track_namespace does not exist
-                if !consumer.has_namespace(track_namespace.clone()) {
-                    let msg = "track_namespace not found";
-                    tracing::error!(msg);
-                    resp.send(Ok(false)).unwrap();
-                    continue;
-                }
-
-                match consumer.delete_namespace(track_namespace) {
-                    Ok(_) => {
-                        resp.send(Ok(true)).unwrap();
-                    }
-                    Err(err) => {
-                        tracing::error!("delete_namespace: err: {:?}", err.to_string());
-                        resp.send(Err(err)).unwrap();
-                    }
-                }
-            }
-            DeleteClient { session_id, resp } => {
-                let is_exist_as_consumer = consumers.contains_key(&session_id);
-                let is_exist_as_producer = producers.contains_key(&session_id);
-                let is_exist_in_pubsub_relation = pubsub_relation
-                    .records
-                    .iter()
-                    .any(|(key, _)| key.0 == session_id);
-
-                // Return an error if the session does not exist
-                if !is_exist_as_consumer && !is_exist_as_producer && !is_exist_in_pubsub_relation {
-                    let msg = "session not found";
-                    tracing::error!(msg);
-                    resp.send(Ok(false)).unwrap();
-                    continue;
-                }
-
-                // Delete as a publisher
-                consumers.remove(&session_id);
-                pubsub_relation.records.retain(|key, _| key.0 != session_id);
-
-                // Delete as a subscriber
-                producers.remove(&session_id);
-                pubsub_relation
-                    .records
-                    .iter_mut()
-                    .for_each(|(_, subscribers)| {
-                        subscribers.retain(|(subscriber_session_id, _)| {
-                            *subscriber_session_id != session_id
-                        });
-                    });
-
-                resp.send(Ok(true)).unwrap();
-            }
-            #[cfg(test)]
-            GetNodeAndRelationClone { resp } => {
-                let consumer = consumers.clone();
-                let producer = producers.clone();
-                let relation = pubsub_relation.clone();
-
-                resp.send(Ok((consumer, producer, relation))).unwrap();
-            }
-        }
-    }
-
-    tracing::trace!("track_namespace_manager end");
-}
-
-#[derive(Debug)]
-pub(crate) enum TrackCommand {
-    SetupPublisher {
-        max_subscribe_id: u64,
-        publisher_session_id: usize,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    SetPublisherAnnouncedNamespace {
-        track_namespace: Vec<String>,
-        publisher_session_id: usize,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    SetupSubscriber {
-        max_subscribe_id: u64,
-        subscriber_session_id: usize,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    IsValidSubscriberSubscribeId {
-        subscribe_id: u64,
-        subscriber_session_id: usize,
-        resp: oneshot::Sender<Result<bool>>,
-    },
-    IsValidSubscriberTrackAlias {
-        track_alias: u64,
-        subscriber_session_id: usize,
-        resp: oneshot::Sender<Result<bool>>,
-    },
-    IsTrackExisting {
-        track_namespace: Vec<String>,
-        track_name: String,
-        resp: oneshot::Sender<Result<bool>>,
-    },
-    GetPublisherSubscription {
-        track_namespace: Vec<String>,
-        track_name: String,
-        resp: oneshot::Sender<Result<Option<Subscription>>>,
-    },
-    GetPublisherSessionId {
-        track_namespace: Vec<String>,
-        resp: oneshot::Sender<Result<Option<usize>>>,
-    },
-    GetRequestingSubscriberSessionIdsAndSubscribeIds {
-        publisher_subscribe_id: u64,
-        publisher_session_id: usize,
-        #[allow(clippy::type_complexity)]
-        resp: oneshot::Sender<Result<Option<Vec<(usize, u64)>>>>,
-    },
-    GetPublisherSubscribeId {
-        track_namespace: Vec<String>,
-        track_name: String,
-        publisher_session_id: usize,
-        resp: oneshot::Sender<Result<Option<u64>>>,
-    },
-    SetSubscriberSubscription {
-        subscriber_session_id: usize,
-        subscribe_id: u64,
-        track_alias: u64,
-        track_namespace: Vec<String>,
-        track_name: String,
-        subscriber_priority: u8,
-        group_order: GroupOrder,
-        filter_type: FilterType,
-        start_group: Option<u64>,
-        start_object: Option<u64>,
-        end_group: Option<u64>,
-        end_object: Option<u64>,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    SetPublisherSubscription {
-        publisher_session_id: usize,
-        track_namespace: Vec<String>,
-        track_name: String,
-        subscriber_priority: u8,
-        group_order: GroupOrder,
-        filter_type: FilterType,
-        start_group: Option<u64>,
-        start_object: Option<u64>,
-        end_group: Option<u64>,
-        end_object: Option<u64>,
-        resp: oneshot::Sender<Result<(u64, u64)>>,
-    },
-    RegisterPubSubRelation {
-        publisher_session_id: usize,
-        publisher_subscribe_id: u64,
-        subscriber_session_id: usize,
-        subscriber_subscribe_id: u64,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    ActivateSubscriberSubscription {
-        subscriber_session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<bool>>,
-    },
-    ActivatePublisherSubscription {
-        publisher_session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<bool>>,
-    },
-    DeletePublisherAnnouncedNamespace {
-        track_namespace: Vec<String>,
-        publisher_session_id: usize,
-        resp: oneshot::Sender<Result<bool>>,
-    },
-    DeleteClient {
-        session_id: usize,
-        resp: oneshot::Sender<Result<bool>>,
-    },
-    #[cfg(test)]
-    GetNodeAndRelationClone {
-        resp: oneshot::Sender<Result<(Consumers, Producers, PubSubRelation)>>,
-    },
-}
 
 // Wrapper to encapsulate channel-related operations
-pub(crate) struct TrackNamespaceManager {
+pub(crate) struct PubSubRelationManagerInterface {
     tx: mpsc::Sender<TrackCommand>,
 }
 
-impl TrackNamespaceManager {
+impl PubSubRelationManagerInterface {
     pub fn new(tx: mpsc::Sender<TrackCommand>) -> Self {
         Self { tx }
     }
 }
 
 #[async_trait]
-impl TrackNamespaceManagerRepository for TrackNamespaceManager {
+impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
     async fn setup_publisher(
         &self,
         max_subscribe_id: u64,
@@ -1033,19 +398,22 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 
 #[cfg(test)]
 pub(crate) mod test_utils {
-
-    use crate::modules::track_namespace_manager::{
-        Consumers, Producers, PubSubRelation, TrackCommand, TrackNamespaceManager,
+    use crate::modules::relation_manager::{
+        commands::TrackCommand,
+        interface::PubSubRelationManagerInterface,
+        manager::{Consumers, Producers},
+        relation::PubSubRelation,
     };
     use anyhow::Result;
+
     use tokio::sync::oneshot;
 
     pub(crate) async fn get_node_and_relation_clone(
-        track_namespace_manager: &TrackNamespaceManager,
+        pubsub_relation_manager: &PubSubRelationManagerInterface,
     ) -> (Consumers, Producers, PubSubRelation) {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<_>>();
         let cmd = TrackCommand::GetNodeAndRelationClone { resp: resp_tx };
-        track_namespace_manager.tx.send(cmd).await.unwrap();
+        pubsub_relation_manager.tx.send(cmd).await.unwrap();
 
         resp_rx.await.unwrap().unwrap()
     }
@@ -1053,14 +421,14 @@ pub(crate) mod test_utils {
 
 #[cfg(test)]
 mod success {
-    use crate::modules::track_namespace_manager::test_utils;
-    use crate::modules::track_namespace_manager::{
-        track_namespace_manager, TrackCommand, TrackNamespaceManager,
+    use crate::modules::relation_manager::{
+        commands::TrackCommand, interface::test_utils, interface::PubSubRelationManagerInterface,
+        manager::pubsub_relation_manager,
     };
     use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
-    use moqt_core::subscription_models::subscription_nodes::SubscriptionNodeRegistory;
+    use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
+    use moqt_core::subscription_models::node_registory::SubscriptionNodeRegistory;
     use moqt_core::subscription_models::subscriptions::Subscription;
-    use moqt_core::TrackNamespaceManagerRepository;
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -1070,17 +438,17 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let result = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let result = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
         assert!(result.is_ok());
 
         // Check if the publisher is created
         let (consumers, _, _) =
-            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
         let length = consumers.len();
 
         assert_eq!(length, 1);
@@ -1094,20 +462,20 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
         assert!(result.is_ok());
 
         // Check if the track_namespace is set
         let (consumers, _, _) =
-            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
 
         let consumer = consumers.get(&publisher_session_id).unwrap();
         let announced_namespaces = consumer.get_namespaces().unwrap();
@@ -1123,17 +491,17 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let result = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let result = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
         assert!(result.is_ok());
 
         // Check if the subscriber is created
         let (_, producers, _) =
-            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
         let length = producers.len();
 
         assert_eq!(length, 1);
@@ -1147,14 +515,14 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .is_valid_subscriber_subscribe_id(subscribe_id, subscriber_session_id)
             .await;
 
@@ -1170,14 +538,14 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .is_valid_subscriber_subscribe_id(subscribe_id, subscriber_session_id)
             .await;
 
@@ -1193,14 +561,14 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .is_valid_subscriber_track_alias(track_alias, subscriber_session_id)
             .await;
 
@@ -1226,13 +594,13 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_subscriber_subscription(
                 subscriber_session_id,
                 subscribe_id,
@@ -1249,7 +617,7 @@ mod success {
             )
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .is_valid_subscriber_track_alias(track_alias, subscriber_session_id)
             .await;
         assert!(result.is_ok());
@@ -1274,19 +642,19 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -1301,7 +669,7 @@ mod success {
             )
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .is_track_existing(track_namespace, track_name)
             .await;
         assert!(result.is_ok());
@@ -1317,10 +685,10 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let result = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let result = pubsub_relation_manager
             .is_track_existing(track_namespace, track_name)
             .await;
         assert!(result.is_ok());
@@ -1346,13 +714,13 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -1367,7 +735,7 @@ mod success {
             )
             .await;
 
-        let subscription = track_namespace_manager
+        let subscription = pubsub_relation_manager
             .get_publisher_subscription_by_full_track_name(
                 track_namespace.clone(),
                 track_name.clone(),
@@ -1401,18 +769,18 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
 
-        let session_id = track_namespace_manager
+        let session_id = pubsub_relation_manager
             .get_publisher_session_id(track_namespace.clone())
             .await
             .unwrap()
@@ -1440,17 +808,17 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
-        let (publisher_subscribe_id, _) = track_namespace_manager
+        let (publisher_subscribe_id, _) = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -1467,10 +835,10 @@ mod success {
             .unwrap();
 
         for i in [0, 1] {
-            let _ = track_namespace_manager
+            let _ = pubsub_relation_manager
                 .setup_subscriber(max_subscribe_id, subscriber_session_ids[i])
                 .await;
-            let _ = track_namespace_manager
+            let _ = pubsub_relation_manager
                 .set_subscriber_subscription(
                     subscriber_session_ids[i],
                     subscriber_subscribe_ids[i],
@@ -1486,7 +854,7 @@ mod success {
                     end_object,
                 )
                 .await;
-            let _ = track_namespace_manager
+            let _ = pubsub_relation_manager
                 .register_pubsup_relation(
                     publisher_session_id,
                     publisher_subscribe_id,
@@ -1496,7 +864,7 @@ mod success {
                 .await;
         }
 
-        let list = track_namespace_manager
+        let list = pubsub_relation_manager
             .get_requesting_subscriber_session_ids_and_subscribe_ids(
                 publisher_subscribe_id,
                 publisher_session_id,
@@ -1529,17 +897,17 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
-        let (expected_publisher_subscribe_id, _) = track_namespace_manager
+        let (expected_publisher_subscribe_id, _) = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -1555,7 +923,7 @@ mod success {
             .await
             .unwrap();
 
-        let publisher_subscribe_id = track_namespace_manager
+        let publisher_subscribe_id = pubsub_relation_manager
             .get_publisher_subscribe_id(track_namespace, track_name, publisher_session_id)
             .await
             .unwrap()
@@ -1582,13 +950,13 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .set_subscriber_subscription(
                 subscriber_session_id,
                 subscribe_id,
@@ -1609,7 +977,7 @@ mod success {
 
         // Assert that the subscription is set
         let (_, producers, _) =
-            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
         let producer = producers.get(&subscriber_session_id).unwrap();
         let subscription = producer.get_subscription(subscribe_id).unwrap().unwrap();
 
@@ -1646,13 +1014,13 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -1673,7 +1041,7 @@ mod success {
 
         // Assert that the subscription is set
         let (consumers, _, _) =
-            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
         let consumer = consumers.get(&publisher_session_id).unwrap();
         let subscription = consumer
             .get_subscription(publisher_subscribe_id)
@@ -1716,18 +1084,18 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
         //   pub 1 <- sub 2, 3
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
-        let (publisher_subscribe_id, _) = track_namespace_manager
+        let (publisher_subscribe_id, _) = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -1744,10 +1112,10 @@ mod success {
             .unwrap();
 
         for i in [0, 1] {
-            let _ = track_namespace_manager
+            let _ = pubsub_relation_manager
                 .setup_subscriber(max_subscribe_id, subscriber_session_ids[i])
                 .await;
-            let _ = track_namespace_manager
+            let _ = pubsub_relation_manager
                 .set_subscriber_subscription(
                     subscriber_session_ids[i],
                     subscriber_subscribe_ids[i],
@@ -1763,7 +1131,7 @@ mod success {
                     end_object,
                 )
                 .await;
-            let result = track_namespace_manager
+            let result = pubsub_relation_manager
                 .register_pubsup_relation(
                     publisher_session_id,
                     publisher_subscribe_id,
@@ -1777,7 +1145,7 @@ mod success {
 
         // Assert that the relation is registered
         let (_, _, pubsub_relation) =
-            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
 
         let subscriber = pubsub_relation
             .get_subscribers(publisher_session_id, publisher_subscribe_id)
@@ -1810,13 +1178,13 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_subscriber_subscription(
                 subscriber_session_id,
                 subscribe_id,
@@ -1833,7 +1201,7 @@ mod success {
             )
             .await;
 
-        let activate_occured = track_namespace_manager
+        let activate_occured = pubsub_relation_manager
             .activate_subscriber_subscription(subscriber_session_id, subscribe_id)
             .await
             .unwrap();
@@ -1842,7 +1210,7 @@ mod success {
 
         // Assert that the subscription is active
         let (_, producers, _) =
-            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
         let producer = producers.get(&subscriber_session_id).unwrap();
         let subscription = producer.get_subscription(subscribe_id).unwrap().unwrap();
 
@@ -1865,13 +1233,13 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let (publisher_subscribe_id, _) = track_namespace_manager
+        let (publisher_subscribe_id, _) = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -1887,7 +1255,7 @@ mod success {
             .await
             .unwrap();
 
-        let activate_occured = track_namespace_manager
+        let activate_occured = pubsub_relation_manager
             .activate_publisher_subscription(publisher_session_id, publisher_subscribe_id)
             .await
             .unwrap();
@@ -1896,7 +1264,7 @@ mod success {
 
         // Assert that the subscription is active
         let (consumers, _, _) =
-            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
         let consumer = consumers.get(&publisher_session_id).unwrap();
         let subscription = consumer
             .get_subscription(publisher_subscribe_id)
@@ -1914,17 +1282,17 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .delete_publisher_announced_namespace(track_namespace, publisher_session_id)
             .await;
         assert!(result.is_ok());
@@ -1934,7 +1302,7 @@ mod success {
 
         // Assert that the announced namespace is deleted
         let (consumers, _, _) =
-            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
         let consumer = consumers.get(&publisher_session_id).unwrap();
         let announced_namespaces = consumer.get_namespaces().unwrap().to_vec();
 
@@ -1949,14 +1317,14 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .delete_publisher_announced_namespace(track_namespace, publisher_session_id)
             .await;
         assert!(result.is_ok());
@@ -1988,25 +1356,25 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
         // Register:
         //   pub 1 <- sub 2, 3, 4
         //   pub 2 <- sub 3, 4
         for i in [0, 1] {
             // for pub 1, 2
-            let _ = track_namespace_manager
+            let _ = pubsub_relation_manager
                 .setup_publisher(max_subscribe_id, publisher_session_ids[i])
                 .await;
-            let _ = track_namespace_manager
+            let _ = pubsub_relation_manager
                 .set_publisher_announced_namespace(
                     track_namespaces[i].clone(),
                     publisher_session_ids[i],
                 )
                 .await;
-            let (publisher_subscribe_id, _) = track_namespace_manager
+            let (publisher_subscribe_id, _) = pubsub_relation_manager
                 .set_publisher_subscription(
                     publisher_session_ids[i],
                     track_namespaces[i].clone(),
@@ -2026,13 +1394,13 @@ mod success {
 
         for j in [0, 1, 2] {
             // for sub 2, 3, 4
-            let _ = track_namespace_manager
+            let _ = pubsub_relation_manager
                 .setup_subscriber(max_subscribe_id, subscriber_session_ids[j])
                 .await;
         }
 
         // for sub 2
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_subscriber_subscription(
                 subscriber_session_ids[0],
                 subscriber_subscribe_ids[0],
@@ -2053,7 +1421,7 @@ mod success {
             // for pub 1, 2
             for j in [1, 2] {
                 // for sub 3, 4
-                let _ = track_namespace_manager
+                let _ = pubsub_relation_manager
                     .set_subscriber_subscription(
                         subscriber_session_ids[j],
                         subscriber_subscribe_ids[j],
@@ -2070,7 +1438,7 @@ mod success {
                     )
                     .await;
 
-                let _ = track_namespace_manager
+                let _ = pubsub_relation_manager
                     .register_pubsup_relation(
                         publisher_session_ids[i],
                         publisher_subscribe_ids[i],
@@ -2078,14 +1446,14 @@ mod success {
                         subscriber_subscribe_ids[j],
                     )
                     .await;
-                let _ = track_namespace_manager
+                let _ = pubsub_relation_manager
                     .activate_subscriber_subscription(
                         subscriber_session_ids[j],
                         subscriber_subscribe_ids[j],
                     )
                     .await;
 
-                let _ = track_namespace_manager
+                let _ = pubsub_relation_manager
                     .activate_publisher_subscription(
                         publisher_session_ids[i],
                         publisher_subscribe_ids[i],
@@ -2095,7 +1463,7 @@ mod success {
         }
 
         // for pub 1 and sub 2
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .register_pubsup_relation(
                 publisher_session_ids[0],
                 publisher_subscribe_ids[0],
@@ -2103,20 +1471,20 @@ mod success {
                 subscriber_subscribe_ids[0],
             )
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .activate_subscriber_subscription(
                 subscriber_session_ids[0],
                 subscriber_subscribe_ids[0],
             )
             .await;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .activate_publisher_subscription(publisher_session_ids[0], publisher_subscribe_ids[0])
             .await;
 
         // Delete: pub 2, sub 2
         // Remain: pub 1 <- sub 3, 4
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .delete_client(subscriber_session_ids[0])
             .await;
         assert!(result.is_ok());
@@ -2125,7 +1493,7 @@ mod success {
         assert!(delete_occured);
 
         let (consumers, producers, pubsub_relation) =
-            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
 
         // Assert that sub 2 is deleted
         // Remain: sub 3, 4
@@ -2163,11 +1531,11 @@ mod success {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
-        let result = track_namespace_manager.delete_client(session_id).await;
+        let result = pubsub_relation_manager.delete_client(session_id).await;
         assert!(result.is_ok());
 
         let delete_occured = result.unwrap();
@@ -2177,11 +1545,12 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::modules::track_namespace_manager::{
-        track_namespace_manager, TrackCommand, TrackNamespaceManager,
+    use crate::modules::relation_manager::{
+        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        manager::pubsub_relation_manager,
     };
     use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
-    use moqt_core::TrackNamespaceManagerRepository;
+    use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -2191,15 +1560,15 @@ mod failure {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
 
         // Register the same publisher
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
 
@@ -2214,18 +1583,18 @@ mod failure {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
 
         // Register the same track namespace
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
 
@@ -2239,15 +1608,15 @@ mod failure {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
 
         // Register the same subscriber
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
 
@@ -2263,14 +1632,14 @@ mod failure {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .is_valid_subscriber_subscribe_id(
                 subscriber_subscribe_id,
                 invalid_subscriber_session_id,
@@ -2289,14 +1658,14 @@ mod failure {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .is_valid_subscriber_track_alias(subscriber_track_alias, invalid_subscriber_session_id)
             .await;
 
@@ -2309,11 +1678,11 @@ mod failure {
         let publisher_subscribe_id = 0;
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .get_requesting_subscriber_session_ids_and_subscribe_ids(
                 publisher_subscribe_id,
                 publisher_session_id,
@@ -2331,11 +1700,11 @@ mod failure {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .get_publisher_subscribe_id(track_namespace, track_name, invalid_publisher_session_id)
             .await;
 
@@ -2361,15 +1730,15 @@ mod failure {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .set_subscriber_subscription(
                 invalid_subscriber_session_id,
                 subscribe_id,
@@ -2406,15 +1775,15 @@ mod failure {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .set_publisher_subscription(
                 invalid_publisher_session_id,
                 track_namespace,
@@ -2441,14 +1810,14 @@ mod failure {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .activate_subscriber_subscription(invalid_subscriber_session_id, subscribe_id)
             .await;
 
@@ -2464,14 +1833,14 @@ mod failure {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .activate_publisher_subscription(invalid_publisher_session_id, publisher_subscribe_id)
             .await;
 
@@ -2487,14 +1856,14 @@ mod failure {
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
-        let track_namespace_manager = TrackNamespaceManager::new(track_tx.clone());
-        let _ = track_namespace_manager
+        let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
 
-        let result = track_namespace_manager
+        let result = pubsub_relation_manager
             .delete_publisher_announced_namespace(track_namespace, invalid_publisher_session_id)
             .await;
 

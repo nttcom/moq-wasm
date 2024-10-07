@@ -1,10 +1,9 @@
 use anyhow::Result;
-
+use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     messages::control_messages::{
         announce::Announce, announce_error::AnnounceError, announce_ok::AnnounceOk,
     },
-    track_namespace_manager_repository::TrackNamespaceManagerRepository,
     MOQTClient,
 };
 
@@ -17,13 +16,13 @@ pub(crate) enum AnnounceResponse {
 pub(crate) async fn announce_handler(
     announce_message: Announce,
     client: &mut MOQTClient,
-    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
 ) -> Result<AnnounceResponse> {
     tracing::trace!("announce_handler start.");
     tracing::debug!("announce_message: {:#?}", announce_message);
 
     // Record the announced Track Namespace
-    let set_result = track_namespace_manager_repository
+    let set_result = pubsub_relation_manager_repository
         .set_publisher_announced_namespace(announce_message.track_namespace().clone(), client.id)
         .await;
 
@@ -54,11 +53,12 @@ pub(crate) async fn announce_handler(
 #[cfg(test)]
 mod success {
     use crate::modules::handlers::announce_handler::{announce_handler, AnnounceResponse};
-    use crate::modules::track_namespace_manager::{
-        track_namespace_manager, TrackCommand, TrackNamespaceManager,
+    use crate::modules::relation_manager::{
+        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        manager::pubsub_relation_manager,
     };
     use moqt_core::messages::moqt_payload::MOQTPayload;
-    use moqt_core::TrackNamespaceManagerRepository;
+    use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
     use moqt_core::{
         messages::control_messages::{
             announce::Announce,
@@ -88,20 +88,20 @@ mod success {
         let publisher_session_id = 0;
         let mut client = MOQTClient::new(publisher_session_id);
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let max_subscribe_id = 10;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
 
         // Execute announce_handler and get result
-        let result = announce_handler(announce_message, &mut client, &mut track_namespace_manager)
+        let result = announce_handler(announce_message, &mut client, &mut pubsub_relation_manager)
             .await
             .unwrap();
 
@@ -114,10 +114,12 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::modules::handlers::announce_handler::{announce_handler, AnnounceResponse};
-    use crate::modules::track_namespace_manager::{
-        track_namespace_manager, TrackCommand, TrackNamespaceManager,
+    use crate::modules::relation_manager::{
+        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        manager::pubsub_relation_manager,
     };
     use moqt_core::messages::moqt_payload::MOQTPayload;
+    use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
     use moqt_core::{
         messages::control_messages::{
             announce::Announce,
@@ -125,7 +127,6 @@ mod failure {
             version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
         },
         moqt_client::MOQTClient,
-        TrackNamespaceManagerRepository,
     };
     use tokio::sync::mpsc;
 
@@ -148,20 +149,20 @@ mod failure {
         let publisher_session_id = 0;
         let mut client = MOQTClient::new(publisher_session_id);
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let max_subscribe_id = 10;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
 
         // Set the duplicated publisher in advance
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(
                 announce_message.track_namespace().clone(),
                 client.id,
@@ -169,7 +170,7 @@ mod failure {
             .await;
 
         // Execute announce_handler and get result
-        let result = announce_handler(announce_message, &mut client, &mut track_namespace_manager)
+        let result = announce_handler(announce_message, &mut client, &mut pubsub_relation_manager)
             .await
             .unwrap();
 

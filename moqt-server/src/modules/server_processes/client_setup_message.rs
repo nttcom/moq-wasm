@@ -2,10 +2,11 @@ use bytes::BytesMut;
 
 use crate::modules::handlers::server_setup_handler::setup_handler;
 use anyhow::{bail, Result};
+use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     constants::UnderlayType,
     messages::{control_messages::client_setup::ClientSetup, moqt_payload::MOQTPayload},
-    MOQTClient, TrackNamespaceManagerRepository,
+    MOQTClient,
 };
 
 pub(crate) async fn process_client_setup_message(
@@ -13,7 +14,7 @@ pub(crate) async fn process_client_setup_message(
     client: &mut MOQTClient,
     underlay_type: UnderlayType,
     write_buf: &mut BytesMut,
-    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
 ) -> Result<()> {
     let client_setup_message = match ClientSetup::depacketize(payload_buf) {
         Ok(client_setup_message) => client_setup_message,
@@ -27,7 +28,7 @@ pub(crate) async fn process_client_setup_message(
         client_setup_message,
         underlay_type,
         client,
-        track_namespace_manager_repository,
+        pubsub_relation_manager_repository,
     )
     .await?;
 

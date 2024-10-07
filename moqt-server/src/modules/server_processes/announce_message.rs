@@ -1,16 +1,17 @@
 use crate::modules::handlers::announce_handler::{announce_handler, AnnounceResponse};
 use anyhow::{bail, Result};
 use bytes::BytesMut;
+use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     messages::{control_messages::announce::Announce, moqt_payload::MOQTPayload},
-    MOQTClient, TrackNamespaceManagerRepository,
+    MOQTClient,
 };
 
 pub(crate) async fn process_announce_message(
     payload_buf: &mut BytesMut,
     client: &mut MOQTClient,
     write_buf: &mut BytesMut,
-    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
 ) -> Result<AnnounceResponse> {
     let announce_message = match Announce::depacketize(payload_buf) {
         Ok(announce_message) => announce_message,
@@ -21,7 +22,7 @@ pub(crate) async fn process_announce_message(
     };
 
     let announce_response =
-        announce_handler(announce_message, client, track_namespace_manager_repository).await;
+        announce_handler(announce_message, client, pubsub_relation_manager_repository).await;
 
     match announce_response {
         Ok(announce_response_message) => match announce_response_message {

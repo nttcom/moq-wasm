@@ -1,14 +1,14 @@
 use anyhow::Result;
-
+use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     constants::StreamDirection,
     messages::{control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload},
-    MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
+    MOQTClient, SendStreamDispatcherRepository,
 };
 
 pub(crate) async fn subscribe_ok_handler(
     subscribe_ok_message: SubscribeOk,
-    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
     client: &mut MOQTClient,
 ) -> Result<()> {
@@ -20,7 +20,7 @@ pub(crate) async fn subscribe_ok_handler(
     let publisher_subscribe_id = subscribe_ok_message.subscribe_id();
 
     // Determine the SUBSCRIBER who sent the SUBSCRIBE using the track_namespace and track_name
-    let ids = track_namespace_manager_repository
+    let ids = pubsub_relation_manager_repository
         .get_requesting_subscriber_session_ids_and_subscribe_ids(
             publisher_subscribe_id,
             publisher_session_id,
@@ -28,7 +28,7 @@ pub(crate) async fn subscribe_ok_handler(
         .await?;
     match ids {
         Some(ids) => {
-            let _ = track_namespace_manager_repository
+            let _ = pubsub_relation_manager_repository
                 .activate_publisher_subscription(publisher_session_id, publisher_subscribe_id)
                 .await;
 
@@ -52,7 +52,7 @@ pub(crate) async fn subscribe_ok_handler(
                     )
                     .await?;
 
-                track_namespace_manager_repository
+                pubsub_relation_manager_repository
                     .activate_subscriber_subscription(
                         *subscriber_session_id,
                         *subscriber_subscribe_id,
@@ -66,7 +66,7 @@ pub(crate) async fn subscribe_ok_handler(
             tracing::warn!("waiting subscriber session ids not found");
 
             // Activate the publisher because it is in the Requesting state
-            let _ = track_namespace_manager_repository
+            let _ = pubsub_relation_manager_repository
                 .activate_publisher_subscription(publisher_session_id, publisher_subscribe_id)
                 .await;
         }
@@ -78,11 +78,12 @@ pub(crate) async fn subscribe_ok_handler(
 #[cfg(test)]
 mod success {
     use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
+    use crate::modules::relation_manager::{
+        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        manager::pubsub_relation_manager,
+    };
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-    };
-    use crate::modules::track_namespace_manager::{
-        track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
     use crate::MOQTClient;
     use moqt_core::constants::StreamDirection;
@@ -93,7 +94,7 @@ mod success {
     use moqt_core::messages::{
         control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
     };
-    use moqt_core::TrackNamespaceManagerRepository;
+    use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
@@ -135,22 +136,22 @@ mod success {
         let publisher_session_id = 1;
         let mut client = MOQTClient::new(publisher_session_id);
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let subscriber_session_id = 2;
         let max_subscribe_id = 10;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
-        let (publisher_subscribe_id, _) = track_namespace_manager
+        let (publisher_subscribe_id, _) = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -166,10 +167,10 @@ mod success {
             .await
             .unwrap();
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_subscriber_subscription(
                 subscriber_session_id,
                 subscriber_subscribe_id,
@@ -185,7 +186,7 @@ mod success {
                 end_object,
             )
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .register_pubsup_relation(
                 publisher_session_id,
                 publisher_subscribe_id,
@@ -213,7 +214,7 @@ mod success {
         // Execute subscribe_ok_handler and get result
         let result = subscribe_ok_handler(
             subscribe_ok,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut client,
         )
@@ -226,11 +227,12 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
+    use crate::modules::relation_manager::{
+        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        manager::pubsub_relation_manager,
+    };
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-    };
-    use crate::modules::track_namespace_manager::{
-        track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
     use crate::MOQTClient;
     use moqt_core::constants::StreamDirection;
@@ -241,7 +243,7 @@ mod failure {
     use moqt_core::messages::{
         control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
     };
-    use moqt_core::TrackNamespaceManagerRepository;
+    use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
@@ -283,22 +285,22 @@ mod failure {
         let publisher_session_id = 1;
         let mut client = MOQTClient::new(publisher_session_id);
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let subscriber_session_id = 2;
         let max_subscribe_id = 10;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
-        let (publisher_subscribe_id, _) = track_namespace_manager
+        let (publisher_subscribe_id, _) = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -314,10 +316,10 @@ mod failure {
             .await
             .unwrap();
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_subscriber_subscription(
                 subscriber_session_id,
                 subscriber_subscribe_id,
@@ -333,7 +335,7 @@ mod failure {
                 end_object,
             )
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .register_pubsup_relation(
                 publisher_session_id,
                 publisher_subscribe_id,
@@ -352,7 +354,7 @@ mod failure {
         // Execute subscribe_ok_handler and get result
         let result = subscribe_ok_handler(
             subscribe_ok,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut client,
         )
@@ -398,22 +400,22 @@ mod failure {
         let publisher_session_id = 1;
         let mut client = MOQTClient::new(publisher_session_id);
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let subscriber_session_id = 2;
         let max_subscribe_id = 10;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -448,7 +450,7 @@ mod failure {
         // Execute subscribe_ok_handler and get result
         let result = subscribe_ok_handler(
             subscribe_ok,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut client,
         )
@@ -495,22 +497,22 @@ mod failure {
         let publisher_session_id = 1;
         let mut client = MOQTClient::new(publisher_session_id);
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let subscriber_session_id = 2;
         let max_subscribe_id = 10;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
-        let (publisher_subscribe_id, _) = track_namespace_manager
+        let (publisher_subscribe_id, _) = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -526,10 +528,10 @@ mod failure {
             .await
             .unwrap();
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_subscriber_subscription(
                 subscriber_session_id,
                 subscriber_subscribe_id,
@@ -545,7 +547,7 @@ mod failure {
                 end_object,
             )
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .register_pubsup_relation(
                 publisher_session_id,
                 publisher_subscribe_id,
@@ -554,7 +556,7 @@ mod failure {
             )
             .await;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .activate_subscriber_subscription(subscriber_session_id, subscriber_subscribe_id)
             .await;
 
@@ -577,7 +579,7 @@ mod failure {
         // Execute subscribe_ok_handler and get result
         let result = subscribe_ok_handler(
             subscribe_ok,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut client,
         )
@@ -624,22 +626,22 @@ mod failure {
         let publisher_session_id = 1;
         let mut client = MOQTClient::new(publisher_session_id);
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let subscriber_session_id = 2;
         let max_subscribe_id = 10;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_publisher(max_subscribe_id, publisher_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
             .await;
-        let (publisher_subscribe_id, _) = track_namespace_manager
+        let (publisher_subscribe_id, _) = pubsub_relation_manager
             .set_publisher_subscription(
                 publisher_session_id,
                 track_namespace.clone(),
@@ -655,10 +657,10 @@ mod failure {
             .await
             .unwrap();
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, subscriber_session_id)
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .set_subscriber_subscription(
                 subscriber_session_id,
                 subscriber_subscribe_id,
@@ -674,7 +676,7 @@ mod failure {
                 end_object,
             )
             .await;
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .register_pubsup_relation(
                 publisher_session_id,
                 publisher_subscribe_id,
@@ -683,7 +685,7 @@ mod failure {
             )
             .await;
 
-        let _ = track_namespace_manager
+        let _ = pubsub_relation_manager
             .activate_publisher_subscription(publisher_session_id, publisher_subscribe_id)
             .await;
 
@@ -706,7 +708,7 @@ mod failure {
         // Execute subscribe_ok_handler and get result
         let result = subscribe_ok_handler(
             subscribe_ok,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut client,
         )
