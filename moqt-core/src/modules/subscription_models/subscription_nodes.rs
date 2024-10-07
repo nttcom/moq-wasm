@@ -2,6 +2,7 @@ use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
 use crate::subscription_models::subscriptions::Subscription;
 use crate::subscription_models::tracks::ForwardingPreference;
 use anyhow::{bail, Result};
+use std::any;
 use std::collections::HashMap;
 
 type SubscribeId = u64;
@@ -72,7 +73,7 @@ pub trait SubscriptionNodeRegistory {
         track_name: String,
     ) -> Result<Option<SubscribeId>>;
     fn has_track(&self, track_namespace: TrackNamespace, track_name: String) -> bool;
-    fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<()>;
+    fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool>;
     fn is_requesting(&self, subscribe_id: SubscribeId) -> bool;
     fn delete_subscription(&mut self, subscribe_id: SubscribeId) -> Result<()>;
 
@@ -167,12 +168,11 @@ impl SubscriptionNodeRegistory for Consumer {
         })
     }
 
-    fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<()> {
-        if let Some(subscription) = self.subscriptions.get_mut(&subscribe_id) {
-            subscription.active();
-        }
+    fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool> {
+        let subscription = self.subscriptions.get_mut(&subscribe_id).unwrap();
+        let activate = subscription.active();
 
-        Ok(())
+        Ok(activate)
     }
 
     fn is_requesting(&self, subscribe_id: SubscribeId) -> bool {
@@ -354,12 +354,11 @@ impl SubscriptionNodeRegistory for Producer {
         })
     }
 
-    fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<()> {
-        if let Some(subscription) = self.subscriptions.get_mut(&subscribe_id) {
-            subscription.active();
-        }
+    fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool> {
+        let subscription = self.subscriptions.get_mut(&subscribe_id).unwrap();
+        let activate = subscription.active();
 
-        Ok(())
+        Ok(activate)
     }
 
     fn is_requesting(&self, subscribe_id: SubscribeId) -> bool {

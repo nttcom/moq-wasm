@@ -8,7 +8,7 @@ use moqt_core::{
     MOQTClient, TrackNamespaceManagerRepository,
 };
 
-pub(crate) fn process_client_setup_message(
+pub(crate) async fn process_client_setup_message(
     payload_buf: &mut BytesMut,
     client: &mut MOQTClient,
     underlay_type: UnderlayType,
@@ -28,7 +28,8 @@ pub(crate) fn process_client_setup_message(
         underlay_type,
         client,
         track_namespace_manager_repository,
-    )?;
+    )
+    .await?;
 
     server_setup_message.packetize(write_buf);
 

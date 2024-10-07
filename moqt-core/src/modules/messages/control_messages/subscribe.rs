@@ -13,14 +13,14 @@ use serde::Serialize;
 use std::any::Any;
 use tracing;
 
-#[derive(Debug, Serialize, Clone, PartialEq, TryFromPrimitive, IntoPrimitive, Copy)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
 #[repr(u8)]
 pub enum GroupOrder {
     Ascending = 0x1,
     Descending = 0x2,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq, TryFromPrimitive, IntoPrimitive, Copy)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
 #[repr(u8)]
 pub enum FilterType {
     LatestGroup = 0x1,
