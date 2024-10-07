@@ -138,7 +138,7 @@ impl MOQTPayload for Subscribe {
             read_fixed_length_bytes_from_buffer(buf, 1).context("subscriber priority")?[0];
         let group_order_u8 = read_fixed_length_bytes_from_buffer(buf, 1)?[0];
 
-        // Values larger than 0x2 are a protocol error.
+        // Values larger than 0x2 are a Protocol Violation.
         let group_order = match GroupOrder::try_from(group_order_u8).context("group order") {
             Ok(group_order) => group_order,
             Err(err) => {
