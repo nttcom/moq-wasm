@@ -292,7 +292,7 @@ mod success {
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
-    use crate::modules::track_namespace_manager::test_fn;
+    use crate::modules::track_namespace_manager::test_utils;
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
@@ -401,7 +401,7 @@ mod success {
 
         // Check the subscriber is registered
         let (_, producers, pubsub_relation) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
 
         assert_eq!(producers.len(), 1);
 
@@ -523,7 +523,7 @@ mod success {
 
         // Check the subscriber is registered
         let (_, producers, pubsub_relation) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
 
         assert_eq!(producers.len(), 1);
 

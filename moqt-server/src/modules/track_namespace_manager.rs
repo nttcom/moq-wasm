@@ -1032,7 +1032,7 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 }
 
 #[cfg(test)]
-pub(crate) mod test_fn {
+pub(crate) mod test_utils {
 
     use crate::modules::track_namespace_manager::{
         Consumers, Producers, PubSubRelation, TrackCommand, TrackNamespaceManager,
@@ -1053,7 +1053,7 @@ pub(crate) mod test_fn {
 
 #[cfg(test)]
 mod success {
-    use crate::modules::track_namespace_manager::test_fn;
+    use crate::modules::track_namespace_manager::test_utils;
     use crate::modules::track_namespace_manager::{
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
@@ -1080,7 +1080,7 @@ mod success {
 
         // Check if the publisher is created
         let (consumers, _, _) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
         let length = consumers.len();
 
         assert_eq!(length, 1);
@@ -1107,7 +1107,7 @@ mod success {
 
         // Check if the track_namespace is set
         let (consumers, _, _) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
 
         let consumer = consumers.get(&publisher_session_id).unwrap();
         let announced_namespaces = consumer.get_namespaces().unwrap();
@@ -1133,7 +1133,7 @@ mod success {
 
         // Check if the subscriber is created
         let (_, producers, _) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
         let length = producers.len();
 
         assert_eq!(length, 1);
@@ -1609,7 +1609,7 @@ mod success {
 
         // Assert that the subscription is set
         let (_, producers, _) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
         let producer = producers.get(&subscriber_session_id).unwrap();
         let subscription = producer.get_subscription(subscribe_id).unwrap().unwrap();
 
@@ -1673,7 +1673,7 @@ mod success {
 
         // Assert that the subscription is set
         let (consumers, _, _) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
         let consumer = consumers.get(&publisher_session_id).unwrap();
         let subscription = consumer
             .get_subscription(publisher_subscribe_id)
@@ -1777,7 +1777,7 @@ mod success {
 
         // Assert that the relation is registered
         let (_, _, pubsub_relation) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
 
         let subscriber = pubsub_relation
             .get_subscribers(publisher_session_id, publisher_subscribe_id)
@@ -1842,7 +1842,7 @@ mod success {
 
         // Assert that the subscription is active
         let (_, producers, _) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
         let producer = producers.get(&subscriber_session_id).unwrap();
         let subscription = producer.get_subscription(subscribe_id).unwrap().unwrap();
 
@@ -1896,7 +1896,7 @@ mod success {
 
         // Assert that the subscription is active
         let (consumers, _, _) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
         let consumer = consumers.get(&publisher_session_id).unwrap();
         let subscription = consumer
             .get_subscription(publisher_subscribe_id)
@@ -1934,7 +1934,7 @@ mod success {
 
         // Assert that the announced namespace is deleted
         let (consumers, _, _) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
         let consumer = consumers.get(&publisher_session_id).unwrap();
         let announced_namespaces = consumer.get_namespaces().unwrap().to_vec();
 
@@ -2125,7 +2125,7 @@ mod success {
         assert!(delete_occured);
 
         let (consumers, producers, pubsub_relation) =
-            test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
+            test_utils::get_node_and_relation_clone(&track_namespace_manager).await;
 
         // Assert that sub 2 is deleted
         // Remain: sub 3, 4
