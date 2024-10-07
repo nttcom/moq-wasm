@@ -3,7 +3,7 @@ use crate::modules::{
     buffer_manager,
     buffer_manager::{buffer_manager, BufferCommand},
     control_message_handler::*,
-    relation_manager::{commands::TrackCommand, manager::pubsub_relation_manager},
+    relation_manager::{commands::PubSubRelationCommand, manager::pubsub_relation_manager},
     send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
 };
 use anyhow::{bail, Context, Ok, Result};
@@ -103,7 +103,8 @@ impl MOQT {
         // For buffer management for each stream
         let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
         // For track management
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_namespace_tx, mut track_namespace_rx) =
+            mpsc::channel::<PubSubRelationCommand>(1024);
         // For relay handler management
         let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
 
@@ -167,7 +168,7 @@ impl MOQT {
 
 async fn handle_connection(
     buffer_tx: mpsc::Sender<BufferCommand>,
-    track_namespace_tx: mpsc::Sender<TrackCommand>,
+    track_namespace_tx: mpsc::Sender<PubSubRelationCommand>,
     send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
     incoming_session: IncomingSession,
 ) -> Result<()> {
@@ -316,7 +317,7 @@ async fn handle_incoming_bi_stream(
     stream: &mut BiStream,
     client: Arc<Mutex<MOQTClient>>,
     buffer_tx: Sender<BufferCommand>,
-    track_namespace_tx: Sender<TrackCommand>,
+    track_namespace_tx: Sender<PubSubRelationCommand>,
     close_tx: Sender<(u64, String)>,
     send_stream_tx: Sender<SendStreamDispatchCommand>,
 ) -> Result<()> {

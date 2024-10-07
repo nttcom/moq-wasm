@@ -1,4 +1,4 @@
-use crate::modules::relation_manager::commands::{TrackCommand, TrackCommand::*};
+use crate::modules::relation_manager::commands::{PubSubRelationCommand, PubSubRelationCommand::*};
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
@@ -8,11 +8,11 @@ use tokio::sync::{mpsc, oneshot};
 
 // Wrapper to encapsulate channel-related operations
 pub(crate) struct PubSubRelationManagerInterface {
-    tx: mpsc::Sender<TrackCommand>,
+    tx: mpsc::Sender<PubSubRelationCommand>,
 }
 
 impl PubSubRelationManagerInterface {
-    pub fn new(tx: mpsc::Sender<TrackCommand>) -> Self {
+    pub fn new(tx: mpsc::Sender<PubSubRelationCommand>) -> Self {
         Self { tx }
     }
 }
@@ -26,7 +26,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = TrackCommand::SetupPublisher {
+        let cmd = PubSubRelationCommand::SetupPublisher {
             max_subscribe_id,
             publisher_session_id,
             resp: resp_tx,
@@ -47,7 +47,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = TrackCommand::SetPublisherAnnouncedNamespace {
+        let cmd = PubSubRelationCommand::SetPublisherAnnouncedNamespace {
             track_namespace,
             publisher_session_id,
             resp: resp_tx,
@@ -68,7 +68,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = TrackCommand::SetupSubscriber {
+        let cmd = PubSubRelationCommand::SetupSubscriber {
             max_subscribe_id,
             subscriber_session_id,
             resp: resp_tx,
@@ -88,7 +88,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
         subscriber_session_id: usize,
     ) -> Result<bool> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<bool>>();
-        let cmd = TrackCommand::IsValidSubscriberSubscribeId {
+        let cmd = PubSubRelationCommand::IsValidSubscriberSubscribeId {
             subscribe_id,
             subscriber_session_id,
             resp: resp_tx,
@@ -108,7 +108,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
         subscriber_session_id: usize,
     ) -> Result<bool> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<bool>>();
-        let cmd = TrackCommand::IsValidSubscriberTrackAlias {
+        let cmd = PubSubRelationCommand::IsValidSubscriberTrackAlias {
             track_alias,
             subscriber_session_id,
             resp: resp_tx,
@@ -128,7 +128,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
         track_name: String,
     ) -> Result<bool> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<bool>>();
-        let cmd = TrackCommand::IsTrackExisting {
+        let cmd = PubSubRelationCommand::IsTrackExisting {
             track_namespace,
             track_name,
             resp: resp_tx,
@@ -148,7 +148,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
         track_name: String,
     ) -> Result<Option<Subscription>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<Subscription>>>();
-        let cmd = TrackCommand::GetPublisherSubscription {
+        let cmd = PubSubRelationCommand::GetPublisherSubscription {
             track_namespace,
             track_name,
             resp: resp_tx,
@@ -167,7 +167,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
         track_namespace: Vec<String>,
     ) -> Result<Option<usize>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<usize>>>();
-        let cmd = TrackCommand::GetPublisherSessionId {
+        let cmd = PubSubRelationCommand::GetPublisherSessionId {
             track_namespace,
             resp: resp_tx,
         };
@@ -186,7 +186,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
         publisher_session_id: usize,
     ) -> Result<Option<Vec<(usize, u64)>>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<Vec<(usize, u64)>>>>();
-        let cmd = TrackCommand::GetRequestingSubscriberSessionIdsAndSubscribeIds {
+        let cmd = PubSubRelationCommand::GetRequestingSubscriberSessionIdsAndSubscribeIds {
             publisher_subscribe_id,
             publisher_session_id,
             resp: resp_tx,
@@ -207,7 +207,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
         publisher_session_id: usize,
     ) -> Result<Option<u64>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<u64>>>();
-        let cmd = TrackCommand::GetPublisherSubscribeId {
+        let cmd = PubSubRelationCommand::GetPublisherSubscribeId {
             track_namespace,
             track_name,
             publisher_session_id,
@@ -238,7 +238,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
         end_object: Option<u64>,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
-        let cmd = TrackCommand::SetSubscriberSubscription {
+        let cmd = PubSubRelationCommand::SetSubscriberSubscription {
             subscriber_session_id,
             subscribe_id,
             track_alias,
@@ -277,7 +277,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
         end_object: Option<u64>,
     ) -> Result<(u64, u64)> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<(u64, u64)>>();
-        let cmd = TrackCommand::SetPublisherSubscription {
+        let cmd = PubSubRelationCommand::SetPublisherSubscription {
             publisher_session_id,
             track_namespace,
             track_name,
@@ -399,7 +399,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
 #[cfg(test)]
 pub(crate) mod test_utils {
     use crate::modules::relation_manager::{
-        commands::TrackCommand,
+        commands::PubSubRelationCommand,
         interface::PubSubRelationManagerInterface,
         manager::{Consumers, Producers},
         relation::PubSubRelation,
@@ -412,7 +412,7 @@ pub(crate) mod test_utils {
         pubsub_relation_manager: &PubSubRelationManagerInterface,
     ) -> (Consumers, Producers, PubSubRelation) {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<_>>();
-        let cmd = TrackCommand::GetNodeAndRelationClone { resp: resp_tx };
+        let cmd = PubSubRelationCommand::GetNodeAndRelationClone { resp: resp_tx };
         pubsub_relation_manager.tx.send(cmd).await.unwrap();
 
         resp_rx.await.unwrap().unwrap()
@@ -422,7 +422,7 @@ pub(crate) mod test_utils {
 #[cfg(test)]
 mod success {
     use crate::modules::relation_manager::{
-        commands::TrackCommand, interface::test_utils, interface::PubSubRelationManagerInterface,
+        commands::PubSubRelationCommand, interface::test_utils, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
     use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
@@ -437,7 +437,7 @@ mod success {
         let publisher_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -461,7 +461,7 @@ mod success {
         let publisher_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -490,7 +490,7 @@ mod success {
         let subscriber_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -514,7 +514,7 @@ mod success {
         let subscriber_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -537,7 +537,7 @@ mod success {
         let subscriber_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -560,7 +560,7 @@ mod success {
         let subscriber_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -593,7 +593,7 @@ mod success {
         let end_object = None;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -641,7 +641,7 @@ mod success {
         let end_object = None;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -684,7 +684,7 @@ mod success {
         let track_name = "test_name".to_string();
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -713,7 +713,7 @@ mod success {
         let end_object = None;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -768,7 +768,7 @@ mod success {
         let publisher_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -807,7 +807,7 @@ mod success {
         let end_object = None;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -896,7 +896,7 @@ mod success {
         let end_object = None;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -949,7 +949,7 @@ mod success {
         let end_object = None;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1013,7 +1013,7 @@ mod success {
         let end_object = None;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1083,7 +1083,7 @@ mod success {
         let end_object = None;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1177,7 +1177,7 @@ mod success {
         let end_object = None;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1232,7 +1232,7 @@ mod success {
         let end_object = None;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1281,7 +1281,7 @@ mod success {
         let publisher_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1316,7 +1316,7 @@ mod success {
         let publisher_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1355,7 +1355,7 @@ mod success {
         let end_object = None;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1530,7 +1530,7 @@ mod success {
         let session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1546,7 +1546,7 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::modules::relation_manager::{
-        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
     use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
@@ -1559,7 +1559,7 @@ mod failure {
         let publisher_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1582,7 +1582,7 @@ mod failure {
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1607,7 +1607,7 @@ mod failure {
         let subscriber_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1631,7 +1631,7 @@ mod failure {
         let invalid_subscriber_session_id = 2;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1657,7 +1657,7 @@ mod failure {
         let invalid_subscriber_session_id = 2;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1677,7 +1677,7 @@ mod failure {
         let publisher_session_id = 0;
         let publisher_subscribe_id = 0;
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1699,7 +1699,7 @@ mod failure {
         let invalid_publisher_session_id = 1;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1729,7 +1729,7 @@ mod failure {
         let invalid_subscriber_session_id = 2;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1774,7 +1774,7 @@ mod failure {
         let invalid_publisher_session_id = 2;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1809,7 +1809,7 @@ mod failure {
         let invalid_subscriber_session_id = 2;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1832,7 +1832,7 @@ mod failure {
         let invalid_publisher_session_id = 2;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
@@ -1855,7 +1855,7 @@ mod failure {
         let invalid_publisher_session_id = 2;
 
         // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<TrackCommand>(1024);
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
 
         let pubsub_relation_manager = PubSubRelationManagerInterface::new(track_tx.clone());
