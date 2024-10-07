@@ -1,6 +1,6 @@
 use crate::constants;
 use anyhow::{bail, Result};
-
+use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     constants::UnderlayType,
     messages::control_messages::{
@@ -10,14 +10,14 @@ use moqt_core::{
         setup_parameters::{Role, RoleCase},
     },
     moqt_client::MOQTClientStatus,
-    MOQTClient, TrackNamespaceManagerRepository,
+    MOQTClient,
 };
 
 pub(crate) async fn setup_handler(
     client_setup_message: ClientSetup,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
-    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
 ) -> Result<ServerSetup> {
     tracing::trace!("setup_handler start.");
 
@@ -60,12 +60,12 @@ pub(crate) async fn setup_handler(
     if client.role() == Some(RoleCase::Subscriber) {
         // Generate producer that manages namespaces and subscriptions with subscribers.
         // FIXME: max_subscribe_id for subscriber is fixed at 100 for now.
-        track_namespace_manager_repository
+        pubsub_relation_manager_repository
             .setup_subscriber(100, client.id)
             .await?;
     } else if client.role() == Some(RoleCase::Publisher) {
         // Generate consumer that manages namespaces and subscriptions with producers.
-        track_namespace_manager_repository
+        pubsub_relation_manager_repository
             .setup_publisher(max_subscribe_id, client.id)
             .await?;
     } else if client.role().is_none() {
@@ -87,8 +87,9 @@ pub(crate) async fn setup_handler(
 
 #[cfg(test)]
 mod success {
-    use crate::modules::track_namespace_manager::{
-        track_namespace_manager, TrackCommand, TrackNamespaceManager,
+    use crate::modules::relation_manager::{
+        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        manager::pubsub_relation_manager,
     };
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
     use moqt_core::messages::control_messages::{
@@ -107,17 +108,17 @@ mod success {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
             underlay_type,
             &mut client,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
         )
         .await;
 
@@ -136,17 +137,17 @@ mod success {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
             underlay_type,
             &mut client,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
         )
         .await;
 
@@ -157,8 +158,9 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::modules::track_namespace_manager::{
-        track_namespace_manager, TrackCommand, TrackNamespaceManager,
+    use crate::modules::relation_manager::{
+        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        manager::pubsub_relation_manager,
     };
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
     use moqt_core::messages::control_messages::{
@@ -177,17 +179,17 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
             underlay_type,
             &mut client,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
         )
         .await;
 
@@ -202,17 +204,17 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
             underlay_type,
             &mut client,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
         )
         .await;
 
@@ -227,17 +229,17 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
             underlay_type,
             &mut client,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
         )
         .await;
 
@@ -253,17 +255,17 @@ mod failure {
         let client_setup_message = ClientSetup::new(vec![unsupported_version], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
             underlay_type,
             &mut client,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
         )
         .await;
 
@@ -282,17 +284,17 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
             underlay_type,
             &mut client,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
         )
         .await;
 

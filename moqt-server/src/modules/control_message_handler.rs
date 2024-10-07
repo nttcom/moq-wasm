@@ -11,13 +11,14 @@ use crate::modules::server_processes::{
 };
 use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
+use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     constants::UnderlayType,
     control_message_type::ControlMessageType,
     messages::{control_messages::unannounce::UnAnnounce, moqt_payload::MOQTPayload},
     moqt_client::MOQTClientStatus,
     variable_integer::{read_variable_integer, write_variable_integer},
-    MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
+    MOQTClient, SendStreamDispatcherRepository,
 };
 
 #[derive(Debug, PartialEq)]
@@ -49,7 +50,7 @@ pub async fn control_message_handler(
     read_buf: &mut BytesMut,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
-    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> MessageProcessResult {
     tracing::trace!("control_message_handler! {}", read_buf.len());
@@ -99,7 +100,7 @@ pub async fn control_message_handler(
                 client,
                 underlay_type,
                 &mut write_buf,
-                track_namespace_manager_repository,
+                pubsub_relation_manager_repository,
             )
             .await
             {
@@ -128,7 +129,7 @@ pub async fn control_message_handler(
                 &mut payload_buf,
                 client,
                 &mut write_buf,
-                track_namespace_manager_repository,
+                pubsub_relation_manager_repository,
                 send_stream_dispatcher_repository,
             )
             .await
@@ -163,7 +164,7 @@ pub async fn control_message_handler(
             // TODO: Merge to process_subscribe_message.
             match process_subscribe_ok_message(
                 &mut payload_buf,
-                track_namespace_manager_repository,
+                pubsub_relation_manager_repository,
                 send_stream_dispatcher_repository,
                 client,
             )
@@ -209,7 +210,7 @@ pub async fn control_message_handler(
             let _unsubscribe_result = unannounce_handler(
                 unsubscribe_message.unwrap(),
                 client,
-                track_namespace_manager_repository,
+                pubsub_relation_manager_repository,
             );
 
             return MessageProcessResult::Success(BytesMut::with_capacity(0));
@@ -228,7 +229,7 @@ pub async fn control_message_handler(
                 &mut payload_buf,
                 client,
                 &mut write_buf,
-                track_namespace_manager_repository,
+                pubsub_relation_manager_repository,
             )
             .await
             {
@@ -278,7 +279,7 @@ pub async fn control_message_handler(
             let _unannounce_result = unannounce_handler(
                 unannounce_message.unwrap(),
                 client,
-                track_namespace_manager_repository,
+                pubsub_relation_manager_repository,
             )
             .await;
 
@@ -312,11 +313,12 @@ pub(crate) mod test_utils {
 
     use crate::modules::control_message_handler::control_message_handler;
     use crate::modules::control_message_handler::MessageProcessResult;
+    use crate::modules::relation_manager::{
+        commands::TrackCommand, interface::PubSubRelationManagerInterface,
+        manager::pubsub_relation_manager,
+    };
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-    };
-    use crate::modules::track_namespace_manager::{
-        track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
     use bytes::BytesMut;
     use moqt_core::constants::UnderlayType;
@@ -338,11 +340,11 @@ pub(crate) mod test_utils {
         let mut client = MOQTClient::new(subscriber_sessin_id);
         client.update_status(client_status);
 
-        // Generate TrackNamespaceManager
+        // Generate PubSubRelationManagerInterface
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
+            PubSubRelationManagerInterface::new(track_namespace_tx);
 
         // Generate SendStreamDispacher
         let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
@@ -356,7 +358,7 @@ pub(crate) mod test_utils {
             &mut buf,
             UnderlayType::WebTransport,
             &mut client,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
         .await

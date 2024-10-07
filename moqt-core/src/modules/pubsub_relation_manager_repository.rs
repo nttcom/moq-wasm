@@ -1,10 +1,11 @@
 use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
 use crate::subscription_models::subscriptions::Subscription;
+
 use anyhow::Result;
 use async_trait::async_trait;
 
 #[async_trait]
-pub trait TrackNamespaceManagerRepository: Send + Sync {
+pub trait PubSubRelationManagerRepository: Send + Sync {
     async fn setup_publisher(
         &self,
         max_subscribe_id: u64,

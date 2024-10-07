@@ -1,21 +1,18 @@
 use anyhow::Result;
-
-use moqt_core::{
-    messages::control_messages::unannounce::UnAnnounce,
-    track_namespace_manager_repository::TrackNamespaceManagerRepository, MOQTClient,
-};
+use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
+use moqt_core::{messages::control_messages::unannounce::UnAnnounce, MOQTClient};
 
 pub(crate) async fn unannounce_handler(
     unannounce_message: UnAnnounce,
     _client: &mut MOQTClient, // TODO: Not implemented yet
-    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
 ) -> Result<()> {
     tracing::trace!("unannounce_handler start.");
 
     tracing::debug!("unannounce_message: {:#?}", unannounce_message);
 
     // Remove the announced Track Namespace
-    let delete_result = track_namespace_manager_repository
+    let delete_result = pubsub_relation_manager_repository
         .delete_publisher_announced_namespace(
             unannounce_message.track_namespace().clone(),
             _client.id,
