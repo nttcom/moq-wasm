@@ -39,7 +39,7 @@ pub(crate) async fn process_subscribe_message(
                 subscribe_ok.as_ref().unwrap().packetize(write_buf);
             }
 
-            return result;
+            result
         }
         Err(err) => {
             tracing::error!("subscribe_handler: err: {:?}", err.to_string());
