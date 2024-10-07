@@ -13,7 +13,7 @@ use moqt_core::{
     MOQTClient, TrackNamespaceManagerRepository,
 };
 
-pub(crate) fn setup_handler(
+pub(crate) async fn setup_handler(
     client_setup_message: ClientSetup,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
@@ -60,10 +60,14 @@ pub(crate) fn setup_handler(
     if client.role() == Some(RoleCase::Subscriber) {
         // Generate producer that manages namespaces and subscriptions with subscribers.
         // FIXME: max_subscribe_id for subscriber is fixed at 100 for now.
-        track_namespace_manager_repository.setup_subscriber(100, client.id);
+        track_namespace_manager_repository
+            .setup_subscriber(100, client.id)
+            .await?;
     } else if client.role() == Some(RoleCase::Publisher) {
         // Generate consumer that manages namespaces and subscriptions with producers.
-        track_namespace_manager_repository.setup_publisher(max_subscribe_id, client.id);
+        track_namespace_manager_repository
+            .setup_publisher(max_subscribe_id, client.id)
+            .await?;
     } else if client.role().is_none() {
         bail!("Role parameter is required in SETUP parameter from client.");
     }
@@ -95,8 +99,8 @@ mod success {
     use std::vec;
     use tokio::sync::mpsc;
 
-    #[test]
-    fn only_role() {
+    #[tokio::test]
+    async fn only_role() {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![SetupParameter::Role(Role::new(RoleCase::Publisher))];
         let client_setup_message =
@@ -114,14 +118,15 @@ mod success {
             underlay_type,
             &mut client,
             &mut track_namespace_manager,
-        );
+        )
+        .await;
 
         assert!(server_setup_message.is_ok());
         let _server_setup_message = server_setup_message.unwrap(); // TODO: Not implemented yet
     }
 
-    #[test]
-    fn role_and_path_on_quic() {
+    #[tokio::test]
+    async fn role_and_path_on_quic() {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![
             SetupParameter::Role(Role::new(RoleCase::Publisher)),
@@ -142,7 +147,8 @@ mod success {
             underlay_type,
             &mut client,
             &mut track_namespace_manager,
-        );
+        )
+        .await;
 
         assert!(server_setup_message.is_ok());
         let _server_setup_message = server_setup_message.unwrap(); // TODO: Not implemented yet
@@ -163,8 +169,8 @@ mod failure {
     use std::vec;
     use tokio::sync::mpsc;
 
-    #[test]
-    fn no_role_parameter() {
+    #[tokio::test]
+    async fn no_role_parameter() {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![];
         let client_setup_message =
@@ -182,13 +188,14 @@ mod failure {
             underlay_type,
             &mut client,
             &mut track_namespace_manager,
-        );
+        )
+        .await;
 
         assert!(server_setup_message.is_err());
     }
 
-    #[test]
-    fn include_path_on_wt() {
+    #[tokio::test]
+    async fn include_path_on_wt() {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![SetupParameter::Path(Path::new(String::from("test")))];
         let client_setup_message =
@@ -206,13 +213,14 @@ mod failure {
             underlay_type,
             &mut client,
             &mut track_namespace_manager,
-        );
+        )
+        .await;
 
         assert!(server_setup_message.is_err());
     }
 
-    #[test]
-    fn include_only_path_on_quic() {
+    #[tokio::test]
+    async fn include_only_path_on_quic() {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![SetupParameter::Path(Path::new(String::from("test")))];
         let client_setup_message =
@@ -230,13 +238,14 @@ mod failure {
             underlay_type,
             &mut client,
             &mut track_namespace_manager,
-        );
+        )
+        .await;
 
         assert!(server_setup_message.is_err());
     }
 
-    #[test]
-    fn include_unsupported_version() {
+    #[tokio::test]
+    async fn include_unsupported_version() {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![SetupParameter::Role(Role::new(RoleCase::Subscriber))];
 
@@ -255,14 +264,15 @@ mod failure {
             underlay_type,
             &mut client,
             &mut track_namespace_manager,
-        );
+        )
+        .await;
 
         assert_ne!(unsupported_version, constants::MOQ_TRANSPORT_VERSION); // assert unsupported_version is unsupport
         assert!(server_setup_message.is_err());
     }
 
-    #[test]
-    fn include_unknown_parameter() {
+    #[tokio::test]
+    async fn include_unknown_parameter() {
         let mut client = MOQTClient::new(33);
         let setup_parameters = vec![
             SetupParameter::Role(Role::new(RoleCase::Publisher)),
@@ -283,7 +293,8 @@ mod failure {
             underlay_type,
             &mut client,
             &mut track_namespace_manager,
-        );
+        )
+        .await;
 
         assert!(server_setup_message.is_ok());
     }

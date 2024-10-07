@@ -94,16 +94,16 @@ pub trait TrackNamespaceManagerRepository: Send + Sync {
         &self,
         subscriber_session_id: usize,
         subscribe_id: u64,
-    ) -> Result<()>;
+    ) -> Result<bool>;
     async fn activate_publisher_subscription(
         &self,
         publisher_session_id: usize,
         subscribe_id: u64,
-    ) -> Result<()>;
+    ) -> Result<bool>;
     async fn delete_publisher_announced_namespace(
         &self,
         track_namespace: Vec<String>,
         publisher_session_id: usize,
-    ) -> Result<()>;
-    async fn delete_client(&self, session_id: usize) -> Result<()>;
+    ) -> Result<bool>;
+    async fn delete_client(&self, session_id: usize) -> Result<bool>;
 }

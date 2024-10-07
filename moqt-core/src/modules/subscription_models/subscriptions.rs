@@ -8,7 +8,7 @@ enum Status {
     Active,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subscription {
     track: Track,
     priority: u8,
@@ -56,8 +56,13 @@ impl Subscription {
         }
     }
 
-    pub fn active(&mut self) {
-        self.subscription_status = Status::Active;
+    pub fn active(&mut self) -> bool {
+        if self.is_active() {
+            false
+        } else {
+            self.subscription_status = Status::Active;
+            true
+        }
     }
 
     pub fn is_active(&self) -> bool {

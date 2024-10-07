@@ -1,11 +1,11 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForwardingPreference {
     Datagram,
     Track,
     Subgroup,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Track {
     track_alias: u64,
     track_namespace: Vec<String>,

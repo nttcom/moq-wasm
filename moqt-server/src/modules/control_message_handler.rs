@@ -100,7 +100,9 @@ pub async fn control_message_handler(
                 underlay_type,
                 &mut write_buf,
                 track_namespace_manager_repository,
-            ) {
+            )
+            .await
+            {
                 Ok(_) => ControlMessageType::ServerSetup,
                 Err(err) => {
                     // TODO: To ensure future extensibility of MOQT, the peers MUST ignore unknown setup parameters.
