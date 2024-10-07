@@ -200,3 +200,462 @@ impl SubscriptionNodeRegistory for Producer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_utils {
+    use super::{Producer, TrackNamespace};
+    use crate::subscription_models::producer_node::{FilterType, GroupOrder};
+
+    #[derive(Debug, Clone)]
+    pub(crate) struct SubscriptionUtils {
+        pub(crate) producer: Producer,
+        pub(crate) subscribe_id: u64,
+        pub(crate) track_alias: u64,
+        pub(crate) track_namespace: TrackNamespace,
+        pub(crate) track_name: String,
+        pub(crate) subscriber_priority: u8,
+        pub(crate) group_order: GroupOrder,
+        pub(crate) filter_type: FilterType,
+        pub(crate) start_group: Option<u64>,
+        pub(crate) start_object: Option<u64>,
+        pub(crate) end_group: Option<u64>,
+        pub(crate) end_object: Option<u64>,
+    }
+
+    impl SubscriptionUtils {
+        pub(crate) fn normal_variable(subscribe_id: u64) -> Self {
+            let producer = Producer::new(10);
+            let track_alias = 0;
+            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+            let track_name = "track_name".to_string();
+            let subscriber_priority = 0;
+            let group_order = GroupOrder::Ascending;
+            let filter_type = FilterType::AbsoluteStart;
+            let start_group = Some(0);
+            let start_object = Some(0);
+            let end_group = None;
+            let end_object = None;
+
+            SubscriptionUtils {
+                producer,
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod success {
+    use super::*;
+    use crate::subscription_models::producer_node::test_utils::SubscriptionUtils;
+    use crate::subscription_models::subscriptions::Subscription;
+
+    #[test]
+    fn set_subscription() {
+        let subscribe_id = 0;
+        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+
+        let result = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace,
+            variables.track_name,
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn get_subscription() {
+        let subscribe_id = 0;
+        let variables = SubscriptionUtils::normal_variable(subscribe_id);
+
+        let mut variables_clone = variables.clone();
+        let _ = variables_clone.producer.set_subscription(
+            variables_clone.subscribe_id,
+            variables_clone.track_alias,
+            variables_clone.track_namespace,
+            variables_clone.track_name,
+            variables_clone.subscriber_priority,
+            variables_clone.group_order,
+            variables_clone.filter_type,
+            variables_clone.start_group,
+            variables_clone.start_object,
+            variables_clone.end_group,
+            variables_clone.end_object,
+        );
+
+        let subscription = variables_clone
+            .producer
+            .get_subscription(variables.clone().subscribe_id)
+            .unwrap();
+
+        let expected_subscription = Some(Subscription::new(
+            variables.track_alias,
+            variables.track_namespace,
+            variables.track_name,
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+            None,
+        ));
+
+        assert_eq!(subscription, expected_subscription);
+    }
+
+    #[test]
+    fn get_subscription_by_full_track_name() {
+        let subscribe_id = 0;
+        let variables = SubscriptionUtils::normal_variable(subscribe_id);
+
+        let mut variables_clone = variables.clone();
+        let _ = variables_clone.producer.set_subscription(
+            variables_clone.subscribe_id,
+            variables_clone.track_alias,
+            variables_clone.track_namespace,
+            variables_clone.track_name,
+            variables_clone.subscriber_priority,
+            variables_clone.group_order,
+            variables_clone.filter_type,
+            variables_clone.start_group,
+            variables_clone.start_object,
+            variables_clone.end_group,
+            variables_clone.end_object,
+        );
+
+        let subscription = variables_clone
+            .producer
+            .get_subscription_by_full_track_name(
+                variables.track_namespace.clone(),
+                variables.track_name.clone(),
+            )
+            .unwrap();
+
+        let expected_subscription = Some(Subscription::new(
+            variables.track_alias,
+            variables.track_namespace,
+            variables.track_name,
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+            None,
+        ));
+
+        assert_eq!(subscription, expected_subscription);
+    }
+
+    #[test]
+    fn get_subscribe_id() {
+        let subscribe_id = 0;
+        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let expected_subscribe_id = variables.subscribe_id;
+
+        let result_subscribe_id = variables
+            .producer
+            .get_subscribe_id(variables.track_namespace, variables.track_name)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result_subscribe_id, expected_subscribe_id);
+    }
+
+    #[test]
+    fn has_track() {
+        let subscribe_id = 0;
+        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let result = variables
+            .producer
+            .has_track(variables.track_namespace, variables.track_name);
+
+        assert!(result);
+    }
+
+    #[test]
+    fn activate_subscription() {
+        let subscribe_id = 0;
+        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let result = variables
+            .producer
+            .activate_subscription(variables.subscribe_id)
+            .unwrap();
+
+        assert!(result);
+    }
+
+    #[test]
+    fn is_requesting() {
+        let subscribe_id = 0;
+        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let result = variables.producer.is_requesting(variables.subscribe_id);
+
+        assert!(result);
+    }
+
+    #[test]
+    fn delete_subscription() {
+        let subscribe_id = 0;
+        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let result = variables
+            .producer
+            .delete_subscription(variables.subscribe_id);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn is_within_max_subscribe_id() {
+        let max_subscribe_id = 10;
+        let subscribe_id = 5;
+
+        let producer = Producer::new(max_subscribe_id);
+        let result = producer.is_within_max_subscribe_id(subscribe_id);
+
+        assert!(result);
+    }
+
+    #[test]
+    fn is_subscribe_id_unique() {
+        let subscribe_id = 0;
+        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let result = variables
+            .producer
+            .is_subscribe_id_unique(variables.subscribe_id);
+
+        assert!(!result);
+    }
+
+    #[test]
+    fn is_track_alias_unique() {
+        let track_alias = 100;
+        let mut variables = SubscriptionUtils::normal_variable(0);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let result = variables.producer.is_track_alias_unique(track_alias);
+
+        assert!(result);
+    }
+
+    #[test]
+    #[should_panic]
+    fn find_unused_subscribe_id_and_track_alias() {
+        let producer = Producer::new(10);
+
+        let _ = producer.find_unused_subscribe_id_and_track_alias();
+    }
+
+    #[test]
+    fn set_namespace() {
+        let namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let mut producer = Producer::new(10);
+
+        let result = producer.set_namespace(namespace);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn get_namespaces() {
+        let namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let mut producer = Producer::new(10);
+
+        let _ = producer.set_namespace(namespace.clone());
+
+        let expected_result = &vec![namespace];
+
+        let result = producer.get_namespaces().unwrap();
+
+        assert_eq!(result, expected_result);
+    }
+
+    #[test]
+    fn has_namespace() {
+        let namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let mut producer = Producer::new(10);
+
+        let _ = producer.set_namespace(namespace.clone());
+
+        let result = producer.has_namespace(namespace);
+
+        assert!(result);
+    }
+
+    #[test]
+    fn delete_namespace() {
+        let namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let mut producer = Producer::new(10);
+
+        let _ = producer.set_namespace(namespace.clone());
+
+        let result = producer.delete_namespace(namespace);
+        assert!(result.is_ok());
+
+        let namespaces = producer.get_namespaces().unwrap();
+        assert!(namespaces.is_empty());
+    }
+
+    #[test]
+    fn set_namespace_prefix() {
+        let namespace_prefix = Vec::from(["test".to_string()]);
+        let mut producer = Producer::new(10);
+
+        let result = producer.set_namespace_prefix(namespace_prefix);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn get_namespace_prefixes() {
+        let namespace_prefix = Vec::from(["test".to_string()]);
+        let mut producer = Producer::new(10);
+
+        let _ = producer.set_namespace_prefix(namespace_prefix.clone());
+
+        let expected_result = &vec![namespace_prefix];
+
+        let result = producer.get_namespace_prefixes().unwrap();
+
+        assert_eq!(result, expected_result);
+    }
+
+    #[test]
+    fn delete_namespace_prefix() {
+        let namespace_prefix = Vec::from(["test".to_string()]);
+        let mut producer = Producer::new(10);
+
+        let _ = producer.set_namespace_prefix(namespace_prefix.clone());
+
+        let result = producer.delete_namespace_prefix(namespace_prefix);
+        assert!(result.is_ok());
+
+        let namespace_prefixes = producer.get_namespace_prefixes().unwrap();
+        assert!(namespace_prefixes.is_empty());
+    }
+}
