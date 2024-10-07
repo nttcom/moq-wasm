@@ -1,14 +1,13 @@
 use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
 use crate::subscription_models::subscriptions::Subscription;
-use crate::subscription_models::tracks::ForwardingPreference;
 use anyhow::{bail, Result};
-use std::any;
 use std::collections::HashMap;
 
 type SubscribeId = u64;
 type TrackNamespace = Vec<String>;
 type TrackAlias = u64;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Consumer {
     max_subscriber_id: u64,
     announced_namespaces: Vec<TrackNamespace>,
@@ -27,6 +26,7 @@ impl Consumer {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Producer {
     max_subscriber_id: u64,
     announcing_namespaces: Vec<TrackNamespace>,
@@ -202,7 +202,7 @@ impl SubscriptionNodeRegistory for Consumer {
             .any(|subscription| subscription.get_track_alias() == track_alias)
     }
     fn find_unused_subscribe_id_and_track_alias(&self) -> Result<(SubscribeId, TrackAlias)> {
-        for subscribe_id in 1..=self.max_subscriber_id {
+        for subscribe_id in 0..=self.max_subscriber_id {
             if !self.subscriptions.contains_key(&subscribe_id) {
                 for track_alias in 0.. {
                     if !self
@@ -305,7 +305,7 @@ impl SubscriptionNodeRegistory for Producer {
             start_object,
             end_group,
             end_object,
-            Some(ForwardingPreference::Track),
+            None,
         );
 
         self.subscriptions.insert(subscribe_id, subscription);

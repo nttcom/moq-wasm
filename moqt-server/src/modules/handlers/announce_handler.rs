@@ -58,6 +58,7 @@ mod success {
         track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
     use moqt_core::messages::moqt_payload::MOQTPayload;
+    use moqt_core::TrackNamespaceManagerRepository;
     use moqt_core::{
         messages::control_messages::{
             announce::Announce,
@@ -84,14 +85,20 @@ mod success {
         announce_message.packetize(&mut buf);
 
         // Generate client
-        let stable_id = 0;
-        let mut client = MOQTClient::new(stable_id as usize);
+        let publisher_session_id = 0;
+        let mut client = MOQTClient::new(publisher_session_id);
 
         // Generate TrackNamespaceManager
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
         tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
         let mut track_namespace_manager: TrackNamespaceManager =
             TrackNamespaceManager::new(track_namespace_tx);
+
+        let max_subscribe_id = 10;
+
+        let _ = track_namespace_manager
+            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .await;
 
         // Execute announce_handler and get result
         let result = announce_handler(announce_message, &mut client, &mut track_namespace_manager)
@@ -138,14 +145,20 @@ mod failure {
         announce_message.packetize(&mut buf);
 
         // Generate client
-        let stable_id = 0;
-        let mut client = MOQTClient::new(stable_id as usize);
+        let publisher_session_id = 0;
+        let mut client = MOQTClient::new(publisher_session_id);
 
         // Generate TrackNamespaceManager
         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
         tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
         let mut track_namespace_manager: TrackNamespaceManager =
             TrackNamespaceManager::new(track_namespace_tx);
+
+        let max_subscribe_id = 10;
+
+        let _ = track_namespace_manager
+            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .await;
 
         // Set the duplicated publisher in advance
         let _ = track_namespace_manager

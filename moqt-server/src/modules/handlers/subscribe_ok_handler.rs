@@ -34,285 +34,684 @@ pub(crate) async fn subscribe_ok_handler(
 
             // Notify all waiting subscribers with the SUBSCRIBE_OK message
             for (subscriber_session_id, subscriber_subscribe_id) in ids.iter() {
-                let message: Box<dyn MOQTPayload> = Box::new(subscribe_ok_message.clone());
-                // TODO: replace subscribe_id and track_alias
+                let mut relaying_subscribe_ok_message = subscribe_ok_message.clone();
+                relaying_subscribe_ok_message.replace_subscribe_id(*subscriber_subscribe_id);
+                let message: Box<dyn MOQTPayload> = Box::new(relaying_subscribe_ok_message.clone());
 
                 tracing::debug!(
                     "message: {:#?} is sent to relay handler for client {:?}",
-                    subscribe_ok_message,
+                    relaying_subscribe_ok_message,
                     subscriber_session_id
                 );
 
-                match send_stream_dispatcher_repository
+                send_stream_dispatcher_repository
                     .send_message_to_send_stream_thread(
                         *subscriber_session_id,
                         message,
                         StreamDirection::Bi,
                     )
-                    .await
-                {
-                    Ok(_) => {
-                        let _ = track_namespace_manager_repository
-                            .activate_subscriber_subscription(
-                                *subscriber_session_id,
-                                *subscriber_subscribe_id,
-                            )
-                            .await;
+                    .await?;
 
-                        tracing::trace!("subscribe_ok_handler complete.");
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "relay subscribe ok failed at session id {:?}:  {:?}",
-                            subscriber_session_id,
-                            e
-                        );
-                        // Failure on SUBSCRIBE_OK relay doesn't turn into closing connection
-                    }
-                }
+                track_namespace_manager_repository
+                    .activate_subscriber_subscription(
+                        *subscriber_session_id,
+                        *subscriber_subscribe_id,
+                    )
+                    .await?;
+
+                tracing::trace!("subscribe_ok_handler complete.");
             }
         }
         None => {
             tracing::warn!("waiting subscriber session ids not found");
-            // Absence of SUBSCRIBE_OK relay doesn't turn into closing connection
+
+            // Activate the publisher because it is in the Requesting state
+            let _ = track_namespace_manager_repository
+                .activate_publisher_subscription(publisher_session_id, publisher_subscribe_id)
+                .await;
         }
     }
 
     Ok(())
 }
 
-// #[cfg(test)]
-// mod success {
-//     use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
-//     use crate::modules::send_stream_dispatcher::{
-//         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-//     };
-//     use crate::modules::track_namespace_manager::{
-//         track_namespace_manager, TrackCommand, TrackNamespaceManager,
-//     };
-//     use moqt_core::constants::StreamDirection;
-//     use moqt_core::messages::control_messages::subscribe::GroupOrder;
-//     use moqt_core::messages::control_messages::version_specific_parameters::{
-//         AuthorizationInfo, VersionSpecificParameter,
-//     };
-//     use moqt_core::messages::{
-//         control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
-//     };
-//     use moqt_core::TrackNamespaceManagerRepository;
-//     use std::sync::Arc;
-//     use tokio::sync::mpsc;
+#[cfg(test)]
+mod success {
+    use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
+    use crate::modules::send_stream_dispatcher::{
+        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
+    };
+    use crate::modules::track_namespace_manager::{
+        track_namespace_manager, TrackCommand, TrackNamespaceManager,
+    };
+    use crate::MOQTClient;
+    use moqt_core::constants::StreamDirection;
+    use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
+    use moqt_core::messages::control_messages::version_specific_parameters::{
+        AuthorizationInfo, VersionSpecificParameter,
+    };
+    use moqt_core::messages::{
+        control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
+    };
+    use moqt_core::TrackNamespaceManagerRepository;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
 
-//     #[tokio::test]
-//     async fn normal_case() {
-//         // Generate SUBSCRIBE_OK message
-//         let subscribe_id = 0;
-//         let expires = 1;
-//         let group_order = GroupOrder::Ascending;
-//         let content_exists = false;
-//         let largest_group_id = None;
-//         let largest_object_id = None;
-//         let version_specific_parameter =
-//             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-//         let subscribe_parameters = vec![version_specific_parameter];
+    #[tokio::test]
+    async fn normal_case() {
+        // Generate SUBSCRIBE_OK message
+        let subscriber_subscribe_id = 0;
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let expires = 1;
+        let group_order = GroupOrder::Ascending;
+        let content_exists = false;
+        let largest_group_id = None;
+        let largest_object_id = None;
+        let filter_type = FilterType::LatestGroup;
+        let start_group = None;
+        let start_object = None;
+        let end_group = None;
+        let end_object = None;
+        let version_specific_parameter =
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
 
-//         let subscribe_ok = SubscribeOk::new(
-//             subscribe_id,
-//             expires,
-//             group_order,
-//             content_exists,
-//             largest_group_id,
-//             largest_object_id,
-//             subscribe_parameters,
-//         );
-//         let mut buf = bytes::BytesMut::new();
-//         subscribe_ok.packetize(&mut buf);
+        let subscribe_ok = SubscribeOk::new(
+            subscriber_subscribe_id,
+            expires,
+            group_order,
+            content_exists,
+            largest_group_id,
+            largest_object_id,
+            subscribe_parameters,
+        );
+        let mut buf = bytes::BytesMut::new();
+        subscribe_ok.packetize(&mut buf);
 
-//         // Generate TrackNamespaceManager
-//         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-//         tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-//         let mut track_namespace_manager: TrackNamespaceManager =
-//             TrackNamespaceManager::new(track_namespace_tx);
+        // Generate client
+        let publisher_session_id = 1;
+        let mut client = MOQTClient::new(publisher_session_id);
 
-//         let publisher_session_id = 1;
-//         let subscriber_session_id = 2;
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
 
-//         let _ = track_namespace_manager
-//             .set_publisher(vec!["namespace".to_string()], publisher_session_id)
-//             .await;
-//         let _ = track_namespace_manager
-//             .set_subscriber(vec!["namespace".to_string()], subscriber_session_id, "name")
-//             .await;
+        let subscriber_session_id = 2;
+        let max_subscribe_id = 10;
 
-//         // Generate SendStreamDispacher
-//         let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        let _ = track_namespace_manager
+            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
+            .await;
+        let (publisher_subscribe_id, _) = track_namespace_manager
+            .set_publisher_subscription(
+                publisher_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
 
-//         tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-//         let mut send_stream_dispatcher: SendStreamDispatcher =
-//             SendStreamDispatcher::new(send_stream_tx.clone());
+        let _ = track_namespace_manager
+            .setup_subscriber(max_subscribe_id, subscriber_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_subscriber_subscription(
+                subscriber_session_id,
+                subscriber_subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+        let _ = track_namespace_manager
+            .register_pubsup_relation(
+                publisher_session_id,
+                publisher_subscribe_id,
+                subscriber_session_id,
+                subscriber_subscribe_id,
+            )
+            .await;
 
-//         let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-//         let _ = send_stream_tx
-//             .send(SendStreamDispatchCommand::Set {
-//                 session_id: subscriber_session_id,
-//                 stream_direction: StreamDirection::Bi,
-//                 sender: uni_relay_tx,
-//             })
-//             .await;
+        // Generate SendStreamDispacher
+        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
 
-//         // Execute subscribe_ok_handler and get result
-//         let result = subscribe_ok_handler(
-//             subscribe_ok,
-//             &mut track_namespace_manager,
-//             &mut send_stream_dispatcher,
-//         )
-//         .await;
+        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
+        let mut send_stream_dispatcher: SendStreamDispatcher =
+            SendStreamDispatcher::new(send_stream_tx.clone());
 
-//         assert!(result.is_ok());
-//     }
-// }
+        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let _ = send_stream_tx
+            .send(SendStreamDispatchCommand::Set {
+                session_id: subscriber_session_id,
+                stream_direction: StreamDirection::Bi,
+                sender: uni_relay_tx,
+            })
+            .await;
 
-// #[cfg(test)]
-// mod failure {
-//     use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
-//     use crate::modules::send_stream_dispatcher::{
-//         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-//     };
-//     use crate::modules::track_namespace_manager::{
-//         track_namespace_manager, TrackCommand, TrackNamespaceManager,
-//     };
-//     use moqt_core::constants::StreamDirection;
-//     use moqt_core::messages::control_messages::subscribe::GroupOrder;
-//     use moqt_core::messages::control_messages::version_specific_parameters::{
-//         AuthorizationInfo, VersionSpecificParameter,
-//     };
-//     use moqt_core::messages::{
-//         control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
-//     };
-//     use moqt_core::TrackNamespaceManagerRepository;
-//     use std::sync::Arc;
-//     use tokio::sync::mpsc;
+        // Execute subscribe_ok_handler and get result
+        let result = subscribe_ok_handler(
+            subscribe_ok,
+            &mut track_namespace_manager,
+            &mut send_stream_dispatcher,
+            &mut client,
+        )
+        .await;
 
-//     #[tokio::test]
-//     async fn relay_fail() {
-//         // Generate SUBSCRIBE_OK message
-//         let subscribe_id = 0;
-//         let expires = 1;
-//         let group_order = GroupOrder::Ascending;
-//         let content_exists = false;
-//         let largest_group_id = None;
-//         let largest_object_id = None;
-//         let version_specific_parameter =
-//             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-//         let subscribe_parameters = vec![version_specific_parameter];
+        assert!(result.is_ok());
+    }
+}
 
-//         let subscribe_ok = SubscribeOk::new(
-//             subscribe_id,
-//             expires,
-//             group_order,
-//             content_exists,
-//             largest_group_id,
-//             largest_object_id,
-//             subscribe_parameters,
-//         );
-//         let mut buf = bytes::BytesMut::new();
-//         subscribe_ok.packetize(&mut buf);
+#[cfg(test)]
+mod failure {
+    use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
+    use crate::modules::send_stream_dispatcher::{
+        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
+    };
+    use crate::modules::track_namespace_manager::{
+        track_namespace_manager, TrackCommand, TrackNamespaceManager,
+    };
+    use crate::MOQTClient;
+    use moqt_core::constants::StreamDirection;
+    use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
+    use moqt_core::messages::control_messages::version_specific_parameters::{
+        AuthorizationInfo, VersionSpecificParameter,
+    };
+    use moqt_core::messages::{
+        control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
+    };
+    use moqt_core::TrackNamespaceManagerRepository;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
 
-//         // Generate TrackNamespaceManager
-//         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-//         tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-//         let mut track_namespace_manager: TrackNamespaceManager =
-//             TrackNamespaceManager::new(track_namespace_tx);
+    #[tokio::test]
+    async fn relay_fail() {
+        // Generate SUBSCRIBE_OK message
+        let subscriber_subscribe_id = 0;
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let expires = 1;
+        let group_order = GroupOrder::Ascending;
+        let content_exists = false;
+        let largest_group_id = None;
+        let largest_object_id = None;
+        let filter_type = FilterType::LatestGroup;
+        let start_group = None;
+        let start_object = None;
+        let end_group = None;
+        let end_object = None;
+        let version_specific_parameter =
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
 
-//         let publisher_session_id = 1;
-//         let subscriber_session_id = 2;
+        let subscribe_ok = SubscribeOk::new(
+            subscriber_subscribe_id,
+            expires,
+            group_order,
+            content_exists,
+            largest_group_id,
+            largest_object_id,
+            subscribe_parameters,
+        );
+        let mut buf = bytes::BytesMut::new();
+        subscribe_ok.packetize(&mut buf);
 
-//         let _ = track_namespace_manager
-//             .set_publisher(vec!["namespace".to_string()], publisher_session_id)
-//             .await;
-//         let _ = track_namespace_manager
-//             .set_subscriber(vec!["namespace".to_string()], subscriber_session_id, "name")
-//             .await;
+        // Generate client
+        let publisher_session_id = 1;
+        let mut client = MOQTClient::new(publisher_session_id);
 
-//         // Generate SendStreamDispacher (without set sender)
-//         let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
 
-//         tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-//         let mut send_stream_dispatcher: SendStreamDispatcher =
-//             SendStreamDispatcher::new(send_stream_tx.clone());
+        let subscriber_session_id = 2;
+        let max_subscribe_id = 10;
 
-//         // Execute subscribe_ok_handler and get result
-//         let result = subscribe_ok_handler(
-//             subscribe_ok,
-//             &mut track_namespace_manager,
-//             &mut send_stream_dispatcher,
-//         )
-//         .await;
+        let _ = track_namespace_manager
+            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
+            .await;
+        let (publisher_subscribe_id, _) = track_namespace_manager
+            .set_publisher_subscription(
+                publisher_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
 
-//         assert!(result.is_ok());
-//     }
+        let _ = track_namespace_manager
+            .setup_subscriber(max_subscribe_id, subscriber_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_subscriber_subscription(
+                subscriber_session_id,
+                subscriber_subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+        let _ = track_namespace_manager
+            .register_pubsup_relation(
+                publisher_session_id,
+                publisher_subscribe_id,
+                subscriber_session_id,
+                subscriber_subscribe_id,
+            )
+            .await;
 
-//     #[tokio::test]
-//     async fn subscriber_not_found() {
-//         // Generate SUBSCRIBE_OK message
-//         let subscribe_id = 0;
-//         let expires = 1;
-//         let group_order = GroupOrder::Ascending;
-//         let content_exists = false;
-//         let largest_group_id = None;
-//         let largest_object_id = None;
-//         let version_specific_parameter =
-//             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-//         let subscribe_parameters = vec![version_specific_parameter];
+        // Generate SendStreamDispacher (without set sender)
+        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
 
-//         let subscribe_ok = SubscribeOk::new(
-//             subscribe_id,
-//             expires,
-//             group_order,
-//             content_exists,
-//             largest_group_id,
-//             largest_object_id,
-//             subscribe_parameters,
-//         );
-//         let mut buf = bytes::BytesMut::new();
-//         subscribe_ok.packetize(&mut buf);
+        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
+        let mut send_stream_dispatcher: SendStreamDispatcher =
+            SendStreamDispatcher::new(send_stream_tx.clone());
 
-//         // Generate TrackNamespaceManager (without set subscriber)
-//         let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-//         tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-//         let mut track_namespace_manager: TrackNamespaceManager =
-//             TrackNamespaceManager::new(track_namespace_tx);
+        // Execute subscribe_ok_handler and get result
+        let result = subscribe_ok_handler(
+            subscribe_ok,
+            &mut track_namespace_manager,
+            &mut send_stream_dispatcher,
+            &mut client,
+        )
+        .await;
 
-//         let publisher_session_id = 1;
-//         let subscriber_session_id = 2;
+        assert!(result.is_err());
+    }
 
-//         let _ = track_namespace_manager
-//             .set_publisher(vec!["namespace".to_string()], publisher_session_id)
-//             .await;
+    #[tokio::test]
+    async fn subscriber_not_found() {
+        // Generate SUBSCRIBE_OK message
+        let subscriber_subscribe_id = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let expires = 1;
+        let group_order = GroupOrder::Ascending;
+        let content_exists = false;
+        let largest_group_id = None;
+        let largest_object_id = None;
+        let filter_type = FilterType::LatestGroup;
+        let start_group = None;
+        let start_object = None;
+        let end_group = None;
+        let end_object = None;
+        let version_specific_parameter =
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
 
-//         // Generate SendStreamDispacher
-//         let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        let subscribe_ok = SubscribeOk::new(
+            subscriber_subscribe_id,
+            expires,
+            group_order,
+            content_exists,
+            largest_group_id,
+            largest_object_id,
+            subscribe_parameters,
+        );
+        let mut buf = bytes::BytesMut::new();
+        subscribe_ok.packetize(&mut buf);
 
-//         tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-//         let mut send_stream_dispatcher: SendStreamDispatcher =
-//             SendStreamDispatcher::new(send_stream_tx.clone());
+        // Generate client
+        let publisher_session_id = 1;
+        let mut client = MOQTClient::new(publisher_session_id);
 
-//         let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-//         let _ = send_stream_tx
-//             .send(SendStreamDispatchCommand::Set {
-//                 session_id: subscriber_session_id,
-//                 stream_direction: StreamDirection::Bi,
-//                 sender: uni_relay_tx,
-//             })
-//             .await;
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
 
-//         // Execute subscribe_ok_handler and get result
-//         let result = subscribe_ok_handler(
-//             subscribe_ok,
-//             &mut track_namespace_manager,
-//             &mut send_stream_dispatcher,
-//         )
-//         .await;
+        let subscriber_session_id = 2;
+        let max_subscribe_id = 10;
 
-//         assert!(result.is_ok());
-//     }
-// }
+        let _ = track_namespace_manager
+            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_publisher_subscription(
+                publisher_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
+
+        // Generate SendStreamDispacher
+        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+
+        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
+        let mut send_stream_dispatcher: SendStreamDispatcher =
+            SendStreamDispatcher::new(send_stream_tx.clone());
+
+        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let _ = send_stream_tx
+            .send(SendStreamDispatchCommand::Set {
+                session_id: subscriber_session_id,
+                stream_direction: StreamDirection::Bi,
+                sender: uni_relay_tx,
+            })
+            .await;
+
+        // Execute subscribe_ok_handler and get result
+        let result = subscribe_ok_handler(
+            subscribe_ok,
+            &mut track_namespace_manager,
+            &mut send_stream_dispatcher,
+            &mut client,
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn subscriber_already_activated() {
+        // Generate SUBSCRIBE_OK message
+        let subscriber_subscribe_id = 0;
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let expires = 1;
+        let group_order = GroupOrder::Ascending;
+        let content_exists = false;
+        let largest_group_id = None;
+        let largest_object_id = None;
+        let filter_type = FilterType::LatestGroup;
+        let start_group = None;
+        let start_object = None;
+        let end_group = None;
+        let end_object = None;
+        let version_specific_parameter =
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
+
+        let subscribe_ok = SubscribeOk::new(
+            subscriber_subscribe_id,
+            expires,
+            group_order,
+            content_exists,
+            largest_group_id,
+            largest_object_id,
+            subscribe_parameters,
+        );
+        let mut buf = bytes::BytesMut::new();
+        subscribe_ok.packetize(&mut buf);
+
+        // Generate client
+        let publisher_session_id = 1;
+        let mut client = MOQTClient::new(publisher_session_id);
+
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
+
+        let subscriber_session_id = 2;
+        let max_subscribe_id = 10;
+
+        let _ = track_namespace_manager
+            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
+            .await;
+        let (publisher_subscribe_id, _) = track_namespace_manager
+            .set_publisher_subscription(
+                publisher_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
+
+        let _ = track_namespace_manager
+            .setup_subscriber(max_subscribe_id, subscriber_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_subscriber_subscription(
+                subscriber_session_id,
+                subscriber_subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+        let _ = track_namespace_manager
+            .register_pubsup_relation(
+                publisher_session_id,
+                publisher_subscribe_id,
+                subscriber_session_id,
+                subscriber_subscribe_id,
+            )
+            .await;
+
+        let _ = track_namespace_manager
+            .activate_subscriber_subscription(subscriber_session_id, subscriber_subscribe_id)
+            .await;
+
+        // Generate SendStreamDispacher
+        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+
+        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
+        let mut send_stream_dispatcher: SendStreamDispatcher =
+            SendStreamDispatcher::new(send_stream_tx.clone());
+
+        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let _ = send_stream_tx
+            .send(SendStreamDispatchCommand::Set {
+                session_id: subscriber_session_id,
+                stream_direction: StreamDirection::Bi,
+                sender: uni_relay_tx,
+            })
+            .await;
+
+        // Execute subscribe_ok_handler and get result
+        let result = subscribe_ok_handler(
+            subscribe_ok,
+            &mut track_namespace_manager,
+            &mut send_stream_dispatcher,
+            &mut client,
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn publisher_already_activated() {
+        // Generate SUBSCRIBE_OK message
+        let subscriber_subscribe_id = 0;
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let expires = 1;
+        let group_order = GroupOrder::Ascending;
+        let content_exists = false;
+        let largest_group_id = None;
+        let largest_object_id = None;
+        let filter_type = FilterType::LatestGroup;
+        let start_group = None;
+        let start_object = None;
+        let end_group = None;
+        let end_object = None;
+        let version_specific_parameter =
+            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
+        let subscribe_parameters = vec![version_specific_parameter];
+
+        let subscribe_ok = SubscribeOk::new(
+            subscriber_subscribe_id,
+            expires,
+            group_order,
+            content_exists,
+            largest_group_id,
+            largest_object_id,
+            subscribe_parameters,
+        );
+        let mut buf = bytes::BytesMut::new();
+        subscribe_ok.packetize(&mut buf);
+
+        // Generate client
+        let publisher_session_id = 1;
+        let mut client = MOQTClient::new(publisher_session_id);
+
+        // Generate TrackNamespaceManager
+        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
+        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
+        let mut track_namespace_manager: TrackNamespaceManager =
+            TrackNamespaceManager::new(track_namespace_tx);
+
+        let subscriber_session_id = 2;
+        let max_subscribe_id = 10;
+
+        let _ = track_namespace_manager
+            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
+            .await;
+        let (publisher_subscribe_id, _) = track_namespace_manager
+            .set_publisher_subscription(
+                publisher_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
+
+        let _ = track_namespace_manager
+            .setup_subscriber(max_subscribe_id, subscriber_session_id)
+            .await;
+        let _ = track_namespace_manager
+            .set_subscriber_subscription(
+                subscriber_session_id,
+                subscriber_subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+        let _ = track_namespace_manager
+            .register_pubsup_relation(
+                publisher_session_id,
+                publisher_subscribe_id,
+                subscriber_session_id,
+                subscriber_subscribe_id,
+            )
+            .await;
+
+        let _ = track_namespace_manager
+            .activate_publisher_subscription(publisher_session_id, publisher_subscribe_id)
+            .await;
+
+        // Generate SendStreamDispacher
+        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+
+        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
+        let mut send_stream_dispatcher: SendStreamDispatcher =
+            SendStreamDispatcher::new(send_stream_tx.clone());
+
+        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let _ = send_stream_tx
+            .send(SendStreamDispatchCommand::Set {
+                session_id: subscriber_session_id,
+                stream_direction: StreamDirection::Bi,
+                sender: uni_relay_tx,
+            })
+            .await;
+
+        // Execute subscribe_ok_handler and get result
+        let result = subscribe_ok_handler(
+            subscribe_ok,
+            &mut track_namespace_manager,
+            &mut send_stream_dispatcher,
+            &mut client,
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+}

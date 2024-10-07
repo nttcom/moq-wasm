@@ -11,8 +11,8 @@ use TrackCommand::*;
 
 type SubscriberSessionId = usize;
 type PublisherSessionId = usize;
-type PublishedSubscribeId = u64;
-type SubscribedSubscribeId = u64;
+type PublisherSubscribeId = u64;
+type SubscriberSubscribeId = u64;
 
 type Consumers = HashMap<PublisherSessionId, Consumer>;
 type Producers = HashMap<SubscriberSessionId, Producer>;
@@ -20,8 +20,8 @@ type Producers = HashMap<SubscriberSessionId, Producer>;
 #[derive(Debug, Clone)]
 pub(crate) struct PubSubRelation {
     records: HashMap<
-        (PublisherSessionId, PublishedSubscribeId),
-        Vec<(SubscriberSessionId, SubscribedSubscribeId)>,
+        (PublisherSessionId, PublisherSubscribeId),
+        Vec<(SubscriberSessionId, SubscriberSubscribeId)>,
     >,
 }
 
@@ -35,12 +35,12 @@ impl PubSubRelation {
     fn add_relation(
         &mut self,
         publisher_session_id: PublisherSessionId,
-        published_subscribe_id: PublishedSubscribeId,
+        publisher_subscribe_id: PublisherSubscribeId,
         subscriber_session_id: SubscriberSessionId,
-        subscribed_subscribe_id: SubscribedSubscribeId,
+        subscriber_subscribe_id: SubscriberSubscribeId,
     ) -> Result<()> {
-        let key = (publisher_session_id, published_subscribe_id);
-        let value = (subscriber_session_id, subscribed_subscribe_id);
+        let key = (publisher_session_id, publisher_subscribe_id);
+        let value = (subscriber_session_id, subscriber_subscribe_id);
 
         match self.records.get_mut(&key) {
             // If the key exists, add the value to the existing vector
@@ -56,12 +56,12 @@ impl PubSubRelation {
         Ok(())
     }
 
-    fn get_subscribers(
+    pub(crate) fn get_subscribers(
         &self,
         publisher_session_id: PublisherSessionId,
-        published_subscribe_id: PublishedSubscribeId,
-    ) -> Option<&Vec<(SubscriberSessionId, SubscribedSubscribeId)>> {
-        let key = (publisher_session_id, published_subscribe_id);
+        publisher_subscribe_id: PublisherSubscribeId,
+    ) -> Option<&Vec<(SubscriberSessionId, SubscriberSubscribeId)>> {
+        let key = (publisher_session_id, publisher_subscribe_id);
         self.records.get(&key)
     }
 
@@ -182,13 +182,13 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
                 resp.send(Ok(publisher_session_id)).unwrap();
             }
             GetRequestingSubscriberSessionIdsAndSubscribeIds {
-                published_subscribe_id,
+                publisher_subscribe_id,
                 publisher_session_id,
                 resp,
             } => {
                 if !pubsub_relation
                     .records
-                    .contains_key(&(publisher_session_id, published_subscribe_id))
+                    .contains_key(&(publisher_session_id, publisher_subscribe_id))
                 {
                     let msg = "publisher not found in pubsub relation";
                     tracing::error!(msg);
@@ -197,18 +197,18 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
                 }
 
                 let subscribers =
-                    pubsub_relation.get_subscribers(publisher_session_id, published_subscribe_id);
+                    pubsub_relation.get_subscribers(publisher_session_id, publisher_subscribe_id);
 
                 // Check if it is in the requesting state
                 let requesting_subscribers: Option<Vec<(usize, u64)>> = match subscribers {
                     Some(subscribers) => {
                         let mut requesting_subscribers = vec![];
 
-                        for (subscriber_session_id, subscribed_subscribe_id) in subscribers {
+                        for (subscriber_session_id, subscriber_subscribe_id) in subscribers {
                             let producer = producers.get(subscriber_session_id).unwrap();
-                            if producer.is_requesting(*subscribed_subscribe_id) {
+                            if producer.is_requesting(*subscriber_subscribe_id) {
                                 requesting_subscribers
-                                    .push((*subscriber_session_id, *subscribed_subscribe_id));
+                                    .push((*subscriber_session_id, *subscriber_subscribe_id));
                             }
                         }
 
@@ -373,16 +373,16 @@ pub(crate) async fn track_namespace_manager(rx: &mut mpsc::Receiver<TrackCommand
             }
             RegisterPubSubRelation {
                 publisher_session_id,
-                published_subscribe_id,
+                publisher_subscribe_id,
                 subscriber_session_id,
-                subscribed_subscribe_id,
+                subscriber_subscribe_id,
                 resp,
             } => {
                 let result = pubsub_relation.add_relation(
                     publisher_session_id,
-                    published_subscribe_id,
+                    publisher_subscribe_id,
                     subscriber_session_id,
-                    subscribed_subscribe_id,
+                    subscriber_subscribe_id,
                 );
 
                 match result {
@@ -570,7 +570,7 @@ pub(crate) enum TrackCommand {
         resp: oneshot::Sender<Result<Option<usize>>>,
     },
     GetRequestingSubscriberSessionIdsAndSubscribeIds {
-        published_subscribe_id: u64,
+        publisher_subscribe_id: u64,
         publisher_session_id: usize,
         #[allow(clippy::type_complexity)]
         resp: oneshot::Sender<Result<Option<Vec<(usize, u64)>>>>,
@@ -611,9 +611,9 @@ pub(crate) enum TrackCommand {
     },
     RegisterPubSubRelation {
         publisher_session_id: usize,
-        published_subscribe_id: u64,
+        publisher_subscribe_id: u64,
         subscriber_session_id: usize,
-        subscribed_subscribe_id: u64,
+        subscriber_subscribe_id: u64,
         resp: oneshot::Sender<Result<()>>,
     },
     ActivateSubscriberSubscription {
@@ -817,12 +817,12 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
     }
     async fn get_requesting_subscriber_session_ids_and_subscribe_ids(
         &self,
-        published_subscribe_id: u64,
+        publisher_subscribe_id: u64,
         publisher_session_id: usize,
     ) -> Result<Option<Vec<(usize, u64)>>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<Vec<(usize, u64)>>>>();
         let cmd = TrackCommand::GetRequestingSubscriberSessionIdsAndSubscribeIds {
-            published_subscribe_id,
+            publisher_subscribe_id,
             publisher_session_id,
             resp: resp_tx,
         };
@@ -937,16 +937,16 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
     async fn register_pubsup_relation(
         &self,
         publisher_session_id: usize,
-        published_subscribe_id: u64,
+        publisher_subscribe_id: u64,
         subscriber_session_id: usize,
-        subscribed_subscribe_id: u64,
+        subscriber_subscribe_id: u64,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
         let cmd = RegisterPubSubRelation {
             publisher_session_id,
-            published_subscribe_id,
+            publisher_subscribe_id,
             subscriber_session_id,
-            subscribed_subscribe_id,
+            subscriber_subscribe_id,
             resp: resp_tx,
         };
 
@@ -1032,7 +1032,7 @@ impl TrackNamespaceManagerRepository for TrackNamespaceManager {
 }
 
 #[cfg(test)]
-mod test_fn {
+pub(crate) mod test_fn {
 
     use crate::modules::track_namespace_manager::{
         Consumers, Producers, PubSubRelation, TrackCommand, TrackNamespaceManager,
@@ -1051,7 +1051,6 @@ mod test_fn {
     }
 }
 
-// TrackNamespaceManagerの中身を一新したのですべてのテストを新たに書き直す
 #[cfg(test)]
 mod success {
     use crate::modules::track_namespace_manager::test_fn;
@@ -1781,8 +1780,7 @@ mod success {
             test_fn::get_node_and_relation_clone(&track_namespace_manager).await;
 
         let subscriber = pubsub_relation
-            .records
-            .get(&(publisher_session_id, publisher_subscribe_id))
+            .get_subscribers(publisher_session_id, publisher_subscribe_id)
             .unwrap()
             .to_vec();
 
@@ -2150,14 +2148,12 @@ mod success {
 
         // Assert that the relation is deleted
         // Remain: pub 1 <- sub 3, 4
-        let pub1_relation = pubsub_relation
-            .records
-            .get(&(publisher_session_ids[0], publisher_subscribe_ids[0]));
+        let pub1_relation =
+            pubsub_relation.get_subscribers(publisher_session_ids[0], publisher_subscribe_ids[0]);
         assert!(pub1_relation.is_some());
 
-        let pub2_relation = pubsub_relation
-            .records
-            .get(&(publisher_session_ids[1], publisher_subscribe_ids[1]));
+        let pub2_relation =
+            pubsub_relation.get_subscribers(publisher_session_ids[1], publisher_subscribe_ids[1]);
         assert!(pub2_relation.is_none());
     }
 

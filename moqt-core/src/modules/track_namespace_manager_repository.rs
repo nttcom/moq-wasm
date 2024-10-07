@@ -44,7 +44,7 @@ pub trait TrackNamespaceManagerRepository: Send + Sync {
         -> Result<Option<usize>>;
     async fn get_requesting_subscriber_session_ids_and_subscribe_ids(
         &self,
-        published_subscribe_id: u64,
+        publisher_subscribe_id: u64,
         publisher_session_id: usize,
     ) -> Result<Option<Vec<(usize, u64)>>>;
     async fn get_publisher_subscribe_id(
@@ -86,9 +86,9 @@ pub trait TrackNamespaceManagerRepository: Send + Sync {
     async fn register_pubsup_relation(
         &self,
         publisher_session_id: usize,
-        published_subscribe_id: u64,
+        publisher_subscribe_id: u64,
         subscriber_session_id: usize,
-        subscribed_subscribe_id: u64,
+        subscriber_subscribe_id: u64,
     ) -> Result<()>;
     async fn activate_subscriber_subscription(
         &self,
