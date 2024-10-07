@@ -308,7 +308,7 @@ pub async fn control_message_handler(
 }
 
 #[cfg(test)]
-pub(crate) mod test_fn {
+pub(crate) mod test_utils {
 
     use crate::modules::control_message_handler::control_message_handler;
     use crate::modules::control_message_handler::MessageProcessResult;
@@ -369,14 +369,14 @@ mod success {
     use moqt_core::control_message_type::ControlMessageType;
     use moqt_core::moqt_client::MOQTClientStatus;
 
-    use crate::modules::control_message_handler::test_fn;
+    use crate::modules::control_message_handler::test_utils;
 
     async fn assert_success(
         message_type_u8: u8,
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
     ) {
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_utils::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,
@@ -432,14 +432,14 @@ mod failure {
     use moqt_core::control_message_type::ControlMessageType;
     use moqt_core::moqt_client::MOQTClientStatus;
 
-    use crate::modules::control_message_handler::test_fn;
+    use crate::modules::control_message_handler::test_utils;
 
     async fn assert_protocol_violation(
         message_type_u8: u8,
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
     ) {
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_utils::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,
@@ -459,7 +459,7 @@ mod failure {
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
     ) {
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_utils::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,
@@ -479,7 +479,7 @@ mod failure {
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
     ) {
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_utils::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,
