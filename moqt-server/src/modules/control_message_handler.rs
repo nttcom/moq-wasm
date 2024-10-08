@@ -45,6 +45,16 @@ fn read_message_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<ControlMes
     Ok(message_type)
 }
 
+fn read_payload_length(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<usize> {
+    let payload_length = match read_variable_integer(read_cur) {
+        Ok(v) => v as usize,
+        Err(err) => {
+            bail!(err.to_string());
+        }
+    };
+    Ok(payload_length)
+}
+
 pub async fn control_message_handler(
     read_buf: &mut BytesMut,
     underlay_type: UnderlayType,
@@ -72,13 +82,15 @@ pub async fn control_message_handler(
     };
     tracing::info!("Received Message Type: {:?}", message_type);
 
-    if read_cur.remaining() == 0 {
+    // Read the payload length
+    let payload_length = read_payload_length(&mut read_cur).unwrap();
+
+    if payload_length == 0 {
         // The length is insufficient, so do nothing. Do not synchronize with the cursor.
         tracing::error!("fragmented {}", read_buf.len());
         return MessageProcessResult::Fragment;
     }
 
-    let payload_length = read_cur.remaining();
     read_buf.advance(read_cur.position() as usize);
     let mut payload_buf = read_buf.split_to(payload_length);
     let mut write_buf = BytesMut::new();
@@ -288,7 +300,8 @@ pub async fn control_message_handler(
     let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
     // Add type
     message_buf.extend(write_variable_integer(u8::from(return_message_type) as u64));
-    // Add payload
+    // Add payload and payload length
+    message_buf.extend(write_variable_integer(write_buf.len() as u64));
     message_buf.extend(write_buf);
 
     tracing::debug!("message_buf: {:#x?}", message_buf);
@@ -320,6 +333,7 @@ pub(crate) mod test_fn {
     ) -> MessageProcessResult {
         let mut buf = BytesMut::with_capacity(bytes_array.len() + 8);
         buf.extend(write_variable_integer(message_type_u8 as u64));
+        buf.extend(write_variable_integer(bytes_array.len() as u64));
         buf.extend_from_slice(bytes_array);
 
         // Generate client
@@ -375,12 +389,12 @@ mod success {
         // Check if MessageProcessResult::Failure(TerminationErrorCode::InternalError, _)
         if let MessageProcessResult::Success(..) = result {
         } else {
-            panic!("result is not MessageProcessResult::Succsess");
+            panic!("result is not MessageProcessResult::Success");
         };
     }
 
     #[tokio::test]
-    async fn client_setup_succsess() {
+    async fn client_setup_success() {
         let message_type = ControlMessageType::ClientSetup;
         let bytes_array = [
             1,   // Number of Supported Versions (i)
@@ -397,7 +411,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn subscribe_succsess() {
+    async fn subscribe_success() {
         let message_type = ControlMessageType::ClientSetup;
         let bytes_array = [
             1,   // Number of Supported Versions (i)
@@ -423,61 +437,6 @@ mod failure {
 
     use crate::modules::control_message_handler::test_fn;
 
-    async fn assert_protocol_violation(
-        message_type_u8: u8,
-        bytes_array: &[u8],
-        client_status: MOQTClientStatus,
-    ) {
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
-            message_type_u8,
-            bytes_array,
-            client_status,
-        )
-        .await;
-
-        // Check if MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, _)
-        if let MessageProcessResult::Failure(code, _) = result {
-            assert_eq!(code, TerminationErrorCode::ProtocolViolation);
-        } else {
-            panic!("result is not MessageProcessResult::Failure");
-        };
-    }
-
-    async fn assert_internal_error(
-        message_type_u8: u8,
-        bytes_array: &[u8],
-        client_status: MOQTClientStatus,
-    ) {
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
-            message_type_u8,
-            bytes_array,
-            client_status,
-        )
-        .await;
-
-        // Check if MessageProcessResult::Failure(TerminationErrorCode::InternalError, _)
-        if let MessageProcessResult::Failure(code, _) = result {
-            assert_eq!(code, TerminationErrorCode::InternalError);
-        } else {
-            panic!("result is not MessageProcessResult::Failure");
-        };
-    }
-
-    async fn assert_fragment(
-        message_type_u8: u8,
-        bytes_array: &[u8],
-        client_status: MOQTClientStatus,
-    ) {
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
-            message_type_u8,
-            bytes_array,
-            client_status,
-        )
-        .await;
-
-        assert_eq!(result, MessageProcessResult::Fragment);
-    }
-
     #[tokio::test]
     async fn client_setup_invalid_timing() {
         let message_type = ControlMessageType::ClientSetup;
@@ -492,7 +451,20 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::SetUp; // Correct Status is Connected
 
-        assert_protocol_violation(message_type as u8, &bytes_array, wrong_client_status).await;
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &bytes_array,
+            wrong_client_status,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, _)
+            ),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 
     #[tokio::test]
@@ -516,7 +488,20 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        assert_protocol_violation(message_type as u8, &bytes_array, wrong_client_status).await;
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &bytes_array,
+            wrong_client_status,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, _)
+            ),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 
     #[tokio::test]
@@ -534,7 +519,20 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        assert_protocol_violation(message_type as u8, &bytes_array, wrong_client_status).await;
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &bytes_array,
+            wrong_client_status,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, _)
+            ),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 
     #[tokio::test]
@@ -550,7 +548,20 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        assert_protocol_violation(message_type as u8, &bytes_array, wrong_client_status).await;
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &bytes_array,
+            wrong_client_status,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, _)
+            ),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 
     #[tokio::test]
@@ -567,7 +578,20 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        assert_protocol_violation(message_type as u8, &bytes_array, wrong_client_status).await;
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &bytes_array,
+            wrong_client_status,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, _)
+            ),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 
     #[tokio::test]
@@ -576,7 +600,20 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::Connected;
 
-        assert_internal_error(message_type as u8, &wrong_bytes_array, client_status).await;
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &wrong_bytes_array,
+            client_status,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                MessageProcessResult::Failure(TerminationErrorCode::InternalError, _)
+            ),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 
     #[tokio::test]
@@ -585,7 +622,20 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        assert_internal_error(message_type as u8, &wrong_bytes_array, client_status).await;
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &wrong_bytes_array,
+            client_status,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                MessageProcessResult::Failure(TerminationErrorCode::InternalError, _)
+            ),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 
     #[tokio::test]
@@ -594,7 +644,20 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        assert_internal_error(message_type as u8, &wrong_bytes_array, client_status).await;
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &wrong_bytes_array,
+            client_status,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                MessageProcessResult::Failure(TerminationErrorCode::InternalError, _)
+            ),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 
     // #[tokio::test]
@@ -612,7 +675,20 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        assert_internal_error(message_type as u8, &wrong_bytes_array, client_status).await;
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &wrong_bytes_array,
+            client_status,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                MessageProcessResult::Failure(TerminationErrorCode::InternalError, _)
+            ),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 
     #[tokio::test]
@@ -621,7 +697,20 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        assert_protocol_violation(message_type, &wrong_bytes_array, client_status).await;
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &wrong_bytes_array,
+            client_status,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, _)
+            ),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 
     #[tokio::test]
@@ -630,6 +719,13 @@ mod failure {
         let bytes_array = [];
         let client_status = MOQTClientStatus::SetUp;
 
-        assert_fragment(message_type as u8, &bytes_array, client_status).await;
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &bytes_array,
+            client_status,
+        )
+        .await;
+
+        assert_eq!(result, MessageProcessResult::Fragment);
     }
 }
