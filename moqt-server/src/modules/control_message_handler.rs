@@ -313,7 +313,7 @@ pub(crate) mod test_utils {
 
     use crate::modules::control_message_handler::control_message_handler;
     use crate::modules::control_message_handler::MessageProcessResult;
-    use crate::modules::relation_manager::{
+    use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };

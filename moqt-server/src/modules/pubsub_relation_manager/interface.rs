@@ -1,4 +1,6 @@
-use crate::modules::relation_manager::commands::{PubSubRelationCommand, PubSubRelationCommand::*};
+use crate::modules::pubsub_relation_manager::commands::{
+    PubSubRelationCommand, PubSubRelationCommand::*,
+};
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
@@ -398,7 +400,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerInterface {
 
 #[cfg(test)]
 pub(crate) mod test_utils {
-    use crate::modules::relation_manager::{
+    use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand,
         interface::PubSubRelationManagerInterface,
         manager::{Consumers, Producers},
@@ -421,7 +423,7 @@ pub(crate) mod test_utils {
 
 #[cfg(test)]
 mod success {
-    use crate::modules::relation_manager::{
+    use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, interface::test_utils,
         interface::PubSubRelationManagerInterface, manager::pubsub_relation_manager,
     };
@@ -1545,7 +1547,7 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::modules::relation_manager::{
+    use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };

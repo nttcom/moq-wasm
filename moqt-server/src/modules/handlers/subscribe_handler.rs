@@ -289,7 +289,7 @@ async fn set_subscriber_and_publisher_subscription(
 #[cfg(test)]
 mod success {
     use crate::modules::handlers::subscribe_handler::subscribe_handler;
-    use crate::modules::relation_manager::{
+    use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand,
         interface::{test_utils, PubSubRelationManagerInterface},
         manager::pubsub_relation_manager,
@@ -544,7 +544,7 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::modules::handlers::subscribe_handler::subscribe_handler;
-    use crate::modules::relation_manager::{
+    use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };

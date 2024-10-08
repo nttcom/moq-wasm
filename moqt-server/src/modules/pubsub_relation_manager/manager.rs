@@ -1,4 +1,4 @@
-use crate::modules::relation_manager::{
+use crate::modules::pubsub_relation_manager::{
     commands::{PubSubRelationCommand, PubSubRelationCommand::*},
     relation::PubSubRelation,
 };

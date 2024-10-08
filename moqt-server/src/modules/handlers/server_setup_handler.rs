@@ -87,7 +87,7 @@ pub(crate) async fn setup_handler(
 
 #[cfg(test)]
 mod success {
-    use crate::modules::relation_manager::{
+    use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
@@ -160,7 +160,7 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::modules::relation_manager::{
+    use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
