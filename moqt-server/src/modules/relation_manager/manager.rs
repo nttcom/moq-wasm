@@ -3,8 +3,9 @@ use crate::modules::relation_manager::{
     relation::PubSubRelation,
 };
 use anyhow::anyhow;
-use moqt_core::subscription_models::node_registory::SubscriptionNodeRegistory;
-use moqt_core::subscription_models::{consumer_node::Consumer, producer_node::Producer};
+use moqt_core::subscription_models::nodes::{
+    consumer_node::Consumer, node_registory::SubscriptionNodeRegistory, producer_node::Producer,
+};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
