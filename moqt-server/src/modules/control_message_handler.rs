@@ -45,16 +45,6 @@ fn read_message_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<ControlMes
     Ok(message_type)
 }
 
-fn read_payload_length(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<usize> {
-    let payload_length = match read_variable_integer(read_cur) {
-        Ok(v) => v as usize,
-        Err(err) => {
-            bail!(err.to_string());
-        }
-    };
-    Ok(payload_length)
-}
-
 pub async fn control_message_handler(
     read_buf: &mut BytesMut,
     underlay_type: UnderlayType,
@@ -83,8 +73,7 @@ pub async fn control_message_handler(
     tracing::info!("Received Message Type: {:?}", message_type);
 
     // Read the payload length
-    let payload_length = read_payload_length(&mut read_cur).unwrap();
-
+    let payload_length = read_variable_integer(&mut read_cur).unwrap();
     if payload_length == 0 {
         // The length is insufficient, so do nothing. Do not synchronize with the cursor.
         tracing::error!("fragmented {}", read_buf.len());
@@ -92,7 +81,7 @@ pub async fn control_message_handler(
     }
 
     read_buf.advance(read_cur.position() as usize);
-    let mut payload_buf = read_buf.split_to(payload_length);
+    let mut payload_buf = read_buf.split_to(payload_length as usize);
     let mut write_buf = BytesMut::new();
 
     let return_message_type = match message_type {
@@ -374,27 +363,35 @@ mod success {
 
     use crate::modules::control_message_handler::test_fn;
 
-    async fn assert_success(
-        message_type_u8: u8,
-        bytes_array: &[u8],
-        client_status: MOQTClientStatus,
-    ) {
+    #[tokio::test]
+    async fn client_setup() {
+        let message_type = ControlMessageType::ClientSetup;
+        let bytes_array = [
+            1,   // Number of Supported Versions (i)
+            192, // Supported Version (i): Length(11 of 2MSB)
+            0, 0, 0, 255, 0, 0, 1, // Supported Version(i): Value(0xff000001) in 62bit
+            1, // Number of Parameters (i)
+            0, // SETUP Parameters (..): Type(Role)
+            1, // SETUP Parameters (..): Length
+            2, // SETUP Parameters (..): Role(Subscriber)
+        ];
+        let client_status = MOQTClientStatus::Connected;
+
         let result = test_fn::packetize_buf_and_execute_control_message_handler(
-            message_type_u8,
-            bytes_array,
+            message_type as u8,
+            &bytes_array,
             client_status,
         )
         .await;
 
-        // Check if MessageProcessResult::Failure(TerminationErrorCode::InternalError, _)
-        if let MessageProcessResult::Success(..) = result {
-        } else {
-            panic!("result is not MessageProcessResult::Success");
-        };
+        assert!(
+            matches!(result, MessageProcessResult::Success(..)),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 
     #[tokio::test]
-    async fn client_setup_success() {
+    async fn subscribe() {
         let message_type = ControlMessageType::ClientSetup;
         let bytes_array = [
             1,   // Number of Supported Versions (i)
@@ -407,24 +404,17 @@ mod success {
         ];
         let client_status = MOQTClientStatus::Connected;
 
-        assert_success(message_type as u8, &bytes_array, client_status).await;
-    }
+        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+            message_type as u8,
+            &bytes_array,
+            client_status,
+        )
+        .await;
 
-    #[tokio::test]
-    async fn subscribe_success() {
-        let message_type = ControlMessageType::ClientSetup;
-        let bytes_array = [
-            1,   // Number of Supported Versions (i)
-            192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 1, // Supported Version(i): Value(0xff000001) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Subscriber)
-        ];
-        let client_status = MOQTClientStatus::Connected;
-
-        assert_success(message_type as u8, &bytes_array, client_status).await;
+        assert!(
+            matches!(result, MessageProcessResult::Success(..)),
+            "result is not MessageProcessResult::Failure"
+        );
     }
 }
 
