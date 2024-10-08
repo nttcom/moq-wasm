@@ -53,7 +53,7 @@ pub(crate) async fn announce_handler(
 #[cfg(test)]
 mod success {
     use crate::modules::handlers::announce_handler::{announce_handler, AnnounceResponse};
-    use crate::modules::relation_manager::{
+    use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };
@@ -115,7 +115,7 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::modules::handlers::announce_handler::{announce_handler, AnnounceResponse};
-    use crate::modules::relation_manager::{
+    use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
         manager::pubsub_relation_manager,
     };

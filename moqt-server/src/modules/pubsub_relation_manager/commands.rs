@@ -4,7 +4,7 @@ use moqt_core::subscription_models::subscriptions::Subscription;
 use tokio::sync::oneshot;
 
 #[cfg(test)]
-use crate::modules::relation_manager::{
+use crate::modules::pubsub_relation_manager::{
     manager::{Consumers, Producers},
     relation::PubSubRelation,
 };
