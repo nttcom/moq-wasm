@@ -427,7 +427,7 @@ mod success {
     };
     use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-    use moqt_core::subscription_models::node_registory::SubscriptionNodeRegistory;
+    use moqt_core::subscription_models::nodes::node_registory::SubscriptionNodeRegistory;
     use moqt_core::subscription_models::subscriptions::Subscription;
     use tokio::sync::mpsc;
 

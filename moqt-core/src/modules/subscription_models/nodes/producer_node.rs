@@ -1,5 +1,5 @@
 use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use crate::subscription_models::node_registory::SubscriptionNodeRegistory;
+use crate::subscription_models::nodes::node_registory::SubscriptionNodeRegistory;
 use crate::subscription_models::subscriptions::Subscription;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
@@ -9,25 +9,25 @@ type TrackNamespace = Vec<String>;
 type TrackAlias = u64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Consumer {
+pub struct Producer {
     max_subscriber_id: u64,
-    announced_namespaces: Vec<TrackNamespace>,
-    subscribing_namespace_prefixes: Vec<TrackNamespace>,
+    announcing_namespaces: Vec<TrackNamespace>,
+    subscribed_namespace_prefixes: Vec<TrackNamespace>,
     subscriptions: HashMap<SubscribeId, Subscription>,
 }
 
-impl Consumer {
+impl Producer {
     pub fn new(max_subscriber_id: u64) -> Self {
-        Consumer {
+        Producer {
             max_subscriber_id,
-            announced_namespaces: Vec::new(),
-            subscribing_namespace_prefixes: Vec::new(),
+            announcing_namespaces: Vec::new(),
+            subscribed_namespace_prefixes: Vec::new(),
             subscriptions: HashMap::new(),
         }
     }
 }
 
-impl SubscriptionNodeRegistory for Consumer {
+impl SubscriptionNodeRegistory for Producer {
     fn set_subscription(
         &mut self,
         subscribe_id: SubscribeId,
@@ -42,7 +42,7 @@ impl SubscriptionNodeRegistory for Consumer {
         end_group: Option<u64>,
         end_object: Option<u64>,
     ) -> Result<()> {
-        // Subscriber cannot define forwarding preference until it receives object message.
+        // Publisher can define forwarding preference when it publishes track.
         let subscription = Subscription::new(
             track_alias,
             track_namespace,
@@ -136,77 +136,65 @@ impl SubscriptionNodeRegistory for Consumer {
             .values()
             .any(|subscription| subscription.get_track_alias() == track_alias)
     }
-    fn find_unused_subscribe_id_and_track_alias(&self) -> Result<(SubscribeId, TrackAlias)> {
-        for subscribe_id in 0..=self.max_subscriber_id {
-            if !self.subscriptions.contains_key(&subscribe_id) {
-                for track_alias in 0.. {
-                    if !self
-                        .subscriptions
-                        .values()
-                        .any(|subscription| subscription.get_track_alias() == track_alias)
-                    {
-                        return Ok((subscribe_id, track_alias));
-                    }
-                }
-            }
-        }
 
-        bail!("No available subscribe_id and track_alias.");
+    fn find_unused_subscribe_id_and_track_alias(&self) -> Result<(SubscribeId, TrackAlias)> {
+        unimplemented!()
     }
 
     fn set_namespace(&mut self, namespace: TrackNamespace) -> Result<()> {
-        if self.announced_namespaces.contains(&namespace) {
+        if self.announcing_namespaces.contains(&namespace) {
             bail!("Namespace already exists.");
         }
 
-        self.announced_namespaces.push(namespace);
+        self.announcing_namespaces.push(namespace);
 
         Ok(())
     }
 
     fn get_namespaces(&self) -> Result<&Vec<TrackNamespace>> {
-        Ok(&self.announced_namespaces)
+        Ok(&self.announcing_namespaces)
     }
 
     fn has_namespace(&self, namespace: TrackNamespace) -> bool {
-        self.announced_namespaces.contains(&namespace)
+        self.announcing_namespaces.contains(&namespace)
     }
 
     fn delete_namespace(&mut self, namespace: TrackNamespace) -> Result<()> {
         if let Some(index) = self
-            .announced_namespaces
+            .announcing_namespaces
             .iter()
             .position(|x| x == &namespace)
         {
-            self.announced_namespaces.remove(index);
+            self.announcing_namespaces.remove(index);
         }
 
         Ok(())
     }
+
     fn set_namespace_prefix(&mut self, namespace_prefix: TrackNamespace) -> Result<()> {
         if self
-            .subscribing_namespace_prefixes
+            .subscribed_namespace_prefixes
             .contains(&namespace_prefix)
         {
             bail!("Namespace prefix already exists.");
         }
 
-        self.subscribing_namespace_prefixes.push(namespace_prefix);
+        self.subscribed_namespace_prefixes.push(namespace_prefix);
 
         Ok(())
     }
 
     fn get_namespace_prefixes(&self) -> Result<&Vec<TrackNamespace>> {
-        Ok(&self.subscribing_namespace_prefixes)
+        Ok(&self.subscribed_namespace_prefixes)
     }
 
     fn delete_namespace_prefix(&mut self, namespace_prefix: TrackNamespace) -> Result<()> {
         if let Some(index) = self
-            .subscribing_namespace_prefixes
+            .subscribed_namespace_prefixes
             .iter()
             .position(|x| x == &namespace_prefix)
         {
-            self.subscribing_namespace_prefixes.remove(index);
+            self.subscribed_namespace_prefixes.remove(index);
         }
 
         Ok(())
@@ -215,12 +203,12 @@ impl SubscriptionNodeRegistory for Consumer {
 
 #[cfg(test)]
 pub(crate) mod test_utils {
-    use super::{Consumer, TrackNamespace};
-    use crate::subscription_models::consumer_node::{FilterType, GroupOrder};
+    use super::{Producer, TrackNamespace};
+    use crate::subscription_models::nodes::producer_node::{FilterType, GroupOrder};
 
     #[derive(Debug, Clone)]
     pub(crate) struct SubscriptionUtils {
-        pub(crate) consumer: Consumer,
+        pub(crate) producer: Producer,
         pub(crate) subscribe_id: u64,
         pub(crate) track_alias: u64,
         pub(crate) track_namespace: TrackNamespace,
@@ -236,7 +224,7 @@ pub(crate) mod test_utils {
 
     impl SubscriptionUtils {
         pub(crate) fn normal_variable(subscribe_id: u64) -> Self {
-            let consumer = Consumer::new(10);
+            let producer = Producer::new(10);
             let track_alias = 0;
             let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
             let track_name = "track_name".to_string();
@@ -249,7 +237,7 @@ pub(crate) mod test_utils {
             let end_object = None;
 
             SubscriptionUtils {
-                consumer,
+                producer,
                 subscribe_id,
                 track_alias,
                 track_namespace,
@@ -269,7 +257,7 @@ pub(crate) mod test_utils {
 #[cfg(test)]
 mod success {
     use super::*;
-    use crate::subscription_models::consumer_node::test_utils::SubscriptionUtils;
+    use crate::subscription_models::nodes::producer_node::test_utils::SubscriptionUtils;
     use crate::subscription_models::subscriptions::Subscription;
 
     #[test]
@@ -277,7 +265,7 @@ mod success {
         let subscribe_id = 0;
         let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
 
-        let result = variables.consumer.set_subscription(
+        let result = variables.producer.set_subscription(
             variables.subscribe_id,
             variables.track_alias,
             variables.track_namespace,
@@ -300,7 +288,7 @@ mod success {
         let variables = SubscriptionUtils::normal_variable(subscribe_id);
 
         let mut variables_clone = variables.clone();
-        let _ = variables_clone.consumer.set_subscription(
+        let _ = variables_clone.producer.set_subscription(
             variables_clone.subscribe_id,
             variables_clone.track_alias,
             variables_clone.track_namespace,
@@ -315,7 +303,7 @@ mod success {
         );
 
         let subscription = variables_clone
-            .consumer
+            .producer
             .get_subscription(variables.clone().subscribe_id)
             .unwrap();
 
@@ -342,7 +330,7 @@ mod success {
         let variables = SubscriptionUtils::normal_variable(subscribe_id);
 
         let mut variables_clone = variables.clone();
-        let _ = variables_clone.consumer.set_subscription(
+        let _ = variables_clone.producer.set_subscription(
             variables_clone.subscribe_id,
             variables_clone.track_alias,
             variables_clone.track_namespace,
@@ -357,7 +345,7 @@ mod success {
         );
 
         let subscription = variables_clone
-            .consumer
+            .producer
             .get_subscription_by_full_track_name(
                 variables.track_namespace.clone(),
                 variables.track_name.clone(),
@@ -386,7 +374,7 @@ mod success {
         let subscribe_id = 0;
         let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
 
-        let _ = variables.consumer.set_subscription(
+        let _ = variables.producer.set_subscription(
             variables.subscribe_id,
             variables.track_alias,
             variables.track_namespace.clone(),
@@ -403,7 +391,7 @@ mod success {
         let expected_subscribe_id = variables.subscribe_id;
 
         let result_subscribe_id = variables
-            .consumer
+            .producer
             .get_subscribe_id(variables.track_namespace, variables.track_name)
             .unwrap()
             .unwrap();
@@ -416,7 +404,7 @@ mod success {
         let subscribe_id = 0;
         let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
 
-        let _ = variables.consumer.set_subscription(
+        let _ = variables.producer.set_subscription(
             variables.subscribe_id,
             variables.track_alias,
             variables.track_namespace.clone(),
@@ -431,7 +419,7 @@ mod success {
         );
 
         let result = variables
-            .consumer
+            .producer
             .has_track(variables.track_namespace, variables.track_name);
 
         assert!(result);
@@ -442,7 +430,7 @@ mod success {
         let subscribe_id = 0;
         let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
 
-        let _ = variables.consumer.set_subscription(
+        let _ = variables.producer.set_subscription(
             variables.subscribe_id,
             variables.track_alias,
             variables.track_namespace.clone(),
@@ -457,7 +445,7 @@ mod success {
         );
 
         let result = variables
-            .consumer
+            .producer
             .activate_subscription(variables.subscribe_id)
             .unwrap();
 
@@ -469,7 +457,7 @@ mod success {
         let subscribe_id = 0;
         let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
 
-        let _ = variables.consumer.set_subscription(
+        let _ = variables.producer.set_subscription(
             variables.subscribe_id,
             variables.track_alias,
             variables.track_namespace.clone(),
@@ -483,7 +471,7 @@ mod success {
             variables.end_object,
         );
 
-        let result = variables.consumer.is_requesting(variables.subscribe_id);
+        let result = variables.producer.is_requesting(variables.subscribe_id);
 
         assert!(result);
     }
@@ -493,7 +481,7 @@ mod success {
         let subscribe_id = 0;
         let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
 
-        let _ = variables.consumer.set_subscription(
+        let _ = variables.producer.set_subscription(
             variables.subscribe_id,
             variables.track_alias,
             variables.track_namespace.clone(),
@@ -508,7 +496,7 @@ mod success {
         );
 
         let result = variables
-            .consumer
+            .producer
             .delete_subscription(variables.subscribe_id);
 
         assert!(result.is_ok());
@@ -519,8 +507,8 @@ mod success {
         let max_subscribe_id = 10;
         let subscribe_id = 5;
 
-        let consumer = Consumer::new(max_subscribe_id);
-        let result = consumer.is_within_max_subscribe_id(subscribe_id);
+        let producer = Producer::new(max_subscribe_id);
+        let result = producer.is_within_max_subscribe_id(subscribe_id);
 
         assert!(result);
     }
@@ -530,7 +518,7 @@ mod success {
         let subscribe_id = 0;
         let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
 
-        let _ = variables.consumer.set_subscription(
+        let _ = variables.producer.set_subscription(
             variables.subscribe_id,
             variables.track_alias,
             variables.track_namespace.clone(),
@@ -545,7 +533,7 @@ mod success {
         );
 
         let result = variables
-            .consumer
+            .producer
             .is_subscribe_id_unique(variables.subscribe_id);
 
         assert!(!result);
@@ -556,7 +544,7 @@ mod success {
         let track_alias = 100;
         let mut variables = SubscriptionUtils::normal_variable(0);
 
-        let _ = variables.consumer.set_subscription(
+        let _ = variables.producer.set_subscription(
             variables.subscribe_id,
             variables.track_alias,
             variables.track_namespace.clone(),
@@ -570,43 +558,25 @@ mod success {
             variables.end_object,
         );
 
-        let result = variables.consumer.is_track_alias_unique(track_alias);
+        let result = variables.producer.is_track_alias_unique(track_alias);
 
         assert!(result);
     }
 
     #[test]
+    #[should_panic]
     fn find_unused_subscribe_id_and_track_alias() {
-        let subscribe_id = 0;
-        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+        let producer = Producer::new(10);
 
-        let _ = variables.consumer.set_subscription(
-            variables.subscribe_id,
-            variables.track_alias,
-            variables.track_namespace.clone(),
-            variables.track_name.clone(),
-            variables.subscriber_priority,
-            variables.group_order,
-            variables.filter_type,
-            variables.start_group,
-            variables.start_object,
-            variables.end_group,
-            variables.end_object,
-        );
-
-        let result = variables
-            .consumer
-            .find_unused_subscribe_id_and_track_alias();
-
-        assert!(result.is_ok());
+        let _ = producer.find_unused_subscribe_id_and_track_alias();
     }
 
     #[test]
     fn set_namespace() {
         let namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let mut consumer = Consumer::new(10);
+        let mut producer = Producer::new(10);
 
-        let result = consumer.set_namespace(namespace);
+        let result = producer.set_namespace(namespace);
 
         assert!(result.is_ok());
     }
@@ -614,13 +584,13 @@ mod success {
     #[test]
     fn get_namespaces() {
         let namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let mut consumer = Consumer::new(10);
+        let mut producer = Producer::new(10);
 
-        let _ = consumer.set_namespace(namespace.clone());
+        let _ = producer.set_namespace(namespace.clone());
 
         let expected_result = &vec![namespace];
 
-        let result = consumer.get_namespaces().unwrap();
+        let result = producer.get_namespaces().unwrap();
 
         assert_eq!(result, expected_result);
     }
@@ -628,11 +598,11 @@ mod success {
     #[test]
     fn has_namespace() {
         let namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let mut consumer = Consumer::new(10);
+        let mut producer = Producer::new(10);
 
-        let _ = consumer.set_namespace(namespace.clone());
+        let _ = producer.set_namespace(namespace.clone());
 
-        let result = consumer.has_namespace(namespace);
+        let result = producer.has_namespace(namespace);
 
         assert!(result);
     }
@@ -640,23 +610,23 @@ mod success {
     #[test]
     fn delete_namespace() {
         let namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let mut consumer = Consumer::new(10);
+        let mut producer = Producer::new(10);
 
-        let _ = consumer.set_namespace(namespace.clone());
+        let _ = producer.set_namespace(namespace.clone());
 
-        let result = consumer.delete_namespace(namespace);
+        let result = producer.delete_namespace(namespace);
         assert!(result.is_ok());
 
-        let namespaces = consumer.get_namespaces().unwrap();
+        let namespaces = producer.get_namespaces().unwrap();
         assert!(namespaces.is_empty());
     }
 
     #[test]
     fn set_namespace_prefix() {
         let namespace_prefix = Vec::from(["test".to_string()]);
-        let mut consumer = Consumer::new(10);
+        let mut producer = Producer::new(10);
 
-        let result = consumer.set_namespace_prefix(namespace_prefix);
+        let result = producer.set_namespace_prefix(namespace_prefix);
 
         assert!(result.is_ok());
     }
@@ -664,13 +634,13 @@ mod success {
     #[test]
     fn get_namespace_prefixes() {
         let namespace_prefix = Vec::from(["test".to_string()]);
-        let mut consumer = Consumer::new(10);
+        let mut producer = Producer::new(10);
 
-        let _ = consumer.set_namespace_prefix(namespace_prefix.clone());
+        let _ = producer.set_namespace_prefix(namespace_prefix.clone());
 
         let expected_result = &vec![namespace_prefix];
 
-        let result = consumer.get_namespace_prefixes().unwrap();
+        let result = producer.get_namespace_prefixes().unwrap();
 
         assert_eq!(result, expected_result);
     }
@@ -678,14 +648,14 @@ mod success {
     #[test]
     fn delete_namespace_prefix() {
         let namespace_prefix = Vec::from(["test".to_string()]);
-        let mut consumer = Consumer::new(10);
+        let mut producer = Producer::new(10);
 
-        let _ = consumer.set_namespace_prefix(namespace_prefix.clone());
+        let _ = producer.set_namespace_prefix(namespace_prefix.clone());
 
-        let result = consumer.delete_namespace_prefix(namespace_prefix);
+        let result = producer.delete_namespace_prefix(namespace_prefix);
         assert!(result.is_ok());
 
-        let namespace_prefixes = consumer.get_namespace_prefixes().unwrap();
+        let namespace_prefixes = producer.get_namespace_prefixes().unwrap();
         assert!(namespace_prefixes.is_empty());
     }
 }
