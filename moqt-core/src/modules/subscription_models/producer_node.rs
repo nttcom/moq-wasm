@@ -105,7 +105,7 @@ impl SubscriptionNodeRegistory for Producer {
 
     fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool> {
         let subscription = self.subscriptions.get_mut(&subscribe_id).unwrap();
-        let activate = subscription.active();
+        let activate = subscription.activate();
 
         Ok(activate)
     }

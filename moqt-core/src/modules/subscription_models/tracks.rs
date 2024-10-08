@@ -40,3 +40,86 @@ impl Track {
         self.track_alias
     }
 }
+
+#[cfg(test)]
+mod succsess {
+    use super::*;
+
+    #[test]
+    fn new() {
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let forwarding_preference = Some(ForwardingPreference::Datagram);
+
+        let track = Track::new(
+            track_alias,
+            track_namespace.clone(),
+            track_name.clone(),
+            forwarding_preference.clone(),
+        );
+
+        assert_eq!(track.track_alias, track_alias);
+        assert_eq!(track.track_namespace, track_namespace);
+        assert_eq!(track.track_name, track_name);
+        assert_eq!(track.forwarding_preference, forwarding_preference);
+    }
+
+    #[test]
+    fn set_forwarding_preference() {
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let expected_forwarding_preference = Some(ForwardingPreference::Subgroup);
+
+        let mut track = Track::new(
+            track_alias,
+            track_namespace.clone(),
+            track_name.clone(),
+            None,
+        );
+        track.set_forwarding_preference(ForwardingPreference::Subgroup);
+
+        assert_eq!(track.track_alias, track_alias);
+        assert_eq!(track.track_namespace, track_namespace);
+        assert_eq!(track.track_name, track_name);
+        assert_eq!(track.forwarding_preference, expected_forwarding_preference);
+    }
+
+    #[test]
+    fn get_track_namespace_and_name() {
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let forwarding_preference = Some(ForwardingPreference::Datagram);
+
+        let track = Track::new(
+            track_alias,
+            track_namespace.clone(),
+            track_name.clone(),
+            forwarding_preference,
+        );
+
+        assert_eq!(
+            track.get_track_namespace_and_name(),
+            (track_namespace, track_name)
+        );
+    }
+
+    #[test]
+    fn test_get_track_alias() {
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let forwarding_preference = Some(ForwardingPreference::Datagram);
+
+        let track = Track::new(
+            track_alias,
+            track_namespace.clone(),
+            track_name.clone(),
+            forwarding_preference,
+        );
+
+        assert_eq!(track.get_track_alias(), track_alias);
+    }
+}
