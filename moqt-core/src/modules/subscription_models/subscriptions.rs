@@ -84,6 +84,10 @@ impl Subscription {
     pub fn get_track_alias(&self) -> u64 {
         self.track.get_track_alias()
     }
+
+    pub fn get_group_order(&self) -> GroupOrder {
+        self.group_order
+    }
 }
 
 #[cfg(test)]
