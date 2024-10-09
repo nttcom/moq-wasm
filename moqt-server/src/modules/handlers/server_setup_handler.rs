@@ -57,19 +57,33 @@ pub(crate) async fn setup_handler(
         }
     }
 
-    if client.role() == Some(RoleCase::Subscriber) {
-        // Generate producer that manages namespaces and subscriptions with subscribers.
-        // FIXME: max_subscribe_id for subscriber is fixed at 100 for now.
-        pubsub_relation_manager_repository
-            .setup_subscriber(100, client.id)
-            .await?;
-    } else if client.role() == Some(RoleCase::Publisher) {
-        // Generate consumer that manages namespaces and subscriptions with producers.
-        pubsub_relation_manager_repository
-            .setup_publisher(max_subscribe_id, client.id)
-            .await?;
-    } else if client.role().is_none() {
-        bail!("Role parameter is required in SETUP parameter from client.");
+    match client.role() {
+        Some(RoleCase::Publisher) => {
+            // Generate consumer that manages namespaces and subscriptions with producers.
+            pubsub_relation_manager_repository
+                .setup_publisher(max_subscribe_id, client.id)
+                .await?;
+        }
+        Some(RoleCase::Subscriber) => {
+            // Generate producer that manages namespaces and subscriptions with subscribers.
+            // FIXME: max_subscribe_id for subscriber is fixed at 100 for now.
+            pubsub_relation_manager_repository
+                .setup_subscriber(100, client.id)
+                .await?;
+        }
+        Some(RoleCase::PubSub) => {
+            // Generate producer and consumer that manages namespaces and subscriptions with publishers and subscribers.
+            pubsub_relation_manager_repository
+                .setup_publisher(max_subscribe_id, client.id)
+                .await?;
+            // FIXME: max_subscribe_id for subscriber is fixed at 100 for now.
+            pubsub_relation_manager_repository
+                .setup_subscriber(100, client.id)
+                .await?;
+        }
+        None => {
+            bail!("Role parameter is required in SETUP parameter from client.");
+        }
     }
 
     // Create a setup parameter with role set to 3 and assign it.
