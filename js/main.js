@@ -1,12 +1,5 @@
 import init, { MOQTClient } from './pkg/moqt_client_sample'
 
-function isAnnouncedTrackNamespaceIncludes(announcedTrackNamespaces, trackNamespace) {
-  return announcedTrackNamespaces.some(
-    (subArr) =>
-      subArr.length === trackNamespace.length && subArr.every((value, index) => value === trackNamespace[index])
-  )
-}
-
 // TODO: impl close
 init().then(async () => {
   console.log('init wasm-pack')
@@ -14,36 +7,29 @@ init().then(async () => {
   const connectBtn = document.getElementById('connectBtn')
   connectBtn.addEventListener('click', async () => {
     const url = document.form.url.value
+    const authInfo = form['auth-info'].value
 
     const client = new MOQTClient(url)
     console.log(client.id, client)
     console.log('URL:', client.url())
 
-    // TODO: Move track management to lib.rs
-    let announcedTrackNamespaces = []
-
-    const ary = new Uint8Array([1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233])
-    client.array_buffer_sample_method(ary)
-    client.array_buffer_sample_method(ary)
-
     client.onSetup(async (serverSetup) => {
       console.log({ serverSetup })
     })
 
-    client.onAnnounce(async (announceResponse) => {
-      console.log({ announceResponse })
+    client.onAnnounce(async (announceMessage) => {
+      console.log({ announceMessage })
     })
 
-    client.onSubscribe(async (subscribeResponse) => {
-      console.log('relay will want to subscribe')
-      console.log({ subscribeResponse })
+    client.onSubscribe(async (subscribeMessage, isSuccess, code) => {
+      console.log({ subscribeMessage })
+      if (isSuccess) {
+        let expire = 0n
+        let subscribeId = BigInt(subscribeMessage.subscribe_id)
 
-      // TODO: Move error handling to lib.rs
-      if (isAnnouncedTrackNamespaceIncludes(announcedTrackNamespaces, subscribeResponse.track_namespace)) {
-        client.sendSubscribeOkMessage(subscribeResponse.track_namespace, subscribeResponse.track_name, 0n, 0n)
-        console.log('send subscribe ok')
+        await client.sendSubscribeOkMessage(subscribeId, expire, authInfo)
       } else {
-        // TODO: Send subscribe error message
+        // TODO: send subscribe error
       }
     })
 
@@ -68,19 +54,14 @@ init().then(async () => {
 
       switch (messageType) {
         case 'setup':
-          await client.sendSetupMessage(role, versions)
+          let maxSubscribeId = 5n
+          await client.sendSetupMessage(role, versions, maxSubscribeId)
           break
         case 'announce':
           await client.sendAnnounceMessage(trackNamespace, 1, authInfo)
-          // TODO: Move track management to lib.rs
-          announcedTrackNamespaces.push(trackNamespace)
           break
         case 'unannounce':
           await client.sendUnannounceMessage(trackNamespace)
-          // TODO: Move track management to lib.rs
-          announcedTrackNamespaces = announcedTrackNamespaces.filter((x) => {
-            return x != trackNamespace
-          })
           break
         case 'subscribe':
           await client.sendSubscribeMessage(trackNamespace, trackName, authInfo)
