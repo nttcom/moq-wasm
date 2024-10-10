@@ -16,46 +16,46 @@ pub(crate) async fn subscribe_ok_handler(
 
     tracing::debug!("subscribe_ok_message: {:#?}", subscribe_ok_message);
 
-    let publisher_session_id = client.id;
-    let publisher_subscribe_id = subscribe_ok_message.subscribe_id();
+    let upstream_session_id = client.id;
+    let upstream_subscribe_id = subscribe_ok_message.subscribe_id();
 
     // Determine the SUBSCRIBER who sent the SUBSCRIBE using the track_namespace and track_name
-    let ids = pubsub_relation_manager_repository
-        .get_requesting_subscriber_session_ids_and_subscribe_ids(
-            publisher_subscribe_id,
-            publisher_session_id,
+    let ids_and_aliases = pubsub_relation_manager_repository
+        .get_requesting_downstream_session_ids_and_subscribe_ids(
+            upstream_subscribe_id,
+            upstream_session_id,
         )
         .await?;
-    match ids {
-        Some(ids) => {
+    match ids_and_aliases {
+        Some(ids_and_aliases) => {
             let _ = pubsub_relation_manager_repository
-                .activate_publisher_subscription(publisher_session_id, publisher_subscribe_id)
+                .activate_upstream_subscription(upstream_session_id, upstream_subscribe_id)
                 .await;
 
             // Notify all waiting subscribers with the SUBSCRIBE_OK message
-            for (subscriber_session_id, subscriber_subscribe_id) in ids.iter() {
+            for (downstream_session_id, downstream_subscribe_id) in ids_and_aliases.iter() {
                 let mut relaying_subscribe_ok_message = subscribe_ok_message.clone();
-                relaying_subscribe_ok_message.replace_subscribe_id(*subscriber_subscribe_id);
+                relaying_subscribe_ok_message.set_subscribe_id(*downstream_subscribe_id);
                 let message: Box<dyn MOQTPayload> = Box::new(relaying_subscribe_ok_message.clone());
 
                 tracing::debug!(
                     "message: {:#?} is sent to relay handler for client {:?}",
                     relaying_subscribe_ok_message,
-                    subscriber_session_id
+                    downstream_session_id
                 );
 
                 send_stream_dispatcher_repository
                     .send_message_to_send_stream_thread(
-                        *subscriber_session_id,
+                        *downstream_session_id,
                         message,
                         StreamDirection::Bi,
                     )
                     .await?;
 
                 pubsub_relation_manager_repository
-                    .activate_subscriber_subscription(
-                        *subscriber_session_id,
-                        *subscriber_subscribe_id,
+                    .activate_downstream_subscription(
+                        *downstream_session_id,
+                        *downstream_subscribe_id,
                     )
                     .await?;
 
@@ -67,7 +67,7 @@ pub(crate) async fn subscribe_ok_handler(
 
             // Activate the publisher because it is in the Requesting state
             let _ = pubsub_relation_manager_repository
-                .activate_publisher_subscription(publisher_session_id, publisher_subscribe_id)
+                .activate_upstream_subscription(upstream_session_id, upstream_subscribe_id)
                 .await;
         }
     }
@@ -79,8 +79,8 @@ pub(crate) async fn subscribe_ok_handler(
 mod success {
     use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
     use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
-        manager::pubsub_relation_manager,
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
     };
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
@@ -101,7 +101,7 @@ mod success {
     #[tokio::test]
     async fn normal_case() {
         // Generate SUBSCRIBE_OK message
-        let subscriber_subscribe_id = 0;
+        let downstream_subscribe_id = 0;
         let track_alias = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
@@ -121,7 +121,7 @@ mod success {
         let subscribe_parameters = vec![version_specific_parameter];
 
         let subscribe_ok = SubscribeOk::new(
-            subscriber_subscribe_id,
+            downstream_subscribe_id,
             expires,
             group_order,
             content_exists,
@@ -133,28 +133,28 @@ mod success {
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
-        let publisher_session_id = 1;
-        let mut client = MOQTClient::new(publisher_session_id);
+        let upstream_session_id = 1;
+        let mut client = MOQTClient::new(upstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
-        let subscriber_session_id = 2;
+        let downstream_session_id = 2;
         let max_subscribe_id = 10;
 
         let _ = pubsub_relation_manager
-            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
             .await;
-        let (publisher_subscribe_id, _) = pubsub_relation_manager
-            .set_publisher_subscription(
-                publisher_session_id,
+        let (upstream_subscribe_id, _) = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
                 track_namespace.clone(),
                 track_name.clone(),
                 subscriber_priority,
@@ -169,12 +169,12 @@ mod success {
             .unwrap();
 
         let _ = pubsub_relation_manager
-            .setup_subscriber(max_subscribe_id, subscriber_session_id)
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_subscriber_subscription(
-                subscriber_session_id,
-                subscriber_subscribe_id,
+            .set_downstream_subscription(
+                downstream_session_id,
+                downstream_subscribe_id,
                 track_alias,
                 track_namespace,
                 track_name,
@@ -188,11 +188,11 @@ mod success {
             )
             .await;
         let _ = pubsub_relation_manager
-            .register_pubsup_relation(
-                publisher_session_id,
-                publisher_subscribe_id,
-                subscriber_session_id,
-                subscriber_subscribe_id,
+            .set_pubsub_relation(
+                upstream_session_id,
+                upstream_subscribe_id,
+                downstream_session_id,
+                downstream_subscribe_id,
             )
             .await;
 
@@ -206,7 +206,7 @@ mod success {
         let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
-                session_id: subscriber_session_id,
+                session_id: downstream_session_id,
                 stream_direction: StreamDirection::Bi,
                 sender: uni_relay_tx,
             })
@@ -229,8 +229,8 @@ mod success {
 mod failure {
     use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
     use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
-        manager::pubsub_relation_manager,
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
     };
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
@@ -251,7 +251,7 @@ mod failure {
     #[tokio::test]
     async fn relay_fail() {
         // Generate SUBSCRIBE_OK message
-        let subscriber_subscribe_id = 0;
+        let downstream_subscribe_id = 0;
         let track_alias = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
@@ -271,7 +271,7 @@ mod failure {
         let subscribe_parameters = vec![version_specific_parameter];
 
         let subscribe_ok = SubscribeOk::new(
-            subscriber_subscribe_id,
+            downstream_subscribe_id,
             expires,
             group_order,
             content_exists,
@@ -283,28 +283,28 @@ mod failure {
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
-        let publisher_session_id = 1;
-        let mut client = MOQTClient::new(publisher_session_id);
+        let upstream_session_id = 1;
+        let mut client = MOQTClient::new(upstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
-        let subscriber_session_id = 2;
+        let downstream_session_id = 2;
         let max_subscribe_id = 10;
 
         let _ = pubsub_relation_manager
-            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
             .await;
-        let (publisher_subscribe_id, _) = pubsub_relation_manager
-            .set_publisher_subscription(
-                publisher_session_id,
+        let (upstream_subscribe_id, _) = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
                 track_namespace.clone(),
                 track_name.clone(),
                 subscriber_priority,
@@ -319,12 +319,12 @@ mod failure {
             .unwrap();
 
         let _ = pubsub_relation_manager
-            .setup_subscriber(max_subscribe_id, subscriber_session_id)
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_subscriber_subscription(
-                subscriber_session_id,
-                subscriber_subscribe_id,
+            .set_downstream_subscription(
+                downstream_session_id,
+                downstream_subscribe_id,
                 track_alias,
                 track_namespace,
                 track_name,
@@ -338,11 +338,11 @@ mod failure {
             )
             .await;
         let _ = pubsub_relation_manager
-            .register_pubsup_relation(
-                publisher_session_id,
-                publisher_subscribe_id,
-                subscriber_session_id,
-                subscriber_subscribe_id,
+            .set_pubsub_relation(
+                upstream_session_id,
+                upstream_subscribe_id,
+                downstream_session_id,
+                downstream_subscribe_id,
             )
             .await;
 
@@ -368,7 +368,7 @@ mod failure {
     #[tokio::test]
     async fn subscriber_not_found() {
         // Generate SUBSCRIBE_OK message
-        let subscriber_subscribe_id = 0;
+        let downstream_subscribe_id = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
@@ -387,7 +387,7 @@ mod failure {
         let subscribe_parameters = vec![version_specific_parameter];
 
         let subscribe_ok = SubscribeOk::new(
-            subscriber_subscribe_id,
+            downstream_subscribe_id,
             expires,
             group_order,
             content_exists,
@@ -399,28 +399,28 @@ mod failure {
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
-        let publisher_session_id = 1;
-        let mut client = MOQTClient::new(publisher_session_id);
+        let upstream_session_id = 1;
+        let mut client = MOQTClient::new(upstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
-        let subscriber_session_id = 2;
+        let downstream_session_id = 2;
         let max_subscribe_id = 10;
 
         let _ = pubsub_relation_manager
-            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_subscription(
-                publisher_session_id,
+            .set_upstream_subscription(
+                upstream_session_id,
                 track_namespace.clone(),
                 track_name.clone(),
                 subscriber_priority,
@@ -444,7 +444,7 @@ mod failure {
         let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
-                session_id: subscriber_session_id,
+                session_id: downstream_session_id,
                 stream_direction: StreamDirection::Bi,
                 sender: uni_relay_tx,
             })
@@ -465,7 +465,7 @@ mod failure {
     #[tokio::test]
     async fn subscriber_already_activated() {
         // Generate SUBSCRIBE_OK message
-        let subscriber_subscribe_id = 0;
+        let downstream_subscribe_id = 0;
         let track_alias = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
@@ -485,7 +485,7 @@ mod failure {
         let subscribe_parameters = vec![version_specific_parameter];
 
         let subscribe_ok = SubscribeOk::new(
-            subscriber_subscribe_id,
+            downstream_subscribe_id,
             expires,
             group_order,
             content_exists,
@@ -497,28 +497,28 @@ mod failure {
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
-        let publisher_session_id = 1;
-        let mut client = MOQTClient::new(publisher_session_id);
+        let upstream_session_id = 1;
+        let mut client = MOQTClient::new(upstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
-        let subscriber_session_id = 2;
+        let downstream_session_id = 2;
         let max_subscribe_id = 10;
 
         let _ = pubsub_relation_manager
-            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
             .await;
-        let (publisher_subscribe_id, _) = pubsub_relation_manager
-            .set_publisher_subscription(
-                publisher_session_id,
+        let (upstream_subscribe_id, _) = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
                 track_namespace.clone(),
                 track_name.clone(),
                 subscriber_priority,
@@ -533,12 +533,12 @@ mod failure {
             .unwrap();
 
         let _ = pubsub_relation_manager
-            .setup_subscriber(max_subscribe_id, subscriber_session_id)
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_subscriber_subscription(
-                subscriber_session_id,
-                subscriber_subscribe_id,
+            .set_downstream_subscription(
+                downstream_session_id,
+                downstream_subscribe_id,
                 track_alias,
                 track_namespace,
                 track_name,
@@ -552,16 +552,16 @@ mod failure {
             )
             .await;
         let _ = pubsub_relation_manager
-            .register_pubsup_relation(
-                publisher_session_id,
-                publisher_subscribe_id,
-                subscriber_session_id,
-                subscriber_subscribe_id,
+            .set_pubsub_relation(
+                upstream_session_id,
+                upstream_subscribe_id,
+                downstream_session_id,
+                downstream_subscribe_id,
             )
             .await;
 
         let _ = pubsub_relation_manager
-            .activate_subscriber_subscription(subscriber_session_id, subscriber_subscribe_id)
+            .activate_downstream_subscription(downstream_session_id, downstream_subscribe_id)
             .await;
 
         // Generate SendStreamDispacher
@@ -574,7 +574,7 @@ mod failure {
         let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
-                session_id: subscriber_session_id,
+                session_id: downstream_session_id,
                 stream_direction: StreamDirection::Bi,
                 sender: uni_relay_tx,
             })
@@ -595,7 +595,7 @@ mod failure {
     #[tokio::test]
     async fn publisher_already_activated() {
         // Generate SUBSCRIBE_OK message
-        let subscriber_subscribe_id = 0;
+        let downstream_subscribe_id = 0;
         let track_alias = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
@@ -615,7 +615,7 @@ mod failure {
         let subscribe_parameters = vec![version_specific_parameter];
 
         let subscribe_ok = SubscribeOk::new(
-            subscriber_subscribe_id,
+            downstream_subscribe_id,
             expires,
             group_order,
             content_exists,
@@ -627,28 +627,28 @@ mod failure {
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
-        let publisher_session_id = 1;
-        let mut client = MOQTClient::new(publisher_session_id);
+        let upstream_session_id = 1;
+        let mut client = MOQTClient::new(upstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
-        let subscriber_session_id = 2;
+        let downstream_session_id = 2;
         let max_subscribe_id = 10;
 
         let _ = pubsub_relation_manager
-            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(track_namespace.clone(), publisher_session_id)
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
             .await;
-        let (publisher_subscribe_id, _) = pubsub_relation_manager
-            .set_publisher_subscription(
-                publisher_session_id,
+        let (upstream_subscribe_id, _) = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
                 track_namespace.clone(),
                 track_name.clone(),
                 subscriber_priority,
@@ -663,12 +663,12 @@ mod failure {
             .unwrap();
 
         let _ = pubsub_relation_manager
-            .setup_subscriber(max_subscribe_id, subscriber_session_id)
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_subscriber_subscription(
-                subscriber_session_id,
-                subscriber_subscribe_id,
+            .set_downstream_subscription(
+                downstream_session_id,
+                downstream_subscribe_id,
                 track_alias,
                 track_namespace,
                 track_name,
@@ -682,16 +682,16 @@ mod failure {
             )
             .await;
         let _ = pubsub_relation_manager
-            .register_pubsup_relation(
-                publisher_session_id,
-                publisher_subscribe_id,
-                subscriber_session_id,
-                subscriber_subscribe_id,
+            .set_pubsub_relation(
+                upstream_session_id,
+                upstream_subscribe_id,
+                downstream_session_id,
+                downstream_subscribe_id,
             )
             .await;
 
         let _ = pubsub_relation_manager
-            .activate_publisher_subscription(publisher_session_id, publisher_subscribe_id)
+            .activate_upstream_subscription(upstream_session_id, upstream_subscribe_id)
             .await;
 
         // Generate SendStreamDispacher
@@ -704,7 +704,7 @@ mod failure {
         let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
-                session_id: subscriber_session_id,
+                session_id: downstream_session_id,
                 stream_direction: StreamDirection::Bi,
                 sender: uni_relay_tx,
             })

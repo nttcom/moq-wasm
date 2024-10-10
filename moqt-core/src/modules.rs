@@ -1,9 +1,9 @@
 pub mod constants;
 pub mod control_message_type;
 pub mod messages;
+pub mod models;
 pub mod moqt_client;
 pub mod pubsub_relation_manager_repository;
 pub mod send_stream_dispatcher_repository;
-pub mod subscription_models;
 pub mod variable_bytes;
 pub mod variable_integer;

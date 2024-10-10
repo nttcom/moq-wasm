@@ -1,5 +1,5 @@
 use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use crate::subscription_models::subscriptions::Subscription;
+use crate::models::subscriptions::Subscription;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -9,55 +9,54 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
     async fn setup_publisher(
         &self,
         max_subscribe_id: u64,
-        publisher_session_id: usize,
+        upstream_session_id: usize,
     ) -> Result<()>;
-    async fn set_publisher_announced_namespace(
+    async fn set_upstream_announced_namespace(
         &self,
         track_namespace: Vec<String>,
-        publisher_session_id: usize,
+        upstream_session_id: usize,
     ) -> Result<()>;
     async fn setup_subscriber(
         &self,
         max_subscribe_id: u64,
-        subscriber_session_id: usize,
+        downstream_session_id: usize,
     ) -> Result<()>;
-    async fn is_valid_subscriber_subscribe_id(
+    async fn is_valid_downstream_subscribe_id(
         &self,
         subscribe_id: u64,
-        subscriber_session_id: usize,
+        downstream_session_id: usize,
     ) -> Result<bool>;
-    async fn is_valid_subscriber_track_alias(
+    async fn is_valid_downstream_track_alias(
         &self,
         track_alias: u64,
-        subscriber_session_id: usize,
+        downstream_session_id: usize,
     ) -> Result<bool>;
     async fn is_track_existing(
         &self,
         track_namespace: Vec<String>,
         track_name: String,
     ) -> Result<bool>;
-    async fn get_publisher_subscription_by_full_track_name(
+    async fn get_upstream_subscription_by_full_track_name(
         &self,
         track_namespace: Vec<String>,
         track_name: String,
     ) -> Result<Option<Subscription>>;
-    async fn get_publisher_session_id(&self, track_namespace: Vec<String>)
-        -> Result<Option<usize>>;
-    async fn get_requesting_subscriber_session_ids_and_subscribe_ids(
+    async fn get_upstream_session_id(&self, track_namespace: Vec<String>) -> Result<Option<usize>>;
+    async fn get_requesting_downstream_session_ids_and_subscribe_ids(
         &self,
-        publisher_subscribe_id: u64,
-        publisher_session_id: usize,
+        upstream_subscribe_id: u64,
+        upstream_session_id: usize,
     ) -> Result<Option<Vec<(usize, u64)>>>;
-    async fn get_publisher_subscribe_id(
+    async fn get_upstream_subscribe_id(
         &self,
         track_namespace: Vec<String>,
         track_name: String,
-        publisher_session_id: usize,
+        upstream_session_id: usize,
     ) -> Result<Option<u64>>;
     #[allow(clippy::too_many_arguments)]
-    async fn set_subscriber_subscription(
+    async fn set_downstream_subscription(
         &self,
-        subscriber_session_id: usize,
+        downstream_session_id: usize,
         subscribe_id: u64,
         track_alias: u64,
         track_namespace: Vec<String>,
@@ -71,9 +70,9 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         end_object: Option<u64>,
     ) -> Result<()>;
     #[allow(clippy::too_many_arguments)]
-    async fn set_publisher_subscription(
+    async fn set_upstream_subscription(
         &self,
-        publisher_session_id: usize,
+        upstream_session_id: usize,
         track_namespace: Vec<String>,
         track_name: String,
         subscriber_priority: u8,
@@ -84,27 +83,27 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         end_group: Option<u64>,
         end_object: Option<u64>,
     ) -> Result<(u64, u64)>;
-    async fn register_pubsup_relation(
+    async fn set_pubsub_relation(
         &self,
-        publisher_session_id: usize,
-        publisher_subscribe_id: u64,
-        subscriber_session_id: usize,
-        subscriber_subscribe_id: u64,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
     ) -> Result<()>;
-    async fn activate_subscriber_subscription(
+    async fn activate_downstream_subscription(
         &self,
-        subscriber_session_id: usize,
+        downstream_session_id: usize,
         subscribe_id: u64,
     ) -> Result<bool>;
-    async fn activate_publisher_subscription(
+    async fn activate_upstream_subscription(
         &self,
-        publisher_session_id: usize,
+        upstream_session_id: usize,
         subscribe_id: u64,
     ) -> Result<bool>;
-    async fn delete_publisher_announced_namespace(
+    async fn delete_upstream_announced_namespace(
         &self,
         track_namespace: Vec<String>,
-        publisher_session_id: usize,
+        upstream_session_id: usize,
     ) -> Result<bool>;
     async fn delete_client(&self, session_id: usize) -> Result<bool>;
 }

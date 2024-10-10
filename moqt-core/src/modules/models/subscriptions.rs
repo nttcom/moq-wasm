@@ -1,6 +1,8 @@
+pub mod nodes;
+
 use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use crate::subscription_models::tracks::ForwardingPreference;
-use crate::subscription_models::tracks::Track;
+use crate::models::tracks::ForwardingPreference;
+use crate::models::tracks::Track;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Status {
@@ -18,7 +20,7 @@ pub struct Subscription {
     start_object: Option<u64>,
     end_group: Option<u64>,
     end_object: Option<u64>,
-    subscription_status: Status,
+    status: Status,
 }
 
 impl Subscription {
@@ -52,7 +54,7 @@ impl Subscription {
             start_object,
             end_group,
             end_object,
-            subscription_status: Status::Requesting,
+            status: Status::Requesting,
         }
     }
 
@@ -60,17 +62,17 @@ impl Subscription {
         if self.is_active() {
             false
         } else {
-            self.subscription_status = Status::Active;
+            self.status = Status::Active;
             true
         }
     }
 
     pub fn is_active(&self) -> bool {
-        self.subscription_status == Status::Active
+        self.status == Status::Active
     }
 
     pub fn is_requesting(&self) -> bool {
-        self.subscription_status == Status::Requesting
+        self.status == Status::Requesting
     }
 
     pub fn set_forwarding_preference(&mut self, forwarding_preference: ForwardingPreference) {
@@ -91,11 +93,11 @@ impl Subscription {
 }
 
 #[cfg(test)]
-pub(crate) mod test_utils {
+pub(crate) mod test_helper_fn {
     use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
 
     #[derive(Debug, Clone)]
-    pub(crate) struct SubscriptionUtils {
+    pub(crate) struct SubscriptionVariables {
         pub(crate) track_alias: u64,
         pub(crate) track_namespace: Vec<String>,
         pub(crate) track_name: String,
@@ -108,31 +110,29 @@ pub(crate) mod test_utils {
         pub(crate) end_object: Option<u64>,
     }
 
-    impl SubscriptionUtils {
-        pub(crate) fn normal_variable() -> Self {
-            let track_alias = 0;
-            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-            let track_name = "track_name".to_string();
-            let subscriber_priority = 0;
-            let group_order = GroupOrder::Ascending;
-            let filter_type = FilterType::AbsoluteStart;
-            let start_group = Some(0);
-            let start_object = Some(0);
-            let end_group = None;
-            let end_object = None;
+    pub(crate) fn common_subscription_variable() -> SubscriptionVariables {
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
 
-            SubscriptionUtils {
-                track_alias,
-                track_namespace,
-                track_name,
-                subscriber_priority,
-                group_order,
-                filter_type,
-                start_group,
-                start_object,
-                end_group,
-                end_object,
-            }
+        SubscriptionVariables {
+            track_alias,
+            track_namespace,
+            track_name,
+            subscriber_priority,
+            group_order,
+            filter_type,
+            start_group,
+            start_object,
+            end_group,
+            end_object,
         }
     }
 }
@@ -140,7 +140,7 @@ pub(crate) mod test_utils {
 #[cfg(test)]
 mod success {
     use super::*;
-    use crate::subscription_models::tracks::ForwardingPreference;
+    use crate::models::tracks::ForwardingPreference;
 
     #[test]
     fn new() {
@@ -186,7 +186,7 @@ mod success {
 
     #[test]
     fn activate() {
-        let variable = test_utils::SubscriptionUtils::normal_variable();
+        let variable = test_helper_fn::common_subscription_variable();
 
         let mut subscription = Subscription::new(
             variable.track_alias,
@@ -211,7 +211,7 @@ mod success {
 
     #[test]
     fn is_active() {
-        let variable = test_utils::SubscriptionUtils::normal_variable();
+        let variable = test_helper_fn::common_subscription_variable();
 
         let mut subscription = Subscription::new(
             variable.track_alias,
@@ -235,7 +235,7 @@ mod success {
 
     #[test]
     fn is_requesting() {
-        let variable = test_utils::SubscriptionUtils::normal_variable();
+        let variable = test_helper_fn::common_subscription_variable();
 
         let mut subscription = Subscription::new(
             variable.track_alias,
@@ -259,7 +259,7 @@ mod success {
 
     #[test]
     fn get_track_namespace_and_name() {
-        let variable = test_utils::SubscriptionUtils::normal_variable();
+        let variable = test_helper_fn::common_subscription_variable();
 
         let subscription = Subscription::new(
             variable.track_alias,
@@ -283,7 +283,7 @@ mod success {
 
     #[test]
     fn get_track_alias() {
-        let variable = test_utils::SubscriptionUtils::normal_variable();
+        let variable = test_helper_fn::common_subscription_variable();
 
         let subscription = Subscription::new(
             variable.track_alias,

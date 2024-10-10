@@ -48,7 +48,7 @@ impl SubscribeOk {
         self.subscribe_id
     }
 
-    pub fn replace_subscribe_id(&mut self, subscribe_id: u64) {
+    pub fn set_subscribe_id(&mut self, subscribe_id: u64) {
         self.subscribe_id = subscribe_id;
     }
 }

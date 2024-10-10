@@ -1,6 +1,6 @@
 use anyhow::Result;
 use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use moqt_core::subscription_models::subscriptions::Subscription;
+use moqt_core::models::subscriptions::Subscription;
 use tokio::sync::oneshot;
 
 #[cfg(test)]
@@ -13,27 +13,27 @@ use crate::modules::pubsub_relation_manager::{
 pub(crate) enum PubSubRelationCommand {
     SetupPublisher {
         max_subscribe_id: u64,
-        publisher_session_id: usize,
+        upstream_session_id: usize,
         resp: oneshot::Sender<Result<()>>,
     },
-    SetPublisherAnnouncedNamespace {
+    SetUpstreamAnnouncedNamespace {
         track_namespace: Vec<String>,
-        publisher_session_id: usize,
+        upstream_session_id: usize,
         resp: oneshot::Sender<Result<()>>,
     },
     SetupSubscriber {
         max_subscribe_id: u64,
-        subscriber_session_id: usize,
+        downstream_session_id: usize,
         resp: oneshot::Sender<Result<()>>,
     },
-    IsValidSubscriberSubscribeId {
+    IsValidDownstreamSubscribeId {
         subscribe_id: u64,
-        subscriber_session_id: usize,
+        downstream_session_id: usize,
         resp: oneshot::Sender<Result<bool>>,
     },
-    IsValidSubscriberTrackAlias {
+    IsValidDownstreamTrackAlias {
         track_alias: u64,
-        subscriber_session_id: usize,
+        downstream_session_id: usize,
         resp: oneshot::Sender<Result<bool>>,
     },
     IsTrackExisting {
@@ -41,29 +41,29 @@ pub(crate) enum PubSubRelationCommand {
         track_name: String,
         resp: oneshot::Sender<Result<bool>>,
     },
-    GetPublisherSubscription {
+    GetUpstreamSubscription {
         track_namespace: Vec<String>,
         track_name: String,
         resp: oneshot::Sender<Result<Option<Subscription>>>,
     },
-    GetPublisherSessionId {
+    GetUpstreamSessionId {
         track_namespace: Vec<String>,
         resp: oneshot::Sender<Result<Option<usize>>>,
     },
-    GetRequestingSubscriberSessionIdsAndSubscribeIds {
-        publisher_subscribe_id: u64,
-        publisher_session_id: usize,
+    GetRequestingDownstreamSessionIdsAndSubscribeIds {
+        upstream_subscribe_id: u64,
+        upstream_session_id: usize,
         #[allow(clippy::type_complexity)]
         resp: oneshot::Sender<Result<Option<Vec<(usize, u64)>>>>,
     },
-    GetPublisherSubscribeId {
+    GetUpstreamSubscribeId {
         track_namespace: Vec<String>,
         track_name: String,
-        publisher_session_id: usize,
+        upstream_session_id: usize,
         resp: oneshot::Sender<Result<Option<u64>>>,
     },
-    SetSubscriberSubscription {
-        subscriber_session_id: usize,
+    SetDownstreamSubscription {
+        downstream_session_id: usize,
         subscribe_id: u64,
         track_alias: u64,
         track_namespace: Vec<String>,
@@ -77,8 +77,8 @@ pub(crate) enum PubSubRelationCommand {
         end_object: Option<u64>,
         resp: oneshot::Sender<Result<()>>,
     },
-    SetPublisherSubscription {
-        publisher_session_id: usize,
+    SetUpstreamSubscription {
+        upstream_session_id: usize,
         track_namespace: Vec<String>,
         track_name: String,
         subscriber_priority: u8,
@@ -90,26 +90,26 @@ pub(crate) enum PubSubRelationCommand {
         end_object: Option<u64>,
         resp: oneshot::Sender<Result<(u64, u64)>>,
     },
-    RegisterPubSubRelation {
-        publisher_session_id: usize,
-        publisher_subscribe_id: u64,
-        subscriber_session_id: usize,
-        subscriber_subscribe_id: u64,
+    SetPubSubRelation {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
         resp: oneshot::Sender<Result<()>>,
     },
-    ActivateSubscriberSubscription {
-        subscriber_session_id: usize,
+    ActivateDownstreamSubscription {
+        downstream_session_id: usize,
         subscribe_id: u64,
         resp: oneshot::Sender<Result<bool>>,
     },
-    ActivatePublisherSubscription {
-        publisher_session_id: usize,
+    ActivateUpstreamSubscription {
+        upstream_session_id: usize,
         subscribe_id: u64,
         resp: oneshot::Sender<Result<bool>>,
     },
-    DeletePublisherAnnouncedNamespace {
+    DeleteUpstreamAnnouncedNamespace {
         track_namespace: Vec<String>,
-        publisher_session_id: usize,
+        upstream_session_id: usize,
         resp: oneshot::Sender<Result<bool>>,
     },
     DeleteClient {
