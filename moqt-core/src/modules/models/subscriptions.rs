@@ -304,7 +304,7 @@ mod success {
 
     #[test]
     fn get_group_order() {
-        let variable = test_utils::SubscriptionUtils::normal_variable();
+        let variable = test_helper_fn::common_subscription_variable();
 
         let subscription = Subscription::new(
             variable.track_alias,
