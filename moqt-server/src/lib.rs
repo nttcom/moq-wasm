@@ -192,8 +192,8 @@ async fn handle_connection(
     });
 
     #[allow(unused_variables)]
-    let (open_tx, mut open_rx) = mpsc::channel::<DataStreamType>(32);
-    let (close_tx, mut close_rx) = mpsc::channel::<(u64, String)>(32);
+    let (open_ch_tx, mut open_ch_rx) = mpsc::channel::<DataStreamType>(32);
+    let (close_conn_tx, mut close_conn_rx) = mpsc::channel::<(u64, String)>(32);
 
     // TODO: FIXME: Need to store information between threads for QUIC-level reconnection support
     let mut is_control_stream_opened = false;
@@ -206,7 +206,7 @@ async fn handle_connection(
                 if is_control_stream_opened {
                     // Only 1 control stream is allowed
                     tracing::error!("Control stream already opened");
-                    close_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    close_conn_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
                 }
                 is_control_stream_opened = true;
@@ -227,7 +227,7 @@ async fn handle_connection(
                 let buffer_tx = buffer_tx.clone();
                 let track_namespace_tx = track_namespace_tx.clone();
                 let send_stream_tx = send_stream_tx.clone();
-                let close_tx = close_tx.clone();
+                let close_conn_tx = close_conn_tx.clone();
                 let client= client.clone();
 
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
@@ -247,7 +247,7 @@ async fn handle_connection(
                         recv_stream,
                         shread_send_stream: send_stream,
                     };
-                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_tx, send_stream_tx).instrument(session_span_clone).await
+                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_conn_tx, send_stream_tx).instrument(session_span_clone).await
 
                 // Propagate the current span (Connection)
                 }.in_current_span());
@@ -264,16 +264,16 @@ async fn handle_connection(
             },
             // Waiting for a uni-directional recv stream and processing the received message
             stream = connection.accept_uni() => {
-                // TODO: handle recv uni-directional stream and open send stream with open_tx
+                // TODO: handle recv uni-directional stream and open send stream with open_ch_tx
                 unimplemented!();
             },
             // Waiting for a uni-directional send stream open request and relaying the message
-            Some(data_stream_type) = open_rx.recv() => {
+            Some(data_stream_type) = open_ch_rx.recv() => {
 
                 if !is_control_stream_opened {
                     // Decline the request if the control stream is not opened
                     tracing::error!("Control stream is not opened yet");
-                    close_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    close_conn_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
                 }
 
@@ -295,7 +295,7 @@ async fn handle_connection(
 
             },
             // TODO: Not implemented yet
-            Some((_code, _reason)) = close_rx.recv() => {
+            Some((_code, _reason)) = close_conn_rx.recv() => {
                 tracing::error!("Close channel received");
                 // FIXME: I want to close the connection, but VarInt is not exported, so I'll leave it as is
                 // Maybe it's in wtransport-proto?
@@ -341,7 +341,7 @@ async fn handle_incoming_bi_stream(
     client: Arc<Mutex<MOQTClient>>,
     buffer_tx: Sender<BufferCommand>,
     track_namespace_tx: Sender<TrackCommand>,
-    close_tx: Sender<(u64, String)>,
+    close_conn_tx: Sender<(u64, String)>,
     send_stream_tx: Sender<SendStreamDispatchCommand>,
 ) -> Result<()> {
     let mut buffer = vec![0; 65536].into_boxed_slice();
@@ -392,7 +392,7 @@ async fn handle_incoming_bi_stream(
             }
             MessageProcessResult::SuccessWithoutResponse => {}
             MessageProcessResult::Failure(code, message) => {
-                close_tx.send((u8::from(code) as u64, message)).await?;
+                close_conn_tx.send((u8::from(code) as u64, message)).await?;
                 break;
             }
             MessageProcessResult::Fragment => (),
