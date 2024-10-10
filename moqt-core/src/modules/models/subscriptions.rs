@@ -86,6 +86,10 @@ impl Subscription {
     pub fn get_track_alias(&self) -> u64 {
         self.track.get_track_alias()
     }
+
+    pub fn get_group_order(&self) -> GroupOrder {
+        self.group_order
+    }
 }
 
 #[cfg(test)]
@@ -296,5 +300,26 @@ mod success {
         );
 
         assert_eq!(subscription.get_track_alias(), variable.track_alias);
+    }
+
+    #[test]
+    fn get_group_order() {
+        let variable = test_helper_fn::common_subscription_variable();
+
+        let subscription = Subscription::new(
+            variable.track_alias,
+            variable.track_namespace,
+            variable.track_name,
+            variable.subscriber_priority,
+            variable.group_order,
+            variable.filter_type,
+            variable.start_group,
+            variable.start_object,
+            variable.end_group,
+            variable.end_object,
+            None,
+        );
+
+        assert_eq!(subscription.get_group_order(), variable.group_order);
     }
 }
