@@ -47,6 +47,10 @@ impl SubscribeOk {
     pub fn subscribe_id(&self) -> u64 {
         self.subscribe_id
     }
+
+    pub fn set_subscribe_id(&mut self, subscribe_id: u64) {
+        self.subscribe_id = subscribe_id;
+    }
 }
 
 impl MOQTPayload for SubscribeOk {
