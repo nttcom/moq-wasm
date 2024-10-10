@@ -1,6 +1,5 @@
 use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use crate::subscription_models::nodes::node_registory::SubscriptionNodeRegistory;
-use crate::subscription_models::subscriptions::Subscription;
+use crate::models::subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription};
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
@@ -14,6 +13,7 @@ pub struct Consumer {
     announced_namespaces: Vec<TrackNamespace>,
     subscribing_namespace_prefixes: Vec<TrackNamespace>,
     subscriptions: HashMap<SubscribeId, Subscription>,
+    latest_subscribe_id: u64,
 }
 
 impl Consumer {
@@ -23,11 +23,12 @@ impl Consumer {
             announced_namespaces: Vec::new(),
             subscribing_namespace_prefixes: Vec::new(),
             subscriptions: HashMap::new(),
+            latest_subscribe_id: 0,
         }
     }
 }
 
-impl SubscriptionNodeRegistory for Consumer {
+impl SubscriptionNodeRegistry for Consumer {
     fn set_subscription(
         &mut self,
         subscribe_id: SubscribeId,
@@ -57,6 +58,7 @@ impl SubscriptionNodeRegistory for Consumer {
             None,
         );
 
+        self.latest_subscribe_id = subscribe_id + 1;
         self.subscriptions.insert(subscribe_id, subscription);
 
         Ok(())
@@ -105,9 +107,9 @@ impl SubscriptionNodeRegistory for Consumer {
 
     fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool> {
         let subscription = self.subscriptions.get_mut(&subscribe_id).unwrap();
-        let activate = subscription.activate();
+        let is_activated = subscription.activate();
 
-        Ok(activate)
+        Ok(is_activated)
     }
 
     fn is_requesting(&self, subscribe_id: SubscribeId) -> bool {
@@ -122,23 +124,29 @@ impl SubscriptionNodeRegistory for Consumer {
         Ok(())
     }
 
-    fn is_within_max_subscribe_id(&self, subscribe_id: SubscribeId) -> bool {
-        subscribe_id <= self.max_subscriber_id
+    fn is_subscribe_id_valid(&self, subscribe_id: SubscribeId) -> bool {
+        let is_less_than_max_subscribe_id = subscribe_id < self.max_subscriber_id;
+        let is_unique = !self.subscriptions.contains_key(&subscribe_id);
+
+        is_less_than_max_subscribe_id && is_unique
     }
 
-    fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool {
-        !self.subscriptions.contains_key(&subscribe_id)
-    }
-
-    fn is_track_alias_unique(&self, track_alias: TrackAlias) -> bool {
-        !self
+    fn is_track_alias_valid(&self, track_alias: TrackAlias) -> bool {
+        let is_unique = !self
             .subscriptions
             .values()
-            .any(|subscription| subscription.get_track_alias() == track_alias)
+            .any(|subscription| subscription.get_track_alias() == track_alias);
+
+        is_unique
     }
-    fn find_unused_subscribe_id_and_track_alias(&self) -> Result<(SubscribeId, TrackAlias)> {
-        for subscribe_id in 0..=self.max_subscriber_id {
-            if !self.subscriptions.contains_key(&subscribe_id) {
+
+    fn create_latest_subscribe_id_and_track_alias(&self) -> Result<(SubscribeId, TrackAlias)> {
+        let subscribe_id = self.latest_subscribe_id;
+        match self.is_subscribe_id_valid(subscribe_id) {
+            false => {
+                bail!("No available subscribe_id.");
+            }
+            true => {
                 for track_alias in 0.. {
                     if !self
                         .subscriptions
@@ -148,10 +156,10 @@ impl SubscriptionNodeRegistory for Consumer {
                         return Ok((subscribe_id, track_alias));
                     }
                 }
+
+                bail!("No available track_alias.");
             }
         }
-
-        bail!("No available subscribe_id and track_alias.");
     }
 
     fn set_namespace(&mut self, namespace: TrackNamespace) -> Result<()> {
@@ -214,12 +222,12 @@ impl SubscriptionNodeRegistory for Consumer {
 }
 
 #[cfg(test)]
-pub(crate) mod test_utils {
+pub(crate) mod test_helper_fn {
     use super::{Consumer, TrackNamespace};
-    use crate::subscription_models::nodes::consumer_node::{FilterType, GroupOrder};
+    use crate::models::subscriptions::nodes::consumers::{FilterType, GroupOrder};
 
     #[derive(Debug, Clone)]
-    pub(crate) struct SubscriptionUtils {
+    pub(crate) struct SubscriptionVariables {
         pub(crate) consumer: Consumer,
         pub(crate) subscribe_id: u64,
         pub(crate) track_alias: u64,
@@ -234,34 +242,32 @@ pub(crate) mod test_utils {
         pub(crate) end_object: Option<u64>,
     }
 
-    impl SubscriptionUtils {
-        pub(crate) fn normal_variable(subscribe_id: u64) -> Self {
-            let consumer = Consumer::new(10);
-            let track_alias = 0;
-            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-            let track_name = "track_name".to_string();
-            let subscriber_priority = 0;
-            let group_order = GroupOrder::Ascending;
-            let filter_type = FilterType::AbsoluteStart;
-            let start_group = Some(0);
-            let start_object = Some(0);
-            let end_group = None;
-            let end_object = None;
+    pub(crate) fn common_subscription_variable(subscribe_id: u64) -> SubscriptionVariables {
+        let consumer = Consumer::new(10);
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
 
-            SubscriptionUtils {
-                consumer,
-                subscribe_id,
-                track_alias,
-                track_namespace,
-                track_name,
-                subscriber_priority,
-                group_order,
-                filter_type,
-                start_group,
-                start_object,
-                end_group,
-                end_object,
-            }
+        SubscriptionVariables {
+            consumer,
+            subscribe_id,
+            track_alias,
+            track_namespace,
+            track_name,
+            subscriber_priority,
+            group_order,
+            filter_type,
+            start_group,
+            start_object,
+            end_group,
+            end_object,
         }
     }
 }
@@ -269,13 +275,13 @@ pub(crate) mod test_utils {
 #[cfg(test)]
 mod success {
     use super::*;
-    use crate::subscription_models::nodes::consumer_node::test_utils::SubscriptionUtils;
-    use crate::subscription_models::subscriptions::Subscription;
+    use crate::models::subscriptions::nodes::consumers::test_helper_fn;
+    use crate::models::subscriptions::Subscription;
 
     #[test]
     fn set_subscription() {
         let subscribe_id = 0;
-        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
         let result = variables.consumer.set_subscription(
             variables.subscribe_id,
@@ -297,7 +303,7 @@ mod success {
     #[test]
     fn get_subscription() {
         let subscribe_id = 0;
-        let variables = SubscriptionUtils::normal_variable(subscribe_id);
+        let variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
         let mut variables_clone = variables.clone();
         let _ = variables_clone.consumer.set_subscription(
@@ -339,7 +345,7 @@ mod success {
     #[test]
     fn get_subscription_by_full_track_name() {
         let subscribe_id = 0;
-        let variables = SubscriptionUtils::normal_variable(subscribe_id);
+        let variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
         let mut variables_clone = variables.clone();
         let _ = variables_clone.consumer.set_subscription(
@@ -384,7 +390,7 @@ mod success {
     #[test]
     fn get_subscribe_id() {
         let subscribe_id = 0;
-        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
         let _ = variables.consumer.set_subscription(
             variables.subscribe_id,
@@ -414,7 +420,7 @@ mod success {
     #[test]
     fn has_track() {
         let subscribe_id = 0;
-        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
         let _ = variables.consumer.set_subscription(
             variables.subscribe_id,
@@ -440,7 +446,7 @@ mod success {
     #[test]
     fn activate_subscription() {
         let subscribe_id = 0;
-        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
         let _ = variables.consumer.set_subscription(
             variables.subscribe_id,
@@ -467,7 +473,7 @@ mod success {
     #[test]
     fn is_requesting() {
         let subscribe_id = 0;
-        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
         let _ = variables.consumer.set_subscription(
             variables.subscribe_id,
@@ -491,7 +497,7 @@ mod success {
     #[test]
     fn delete_subscription() {
         let subscribe_id = 0;
-        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
         let _ = variables.consumer.set_subscription(
             variables.subscribe_id,
@@ -515,20 +521,9 @@ mod success {
     }
 
     #[test]
-    fn is_within_max_subscribe_id() {
-        let max_subscribe_id = 10;
-        let subscribe_id = 5;
-
-        let consumer = Consumer::new(max_subscribe_id);
-        let result = consumer.is_within_max_subscribe_id(subscribe_id);
-
-        assert!(result);
-    }
-
-    #[test]
-    fn is_subscribe_id_unique() {
+    fn is_subscribe_id_valid() {
         let subscribe_id = 0;
-        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
         let _ = variables.consumer.set_subscription(
             variables.subscribe_id,
@@ -546,15 +541,15 @@ mod success {
 
         let result = variables
             .consumer
-            .is_subscribe_id_unique(variables.subscribe_id);
+            .is_subscribe_id_valid(variables.subscribe_id);
 
         assert!(!result);
     }
 
     #[test]
-    fn is_track_alias_unique() {
+    fn is_track_alias_valid() {
         let track_alias = 100;
-        let mut variables = SubscriptionUtils::normal_variable(0);
+        let mut variables = test_helper_fn::common_subscription_variable(0);
 
         let _ = variables.consumer.set_subscription(
             variables.subscribe_id,
@@ -570,15 +565,15 @@ mod success {
             variables.end_object,
         );
 
-        let result = variables.consumer.is_track_alias_unique(track_alias);
+        let result = variables.consumer.is_track_alias_valid(track_alias);
 
         assert!(result);
     }
 
     #[test]
-    fn find_unused_subscribe_id_and_track_alias() {
+    fn create_latest_subscribe_id_and_track_alias() {
         let subscribe_id = 0;
-        let mut variables = SubscriptionUtils::normal_variable(subscribe_id);
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
         let _ = variables.consumer.set_subscription(
             variables.subscribe_id,
@@ -596,9 +591,13 @@ mod success {
 
         let result = variables
             .consumer
-            .find_unused_subscribe_id_and_track_alias();
+            .create_latest_subscribe_id_and_track_alias();
 
         assert!(result.is_ok());
+
+        let expected_id_and_alias = (variables.subscribe_id + 1, variables.track_alias + 1);
+
+        assert_eq!(result.unwrap(), expected_id_and_alias);
     }
 
     #[test]

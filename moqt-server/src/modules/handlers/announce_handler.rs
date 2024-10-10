@@ -23,7 +23,7 @@ pub(crate) async fn announce_handler(
 
     // Record the announced Track Namespace
     let set_result = pubsub_relation_manager_repository
-        .set_publisher_announced_namespace(announce_message.track_namespace().clone(), client.id)
+        .set_upstream_announced_namespace(announce_message.track_namespace().clone(), client.id)
         .await;
 
     match set_result {
@@ -54,8 +54,8 @@ pub(crate) async fn announce_handler(
 mod success {
     use crate::modules::handlers::announce_handler::{announce_handler, AnnounceResponse};
     use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
-        manager::pubsub_relation_manager,
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
     };
     use moqt_core::messages::moqt_payload::MOQTPayload;
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
@@ -85,20 +85,20 @@ mod success {
         announce_message.packetize(&mut buf);
 
         // Generate client
-        let publisher_session_id = 0;
-        let mut client = MOQTClient::new(publisher_session_id);
+        let upstream_session_id = 0;
+        let mut client = MOQTClient::new(upstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let max_subscribe_id = 10;
 
         let _ = pubsub_relation_manager
-            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
 
         // Execute announce_handler and get result
@@ -116,8 +116,8 @@ mod success {
 mod failure {
     use crate::modules::handlers::announce_handler::{announce_handler, AnnounceResponse};
     use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
-        manager::pubsub_relation_manager,
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
     };
     use moqt_core::messages::moqt_payload::MOQTPayload;
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
@@ -147,28 +147,25 @@ mod failure {
         announce_message.packetize(&mut buf);
 
         // Generate client
-        let publisher_session_id = 0;
-        let mut client = MOQTClient::new(publisher_session_id);
+        let upstream_session_id = 0;
+        let mut client = MOQTClient::new(upstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let max_subscribe_id = 10;
 
         let _ = pubsub_relation_manager
-            .setup_publisher(max_subscribe_id, publisher_session_id)
+            .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
 
         // Set the duplicated publisher in advance
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(
-                announce_message.track_namespace().clone(),
-                client.id,
-            )
+            .set_upstream_announced_namespace(announce_message.track_namespace().clone(), client.id)
             .await;
 
         // Execute announce_handler and get result

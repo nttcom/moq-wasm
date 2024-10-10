@@ -20,14 +20,14 @@ pub(crate) async fn subscribe_handler(
     tracing::debug!("subscribe_message: {:#?}", subscribe_message);
 
     if !pubsub_relation_manager_repository
-        .is_valid_subscriber_subscribe_id(subscribe_message.subscribe_id(), client.id)
+        .is_valid_downstream_subscribe_id(subscribe_message.subscribe_id(), client.id)
         .await?
     {
         // TODO: return TerminationErrorCode
         bail!("TooManySubscribers");
     }
     if !pubsub_relation_manager_repository
-        .is_valid_subscriber_track_alias(subscribe_message.track_alias(), client.id)
+        .is_valid_downstream_track_alias(subscribe_message.track_alias(), client.id)
         .await?
     {
         // TODO: return TerminationErrorCode
@@ -43,7 +43,7 @@ pub(crate) async fn subscribe_handler(
         .await
         .unwrap()
     {
-        let _ = set_only_subscriber_subscription(
+        let _ = set_downstream_subscription(
             pubsub_relation_manager_repository,
             &subscribe_message,
             client,
@@ -75,33 +75,33 @@ pub(crate) async fn subscribe_handler(
     // Since only the track_namespace is recorded in ANNOUNCE, use track_namespace to determine the publisher
     // TODO: multiple publishers for the same track_namespace
     let upstream_session_id = pubsub_relation_manager_repository
-        .get_publisher_session_id(subscribe_message.track_namespace().clone())
+        .get_upstream_session_id(subscribe_message.track_namespace().clone())
         .await
         .unwrap();
     match upstream_session_id {
         Some(session_id) => {
-            let (upstream_subscribe_id, upstream_track_alias) =
-                match set_subscriber_and_publisher_subscription(
-                    pubsub_relation_manager_repository,
-                    &subscribe_message,
-                    client,
-                    session_id,
-                )
-                .await
-                {
-                    Ok((upstream_subscribe_id, upstream_track_alias)) => {
-                        (upstream_subscribe_id, upstream_track_alias)
-                    }
-                    Err(e) => {
-                        bail!("cannot register publisher and subscriber: {:?}", e);
-                    }
-                };
+            let (upstream_subscribe_id, _) = match set_downstream_and_upstream_subscription(
+                pubsub_relation_manager_repository,
+                &subscribe_message,
+                client,
+                session_id,
+            )
+            .await
+            {
+                Ok((upstream_subscribe_id, upstream_track_alias)) => {
+                    (upstream_subscribe_id, upstream_track_alias)
+                }
+                Err(e) => {
+                    bail!("cannot register publisher and subscriber: {:?}", e);
+                }
+            };
 
             let mut relaying_subscribe_message = subscribe_message.clone();
 
             // Replace the subscribe_id and track_alias in the SUBSCRIBE message to request to the upstream publisher
-            relaying_subscribe_message
-                .replace_subscribe_id_and_track_alias(upstream_subscribe_id, upstream_track_alias);
+            relaying_subscribe_message.set_subscribe_id(upstream_subscribe_id);
+            relaying_subscribe_message.set_track_alias(upstream_subscribe_id);
+
             let message: Box<dyn MOQTPayload> = Box::new(relaying_subscribe_message.clone());
 
             tracing::debug!(
@@ -143,7 +143,7 @@ pub(crate) async fn subscribe_handler(
     }
 }
 
-async fn set_only_subscriber_subscription(
+async fn set_downstream_subscription(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     subscribe_message: &Subscribe,
     client: &MOQTClient,
@@ -153,7 +153,7 @@ async fn set_only_subscriber_subscription(
     let downstream_track_alias = subscribe_message.track_alias();
     let downstream_track_namespace = subscribe_message.track_namespace().to_vec();
     let downstream_track_name = subscribe_message.track_name().to_string();
-    let downstream_priority = subscribe_message.subscriber_priority();
+    let subscriber_priority = subscribe_message.subscriber_priority();
     let downstream_group_order = subscribe_message.group_order();
     let downstream_filter_type = subscribe_message.filter_type();
     let downstream_start_group = subscribe_message.start_group();
@@ -163,7 +163,7 @@ async fn set_only_subscriber_subscription(
 
     // Get publisher subscription already exists
     let upstream_subscription = pubsub_relation_manager_repository
-        .get_publisher_subscription_by_full_track_name(
+        .get_upstream_subscription_by_full_track_name(
             downstream_track_namespace.clone(),
             downstream_track_name.clone(),
         )
@@ -171,13 +171,13 @@ async fn set_only_subscriber_subscription(
         .unwrap();
 
     pubsub_relation_manager_repository
-        .set_subscriber_subscription(
+        .set_downstream_subscription(
             downstream_client_id,
             downstream_subscribe_id,
             downstream_track_alias,
             downstream_track_namespace.clone(),
             downstream_track_name.clone(),
-            downstream_priority,
+            subscriber_priority,
             downstream_group_order,
             downstream_filter_type,
             downstream_start_group,
@@ -188,16 +188,16 @@ async fn set_only_subscriber_subscription(
         .await?;
 
     let upstream_session_id = pubsub_relation_manager_repository
-        .get_publisher_session_id(downstream_track_namespace)
+        .get_upstream_session_id(downstream_track_namespace)
         .await?
         .unwrap();
 
     let (upstream_track_namespace, upstream_track_name) =
         upstream_subscription.get_track_namespace_and_name();
 
-    // Get publisher subscribe id to register pubsup relation
+    // Get publisher subscribe id to register pubsub relation
     let upstream_subscribe_id = pubsub_relation_manager_repository
-        .get_publisher_subscribe_id(
+        .get_upstream_subscribe_id(
             upstream_track_namespace,
             upstream_track_name,
             upstream_session_id,
@@ -206,7 +206,7 @@ async fn set_only_subscriber_subscription(
         .unwrap();
 
     pubsub_relation_manager_repository
-        .register_pubsup_relation(
+        .set_pubsub_relation(
             upstream_session_id,
             upstream_subscribe_id,
             downstream_client_id,
@@ -215,13 +215,13 @@ async fn set_only_subscriber_subscription(
         .await?;
 
     pubsub_relation_manager_repository
-        .activate_subscriber_subscription(downstream_client_id, downstream_subscribe_id)
+        .activate_downstream_subscription(downstream_client_id, downstream_subscribe_id)
         .await?;
 
     Ok(())
 }
 
-async fn set_subscriber_and_publisher_subscription(
+async fn set_downstream_and_upstream_subscription(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     subscribe_message: &Subscribe,
     client: &MOQTClient,
@@ -232,7 +232,7 @@ async fn set_subscriber_and_publisher_subscription(
     let downstream_track_alias = subscribe_message.track_alias();
     let downstream_track_namespace = subscribe_message.track_namespace().to_vec();
     let downstream_track_name = subscribe_message.track_name().to_string();
-    let downstream_priority = subscribe_message.subscriber_priority();
+    let subscriber_priority = subscribe_message.subscriber_priority();
     let downstream_group_order = subscribe_message.group_order();
     let downstream_filter_type = subscribe_message.filter_type();
     let downstream_start_group = subscribe_message.start_group();
@@ -241,13 +241,13 @@ async fn set_subscriber_and_publisher_subscription(
     let downstream_end_object = subscribe_message.end_object();
 
     pubsub_relation_manager_repository
-        .set_subscriber_subscription(
+        .set_downstream_subscription(
             downstream_client_id,
             downstream_subscribe_id,
             downstream_track_alias,
             downstream_track_namespace.clone(),
             downstream_track_name.clone(),
-            downstream_priority,
+            subscriber_priority,
             downstream_group_order,
             downstream_filter_type,
             downstream_start_group,
@@ -258,11 +258,11 @@ async fn set_subscriber_and_publisher_subscription(
         .await?;
 
     let (upstream_subscribe_id, upstream_track_alias) = pubsub_relation_manager_repository
-        .set_publisher_subscription(
+        .set_upstream_subscription(
             upstream_session_id,
             downstream_track_namespace.clone(),
             downstream_track_name.clone(),
-            downstream_priority,
+            subscriber_priority,
             downstream_group_order,
             downstream_filter_type,
             downstream_start_group,
@@ -273,7 +273,7 @@ async fn set_subscriber_and_publisher_subscription(
         .await?;
 
     pubsub_relation_manager_repository
-        .register_pubsup_relation(
+        .set_pubsub_relation(
             upstream_session_id,
             upstream_subscribe_id,
             downstream_client_id,
@@ -289,8 +289,8 @@ mod success {
     use crate::modules::handlers::subscribe_handler::subscribe_handler;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand,
-        interface::{test_utils, PubSubRelationManagerInterface},
         manager::pubsub_relation_manager,
+        wrapper::{test_helper_fn, PubSubRelationManagerWrapper},
     };
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
@@ -316,7 +316,7 @@ mod success {
         let track_alias = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
-        let downstream_priority = 0;
+        let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
         let filter_type = FilterType::LatestGroup;
         let start_group = None;
@@ -332,7 +332,7 @@ mod success {
             track_alias,
             track_namespace.clone(),
             track_name.clone(),
-            downstream_priority,
+            subscriber_priority,
             group_order,
             filter_type,
             start_group,
@@ -347,12 +347,12 @@ mod success {
         let downstream_session_id = 0;
         let mut client = MOQTClient::new(downstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let upstream_session_id = 1;
         let max_subscribe_id = 10;
@@ -362,7 +362,7 @@ mod success {
             .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
             .await;
 
         let _ = pubsub_relation_manager
@@ -401,7 +401,7 @@ mod success {
 
         // Check the subscriber is registered
         let (_, producers, pubsub_relation) =
-            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
+            test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
 
         assert_eq!(producers.len(), 1);
 
@@ -424,7 +424,7 @@ mod success {
         let track_alias = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
-        let downstream_priority = 0;
+        let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
         let filter_type = FilterType::LatestGroup;
         let start_group = None;
@@ -440,7 +440,7 @@ mod success {
             track_alias,
             track_namespace.clone(),
             track_name.clone(),
-            downstream_priority,
+            subscriber_priority,
             group_order,
             filter_type,
             start_group,
@@ -455,12 +455,12 @@ mod success {
         let downstream_session_id = 0;
         let mut client = MOQTClient::new(downstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let upstream_session_id = 1;
         let max_subscribe_id = 10;
@@ -470,14 +470,14 @@ mod success {
             .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
             .await;
         let (upstream_subscribe_id, _) = pubsub_relation_manager
-            .set_publisher_subscription(
+            .set_upstream_subscription(
                 upstream_session_id,
                 track_namespace,
                 track_name,
-                downstream_priority,
+                subscriber_priority,
                 group_order,
                 filter_type,
                 start_group,
@@ -524,7 +524,7 @@ mod success {
 
         // Check the subscriber is registered
         let (_, producers, pubsub_relation) =
-            test_utils::get_node_and_relation_clone(&pubsub_relation_manager).await;
+            test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
 
         assert_eq!(producers.len(), 1);
 
@@ -543,8 +543,8 @@ mod success {
 mod failure {
     use crate::modules::handlers::subscribe_handler::subscribe_handler;
     use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
-        manager::pubsub_relation_manager,
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
     };
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
@@ -569,7 +569,7 @@ mod failure {
         let track_alias = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
-        let downstream_priority = 0;
+        let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
         let filter_type = FilterType::LatestGroup;
         let start_group = None;
@@ -585,7 +585,7 @@ mod failure {
             track_alias,
             track_namespace.clone(),
             track_name.clone(),
-            downstream_priority,
+            subscriber_priority,
             group_order,
             filter_type,
             start_group,
@@ -600,12 +600,12 @@ mod failure {
         let downstream_session_id = 0;
         let mut client = MOQTClient::new(downstream_session_id);
 
-        // Generate PubSubRelationManagerInterface (register subscriber in advance)
+        // Generate PubSubRelationManagerWrapper (register subscriber in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let upstream_session_id = 1;
         let max_subscribe_id = 10;
@@ -614,20 +614,20 @@ mod failure {
             .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
             .await;
 
         let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_subscriber_subscription(
+            .set_downstream_subscription(
                 downstream_session_id,
                 subscribe_id,
                 track_alias,
                 track_namespace,
                 track_name,
-                downstream_priority,
+                subscriber_priority,
                 group_order,
                 filter_type,
                 start_group,
@@ -672,7 +672,7 @@ mod failure {
         let track_alias = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
-        let downstream_priority = 0;
+        let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
         let filter_type = FilterType::LatestGroup;
         let start_group = None;
@@ -688,7 +688,7 @@ mod failure {
             track_alias,
             track_namespace.clone(),
             track_name.clone(),
-            downstream_priority,
+            subscriber_priority,
             group_order,
             filter_type,
             start_group,
@@ -703,12 +703,12 @@ mod failure {
         let downstream_session_id = 0;
         let mut client = MOQTClient::new(downstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let upstream_session_id = 1;
         let max_subscribe_id = 10;
@@ -717,7 +717,7 @@ mod failure {
             .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
             .await;
 
         let _ = pubsub_relation_manager
@@ -750,7 +750,7 @@ mod failure {
         let track_alias = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name";
-        let downstream_priority = 0;
+        let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
         let filter_type = FilterType::LatestGroup;
         let start_group = None;
@@ -766,7 +766,7 @@ mod failure {
             track_alias,
             track_namespace,
             track_name.to_string(),
-            downstream_priority,
+            subscriber_priority,
             group_order,
             filter_type,
             start_group,
@@ -781,12 +781,12 @@ mod failure {
         let downstream_session_id = 0;
         let mut client = MOQTClient::new(downstream_session_id);
 
-        // Generate PubSubRelationManagerInterface (without set publisher)
+        // Generate PubSubRelationManagerWrapper (without set publisher)
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let upstream_session_id = 1;
         let max_subscribe_id = 10;
@@ -830,7 +830,7 @@ mod failure {
         let track_aliases = [0, 1];
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
-        let downstream_priority = 0;
+        let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
         let filter_type = FilterType::LatestGroup;
         let start_group = None;
@@ -849,7 +849,7 @@ mod failure {
                 track_aliases[i],
                 track_namespace.clone(),
                 track_name.clone(),
-                downstream_priority,
+                subscriber_priority,
                 group_order,
                 filter_type,
                 start_group,
@@ -867,12 +867,12 @@ mod failure {
         let downstream_session_id = 0;
         let mut client = MOQTClient::new(downstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let upstream_session_id = 1;
         let max_subscribe_id = 0;
@@ -882,7 +882,7 @@ mod failure {
             .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
             .await;
 
         let _ = pubsub_relation_manager
@@ -932,7 +932,7 @@ mod failure {
         let track_alias = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
-        let downstream_priority = 0;
+        let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
         let filter_type = FilterType::LatestGroup;
         let start_group = None;
@@ -951,7 +951,7 @@ mod failure {
                 track_alias,
                 track_namespace.clone(),
                 track_name.clone(),
-                downstream_priority,
+                subscriber_priority,
                 group_order,
                 filter_type,
                 start_group,
@@ -969,12 +969,12 @@ mod failure {
         let downstream_session_id = 0;
         let mut client = MOQTClient::new(downstream_session_id);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let upstream_session_id = 1;
         let max_subscribe_id = 10;
@@ -984,7 +984,7 @@ mod failure {
             .setup_publisher(max_subscribe_id, upstream_session_id)
             .await;
         let _ = pubsub_relation_manager
-            .set_publisher_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
             .await;
 
         let _ = pubsub_relation_manager

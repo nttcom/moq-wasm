@@ -152,8 +152,11 @@ impl Subscribe {
         self.end_object
     }
 
-    pub fn replace_subscribe_id_and_track_alias(&mut self, subscribe_id: u64, track_alias: u64) {
+    pub fn set_subscribe_id(&mut self, subscribe_id: u64) {
         self.subscribe_id = subscribe_id;
+    }
+
+    pub fn set_track_alias(&mut self, track_alias: u64) {
         self.track_alias = track_alias;
     }
 }
