@@ -23,13 +23,13 @@ impl PubSubRelation {
 
     pub(crate) fn add_relation(
         &mut self,
-        publisher_session_id: PublisherSessionId,
-        publisher_subscribe_id: PublisherSubscribeId,
-        subscriber_session_id: SubscriberSessionId,
-        subscriber_subscribe_id: SubscriberSubscribeId,
+        upstream_session_id: PublisherSessionId,
+        upstream_subscribe_id: PublisherSubscribeId,
+        downstream_session_id: SubscriberSessionId,
+        downstream_subscribe_id: SubscriberSubscribeId,
     ) -> Result<()> {
-        let key = (publisher_session_id, publisher_subscribe_id);
-        let value = (subscriber_session_id, subscriber_subscribe_id);
+        let key = (upstream_session_id, upstream_subscribe_id);
+        let value = (downstream_session_id, downstream_subscribe_id);
 
         match self.records.get_mut(&key) {
             // If the key exists, add the value to the existing vector
@@ -47,10 +47,10 @@ impl PubSubRelation {
 
     pub(crate) fn get_subscribers(
         &self,
-        publisher_session_id: PublisherSessionId,
-        publisher_subscribe_id: PublisherSubscribeId,
+        upstream_session_id: PublisherSessionId,
+        upstream_subscribe_id: PublisherSubscribeId,
     ) -> Option<&Vec<(SubscriberSessionId, SubscriberSubscribeId)>> {
-        let key = (publisher_session_id, publisher_subscribe_id);
+        let key = (upstream_session_id, upstream_subscribe_id);
         self.records.get(&key)
     }
 

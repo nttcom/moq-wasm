@@ -3,17 +3,17 @@ use crate::modules::pubsub_relation_manager::{
     relation::PubSubRelation,
 };
 use anyhow::anyhow;
-use moqt_core::subscription_models::nodes::{
-    consumer_node::Consumer, node_registory::SubscriptionNodeRegistory, producer_node::Producer,
+use moqt_core::models::subscriptions::nodes::{
+    consumers::Consumer, producers::Producer, registry::SubscriptionNodeRegistry,
 };
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
-type SubscriberSessionId = usize;
-type PublisherSessionId = usize;
+type DownstreamSessionId = usize;
+type UpstreamSessionId = usize;
 
-pub(crate) type Consumers = HashMap<PublisherSessionId, Consumer>;
-pub(crate) type Producers = HashMap<SubscriberSessionId, Producer>;
+pub(crate) type Consumers = HashMap<UpstreamSessionId, Consumer>;
+pub(crate) type Producers = HashMap<DownstreamSessionId, Producer>;
 
 // [Original Publisher: (Producer) ] -> [Relay: (Consumer) - <PubSubRelation> - (Producer) ] -> [End Subscriber: (Consumer)]
 
@@ -30,25 +30,25 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
         match cmd {
             SetupPublisher {
                 max_subscribe_id,
-                publisher_session_id,
+                upstream_session_id,
                 resp,
             } => {
                 // Return an error if it already exists
-                if consumers.contains_key(&publisher_session_id) {
+                if consumers.contains_key(&upstream_session_id) {
                     let msg = "publisher already exists";
                     tracing::error!(msg);
                     resp.send(Err(anyhow!(msg))).unwrap();
                     continue;
                 }
-                consumers.insert(publisher_session_id, Consumer::new(max_subscribe_id));
+                consumers.insert(upstream_session_id, Consumer::new(max_subscribe_id));
                 resp.send(Ok(())).unwrap();
             }
-            SetPublisherAnnouncedNamespace {
+            SetUpstreamAnnouncedNamespace {
                 track_namespace,
-                publisher_session_id,
+                upstream_session_id,
                 resp,
             } => {
-                let consumer = consumers.get_mut(&publisher_session_id).unwrap();
+                let consumer = consumers.get_mut(&upstream_session_id).unwrap();
                 match consumer.set_namespace(track_namespace) {
                     Ok(_) => {
                         resp.send(Ok(())).unwrap();
@@ -62,27 +62,27 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
             }
             SetupSubscriber {
                 max_subscribe_id,
-                subscriber_session_id,
+                downstream_session_id,
                 resp,
             } => {
                 // Return an error if it already exists
-                if producers.contains_key(&subscriber_session_id) {
+                if producers.contains_key(&downstream_session_id) {
                     let msg = "subscriber already exists";
                     tracing::error!(msg);
                     resp.send(Err(anyhow!(msg))).unwrap();
                     continue;
                 }
 
-                producers.insert(subscriber_session_id, Producer::new(max_subscribe_id));
+                producers.insert(downstream_session_id, Producer::new(max_subscribe_id));
                 resp.send(Ok(())).unwrap();
             }
-            IsValidSubscriberSubscribeId {
+            IsValidDownstreamSubscribeId {
                 subscribe_id,
-                subscriber_session_id,
+                downstream_session_id,
                 resp,
             } => {
                 // Return an error if the subscriber does not exist
-                let producer = match producers.get(&subscriber_session_id) {
+                let producer = match producers.get(&downstream_session_id) {
                     Some(producer) => producer,
                     None => {
                         let msg = "subscriber not found";
@@ -92,18 +92,16 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
 
-                let is_valid = producer.is_within_max_subscribe_id(subscribe_id)
-                    && producer.is_subscribe_id_unique(subscribe_id);
-
+                let is_valid = producer.is_subscribe_id_valid(subscribe_id);
                 resp.send(Ok(is_valid)).unwrap();
             }
-            IsValidSubscriberTrackAlias {
+            IsValidDownstreamTrackAlias {
                 track_alias,
-                subscriber_session_id,
+                downstream_session_id,
                 resp,
             } => {
                 // Return an error if the subscriber does not exist
-                let producer = match producers.get(&subscriber_session_id) {
+                let producer = match producers.get(&downstream_session_id) {
                     Some(producer) => producer,
                     None => {
                         let msg = "subscriber not found";
@@ -113,28 +111,28 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
 
-                let is_valid = producer.is_track_alias_unique(track_alias);
+                let is_valid = producer.is_track_alias_valid(track_alias);
                 resp.send(Ok(is_valid)).unwrap();
             }
-            GetPublisherSessionId {
+            GetUpstreamSessionId {
                 track_namespace,
                 resp,
             } => {
                 // Find the publisher that has the track namespace from all consumers
-                let publisher_session_id = consumers
+                let upstream_session_id = consumers
                     .iter()
                     .find(|(_, consumer)| consumer.has_namespace(track_namespace.clone()))
                     .map(|(session_id, _)| *session_id);
-                resp.send(Ok(publisher_session_id)).unwrap();
+                resp.send(Ok(upstream_session_id)).unwrap();
             }
-            GetRequestingSubscriberSessionIdsAndSubscribeIds {
-                publisher_subscribe_id,
-                publisher_session_id,
+            GetRequestingDownstreamSessionIdsAndSubscribeIds {
+                upstream_subscribe_id,
+                upstream_session_id,
                 resp,
             } => {
                 if !pubsub_relation
                     .records
-                    .contains_key(&(publisher_session_id, publisher_subscribe_id))
+                    .contains_key(&(upstream_session_id, upstream_subscribe_id))
                 {
                     let msg = "publisher not found in pubsub relation";
                     tracing::error!(msg);
@@ -143,18 +141,18 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 }
 
                 let subscribers =
-                    pubsub_relation.get_subscribers(publisher_session_id, publisher_subscribe_id);
+                    pubsub_relation.get_subscribers(upstream_session_id, upstream_subscribe_id);
 
                 // Check if it is in the requesting state
                 let requesting_subscribers: Option<Vec<(usize, u64)>> = match subscribers {
                     Some(subscribers) => {
                         let mut requesting_subscribers = vec![];
 
-                        for (subscriber_session_id, subscriber_subscribe_id) in subscribers {
-                            let producer = producers.get(subscriber_session_id).unwrap();
-                            if producer.is_requesting(*subscriber_subscribe_id) {
+                        for (downstream_session_id, downstream_subscribe_id) in subscribers {
+                            let producer = producers.get(downstream_session_id).unwrap();
+                            if producer.is_requesting(*downstream_subscribe_id) {
                                 requesting_subscribers
-                                    .push((*subscriber_session_id, *subscriber_subscribe_id));
+                                    .push((*downstream_session_id, *downstream_subscribe_id));
                             }
                         }
 
@@ -165,14 +163,14 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
 
                 resp.send(Ok(requesting_subscribers)).unwrap();
             }
-            GetPublisherSubscribeId {
+            GetUpstreamSubscribeId {
                 track_namespace,
                 track_name,
-                publisher_session_id,
+                upstream_session_id,
                 resp,
             } => {
                 // Return an error if the publisher does not exist
-                let consumer = match consumers.get(&publisher_session_id) {
+                let consumer = match consumers.get(&upstream_session_id) {
                     Some(consumer) => consumer,
                     None => {
                         let msg = "publisher not found";
@@ -197,7 +195,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 let is_existing = consumer.is_some();
                 resp.send(Ok(is_existing)).unwrap();
             }
-            GetPublisherSubscription {
+            GetUpstreamSubscription {
                 track_namespace,
                 track_name,
                 resp,
@@ -213,8 +211,8 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
 
                 resp.send(result).unwrap();
             }
-            SetSubscriberSubscription {
-                subscriber_session_id,
+            SetDownstreamSubscription {
+                downstream_session_id,
                 subscribe_id,
                 track_alias,
                 track_namespace,
@@ -229,7 +227,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 resp,
             } => {
                 // Return an error if the subscriber does not exist
-                let producer = match producers.get_mut(&subscriber_session_id) {
+                let producer = match producers.get_mut(&downstream_session_id) {
                     Some(producer) => producer,
                     None => {
                         let msg = "subscriber not found";
@@ -254,14 +252,14 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 ) {
                     Ok(_) => resp.send(Ok(())).unwrap(),
                     Err(err) => {
-                        tracing::error!("set_subscriber_subscription: err: {:?}", err.to_string());
+                        tracing::error!("set_downstream_subscription: err: {:?}", err.to_string());
                         resp.send(Err(anyhow!(err))).unwrap();
                         continue;
                     }
                 }
             }
-            SetPublisherSubscription {
-                publisher_session_id,
+            SetUpstreamSubscription {
+                upstream_session_id,
                 track_namespace,
                 track_name,
                 subscriber_priority,
@@ -274,7 +272,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 resp,
             } => {
                 // Return an error if the publisher does not exist
-                let consumer = match consumers.get_mut(&publisher_session_id) {
+                let consumer = match consumers.get_mut(&upstream_session_id) {
                     Some(consumer) => consumer,
                     None => {
                         let msg = "publisher not found";
@@ -285,11 +283,11 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 };
 
                 let (subscribe_id, track_alias) =
-                    match consumer.find_unused_subscribe_id_and_track_alias() {
+                    match consumer.create_latest_subscribe_id_and_track_alias() {
                         Ok(result) => result,
                         Err(err) => {
                             tracing::error!(
-                                "find_unused_subscribe_id_and_track_alias: err: {:?}",
+                                "create_latest_subscribe_id_and_track_alias: err: {:?}",
                                 err.to_string()
                             );
                             resp.send(Err(anyhow!(err))).unwrap();
@@ -317,18 +315,18 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
             }
-            RegisterPubSubRelation {
-                publisher_session_id,
-                publisher_subscribe_id,
-                subscriber_session_id,
-                subscriber_subscribe_id,
+            SetPubSubRelation {
+                upstream_session_id,
+                upstream_subscribe_id,
+                downstream_session_id,
+                downstream_subscribe_id,
                 resp,
             } => {
                 let result = pubsub_relation.add_relation(
-                    publisher_session_id,
-                    publisher_subscribe_id,
-                    subscriber_session_id,
-                    subscriber_subscribe_id,
+                    upstream_session_id,
+                    upstream_subscribe_id,
+                    downstream_session_id,
+                    downstream_subscribe_id,
                 );
 
                 match result {
@@ -339,13 +337,13 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 }
             }
-            ActivateSubscriberSubscription {
-                subscriber_session_id,
+            ActivateDownstreamSubscription {
+                downstream_session_id,
                 subscribe_id,
                 resp,
             } => {
                 // Return an error if the subscriber does not exist
-                let producer = match producers.get_mut(&subscriber_session_id) {
+                let producer = match producers.get_mut(&downstream_session_id) {
                     Some(producer) => producer,
                     None => {
                         let msg = "subscriber not found";
@@ -366,13 +364,13 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 }
             }
-            ActivatePublisherSubscription {
-                publisher_session_id,
+            ActivateUpstreamSubscription {
+                upstream_session_id,
                 subscribe_id,
                 resp,
             } => {
                 // Return an error if the publisher does not exist
-                let consumer = match consumers.get_mut(&publisher_session_id) {
+                let consumer = match consumers.get_mut(&upstream_session_id) {
                     Some(consumer) => consumer,
                     None => {
                         let msg = "publisher not found";
@@ -393,13 +391,13 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 }
             }
-            DeletePublisherAnnouncedNamespace {
+            DeleteUpstreamAnnouncedNamespace {
                 track_namespace,
-                publisher_session_id,
+                upstream_session_id,
                 resp,
             } => {
                 // Return an error if the publisher does not exist
-                let consumer = match consumers.get_mut(&publisher_session_id) {
+                let consumer = match consumers.get_mut(&upstream_session_id) {
                     Some(consumer) => consumer,
                     None => {
                         let msg = "publisher not found";
@@ -453,8 +451,8 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     .records
                     .iter_mut()
                     .for_each(|(_, subscribers)| {
-                        subscribers.retain(|(subscriber_session_id, _)| {
-                            *subscriber_session_id != session_id
+                        subscribers.retain(|(downstream_session_id, _)| {
+                            *downstream_session_id != session_id
                         });
                     });
 
