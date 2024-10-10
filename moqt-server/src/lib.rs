@@ -282,7 +282,7 @@ async fn handle_connection(
 
     // Delete pub/sub information related to the client
     let pubsub_relation_manager =
-        modules::pubsub_relation_manager::interface::PubSubRelationManagerInterface::new(
+        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
             track_namespace_tx.clone(),
         );
     let _ = pubsub_relation_manager.delete_client(stable_id).await;
@@ -329,7 +329,7 @@ async fn handle_incoming_bi_stream(
     let shread_send_stream = &mut stream.shread_send_stream;
 
     let mut pubsub_relation_manager =
-        modules::pubsub_relation_manager::interface::PubSubRelationManagerInterface::new(
+        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
             track_namespace_tx.clone(),
         );
     let mut send_stream_dispatcher =

@@ -57,19 +57,33 @@ pub(crate) async fn setup_handler(
         }
     }
 
-    if client.role() == Some(RoleCase::Subscriber) {
-        // Generate producer that manages namespaces and subscriptions with subscribers.
-        // FIXME: max_subscribe_id for subscriber is fixed at 100 for now.
-        pubsub_relation_manager_repository
-            .setup_subscriber(100, client.id)
-            .await?;
-    } else if client.role() == Some(RoleCase::Publisher) {
-        // Generate consumer that manages namespaces and subscriptions with producers.
-        pubsub_relation_manager_repository
-            .setup_publisher(max_subscribe_id, client.id)
-            .await?;
-    } else if client.role().is_none() {
-        bail!("Role parameter is required in SETUP parameter from client.");
+    match client.role() {
+        Some(RoleCase::Publisher) => {
+            // Generate consumer that manages namespaces and subscriptions with producers.
+            pubsub_relation_manager_repository
+                .setup_publisher(max_subscribe_id, client.id)
+                .await?;
+        }
+        Some(RoleCase::Subscriber) => {
+            // Generate producer that manages namespaces and subscriptions with subscribers.
+            // FIXME: max_subscribe_id for subscriber is fixed at 100 for now.
+            pubsub_relation_manager_repository
+                .setup_subscriber(100, client.id)
+                .await?;
+        }
+        Some(RoleCase::PubSub) => {
+            // Generate producer and consumer that manages namespaces and subscriptions with publishers and subscribers.
+            pubsub_relation_manager_repository
+                .setup_publisher(max_subscribe_id, client.id)
+                .await?;
+            // FIXME: max_subscribe_id for subscriber is fixed at 100 for now.
+            pubsub_relation_manager_repository
+                .setup_subscriber(100, client.id)
+                .await?;
+        }
+        None => {
+            bail!("Role parameter is required in SETUP parameter from client.");
+        }
     }
 
     // Create a setup parameter with role set to 3 and assign it.
@@ -88,8 +102,8 @@ pub(crate) async fn setup_handler(
 #[cfg(test)]
 mod success {
     use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
-        manager::pubsub_relation_manager,
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
     };
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
     use moqt_core::messages::control_messages::{
@@ -108,12 +122,12 @@ mod success {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
@@ -138,12 +152,12 @@ mod success {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
@@ -161,8 +175,8 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
-        manager::pubsub_relation_manager,
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
     };
     use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
     use moqt_core::messages::control_messages::{
@@ -181,12 +195,12 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
@@ -207,12 +221,12 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
@@ -233,12 +247,12 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::QUIC;
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
@@ -260,12 +274,12 @@ mod failure {
         let client_setup_message = ClientSetup::new(vec![unsupported_version], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,
@@ -290,12 +304,12 @@ mod failure {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
         let underlay_type = crate::constants::UnderlayType::WebTransport;
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         let server_setup_message = setup_handler(
             client_setup_message,

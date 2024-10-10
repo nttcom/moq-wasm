@@ -309,13 +309,13 @@ pub async fn control_message_handler(
 }
 
 #[cfg(test)]
-pub(crate) mod test_utils {
+pub(crate) mod test_helper_fn {
 
     use crate::modules::control_message_handler::control_message_handler;
     use crate::modules::control_message_handler::MessageProcessResult;
     use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, interface::PubSubRelationManagerInterface,
-        manager::pubsub_relation_manager,
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
     };
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
@@ -340,12 +340,12 @@ pub(crate) mod test_utils {
         let mut client = MOQTClient::new(subscriber_sessin_id);
         client.update_status(client_status);
 
-        // Generate PubSubRelationManagerInterface
+        // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
-        let mut pubsub_relation_manager: PubSubRelationManagerInterface =
-            PubSubRelationManagerInterface::new(track_namespace_tx);
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         // Generate SendStreamDispacher
         let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
@@ -372,14 +372,14 @@ mod success {
     use moqt_core::control_message_type::ControlMessageType;
     use moqt_core::moqt_client::MOQTClientStatus;
 
-    use crate::modules::control_message_handler::test_utils;
+    use crate::modules::control_message_handler::test_helper_fn;
 
     async fn assert_success(
         message_type_u8: u8,
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
     ) {
-        let result = test_utils::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,
@@ -435,14 +435,14 @@ mod failure {
     use moqt_core::control_message_type::ControlMessageType;
     use moqt_core::moqt_client::MOQTClientStatus;
 
-    use crate::modules::control_message_handler::test_utils;
+    use crate::modules::control_message_handler::test_helper_fn;
 
     async fn assert_protocol_violation(
         message_type_u8: u8,
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
     ) {
-        let result = test_utils::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,
@@ -462,7 +462,7 @@ mod failure {
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
     ) {
-        let result = test_utils::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,
@@ -482,7 +482,7 @@ mod failure {
         bytes_array: &[u8],
         client_status: MOQTClientStatus,
     ) {
-        let result = test_utils::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type_u8,
             bytes_array,
             client_status,

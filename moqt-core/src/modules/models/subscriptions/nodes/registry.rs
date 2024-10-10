@@ -1,12 +1,12 @@
 use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use crate::subscription_models::subscriptions::Subscription;
+use crate::models::subscriptions::Subscription;
 use anyhow::Result;
 
 type SubscribeId = u64;
 type TrackNamespace = Vec<String>;
 type TrackAlias = u64;
 
-pub trait SubscriptionNodeRegistory {
+pub trait SubscriptionNodeRegistry {
     #[allow(clippy::too_many_arguments)]
     fn set_subscription(
         &mut self,
@@ -38,10 +38,9 @@ pub trait SubscriptionNodeRegistory {
     fn is_requesting(&self, subscribe_id: SubscribeId) -> bool;
     fn delete_subscription(&mut self, subscribe_id: SubscribeId) -> Result<()>;
 
-    fn is_within_max_subscribe_id(&self, subscribe_id: SubscribeId) -> bool;
-    fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool;
-    fn is_track_alias_unique(&self, track_alias: TrackAlias) -> bool;
-    fn find_unused_subscribe_id_and_track_alias(&self) -> Result<(SubscribeId, TrackAlias)>;
+    fn is_subscribe_id_valid(&self, subscribe_id: SubscribeId) -> bool;
+    fn is_track_alias_valid(&self, track_alias: TrackAlias) -> bool;
+    fn create_latest_subscribe_id_and_track_alias(&self) -> Result<(SubscribeId, TrackAlias)>;
 
     fn set_namespace(&mut self, namespace: TrackNamespace) -> Result<()>;
     fn get_namespaces(&self) -> Result<&Vec<TrackNamespace>>;
