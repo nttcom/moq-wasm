@@ -12,6 +12,7 @@ pub use moqt_core::constants;
 use moqt_core::{
     constants::{StreamDirection, UnderlayType},
     control_message_type::ControlMessageType,
+    data_stream_type::DataStreamType,
     messages::{
         control_messages::{
             subscribe::Subscribe, subscribe_error::SubscribeError, subscribe_ok::SubscribeOk,
@@ -190,20 +191,14 @@ async fn handle_connection(
         tracing::info!("Waiting for data from client...");
     });
 
+    #[allow(unused_variables)]
+    let (open_tx, mut open_rx) = mpsc::channel::<DataStreamType>(32);
     let (close_tx, mut close_rx) = mpsc::channel::<(u64, String)>(32);
-
-    let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-    send_stream_tx
-        .send(SendStreamDispatchCommand::Set {
-            session_id: stable_id,
-            stream_direction: StreamDirection::Uni,
-            sender: uni_relay_tx,
-        })
-        .await?;
 
     // TODO: FIXME: Need to store information between threads for QUIC-level reconnection support
     let mut is_control_stream_opened = false;
 
+    #[allow(unused_variables)]
     loop {
         tokio::select! {
             // Waiting for a bi-directional stream and processing the received message
@@ -266,6 +261,38 @@ async fn handle_connection(
 
                 // Propagate the current span (Connection)
                 }.in_current_span());
+            },
+            // Waiting for a uni-directional recv stream and processing the received message
+            stream = connection.accept_uni() => {
+                // TODO: handle recv uni-directional stream and open send stream with open_tx
+                unimplemented!();
+            },
+            // Waiting for a uni-directional send stream open request and relaying the message
+            Some(data_stream_type) = open_rx.recv() => {
+
+                if !is_control_stream_opened {
+                    // Decline the request if the control stream is not opened
+                    tracing::error!("Control stream is not opened yet");
+                    close_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    break;
+                }
+
+                match data_stream_type {
+                    DataStreamType::StreamHeaderTrack | DataStreamType::StreamHeaderSubgroup => {
+                        let session_span = tracing::info_span!("Session", stable_id);
+                        session_span.in_scope(|| {
+                            tracing::info!("Open UNI Send stream");
+                        });
+
+                        // TODO: Open unidirectional send stream thread
+                    }
+                    DataStreamType::ObjectDatagram => {
+                        // TODO: Open datagram thread
+                        unimplemented!();
+                    }
+                }
+
+
             },
             // TODO: Not implemented yet
             Some((_code, _reason)) = close_rx.recv() => {
