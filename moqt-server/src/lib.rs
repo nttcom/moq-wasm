@@ -422,7 +422,7 @@ async fn wait_and_relay_control_message(
             tracing::warn!("Unsupported message type for bi-directional stream");
             continue;
         }
-
+        message_buf.extend(write_variable_integer(write_buf.len() as u64));
         message_buf.extend(write_buf);
 
         let mut shread_send_stream = send_stream.lock().await;
