@@ -412,7 +412,9 @@ async fn handle_incoming_uni_stream(
             )
             .await?;
 
-        // TODO: Open the send stream
+            // TODO: Open the send stream
+
+            header_read = true;
         } else {
             data_stream_body_handler(
                 &mut buf,
