@@ -11,13 +11,14 @@ use crate::modules::server_processes::{
 };
 use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
+use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     constants::UnderlayType,
     control_message_type::ControlMessageType,
     messages::{control_messages::unannounce::UnAnnounce, moqt_payload::MOQTPayload},
     moqt_client::MOQTClientStatus,
     variable_integer::{read_variable_integer, write_variable_integer},
-    MOQTClient, SendStreamDispatcherRepository, TrackNamespaceManagerRepository,
+    MOQTClient, SendStreamDispatcherRepository,
 };
 
 #[derive(Debug, PartialEq)]
@@ -49,7 +50,7 @@ pub async fn control_message_handler(
     read_buf: &mut BytesMut,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
-    track_namespace_manager_repository: &mut dyn TrackNamespaceManagerRepository,
+    pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> MessageProcessResult {
     tracing::trace!("control_message_handler! {}", read_buf.len());
@@ -100,7 +101,10 @@ pub async fn control_message_handler(
                 client,
                 underlay_type,
                 &mut write_buf,
-            ) {
+                pubsub_relation_manager_repository,
+            )
+            .await
+            {
                 Ok(_) => ControlMessageType::ServerSetup,
                 Err(err) => {
                     // TODO: To ensure future extensibility of MOQT, the peers MUST ignore unknown setup parameters.
@@ -125,13 +129,20 @@ pub async fn control_message_handler(
             match process_subscribe_message(
                 &mut payload_buf,
                 client,
-                track_namespace_manager_repository,
+                &mut write_buf,
+                pubsub_relation_manager_repository,
                 send_stream_dispatcher_repository,
             )
             .await
             {
-                Ok(_) => {
-                    return MessageProcessResult::SuccessWithoutResponse;
+                Ok(result) => {
+                    match result {
+                        Some(_) => (),
+                        None => {
+                            return MessageProcessResult::SuccessWithoutResponse;
+                        }
+                    }
+                    ControlMessageType::SubscribeOk
                 }
                 Err(err) => {
                     return MessageProcessResult::Failure(
@@ -154,8 +165,9 @@ pub async fn control_message_handler(
             // TODO: Merge to process_subscribe_message.
             match process_subscribe_ok_message(
                 &mut payload_buf,
-                track_namespace_manager_repository,
+                pubsub_relation_manager_repository,
                 send_stream_dispatcher_repository,
+                client,
             )
             .await
             {
@@ -199,7 +211,7 @@ pub async fn control_message_handler(
             let _unsubscribe_result = unannounce_handler(
                 unsubscribe_message.unwrap(),
                 client,
-                track_namespace_manager_repository,
+                pubsub_relation_manager_repository,
             );
 
             return MessageProcessResult::Success(BytesMut::with_capacity(0));
@@ -218,7 +230,7 @@ pub async fn control_message_handler(
                 &mut payload_buf,
                 client,
                 &mut write_buf,
-                track_namespace_manager_repository,
+                pubsub_relation_manager_repository,
             )
             .await
             {
@@ -268,7 +280,7 @@ pub async fn control_message_handler(
             let _unannounce_result = unannounce_handler(
                 unannounce_message.unwrap(),
                 client,
-                track_namespace_manager_repository,
+                pubsub_relation_manager_repository,
             )
             .await;
 
@@ -299,15 +311,16 @@ pub async fn control_message_handler(
 }
 
 #[cfg(test)]
-pub(crate) mod test_fn {
+pub(crate) mod test_helper_fn {
 
     use crate::modules::control_message_handler::control_message_handler;
     use crate::modules::control_message_handler::MessageProcessResult;
+    use crate::modules::pubsub_relation_manager::{
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
+    };
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-    };
-    use crate::modules::track_namespace_manager::{
-        track_namespace_manager, TrackCommand, TrackNamespaceManager,
     };
     use bytes::BytesMut;
     use moqt_core::constants::UnderlayType;
@@ -330,11 +343,12 @@ pub(crate) mod test_fn {
         let mut client = MOQTClient::new(subscriber_sessin_id);
         client.update_status(client_status);
 
-        // Generate TrackNamespaceManager
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-        let mut track_namespace_manager: TrackNamespaceManager =
-            TrackNamespaceManager::new(track_namespace_tx);
+        // Generate PubSubRelationManagerWrapper
+        let (track_namespace_tx, mut track_namespace_rx) =
+            mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
+            PubSubRelationManagerWrapper::new(track_namespace_tx);
 
         // Generate SendStreamDispacher
         let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
@@ -348,7 +362,7 @@ pub(crate) mod test_fn {
             &mut buf,
             UnderlayType::WebTransport,
             &mut client,
-            &mut track_namespace_manager,
+            &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
         .await
@@ -361,7 +375,7 @@ mod success {
     use moqt_core::control_message_type::ControlMessageType;
     use moqt_core::moqt_client::MOQTClientStatus;
 
-    use crate::modules::control_message_handler::test_fn;
+    use crate::modules::control_message_handler::test_helper_fn;
 
     #[tokio::test]
     async fn client_setup() {
@@ -377,7 +391,7 @@ mod success {
         ];
         let client_status = MOQTClientStatus::Connected;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             client_status,
@@ -404,7 +418,7 @@ mod success {
         ];
         let client_status = MOQTClientStatus::Connected;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             client_status,
@@ -425,7 +439,7 @@ mod failure {
     use moqt_core::control_message_type::ControlMessageType;
     use moqt_core::moqt_client::MOQTClientStatus;
 
-    use crate::modules::control_message_handler::test_fn;
+    use crate::modules::control_message_handler::test_helper_fn;
 
     #[tokio::test]
     async fn client_setup_invalid_timing() {
@@ -441,7 +455,7 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::SetUp; // Correct Status is Connected
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             wrong_client_status,
@@ -478,7 +492,7 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             wrong_client_status,
@@ -509,7 +523,7 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             wrong_client_status,
@@ -538,7 +552,7 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             wrong_client_status,
@@ -568,7 +582,7 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             wrong_client_status,
@@ -590,7 +604,7 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::Connected;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &wrong_bytes_array,
             client_status,
@@ -612,7 +626,7 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &wrong_bytes_array,
             client_status,
@@ -634,7 +648,7 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &wrong_bytes_array,
             client_status,
@@ -665,7 +679,7 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &wrong_bytes_array,
             client_status,
@@ -687,7 +701,7 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &wrong_bytes_array,
             client_status,
@@ -709,7 +723,7 @@ mod failure {
         let bytes_array = [];
         let client_status = MOQTClientStatus::SetUp;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             client_status,

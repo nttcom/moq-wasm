@@ -13,14 +13,14 @@ use serde::Serialize;
 use std::any::Any;
 use tracing;
 
-#[derive(Debug, Serialize, Clone, PartialEq, TryFromPrimitive, IntoPrimitive, Copy)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
 #[repr(u8)]
 pub enum GroupOrder {
     Ascending = 0x1,
     Descending = 0x2,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq, TryFromPrimitive, IntoPrimitive, Copy)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
 #[repr(u8)]
 pub enum FilterType {
     LatestGroup = 0x1,
@@ -109,11 +109,55 @@ impl Subscribe {
         })
     }
 
+    pub fn subscribe_id(&self) -> u64 {
+        self.subscribe_id
+    }
+
+    pub fn track_alias(&self) -> u64 {
+        self.track_alias
+    }
+
     pub fn track_namespace(&self) -> &Vec<String> {
         &self.track_namespace
     }
     pub fn track_name(&self) -> &str {
         &self.track_name
+    }
+
+    pub fn subscriber_priority(&self) -> u8 {
+        self.subscriber_priority
+    }
+
+    pub fn group_order(&self) -> GroupOrder {
+        self.group_order
+    }
+
+    pub fn filter_type(&self) -> FilterType {
+        self.filter_type
+    }
+
+    pub fn start_group(&self) -> Option<u64> {
+        self.start_group
+    }
+
+    pub fn start_object(&self) -> Option<u64> {
+        self.start_object
+    }
+
+    pub fn end_group(&self) -> Option<u64> {
+        self.end_group
+    }
+
+    pub fn end_object(&self) -> Option<u64> {
+        self.end_object
+    }
+
+    pub fn set_subscribe_id(&mut self, subscribe_id: u64) {
+        self.subscribe_id = subscribe_id;
+    }
+
+    pub fn set_track_alias(&mut self, track_alias: u64) {
+        self.track_alias = track_alias;
     }
 }
 
@@ -138,7 +182,7 @@ impl MOQTPayload for Subscribe {
             read_fixed_length_bytes_from_buffer(buf, 1).context("subscriber priority")?[0];
         let group_order_u8 = read_fixed_length_bytes_from_buffer(buf, 1)?[0];
 
-        // Values larger than 0x2 are a protocol error.
+        // Values larger than 0x2 are a Protocol Violation.
         let group_order = match GroupOrder::try_from(group_order_u8).context("group order") {
             Ok(group_order) => group_order,
             Err(err) => {
