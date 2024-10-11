@@ -13,6 +13,7 @@ use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerReposito
 use moqt_core::{
     constants::{StreamDirection, UnderlayType},
     control_message_type::ControlMessageType,
+    data_stream_type::DataStreamType,
     messages::{
         control_messages::{
             subscribe::Subscribe, subscribe_error::SubscribeError, subscribe_ok::SubscribeOk,
@@ -103,7 +104,7 @@ impl MOQT {
         // For buffer management for each stream
         let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
         // For track management
-        let (track_namespace_tx, mut track_namespace_rx) =
+        let (pubsub_relation_tx, mut pubsub_relation_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         // For relay handler management
         let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
@@ -116,7 +117,7 @@ impl MOQT {
         tokio::spawn(async move { buffer_manager(&mut buffer_rx).await });
 
         // Start track management thread
-        tokio::spawn(async move { pubsub_relation_manager(&mut track_namespace_rx).await });
+        tokio::spawn(async move { pubsub_relation_manager(&mut pubsub_relation_rx).await });
 
         // Start stream management thread
         tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
@@ -143,7 +144,7 @@ impl MOQT {
 
         for id in 0.. {
             let buffer_tx = buffer_tx.clone();
-            let track_namespace_tx = track_namespace_tx.clone();
+            let pubsub_relation_tx = pubsub_relation_tx.clone();
             let send_stream_tx = send_stream_tx.clone();
             let incoming_session = server.accept().await;
             let connection_span = tracing::info_span!("Connection", id);
@@ -152,7 +153,7 @@ impl MOQT {
             tokio::spawn(async move {
                 let result = handle_connection(
                     buffer_tx,
-                    track_namespace_tx,
+                    pubsub_relation_tx,
                     send_stream_tx,
                     incoming_session,
                 )
@@ -168,7 +169,7 @@ impl MOQT {
 
 async fn handle_connection(
     buffer_tx: mpsc::Sender<BufferCommand>,
-    track_namespace_tx: mpsc::Sender<PubSubRelationCommand>,
+    pubsub_relation_tx: mpsc::Sender<PubSubRelationCommand>,
     send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
     incoming_session: IncomingSession,
 ) -> Result<()> {
@@ -192,20 +193,14 @@ async fn handle_connection(
         tracing::info!("Waiting for data from client...");
     });
 
-    let (close_tx, mut close_rx) = mpsc::channel::<(u64, String)>(32);
-
-    let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-    send_stream_tx
-        .send(SendStreamDispatchCommand::Set {
-            session_id: stable_id,
-            stream_direction: StreamDirection::Uni,
-            sender: uni_relay_tx,
-        })
-        .await?;
+    #[allow(unused_variables)]
+    let (open_ch_tx, mut open_ch_rx) = mpsc::channel::<DataStreamType>(32);
+    let (close_conn_tx, mut close_conn_rx) = mpsc::channel::<(u64, String)>(32);
 
     // TODO: FIXME: Need to store information between threads for QUIC-level reconnection support
     let mut is_control_stream_opened = false;
 
+    #[allow(unused_variables)]
     loop {
         tokio::select! {
             // Waiting for a bi-directional stream and processing the received message
@@ -213,7 +208,7 @@ async fn handle_connection(
                 if is_control_stream_opened {
                     // Only 1 control stream is allowed
                     tracing::error!("Control stream already opened");
-                    close_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    close_conn_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
                 }
                 is_control_stream_opened = true;
@@ -232,9 +227,9 @@ async fn handle_connection(
                 let stream_id = recv_stream.id().into_u64();
 
                 let buffer_tx = buffer_tx.clone();
-                let track_namespace_tx = track_namespace_tx.clone();
+                let pubsub_relation_tx = pubsub_relation_tx.clone();
                 let send_stream_tx = send_stream_tx.clone();
-                let close_tx = close_tx.clone();
+                let close_conn_tx = close_conn_tx.clone();
                 let client= client.clone();
 
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
@@ -254,7 +249,7 @@ async fn handle_connection(
                         recv_stream,
                         shread_send_stream: send_stream,
                     };
-                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_tx, send_stream_tx).instrument(session_span_clone).await
+                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, close_conn_tx, send_stream_tx).instrument(session_span_clone).await
 
                 // Propagate the current span (Connection)
                 }.in_current_span());
@@ -269,8 +264,65 @@ async fn handle_connection(
                 // Propagate the current span (Connection)
                 }.in_current_span());
             },
+            // Waiting for a uni-directional recv stream and processing the received message
+            stream = connection.accept_uni() => {
+                let recv_stream = stream?;
+
+                let session_span = tracing::info_span!("Session", stable_id);
+                session_span.in_scope(|| {
+                    tracing::info!("Accepted UNI Recv stream");
+                });
+                let stream_id = recv_stream.id().into_u64();
+
+                let buffer_tx = buffer_tx.clone();
+                let pubsub_relation_tx = pubsub_relation_tx.clone();
+                let send_stream_tx = send_stream_tx.clone();
+                let open_ch_tx = open_ch_tx.clone();
+                let close_conn_tx = close_conn_tx.clone();
+                let client = client.clone();
+                let session_span_clone = session_span.clone();
+
+                tokio::spawn(async move {
+                    let mut stream = UniRecvStream {
+                    stable_id,
+                    stream_id,
+                    recv_stream,
+                };
+                    handle_incoming_uni_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_ch_tx, close_conn_tx, send_stream_tx).instrument(session_span_clone).await
+
+                // Propagate the current span (Connection)
+                }.in_current_span());
+
+            },
+            // Waiting for a uni-directional send stream open request and relaying the message
+            Some(data_stream_type) = open_ch_rx.recv() => {
+
+                if !is_control_stream_opened {
+                    // Decline the request if the control stream is not opened
+                    tracing::error!("Control stream is not opened yet");
+                    close_conn_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    break;
+                }
+
+                match data_stream_type {
+                    DataStreamType::StreamHeaderTrack | DataStreamType::StreamHeaderSubgroup => {
+                        let session_span = tracing::info_span!("Session", stable_id);
+                        session_span.in_scope(|| {
+                            tracing::info!("Open UNI Send stream");
+                        });
+
+                        // TODO: Open unidirectional send stream thread
+                    }
+                    DataStreamType::ObjectDatagram => {
+                        // TODO: Open datagram thread
+                        unimplemented!();
+                    }
+                }
+
+
+            },
             // TODO: Not implemented yet
-            Some((_code, _reason)) = close_rx.recv() => {
+            Some((_code, _reason)) = close_conn_rx.recv() => {
                 tracing::error!("Close channel received");
                 // FIXME: I want to close the connection, but VarInt is not exported, so I'll leave it as is
                 // Maybe it's in wtransport-proto?
@@ -283,7 +335,7 @@ async fn handle_connection(
     // Delete pub/sub information related to the client
     let pubsub_relation_manager =
         modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
-            track_namespace_tx.clone(),
+            pubsub_relation_tx.clone(),
         );
     let _ = pubsub_relation_manager.delete_client(stable_id).await;
 
@@ -306,6 +358,83 @@ async fn handle_connection(
     Ok(())
 }
 
+struct UniRecvStream {
+    stable_id: usize,
+    stream_id: u64,
+    recv_stream: RecvStream,
+}
+
+async fn handle_incoming_uni_stream(
+    stream: &mut UniRecvStream,
+    client: Arc<Mutex<MOQTClient>>,
+    buffer_tx: Sender<BufferCommand>,
+    pubsub_relation_tx: Sender<PubSubRelationCommand>,
+    open_ch_tx: Sender<DataStreamType>,
+    close_conn_tx: Sender<(u64, String)>,
+    send_stream_tx: Sender<SendStreamDispatchCommand>,
+) -> Result<()> {
+    let mut header_read = false;
+    let mut buffer = vec![0; 65536].into_boxed_slice();
+
+    let stable_id = stream.stable_id;
+    let stream_id = stream.stream_id;
+    let recv_stream = &mut stream.recv_stream;
+
+    let mut pubsub_relation_manager =
+        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
+            pubsub_relation_tx.clone(),
+        );
+    let mut send_stream_dispatcher =
+        modules::send_stream_dispatcher::SendStreamDispatcher::new(send_stream_tx.clone());
+
+    loop {
+        let bytes_read = match recv_stream.read(&mut buffer).await? {
+            Some(bytes_read) => bytes_read,
+            None => bail!("Failed to read from stream"),
+        };
+
+        tracing::debug!("bytes_read: {}", bytes_read);
+
+        let read_buf = BytesMut::from(&buffer[..bytes_read]);
+        let buf = buffer_manager::request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
+        let mut buf = buf.lock().await;
+        buf.extend_from_slice(&read_buf);
+
+        let mut client = client.lock().await;
+
+        if !header_read {
+            data_stream_header_handler(
+                &mut buf,
+                UnderlayType::WebTransport,
+                &mut client,
+                &mut pubsub_relation_manager,
+                &mut send_stream_dispatcher,
+            )
+            .await?;
+
+        // TODO: Open the send stream
+        } else {
+            data_stream_body_handler(
+                &mut buf,
+                UnderlayType::WebTransport,
+                &mut client,
+                &mut pubsub_relation_manager,
+                &mut send_stream_dispatcher,
+            )
+            .await?;
+        }
+    }
+
+    buffer_tx
+        .send(BufferCommand::ReleaseStream {
+            session_id: stable_id,
+            stream_id,
+        })
+        .await?;
+
+    Ok(())
+}
+
 struct BiStream {
     stable_id: usize,
     stream_id: u64,
@@ -317,8 +446,8 @@ async fn handle_incoming_bi_stream(
     stream: &mut BiStream,
     client: Arc<Mutex<MOQTClient>>,
     buffer_tx: Sender<BufferCommand>,
-    track_namespace_tx: Sender<PubSubRelationCommand>,
-    close_tx: Sender<(u64, String)>,
+    pubsub_relation_tx: Sender<PubSubRelationCommand>,
+    close_conn_tx: Sender<(u64, String)>,
     send_stream_tx: Sender<SendStreamDispatchCommand>,
 ) -> Result<()> {
     let mut buffer = vec![0; 65536].into_boxed_slice();
@@ -330,7 +459,7 @@ async fn handle_incoming_bi_stream(
 
     let mut pubsub_relation_manager =
         modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
-            track_namespace_tx.clone(),
+            pubsub_relation_tx.clone(),
         );
     let mut send_stream_dispatcher =
         modules::send_stream_dispatcher::SendStreamDispatcher::new(send_stream_tx.clone());
@@ -371,7 +500,7 @@ async fn handle_incoming_bi_stream(
             }
             MessageProcessResult::SuccessWithoutResponse => {}
             MessageProcessResult::Failure(code, message) => {
-                close_tx.send((u8::from(code) as u64, message)).await?;
+                close_conn_tx.send((u8::from(code) as u64, message)).await?;
                 break;
             }
             MessageProcessResult::Fragment => (),
@@ -422,7 +551,7 @@ async fn wait_and_relay_control_message(
             tracing::warn!("Unsupported message type for bi-directional stream");
             continue;
         }
-
+        message_buf.extend(write_variable_integer(write_buf.len() as u64));
         message_buf.extend(write_buf);
 
         let mut shread_send_stream = send_stream.lock().await;

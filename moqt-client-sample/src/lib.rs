@@ -145,7 +145,8 @@ impl MOQTClient {
             buf.extend(write_variable_integer(
                 u8::from(ControlMessageType::ClientSetup) as u64,
             ));
-            // Message Payload
+            // Message Payload and Payload Length
+            buf.extend(write_variable_integer(client_setup_message_buf.len() as u64));
             buf.extend(client_setup_message_buf);
 
             // send
@@ -218,7 +219,8 @@ impl MOQTClient {
             buf.extend(write_variable_integer(
                 u8::from(ControlMessageType::Announce) as u64,
             ));
-            // Message Payload
+            // Message Payload and Payload Length
+            buf.extend(write_variable_integer(announce_message_buf.len() as u64));
             buf.extend(announce_message_buf);
 
             // send
@@ -266,7 +268,8 @@ impl MOQTClient {
             buf.extend(write_variable_integer(
                 u8::from(ControlMessageType::UnAnnounce) as u64,
             ));
-            // Message Payload
+            // Message Payload and Payload Length
+            buf.extend(write_variable_integer(unannounce_message_buf.len() as u64));
             buf.extend(unannounce_message_buf);
 
             // send
@@ -337,9 +340,12 @@ impl MOQTClient {
             subscribe_message.packetize(&mut subscribe_message_buf);
 
             let mut buf = Vec::new();
+            // Message Type
             buf.extend(write_variable_integer(
                 u8::from(ControlMessageType::Subscribe) as u64,
-            )); // subscribe
+            ));
+            // Message Payload and Payload Length
+            buf.extend(write_variable_integer(subscribe_message_buf.len() as u64));
             buf.extend(subscribe_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
@@ -405,9 +411,12 @@ impl MOQTClient {
             subscribe_ok_message.packetize(&mut subscribe_ok_message_buf);
 
             let mut buf = Vec::new();
+            // Message Type
             buf.extend(write_variable_integer(
                 u8::from(ControlMessageType::SubscribeOk) as u64,
-            )); // subscribe ok
+            ));
+            // Message Payload and Payload Length
+            buf.extend(write_variable_integer(subscribe_ok_message_buf.len() as u64));
             buf.extend(subscribe_ok_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
@@ -455,9 +464,14 @@ impl MOQTClient {
             subscribe_error_message.packetize(&mut subscribe_error_message_buf);
 
             let mut buf = Vec::new();
+            // Message Type
             buf.extend(write_variable_integer(
                 u8::from(ControlMessageType::SubscribeError) as u64,
-            )); // subscribe error
+            ));
+            // Message Payload and Payload Length
+            buf.extend(write_variable_integer(
+                subscribe_error_message_buf.len() as u64
+            ));
             buf.extend(subscribe_error_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
@@ -490,9 +504,12 @@ impl MOQTClient {
             unsubscribe_message.packetize(&mut unsubscribe_message_buf);
 
             let mut buf = Vec::new();
+            // Message Type
             buf.extend(write_variable_integer(
                 u8::from(ControlMessageType::UnSubscribe) as u64,
-            )); // unsubscribe
+            ));
+            // Message Payload and Payload Length
+            buf.extend(write_variable_integer(unsubscribe_message_buf.len() as u64));
             buf.extend(unsubscribe_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
@@ -629,7 +646,7 @@ async fn stream_read_thread(
         let ret_value = js_sys::Uint8Array::from(ret_value).to_vec();
 
         log(std::format!(
-            "recv value: {:#?} {} {:#x?}",
+            "recv value: {:#?} {} {:#?}",
             stream_direction,
             ret_value.len(),
             ret_value
@@ -666,6 +683,7 @@ async fn message_handler(
     mut buf: &mut BytesMut,
 ) -> Result<()> {
     let message_type_value = read_variable_integer_from_buffer(&mut buf);
+    let _payload_length = read_variable_integer_from_buffer(&mut buf);
 
     // TODO: Check stream type
     match message_type_value {
