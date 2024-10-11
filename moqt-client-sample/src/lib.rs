@@ -4,6 +4,7 @@ mod utils;
 use anyhow::Result;
 #[cfg(web_sys_unstable_apis)]
 use bytes::{BufMut, BytesMut};
+
 #[cfg(web_sys_unstable_apis)]
 use moqt_core::{
     constants::StreamDirection,
@@ -14,7 +15,7 @@ use moqt_core::{
         announce_ok::AnnounceOk,
         client_setup::ClientSetup,
         server_setup::ServerSetup,
-        setup_parameters::{Role, RoleCase, SetupParameter},
+        setup_parameters::{MaxSubscribeID, Role, RoleCase, SetupParameter},
         subscribe::{FilterType, GroupOrder, Subscribe},
         subscribe_error::{SubscribeError, SubscribeErrorCode},
         subscribe_ok::SubscribeOk,
@@ -23,8 +24,16 @@ use moqt_core::{
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     messages::moqt_payload::MOQTPayload,
+    subscription_models::{
+        nodes::{
+            consumer_node::Consumer, node_registory::SubscriptionNodeRegistory,
+            producer_node::Producer,
+        },
+        subscriptions::Subscription,
+    },
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
+
 #[cfg(web_sys_unstable_apis)]
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::prelude::*;
@@ -59,6 +68,7 @@ fn main() {
 pub struct MOQTClient {
     pub id: u64,
     url: String,
+    subscription_node: Rc<RefCell<SubscriptionNode>>,
     transport: Rc<RefCell<Option<web_sys::WebTransport>>>,
     control_stream_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
     callbacks: Rc<RefCell<MOQTCallbacks>>,
@@ -72,6 +82,7 @@ impl MOQTClient {
         MOQTClient {
             id: 42,
             url,
+            subscription_node: Rc::new(RefCell::new(SubscriptionNode::new())),
             transport: Rc::new(RefCell::new(None)),
             control_stream_writer: Rc::new(RefCell::new(None)),
             callbacks: Rc::new(RefCell::new(MOQTCallbacks::new())),
@@ -105,16 +116,27 @@ impl MOQTClient {
 
     #[wasm_bindgen(js_name = sendSetupMessage)]
     pub async fn send_setup_message(
-        &self,
+        &mut self,
         role_value: u8,
         versions: Vec<u64>,
+        max_subscribe_id: u64,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
             let role = RoleCase::try_from(role_value).unwrap();
             let versions = versions.iter().map(|v| *v as u32).collect::<Vec<u32>>();
+            let mut setup_parameters: Vec<SetupParameter> =
+                vec![SetupParameter::Role(Role::new(role))];
 
-            let client_setup_message =
-                ClientSetup::new(versions, vec![SetupParameter::Role(Role::new(role))]);
+            match role {
+                RoleCase::Publisher | RoleCase::PubSub => {
+                    setup_parameters.push(SetupParameter::MaxSubscribeID(MaxSubscribeID::new(
+                        max_subscribe_id,
+                    )));
+                }
+                _ => {}
+            }
+
+            let client_setup_message = ClientSetup::new(versions, setup_parameters);
             let mut client_setup_message_buf = BytesMut::new();
             client_setup_message.packetize(&mut client_setup_message_buf);
 
@@ -130,7 +152,33 @@ impl MOQTClient {
             // send
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
-            JsFuture::from(writer.write_with_chunk(&buffer)).await
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                // Setup nodes along with the role
+                Ok(ok) => {
+                    match role {
+                        RoleCase::Publisher => {
+                            self.subscription_node
+                                .borrow_mut()
+                                .setup_as_publisher(max_subscribe_id);
+                        }
+                        RoleCase::Subscriber => {
+                            self.subscription_node
+                                .borrow_mut()
+                                .setup_as_subscriber(max_subscribe_id);
+                        }
+                        RoleCase::PubSub => {
+                            self.subscription_node
+                                .borrow_mut()
+                                .setup_as_publisher(max_subscribe_id);
+                            self.subscription_node
+                                .borrow_mut()
+                                .setup_as_subscriber(max_subscribe_id);
+                        }
+                    }
+                    Ok(ok)
+                }
+                Err(e) => Err(e),
+            }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
         }
@@ -159,7 +207,7 @@ impl MOQTClient {
             }
 
             let announce_message = Announce::new(
-                track_namespace_vec,
+                track_namespace_vec.clone(),
                 number_of_parameters,
                 vec![auth_info_parameter],
             );
@@ -178,7 +226,17 @@ impl MOQTClient {
             // send
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
-            JsFuture::from(writer.write_with_chunk(&buffer)).await
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    // Register the announceing track
+                    self.subscription_node
+                        .borrow_mut()
+                        .set_namespace(track_namespace_vec);
+
+                    Ok(ok)
+                }
+                Err(e) => Err(e),
+            }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
         }
@@ -248,19 +306,33 @@ impl MOQTClient {
                     .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
                 track_namespace_vec.push(string_element);
             }
+
+            // Find unused subscribe_id and track_alias automatically
+            let (subscribe_id, track_alias) = self
+                .subscription_node
+                .borrow_mut()
+                .find_unused_subscribe_id_and_track_alias()
+                .unwrap();
+            let priority = 0;
+            let group_order = GroupOrder::Ascending;
+            let filter_type = FilterType::LatestGroup;
+            let start_group = None;
+            let start_object = None;
+            let end_group = None;
+            let end_object = None;
             let version_specific_parameters = vec![auth_info];
             let subscribe_message = Subscribe::new(
-                1,
-                0,
-                track_namespace_vec,
-                track_name,
-                1,
-                GroupOrder::Ascending,
-                FilterType::LatestGroup,
-                None,
-                None,
-                None,
-                None,
+                subscribe_id,
+                track_alias,
+                track_namespace_vec.clone(),
+                track_name.clone(),
+                priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
                 version_specific_parameters,
             )
             .unwrap();
@@ -279,7 +351,29 @@ impl MOQTClient {
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
 
-            JsFuture::from(writer.write_with_chunk(&buffer)).await
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    // Register the subscribing track
+                    self.subscription_node
+                        .borrow_mut()
+                        .set_subscribing_subscription(
+                            subscribe_id,
+                            track_alias,
+                            track_namespace_vec,
+                            track_name,
+                            priority,
+                            group_order,
+                            filter_type,
+                            start_group,
+                            start_object,
+                            end_group,
+                            end_object,
+                        );
+
+                    Ok(ok)
+                }
+                Err(e) => Err(e),
+            }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
         }
@@ -288,23 +382,31 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendSubscribeOkMessage)]
     pub async fn send_subscribe_ok_message(
         &self,
-        track_namespace: js_sys::Array,
-        track_name: String,
-        track_id: u64,
+        subscribe_id: u64,
         expires: u64,
+        auth_info: String,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
-            let length = track_namespace.length();
-            let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
-            for i in 0..length {
-                let js_element = track_namespace.get(i);
-                let string_element = js_element
-                    .as_string()
-                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
-                track_namespace_vec.push(string_element);
-            }
-            let subscribe_ok_message =
-                SubscribeOk::new(track_namespace_vec, track_name, track_id, expires);
+            let auth_info =
+                VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
+            let subscription = self
+                .subscription_node
+                .borrow()
+                .get_publishing_subscription(subscribe_id)
+                .unwrap();
+
+            let group_order = subscription.get_group_order();
+
+            let version_specific_parameters = vec![auth_info];
+            let subscribe_ok_message = SubscribeOk::new(
+                subscribe_id,
+                expires,
+                group_order,
+                false,
+                None,
+                None,
+                version_specific_parameters,
+            );
             let mut subscribe_ok_message_buf = BytesMut::new();
             subscribe_ok_message.packetize(&mut subscribe_ok_message_buf);
 
@@ -320,7 +422,15 @@ impl MOQTClient {
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
 
-            JsFuture::from(writer.write_with_chunk(&buffer)).await
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    self.subscription_node
+                        .borrow_mut()
+                        .activate_as_publisher(subscribe_id);
+                    Ok(ok)
+                }
+                Err(e) => Err(e),
+            }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
         }
@@ -441,9 +551,15 @@ impl MOQTClient {
 
         // For receiving control messages
         let callbacks = self.callbacks.clone();
+        let subscription_node = self.subscription_node.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let _ =
-                stream_read_thread(callbacks, StreamDirection::Bi, &control_stream_reader).await;
+            let _ = stream_read_thread(
+                callbacks,
+                subscription_node,
+                StreamDirection::Bi,
+                &control_stream_reader,
+            )
+            .await;
         });
 
         // For receiving object messages
@@ -451,8 +567,15 @@ impl MOQTClient {
         let incoming_stream_reader =
             web_sys::ReadableStreamDefaultReader::new(&&incoming_stream.into())?;
         let callbacks = self.callbacks.clone();
+        let subscription_node = self.subscription_node.clone();
+
         wasm_bindgen_futures::spawn_local(async move {
-            let _ = receive_unidirectional_thread(callbacks, &incoming_stream_reader).await;
+            let _ = receive_unidirectional_thread(
+                callbacks,
+                subscription_node,
+                &incoming_stream_reader,
+            )
+            .await;
         });
 
         Ok(JsValue::null())
@@ -466,6 +589,7 @@ impl MOQTClient {
 #[cfg(web_sys_unstable_apis)]
 async fn receive_unidirectional_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
+    subscription_node: Rc<RefCell<SubscriptionNode>>,
     reader: &ReadableStreamDefaultReader,
 ) -> Result<(), JsValue> {
     log("receive_unidirectional_thread");
@@ -486,9 +610,12 @@ async fn receive_unidirectional_thread(
         let ret_value = web_sys::ReadableStream::from(ret_value);
 
         let callbacks = callbacks.clone();
+        let subscription_node = subscription_node.clone();
+
         let reader = web_sys::ReadableStreamDefaultReader::new(&ret_value)?;
         wasm_bindgen_futures::spawn_local(async move {
-            let _ = stream_read_thread(callbacks, StreamDirection::Uni, &reader).await;
+            let _ = stream_read_thread(callbacks, subscription_node, StreamDirection::Uni, &reader)
+                .await;
         });
     }
 
@@ -498,6 +625,7 @@ async fn receive_unidirectional_thread(
 #[cfg(web_sys_unstable_apis)]
 async fn stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
+    subscription_node: Rc<RefCell<SubscriptionNode>>,
     stream_direction: StreamDirection,
     reader: &ReadableStreamDefaultReader,
 ) -> Result<(), JsValue> {
@@ -530,7 +658,13 @@ async fn stream_read_thread(
             buf.put_u8(i);
         }
 
-        if let Err(e) = message_handler(callbacks.clone(), stream_direction.clone(), &mut buf).await
+        if let Err(e) = message_handler(
+            callbacks.clone(),
+            subscription_node.clone(),
+            stream_direction.clone(),
+            &mut buf,
+        )
+        .await
         {
             log(std::format!("error: {:#?}", e).as_str());
             return Err(js_sys::Error::new(&e.to_string()).into());
@@ -544,6 +678,7 @@ async fn stream_read_thread(
 #[cfg(web_sys_unstable_apis)]
 async fn message_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
+    subscription_node: Rc<RefCell<SubscriptionNode>>,
     _stream_direction: StreamDirection, // TODO: Not implemented yet
     mut buf: &mut BytesMut,
 ) -> Result<()> {
@@ -598,9 +733,31 @@ async fn message_handler(
                     let subscribe_message = Subscribe::depacketize(&mut buf)?;
                     log(std::format!("subscribe_message: {:#x?}", subscribe_message).as_str());
 
+                    let result = subscription_node
+                        .borrow_mut()
+                        .validation_and_register_subscription(subscribe_message.clone());
+
                     if let Some(callback) = callbacks.borrow().subscribe_callback() {
                         let v = serde_wasm_bindgen::to_value(&subscribe_message).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
+
+                        match result {
+                            Ok(_) => {
+                                let is_success = JsValue::from_bool(true);
+                                let empty = JsValue::null();
+                                callback
+                                    .call3(&JsValue::null(), &(v), &(is_success), &(empty))
+                                    .unwrap();
+                            }
+                            Err(e) => {
+                                let is_success = JsValue::from_bool(false);
+                                if let Some(e_u8) = e.downcast_ref::<u8>() {
+                                    let code = JsValue::from_f64(*e_u8 as f64);
+                                    callback
+                                        .call3(&JsValue::null(), &(v), &(is_success), &(code))
+                                        .unwrap();
+                                }
+                            }
+                        }
                     }
                 }
                 ControlMessageType::SubscribeOk => {
@@ -608,6 +765,10 @@ async fn message_handler(
                     log(
                         std::format!("subscribe_ok_message: {:#x?}", subscribe_ok_message).as_str(),
                     );
+
+                    let _ = subscription_node
+                        .borrow_mut()
+                        .activate_as_subscriber(subscribe_ok_message.subscribe_id());
 
                     if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
                         let v = serde_wasm_bindgen::to_value(&subscribe_ok_message).unwrap();
@@ -639,6 +800,180 @@ async fn message_handler(
     }
 
     Ok(())
+}
+
+#[cfg(web_sys_unstable_apis)]
+struct SubscriptionNode {
+    consumer: Option<Consumer>,
+    producer: Option<Producer>,
+}
+
+#[cfg(web_sys_unstable_apis)]
+impl SubscriptionNode {
+    fn new() -> Self {
+        SubscriptionNode {
+            consumer: None,
+            producer: None,
+        }
+    }
+
+    fn setup_as_publisher(&mut self, max_subscribe_id: u64) {
+        self.producer = Some(Producer::new(max_subscribe_id));
+    }
+
+    fn setup_as_subscriber(&mut self, max_subscribe_id: u64) {
+        self.consumer = Some(Consumer::new(max_subscribe_id));
+    }
+
+    fn set_namespace(&mut self, track_namespace: Vec<String>) {
+        if let Some(producer) = &mut self.producer {
+            let _ = producer.set_namespace(track_namespace);
+        }
+    }
+
+    fn find_unused_subscribe_id_and_track_alias(&self) -> Result<(u64, u64)> {
+        if let Some(consumer) = &self.consumer {
+            consumer.find_unused_subscribe_id_and_track_alias()
+        } else {
+            Err(anyhow::anyhow!("consumer is None"))
+        }
+    }
+
+    fn set_subscribing_subscription(
+        &mut self,
+        subscribe_id: u64,
+        track_alias: u64,
+        track_namespace: Vec<String>,
+        track_name: String,
+        priority: u8,
+        group_order: GroupOrder,
+        filter_type: FilterType,
+        start_group: Option<u64>,
+        start_object: Option<u64>,
+        end_group: Option<u64>,
+        end_object: Option<u64>,
+    ) {
+        if let Some(consumer) = &mut self.consumer {
+            let _ = consumer.set_subscription(
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            );
+        }
+    }
+
+    fn set_publishing_subscription(
+        &mut self,
+        subscribe_id: u64,
+        track_alias: u64,
+        track_namespace: Vec<String>,
+        track_name: String,
+        subscriber_priority: u8,
+        group_order: GroupOrder,
+        filter_type: FilterType,
+        start_group: Option<u64>,
+        start_object: Option<u64>,
+        end_group: Option<u64>,
+        end_object: Option<u64>,
+    ) {
+        if let Some(producer) = &mut self.producer {
+            let _ = producer.set_subscription(
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            );
+        }
+    }
+
+    fn validate_subscribe(&self, subscribe_message: Subscribe) -> Result<()> {
+        if let Some(producer) = &self.producer {
+            match producer.has_namespace(subscribe_message.track_namespace().clone()) {
+                true => {}
+                false => {
+                    let error_code = SubscribeErrorCode::TrackDoesNotExist;
+                    return Err(anyhow::anyhow!(u8::from(error_code)));
+                }
+            }
+
+            match producer.is_within_max_subscribe_id(subscribe_message.subscribe_id())
+                && producer.is_subscribe_id_unique(subscribe_message.subscribe_id())
+            {
+                true => {}
+                false => {
+                    let error_code = SubscribeErrorCode::InvalidRange;
+                    return Err(anyhow::anyhow!(u8::from(error_code)));
+                }
+            }
+
+            match producer.is_track_alias_unique(subscribe_message.track_alias()) {
+                true => {}
+                false => {
+                    let error_code = SubscribeErrorCode::RetryTrackAlias;
+                    return Err(anyhow::anyhow!(u8::from(error_code)));
+                }
+            }
+            Ok(())
+        } else {
+            let error_code = SubscribeErrorCode::InternalError;
+            Err(anyhow::anyhow!(u8::from(error_code)))
+        }
+    }
+
+    fn validation_and_register_subscription(&mut self, subscribe_message: Subscribe) -> Result<()> {
+        self.validate_subscribe(subscribe_message.clone())?;
+
+        self.set_publishing_subscription(
+            subscribe_message.subscribe_id(),
+            subscribe_message.track_alias(),
+            subscribe_message.track_namespace().to_vec(),
+            subscribe_message.track_name().to_string(),
+            subscribe_message.subscriber_priority(),
+            subscribe_message.group_order(),
+            subscribe_message.filter_type(),
+            subscribe_message.start_group(),
+            subscribe_message.start_object(),
+            subscribe_message.end_group(),
+            subscribe_message.end_object(),
+        );
+
+        Ok(())
+    }
+
+    fn get_publishing_subscription(&self, subscribe_id: u64) -> Option<Subscription> {
+        if let Some(producer) = &self.producer {
+            producer.get_subscription(subscribe_id).unwrap()
+        } else {
+            None
+        }
+    }
+
+    fn activate_as_publisher(&mut self, subscribe_id: u64) {
+        if let Some(producer) = &mut self.producer {
+            let _ = producer.activate_subscription(subscribe_id);
+        }
+    }
+
+    fn activate_as_subscriber(&mut self, subscribe_id: u64) {
+        if let Some(consumer) = &mut self.consumer {
+            let _ = consumer.activate_subscription(subscribe_id);
+        }
+    }
 }
 
 // Due to the lifetime issue of `spawn_local`, it needs to be kept separate from MOQTClient.

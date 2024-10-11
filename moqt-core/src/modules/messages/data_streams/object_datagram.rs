@@ -79,7 +79,7 @@ impl MOQTPayload for ObjectDatagram {
                 match ObjectStatus::try_from(object_status_u64 as u8).context("object status") {
                     Ok(status) => status,
                     Err(err) => {
-                        // Any other value SHOULD be treated as a protocol error and terminate the session with a Protocol Violation
+                        // Any other value SHOULD be treated as a Protocol Violation and terminate the session with a Protocol Violation
                         // TODO: return Termination Error Code
                         bail!(err);
                     }
