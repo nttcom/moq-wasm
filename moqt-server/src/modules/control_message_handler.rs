@@ -391,7 +391,7 @@ mod success {
         ];
         let client_status = MOQTClientStatus::Connected;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             client_status,
@@ -418,7 +418,7 @@ mod success {
         ];
         let client_status = MOQTClientStatus::Connected;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             client_status,
@@ -455,7 +455,7 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::SetUp; // Correct Status is Connected
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             wrong_client_status,
@@ -492,7 +492,7 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             wrong_client_status,
@@ -523,7 +523,7 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             wrong_client_status,
@@ -552,7 +552,7 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             wrong_client_status,
@@ -582,7 +582,7 @@ mod failure {
         ];
         let wrong_client_status = MOQTClientStatus::Connected; // Correct Status is SetUp
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             wrong_client_status,
@@ -604,7 +604,7 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::Connected;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &wrong_bytes_array,
             client_status,
@@ -626,7 +626,7 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &wrong_bytes_array,
             client_status,
@@ -648,7 +648,7 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &wrong_bytes_array,
             client_status,
@@ -679,7 +679,7 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &wrong_bytes_array,
             client_status,
@@ -701,7 +701,7 @@ mod failure {
         let wrong_bytes_array = [0];
         let client_status = MOQTClientStatus::SetUp;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &wrong_bytes_array,
             client_status,
@@ -723,7 +723,7 @@ mod failure {
         let bytes_array = [];
         let client_status = MOQTClientStatus::SetUp;
 
-        let result = test_fn::packetize_buf_and_execute_control_message_handler(
+        let result = test_helper_fn::packetize_buf_and_execute_control_message_handler(
             message_type as u8,
             &bytes_array,
             client_status,
