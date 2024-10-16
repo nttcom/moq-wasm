@@ -23,14 +23,13 @@ use moqt_core::{
         unsubscribe::Unsubscribe,
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
+    messages::data_streams::object_datagram::ObjectDatagram,
+    messages::data_streams::object_status::ObjectStatus,
     messages::moqt_payload::MOQTPayload,
-    subscription_models::{
-        nodes::{
-            consumer_node::Consumer, node_registory::SubscriptionNodeRegistory,
-            producer_node::Producer,
-        },
-        subscriptions::Subscription,
+    models::subscriptions::nodes::{
+        consumers::Consumer, producers::Producer, registry::SubscriptionNodeRegistry,
     },
+    models::subscriptions::Subscription,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
@@ -71,6 +70,7 @@ pub struct MOQTClient {
     subscription_node: Rc<RefCell<SubscriptionNode>>,
     transport: Rc<RefCell<Option<web_sys::WebTransport>>>,
     control_stream_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
+    datagram_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
     callbacks: Rc<RefCell<MOQTCallbacks>>,
 }
 
@@ -85,6 +85,7 @@ impl MOQTClient {
             subscription_node: Rc::new(RefCell::new(SubscriptionNode::new())),
             transport: Rc::new(RefCell::new(None)),
             control_stream_writer: Rc::new(RefCell::new(None)),
+            datagram_writer: Rc::new(RefCell::new(None)),
             callbacks: Rc::new(RefCell::new(MOQTCallbacks::new())),
         }
     }
@@ -311,7 +312,7 @@ impl MOQTClient {
             let (subscribe_id, track_alias) = self
                 .subscription_node
                 .borrow_mut()
-                .find_unused_subscribe_id_and_track_alias()
+                .create_latest_subscribe_id_and_track_alias()
                 .unwrap();
             let priority = 0;
             let group_order = GroupOrder::Ascending;
@@ -521,6 +522,31 @@ impl MOQTClient {
         }
     }
 
+    #[wasm_bindgen(js_name = sendObjectDatagramMessage)]
+    pub async fn send_object_datagram(&self) -> Result<JsValue, JsValue> {
+        if let Some(writer) = &*self.datagram_writer.borrow() {
+            let object_datagram_result =
+                ObjectDatagram::new(0, 0, 0, 0, 0, Some(ObjectStatus::Normal), vec![0, 0, 0]);
+            let object_datagram = match object_datagram_result {
+                Ok(v) => v,
+                Err(e) => return Err(JsValue::from_str(&e.to_string())),
+            };
+            let mut object_datagram_buf = bytes::BytesMut::new();
+            object_datagram.packetize(&mut object_datagram_buf);
+
+            let mut buf = Vec::new();
+            buf.extend(object_datagram_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+            console_log!("send_object_datagram: {:#?}", buffer);
+
+            JsFuture::from(writer.write_with_chunk(&buffer)).await
+        } else {
+            Err(JsValue::from_str("datagram_writer is None"))
+        }
+    }
+
     pub async fn start(&self) -> Result<JsValue, JsValue> {
         let transport = web_sys::WebTransport::new(self.url.as_str());
         match &transport {
@@ -535,6 +561,11 @@ impl MOQTClient {
         // Keep it for sending object messages
         *self.transport.borrow_mut() = Some(transport.clone());
         JsFuture::from(transport.ready()).await?;
+        let datagram_reader_js_object = transport.datagrams().readable();
+        let datagram_reader =
+            web_sys::ReadableStreamDefaultReader::new(&datagram_reader_js_object)?;
+        let datagram_writer = transport.datagrams().writable().get_writer()?;
+        *self.datagram_writer.borrow_mut() = Some(datagram_writer);
 
         // All control messages are sent on same bidirectional stream which is called "control stream"
         let control_stream = web_sys::WebTransportBidirectionalStream::from(
@@ -548,6 +579,12 @@ impl MOQTClient {
         let control_stream_writable = control_stream.writable();
         let control_stream_writer = control_stream_writable.get_writer()?;
         *self.control_stream_writer.borrow_mut() = Some(control_stream_writer);
+
+        // For receiving datagrams
+        let callbacks = self.callbacks.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = datagram_read_thread(callbacks, &datagram_reader).await;
+        });
 
         // For receiving control messages
         let callbacks = self.callbacks.clone();
@@ -671,6 +708,42 @@ async fn stream_read_thread(
         }
     }
 
+    Ok(())
+}
+
+#[cfg(web_sys_unstable_apis)]
+async fn datagram_read_thread(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    reader: &ReadableStreamDefaultReader,
+) -> Result<(), JsValue> {
+    log("datagram_read_thread");
+
+    loop {
+        let ret = reader.read();
+        let ret = JsFuture::from(ret).await?;
+
+        let ret_value = js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?;
+        let ret_done = js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?;
+        let ret_done = js_sys::Boolean::from(ret_done).value_of();
+
+        if ret_done {
+            break;
+        }
+
+        let ret_value = js_sys::Uint8Array::from(ret_value).to_vec();
+
+        log(std::format!("recv value: {:#?}", ret_value).as_str());
+
+        let mut buf = BytesMut::with_capacity(ret_value.len());
+        for i in ret_value {
+            buf.put_u8(i);
+        }
+
+        if let Err(e) = datagram_handler(callbacks.clone(), &mut buf).await {
+            log(std::format!("error: {:#?}", e).as_str());
+            return Err(js_sys::Error::new(&e.to_string()).into());
+        }
+    }
     Ok(())
 }
 
@@ -803,6 +876,24 @@ async fn message_handler(
 }
 
 #[cfg(web_sys_unstable_apis)]
+async fn datagram_handler(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    mut buf: &mut BytesMut,
+) -> Result<()> {
+    let datagram_object = ObjectDatagram::depacketize(&mut buf)?;
+    log(std::format!("datagram_object: {:#x?}", datagram_object).as_str());
+    if let Some(callback) = callbacks.borrow().setup_callback() {
+        callback
+            .call1(&JsValue::null(), &JsValue::from("called2"))
+            .unwrap();
+        let v = serde_wasm_bindgen::to_value(&datagram_object).unwrap();
+        callback.call1(&JsValue::null(), &(v)).unwrap();
+    }
+
+    Ok(())
+}
+
+#[cfg(web_sys_unstable_apis)]
 struct SubscriptionNode {
     consumer: Option<Consumer>,
     producer: Option<Producer>,
@@ -831,9 +922,9 @@ impl SubscriptionNode {
         }
     }
 
-    fn find_unused_subscribe_id_and_track_alias(&self) -> Result<(u64, u64)> {
+    fn create_latest_subscribe_id_and_track_alias(&self) -> Result<(u64, u64)> {
         if let Some(consumer) = &self.consumer {
-            consumer.find_unused_subscribe_id_and_track_alias()
+            consumer.create_latest_subscribe_id_and_track_alias()
         } else {
             Err(anyhow::anyhow!("consumer is None"))
         }
@@ -911,20 +1002,10 @@ impl SubscriptionNode {
                 }
             }
 
-            match producer.is_within_max_subscribe_id(subscribe_message.subscribe_id())
-                && producer.is_subscribe_id_unique(subscribe_message.subscribe_id())
-            {
+            match producer.is_subscribe_id_valid(subscribe_message.subscribe_id()) {
                 true => {}
                 false => {
                     let error_code = SubscribeErrorCode::InvalidRange;
-                    return Err(anyhow::anyhow!(u8::from(error_code)));
-                }
-            }
-
-            match producer.is_track_alias_unique(subscribe_message.track_alias()) {
-                true => {}
-                false => {
-                    let error_code = SubscribeErrorCode::RetryTrackAlias;
                     return Err(anyhow::anyhow!(u8::from(error_code)));
                 }
             }

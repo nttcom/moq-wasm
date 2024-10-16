@@ -69,6 +69,9 @@ init().then(async () => {
         case 'unsubscribe':
           await client.sendUnsubscribeMessage(trackNamespace, trackName)
           break
+        case 'object-datagram':
+          await client.sendObjectDatagramMessage()
+          break
       }
     }
 

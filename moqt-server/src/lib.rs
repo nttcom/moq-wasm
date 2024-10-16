@@ -269,6 +269,14 @@ async fn handle_connection(
                 // TODO: handle recv uni-directional stream and open send stream with open_ch_tx
                 unimplemented!();
             },
+            datagram = connection.receive_datagram() => {
+                let datagram = datagram?;
+                let str_data = std::str::from_utf8(&datagram)?;
+
+                tracing::info!("Received (dgram) '{str_data}' from client");
+
+                connection.send_datagram(b"ACK")?;
+            }
             // Waiting for a uni-directional send stream open request and relaying the message
             Some(data_stream_type) = open_ch_rx.recv() => {
 
