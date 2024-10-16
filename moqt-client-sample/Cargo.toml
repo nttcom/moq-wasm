@@ -14,7 +14,7 @@ default = ["console_error_panic_hook"]
 [dependencies]
 bytes = "1.5.0"
 console_error_panic_hook = { version = "0.1.7", optional = true }
-js-sys = "0.3.64"
+js-sys = "0.3.72"
 serde = { version = "1.0.188", features = ["derive"] }
 serde-wasm-bindgen = "0.6.0"
 wasm-bindgen = "0.2.87"
@@ -24,17 +24,15 @@ futures = "0.3.29"
 anyhow = "1.0.75"
 
 [dependencies.web-sys]
-version = "0.3.64"
+version = "0.3.72"
 features = [
-  'WebTransport',
-  'WebTransportBidirectionalStream',
-  'WebTransportSendStream',
-  'WebTransportReceiveStream',
-  'ReadableStreamDefaultReader',
-  'WritableStreamDefaultWriter',
-  'ReadableStream',
-  'WritableStream',
+  "WebTransport", 
+  "WebTransportBidirectionalStream",
+  "WebTransportDatagramDuplexStream", 
+  "WebTransportSendStream", 
+  "WebTransportReceiveStream", 
+  "ReadableStreamDefaultReader", 
+  "WritableStreamDefaultWriter", 
+  "ReadableStream", 
+  "WritableStream"
 ]
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(web_sys_unstable_apis)'] }
