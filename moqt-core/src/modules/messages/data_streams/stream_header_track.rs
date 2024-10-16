@@ -8,7 +8,7 @@ use std::any::Any;
 
 use crate::messages::moqt_payload::MOQTPayload;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct StreamHeaderTrack {
     subscribe_id: u64,
     track_alias: u64,
@@ -24,8 +24,20 @@ impl StreamHeaderTrack {
         })
     }
 
+    pub fn subscribe_id(&self) -> u64 {
+        self.subscribe_id
+    }
+
     pub fn track_alias(&self) -> u64 {
         self.track_alias
+    }
+
+    pub fn set_subscribe_id(&mut self, subscribe_id: u64) {
+        self.subscribe_id = subscribe_id;
+    }
+
+    pub fn set_track_alias(&mut self, track_alias: u64) {
+        self.track_alias = track_alias;
     }
 }
 

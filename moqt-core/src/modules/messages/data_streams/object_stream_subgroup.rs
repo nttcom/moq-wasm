@@ -40,6 +40,10 @@ impl ObjectStreamSubgroup {
             object_payload,
         })
     }
+
+    pub fn object_id(&self) -> u64 {
+        self.object_id
+    }
 }
 
 impl MOQTPayload for ObjectStreamSubgroup {
