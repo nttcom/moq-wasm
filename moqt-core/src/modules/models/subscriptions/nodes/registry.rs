@@ -1,5 +1,6 @@
 use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
 use crate::models::subscriptions::Subscription;
+use crate::models::tracks::ForwardingPreference;
 use anyhow::Result;
 
 type SubscribeId = u64;
@@ -37,6 +38,15 @@ pub trait SubscriptionNodeRegistry {
     fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool>;
     fn is_requesting(&self, subscribe_id: SubscribeId) -> bool;
     fn delete_subscription(&mut self, subscribe_id: SubscribeId) -> Result<()>;
+    fn set_forwarding_preference(
+        &mut self,
+        subscribe_id: SubscribeId,
+        forwarding_preference: ForwardingPreference,
+    ) -> Result<()>;
+    fn get_forwarding_preference(
+        &self,
+        subscribe_id: SubscribeId,
+    ) -> Result<Option<ForwardingPreference>>;
 
     fn is_subscribe_id_valid(&self, subscribe_id: SubscribeId) -> bool;
     fn is_track_alias_valid(&self, track_alias: TrackAlias) -> bool;

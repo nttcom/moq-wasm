@@ -1,5 +1,6 @@
 use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
 use crate::models::subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription};
+use crate::models::tracks::ForwardingPreference;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
@@ -122,6 +123,27 @@ impl SubscriptionNodeRegistry for Consumer {
     fn delete_subscription(&mut self, subscribe_id: SubscribeId) -> Result<()> {
         self.subscriptions.remove(&subscribe_id);
         Ok(())
+    }
+
+    fn set_forwarding_preference(
+        &mut self,
+        subscribe_id: SubscribeId,
+        forwarding_preference: ForwardingPreference,
+    ) -> Result<()> {
+        let subscription = self.subscriptions.get_mut(&subscribe_id).unwrap();
+        subscription.set_forwarding_preference(forwarding_preference);
+
+        Ok(())
+    }
+    fn get_forwarding_preference(
+        &self,
+        subscribe_id: SubscribeId,
+    ) -> Result<Option<ForwardingPreference>> {
+        let forwarding_preference = self
+            .subscriptions
+            .get(&subscribe_id)
+            .map(|subscription| subscription.get_forwarding_preference().unwrap());
+        Ok(forwarding_preference)
     }
 
     fn is_subscribe_id_valid(&self, subscribe_id: SubscribeId) -> bool {

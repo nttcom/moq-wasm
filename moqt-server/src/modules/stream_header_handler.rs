@@ -4,18 +4,18 @@ use crate::constants::TerminationErrorCode;
 use crate::modules::server_processes::stream_track_header::process_stream_header_track;
 use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
+use moqt_core::moqt_client::MOQTClientStatus;
 use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
-    constants::UnderlayType, data_stream_type::DataStreamType,
-    variable_integer::read_variable_integer, MOQTClient, SendStreamDispatcherRepository,
+    data_stream_type::DataStreamType, variable_integer::read_variable_integer, MOQTClient,
 };
 
+use crate::modules::object_cache_storage::ObjectCacheStorageWrapper;
+
 #[derive(Debug, PartialEq)]
-pub enum MessageProcessResult {
-    Success(BytesMut),
-    SuccessWithoutResponse,
+pub enum StreamHeaderProcessResult {
+    Success((u64, DataStreamType)),
     Failure(TerminationErrorCode, String),
-    Fragment,
 }
 
 fn read_header_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataStreamType> {
@@ -42,11 +42,10 @@ fn read_header_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataStreamT
 
 pub async fn stream_header_handler(
     read_buf: &mut BytesMut,
-    underlay_type: UnderlayType,
     client: &mut MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
-) -> MessageProcessResult {
+    object_cache_storage: &mut ObjectCacheStorageWrapper,
+) -> StreamHeaderProcessResult {
     tracing::trace!("stream_header_handler! {}", read_buf.len());
 
     let mut read_cur = Cursor::new(&read_buf[..]);
@@ -59,7 +58,7 @@ pub async fn stream_header_handler(
             read_buf.advance(read_cur.position() as usize);
 
             tracing::error!("header_type is wrong {:?}", err);
-            return MessageProcessResult::Failure(
+            return StreamHeaderProcessResult::Failure(
                 TerminationErrorCode::ProtocolViolation,
                 err.to_string(),
             );
@@ -68,24 +67,28 @@ pub async fn stream_header_handler(
     tracing::info!("Received Header Type: {:?}", header_type);
 
     // check subscription and judge if it is invalid timing
-    // set uni stream sender
+    if client.status() != MOQTClientStatus::SetUp {
+        let message = String::from("Invalid timing");
+        tracing::error!(message);
+        return StreamHeaderProcessResult::Failure(
+            TerminationErrorCode::ProtocolViolation,
+            message,
+        );
+    }
 
-    let mut write_buf = BytesMut::new();
-
-    match header_type {
+    let subscribe_id = match header_type {
         DataStreamType::StreamHeaderTrack => {
             match process_stream_header_track(
-                &mut read_buf,
+                read_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
-                &mut client,
+                object_cache_storage,
+                client,
             )
             .await
             {
-                Ok(_) => ControlMessageType::ServerSetup,
+                Ok(subscribe_id) => subscribe_id,
                 Err(err) => {
-                    // TODO: To ensure future extensibility of MOQT, the peers MUST ignore unknown setup parameters.
-                    return MessageProcessResult::Failure(
+                    return StreamHeaderProcessResult::Failure(
                         TerminationErrorCode::InternalError,
                         err.to_string(),
                     );
@@ -96,12 +99,12 @@ pub async fn stream_header_handler(
             unimplemented!();
         }
         unknown => {
-            return MessageProcessResult::Failure(
+            return StreamHeaderProcessResult::Failure(
                 TerminationErrorCode::ProtocolViolation,
                 format!("Unknown message type: {:?}", unknown),
             );
         }
     };
 
-    MessageProcessResult::Success(message_buf)
+    StreamHeaderProcessResult::Success((subscribe_id, header_type))
 }

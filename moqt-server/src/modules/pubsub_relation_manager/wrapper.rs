@@ -5,6 +5,7 @@ use anyhow::{bail, Result};
 use async_trait::async_trait;
 use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
 use moqt_core::models::subscriptions::Subscription;
+use moqt_core::models::tracks::ForwardingPreference;
 use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use tokio::sync::{mpsc, oneshot};
 
@@ -150,9 +151,29 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         track_name: String,
     ) -> Result<Option<Subscription>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<Subscription>>>();
-        let cmd = PubSubRelationCommand::GetUpstreamSubscription {
+        let cmd = PubSubRelationCommand::GetUpstreamSubscriptionByFullTrackName {
             track_namespace,
             track_name,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(subscription) => Ok(subscription),
+            Err(err) => bail!(err),
+        }
+    }
+    async fn get_downstream_subscription_by_ids(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<Option<Subscription>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<Subscription>>>();
+        let cmd = PubSubRelationCommand::GetDownstreamSubscriptionByIds {
+            downstream_session_id,
+            downstream_subscribe_id,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -393,6 +414,111 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             Err(err) => bail!(err),
         }
     }
+    async fn set_downstream_forwarding_preference(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        forwarding_preference: ForwardingPreference,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
+        let cmd = SetDownstreamForwardingPreference {
+            downstream_session_id,
+            downstream_subscribe_id,
+            forwarding_preference,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => bail!(err),
+        }
+    }
+    async fn set_upstream_forwarding_preference(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        forwarding_preference: ForwardingPreference,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
+        let cmd = SetUpstreamForwardingPreference {
+            upstream_session_id,
+            upstream_subscribe_id,
+            forwarding_preference,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => bail!(err),
+        }
+    }
+
+    async fn get_upstream_forwarding_preference(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Option<ForwardingPreference>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<ForwardingPreference>>>();
+        let cmd = GetUpstreamForwardingPreference {
+            upstream_session_id,
+            upstream_subscribe_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(forwarding_preference) => Ok(forwarding_preference),
+            Err(err) => bail!(err),
+        }
+    }
+
+    async fn get_related_subscribers(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Vec<(usize, u64)>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Vec<(usize, u64)>>>();
+        let cmd = PubSubRelationCommand::GetRelatedSubscribers {
+            upstream_session_id,
+            upstream_subscribe_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(related_subscribers) => Ok(related_subscribers),
+            Err(err) => bail!(err),
+        }
+    }
+
+    async fn get_related_publisher(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<(usize, u64)> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<(usize, u64)>>();
+        let cmd = PubSubRelationCommand::GetRelatedPublisher {
+            downstream_session_id,
+            downstream_subscribe_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(related_publisher) => Ok(related_publisher),
+            Err(err) => bail!(err),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -428,6 +554,7 @@ mod success {
     use moqt_core::models::subscriptions::{
         nodes::registry::SubscriptionNodeRegistry, Subscription,
     };
+    use moqt_core::models::tracks::ForwardingPreference;
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
     use tokio::sync::mpsc;
 
@@ -740,6 +867,70 @@ mod success {
                 track_namespace.clone(),
                 track_name.clone(),
             )
+            .await
+            .unwrap();
+
+        let forwarding_preference = None;
+        let expected_subscription = Subscription::new(
+            track_alias,
+            track_namespace,
+            track_name,
+            subscriber_priority,
+            group_order,
+            filter_type,
+            start_group,
+            start_object,
+            end_group,
+            end_object,
+            forwarding_preference,
+        );
+
+        assert_eq!(subscription, Some(expected_subscription));
+    }
+
+    #[tokio::test]
+    async fn get_downstream_subscription_by_ids() {
+        let max_subscribe_id = 10;
+        let downstream_session_id = 1;
+        let downstream_subscribe_id = 1;
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_downstream_subscription(
+                downstream_session_id,
+                downstream_subscribe_id,
+                track_alias,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+
+        let subscription = pubsub_relation_manager
+            .get_downstream_subscription_by_ids(downstream_session_id, downstream_subscribe_id)
             .await
             .unwrap();
 
@@ -1540,6 +1731,387 @@ mod success {
 
         let delete_occured = result.unwrap();
         assert!(!delete_occured);
+    }
+
+    #[tokio::test]
+    async fn set_upstream_forwarding_preference() {
+        let max_subscribe_id = 10;
+        let upstream_session_id = 1;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+        let forwarding_preference = ForwardingPreference::Track;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_publisher(max_subscribe_id, upstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .await;
+        let (upstream_subscribe_id, _) = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
+
+        let result = pubsub_relation_manager
+            .set_upstream_forwarding_preference(
+                upstream_session_id,
+                upstream_subscribe_id,
+                forwarding_preference.clone(),
+            )
+            .await;
+        assert!(result.is_ok());
+
+        // Assert that the forwarding preference is set
+        let (consumers, _, _) =
+            test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
+        let consumer = consumers.get(&upstream_session_id).unwrap();
+        let subscription = consumer
+            .get_subscription(upstream_subscribe_id)
+            .unwrap()
+            .unwrap();
+
+        let result_forwarding_preference = subscription.get_forwarding_preference().unwrap();
+
+        assert_eq!(result_forwarding_preference, forwarding_preference);
+    }
+
+    #[tokio::test]
+    async fn get_upstream_forwarding_preference() {
+        let max_subscribe_id = 10;
+        let upstream_session_id = 1;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+        let forwarding_preference = ForwardingPreference::Track;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_publisher(max_subscribe_id, upstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .await;
+        let (upstream_subscribe_id, _) = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
+        let _ = pubsub_relation_manager
+            .set_upstream_forwarding_preference(
+                upstream_session_id,
+                upstream_subscribe_id,
+                forwarding_preference.clone(),
+            )
+            .await;
+
+        let result = pubsub_relation_manager
+            .get_upstream_forwarding_preference(upstream_session_id, upstream_subscribe_id)
+            .await;
+        assert!(result.is_ok());
+
+        let result_forwarding_preference = result.unwrap().unwrap();
+
+        assert_eq!(result_forwarding_preference, forwarding_preference);
+    }
+
+    #[tokio::test]
+    async fn set_downstream_forwarding_preference() {
+        let max_subscribe_id = 10;
+        let downstream_session_id = 1;
+        let subscribe_id = 0;
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+        let forwarding_preference = ForwardingPreference::Subgroup;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_downstream_subscription(
+                downstream_session_id,
+                subscribe_id,
+                track_alias,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+
+        let result = pubsub_relation_manager
+            .set_downstream_forwarding_preference(
+                downstream_session_id,
+                subscribe_id,
+                forwarding_preference.clone(),
+            )
+            .await;
+        assert!(result.is_ok());
+
+        // Assert that the forwarding preference is set
+        let (_, producers, _) =
+            test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
+        let producer = producers.get(&downstream_session_id).unwrap();
+        let subscription = producer.get_subscription(subscribe_id).unwrap().unwrap();
+
+        let result_forwarding_preference = subscription.get_forwarding_preference().unwrap();
+
+        assert_eq!(result_forwarding_preference, forwarding_preference);
+    }
+
+    #[tokio::test]
+    async fn get_related_subscribers() {
+        let max_subscribe_id = 10;
+        let upstream_session_id = 1;
+        let downstream_session_ids = [2, 3];
+        let downstream_subscribe_ids = [4, 5];
+        let downstream_track_aliases = [6, 7];
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+
+        //   pub 1 <- sub 2, 3
+        let _ = pubsub_relation_manager
+            .setup_publisher(max_subscribe_id, upstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .await;
+        let (upstream_subscribe_id, _) = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
+
+        for i in [0, 1] {
+            let _ = pubsub_relation_manager
+                .setup_subscriber(max_subscribe_id, downstream_session_ids[i])
+                .await;
+            let _ = pubsub_relation_manager
+                .set_downstream_subscription(
+                    downstream_session_ids[i],
+                    downstream_subscribe_ids[i],
+                    downstream_track_aliases[i],
+                    track_namespace.clone(),
+                    track_name.clone(),
+                    subscriber_priority,
+                    group_order,
+                    filter_type,
+                    start_group,
+                    start_object,
+                    end_group,
+                    end_object,
+                )
+                .await;
+            let _ = pubsub_relation_manager
+                .set_pubsub_relation(
+                    upstream_session_id,
+                    upstream_subscribe_id,
+                    downstream_session_ids[i],
+                    downstream_subscribe_ids[i],
+                )
+                .await;
+
+            let _ = pubsub_relation_manager
+                .activate_downstream_subscription(
+                    downstream_session_ids[i],
+                    downstream_subscribe_ids[i],
+                )
+                .await;
+
+            let _ = pubsub_relation_manager
+                .activate_upstream_subscription(upstream_session_id, upstream_subscribe_id)
+                .await;
+        }
+
+        let related_subscribers = pubsub_relation_manager
+            .get_related_subscribers(upstream_session_id, upstream_subscribe_id)
+            .await
+            .unwrap();
+
+        let expected_related_subscribers = vec![
+            (downstream_session_ids[0], downstream_subscribe_ids[0]),
+            (downstream_session_ids[1], downstream_subscribe_ids[1]),
+        ];
+
+        assert_eq!(related_subscribers, expected_related_subscribers);
+    }
+
+    #[tokio::test]
+    async fn get_related_publisher() {
+        let max_subscribe_id = 10;
+        let upstream_session_id = 1;
+        let downstream_session_ids = [2, 3];
+        let downstream_subscribe_ids = [4, 5];
+        let downstream_track_aliases = [6, 7];
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+
+        //   pub 1 <- sub 2, 3
+        let _ = pubsub_relation_manager
+            .setup_publisher(max_subscribe_id, upstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .await;
+        let (upstream_subscribe_id, _) = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
+
+        for i in [0, 1] {
+            let _ = pubsub_relation_manager
+                .setup_subscriber(max_subscribe_id, downstream_session_ids[i])
+                .await;
+            let _ = pubsub_relation_manager
+                .set_downstream_subscription(
+                    downstream_session_ids[i],
+                    downstream_subscribe_ids[i],
+                    downstream_track_aliases[i],
+                    track_namespace.clone(),
+                    track_name.clone(),
+                    subscriber_priority,
+                    group_order,
+                    filter_type,
+                    start_group,
+                    start_object,
+                    end_group,
+                    end_object,
+                )
+                .await;
+            let _ = pubsub_relation_manager
+                .set_pubsub_relation(
+                    upstream_session_id,
+                    upstream_subscribe_id,
+                    downstream_session_ids[i],
+                    downstream_subscribe_ids[i],
+                )
+                .await;
+            let _ = pubsub_relation_manager
+                .activate_downstream_subscription(
+                    downstream_session_ids[i],
+                    downstream_subscribe_ids[i],
+                )
+                .await;
+            let _ = pubsub_relation_manager
+                .activate_upstream_subscription(upstream_session_id, upstream_subscribe_id)
+                .await;
+        }
+
+        let related_publisher = pubsub_relation_manager
+            .get_related_publisher(downstream_session_ids[0], downstream_subscribe_ids[0])
+            .await
+            .unwrap();
+
+        let expected_related_publisher = (upstream_session_id, upstream_subscribe_id);
+
+        assert_eq!(related_publisher, expected_related_publisher);
     }
 }
 

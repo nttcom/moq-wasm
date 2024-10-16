@@ -4,6 +4,8 @@ use crate::models::subscriptions::Subscription;
 use anyhow::Result;
 use async_trait::async_trait;
 
+use super::models::tracks::ForwardingPreference;
+
 #[async_trait]
 pub trait PubSubRelationManagerRepository: Send + Sync {
     async fn setup_publisher(
@@ -40,6 +42,11 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         &self,
         track_namespace: Vec<String>,
         track_name: String,
+    ) -> Result<Option<Subscription>>;
+    async fn get_downstream_subscription_by_ids(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
     ) -> Result<Option<Subscription>>;
     async fn get_upstream_session_id(&self, track_namespace: Vec<String>) -> Result<Option<usize>>;
     async fn get_requesting_downstream_session_ids_and_subscribe_ids(
@@ -106,4 +113,31 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         upstream_session_id: usize,
     ) -> Result<bool>;
     async fn delete_client(&self, session_id: usize) -> Result<bool>;
+    async fn set_downstream_forwarding_preference(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        forwarding_preference: ForwardingPreference,
+    ) -> Result<()>;
+    async fn set_upstream_forwarding_preference(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        forwarding_preference: ForwardingPreference,
+    ) -> Result<()>;
+    async fn get_upstream_forwarding_preference(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Option<ForwardingPreference>>;
+    async fn get_related_subscribers(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Vec<(usize, u64)>>;
+    async fn get_related_publisher(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<(usize, u64)>;
 }

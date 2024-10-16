@@ -43,6 +43,14 @@ impl ObjectStreamTrack {
             object_payload,
         })
     }
+
+    pub fn group_id(&self) -> u64 {
+        self.group_id
+    }
+
+    pub fn object_id(&self) -> u64 {
+        self.object_id
+    }
 }
 
 impl MOQTPayload for ObjectStreamTrack {
