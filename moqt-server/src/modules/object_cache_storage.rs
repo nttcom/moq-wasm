@@ -1,5 +1,4 @@
-use anyhow::bail;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use moqt_core::messages::data_streams::{
     object_datagram::ObjectDatagram, object_stream_subgroup::ObjectStreamSubgroup,
     object_stream_track::ObjectStreamTrack,
@@ -684,7 +683,6 @@ impl ObjectCacheStorageWrapper {
 #[cfg(test)]
 mod success {
     use super::*;
-    use moqt_core::messages::data_streams::object_status;
 
     #[tokio::test]
     async fn set_channel() {
@@ -986,7 +984,7 @@ mod success {
         let group_id = 4;
         let subgroup_id = 5;
         let publisher_priority = 6;
-        let object_status = Some(object_status::ObjectStatus::Normal);
+        let object_status = None;
         let duration = 1000;
         let header = CacheHeader::Subgroup(
             StreamHeaderSubgroup::new(
@@ -1249,7 +1247,7 @@ mod success {
         let group_id = 4;
         let subgroup_id = 5;
         let publisher_priority = 6;
-        let object_status = Some(object_status::ObjectStatus::Normal);
+        let object_status = None;
         let duration = 1000;
         let header = CacheHeader::Subgroup(
             StreamHeaderSubgroup::new(
@@ -1443,7 +1441,7 @@ mod success {
         let group_id = 4;
         let subgroup_id = 5;
         let publisher_priority = 6;
-        let object_status = Some(object_status::ObjectStatus::Normal);
+        let object_status = None;
         let duration = 1000;
         let header = CacheHeader::Subgroup(
             StreamHeaderSubgroup::new(
@@ -1807,7 +1805,7 @@ mod success {
         let group_id = 4;
         let subgroup_id = 5;
         let publisher_priority = 6;
-        let object_status = Some(object_status::ObjectStatus::Normal);
+        let object_status = None;
         let duration = 1000;
         let header = CacheHeader::Subgroup(
             StreamHeaderSubgroup::new(
