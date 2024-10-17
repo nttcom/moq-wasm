@@ -1,3 +1,4 @@
+pub mod catalogs;
 pub mod constants;
 pub mod control_message_type;
 pub mod messages;
