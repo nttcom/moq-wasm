@@ -160,7 +160,7 @@ mod serialize_success {
 
     #[test]
     fn example1() {
-        let json = r#"{
+        let json = serde_json::json!({
           "version": 1,
           "streamingFormat": "1",
           "streamingFormatVersion": "0.2",
@@ -179,8 +179,8 @@ mod serialize_success {
               "selectionParams":{"codec":"opus","samplerate":48000,"channelConfig":"2","bitrate":32000}
             }
           ]
-        }"#;
-        let result: Result<CommonCatalogFormat, _> = serde_json::from_str(json);
+        });
+        let result: Result<CommonCatalogFormat, _> = serde_json::from_value(json);
         let expected = CommonCatalog {
             version: 1,
             streaming_format: "1".to_string(),
@@ -229,8 +229,7 @@ mod serialize_success {
 
     #[test]
     fn example11() {
-        let json = r#"
-        {
+        let json = serde_json::json!({
           "version": 1,
           "catalogs": [
             {
@@ -247,9 +246,8 @@ mod serialize_success {
               "streamingFormatVersion": "1.6.2"
             }
           ]
-        }
-        "#;
-        let result: Result<CommonCatalogFormat, _> = serde_json::from_str(json);
+        });
+        let result: Result<CommonCatalogFormat, _> = serde_json::from_value(json);
 
         let expected = CommonCatalogWithMultipleCatalogs {
             version: 1,
@@ -287,7 +285,7 @@ mod patch_success {
 
     #[test]
     fn example1() {
-        let json = r#"{
+        let json = serde_json::json!({
           "version": 1,
           "streamingFormat": "1",
           "streamingFormatVersion": "0.2",
@@ -306,8 +304,9 @@ mod patch_success {
               "selectionParams":{"codec":"opus","samplerate":48000,"channelConfig":"2","bitrate":32000}
             }
           ]
-        }"#;
-        let base_common_catalog_result: Result<CommonCatalogFormat, _> = serde_json::from_str(json);
+        });
+        let base_common_catalog_result: Result<CommonCatalogFormat, _> =
+            serde_json::from_value(json);
         let mut base_common_catalog = match base_common_catalog_result {
             Ok(CommonCatalogFormat::CommonCatalog(common_catalog)) => common_catalog,
             _ => panic!("unexpected"),
