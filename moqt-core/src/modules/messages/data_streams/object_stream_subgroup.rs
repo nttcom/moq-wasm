@@ -1,13 +1,12 @@
+use super::DataStreams;
 use crate::messages::data_streams::object_status::ObjectStatus;
 use crate::{
-    variable_bytes::read_fixed_length_bytes_from_buffer,
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+    variable_bytes::read_fixed_length_bytes,
+    variable_integer::{read_variable_integer, write_variable_integer},
 };
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::any::Any;
-
-use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ObjectStreamSubgroup {
@@ -24,6 +23,10 @@ impl ObjectStreamSubgroup {
         object_payload: Vec<u8>,
     ) -> Result<Self> {
         let object_payload_length = object_payload.len() as u64;
+
+        if object_status.is_some() && object_payload_length != 0 {
+            bail!("The Object Status field is only sent if the Object Payload Length is zero.");
+        }
 
         // Any object with a status code other than zero MUST have an empty payload.
         if let Some(status) = object_status {
@@ -46,18 +49,18 @@ impl ObjectStreamSubgroup {
     }
 }
 
-impl MOQTPayload for ObjectStreamSubgroup {
-    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self>
+impl DataStreams for ObjectStreamSubgroup {
+    fn depacketize(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<Self>
     where
         Self: Sized,
     {
-        let object_id = read_variable_integer_from_buffer(buf).context("object id")?;
+        let object_id = read_variable_integer(read_cur).context("object id")?;
         let object_payload_length =
-            read_variable_integer_from_buffer(buf).context("object payload length")?;
+            read_variable_integer(read_cur).context("object payload length")?;
 
         // If the length of the remaining buf is larger than object_payload_length, object_status exists.
-        let object_status = if buf.len() > object_payload_length as usize {
-            let object_status_u64 = read_variable_integer_from_buffer(buf)?;
+        let object_status = if object_payload_length == 0 {
+            let object_status_u64 = read_variable_integer(read_cur)?;
             let object_status =
                 match ObjectStatus::try_from(object_status_u64 as u8).context("object status") {
                     Ok(status) => status,
@@ -68,19 +71,13 @@ impl MOQTPayload for ObjectStreamSubgroup {
                     }
                 };
 
-            // Any object with a status code other than zero MUST have an empty payload.
-            if object_status != ObjectStatus::Normal && object_payload_length != 0 {
-                // TODO: return Termination Error Code
-                bail!("Any object with a status code other than zero MUST have an empty payload.");
-            }
-
             Some(object_status)
         } else {
             None
         };
 
         let object_payload = if object_payload_length > 0 {
-            read_fixed_length_bytes_from_buffer(buf, object_payload_length as usize)
+            read_fixed_length_bytes(read_cur, object_payload_length as usize)
                 .context("object payload")?
         } else {
             vec![]
@@ -116,16 +113,17 @@ impl MOQTPayload for ObjectStreamSubgroup {
 
 #[cfg(test)]
 mod success {
+    use crate::messages::data_streams::DataStreams;
     use crate::messages::data_streams::{
         object_status::ObjectStatus, object_stream_subgroup::ObjectStreamSubgroup,
     };
-    use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
+    use std::io::Cursor;
 
     #[test]
     fn packetize_object_stream_subgroup_normal() {
         let object_id = 0;
-        let object_status = Some(ObjectStatus::Normal);
+        let object_status = None;
         let object_payload = vec![0, 1, 2];
 
         let object_stream_subgroup =
@@ -136,8 +134,7 @@ mod success {
 
         let expected_bytes_array = [
             0, // Object ID (i)
-            3, // Object Payload Length (i)
-            0, // Object Status (i)
+            3, // Object Payload Length (i
             0, 1, 2, // Object Payload (..)
         ];
 
@@ -190,18 +187,18 @@ mod success {
     fn depacketize_object_stream_subgroup_normal() {
         let bytes_array = [
             0, // Object ID (i)
-            3, // Object Payload Length (i)
+            0, // Object Payload Length (i)
             0, // Object Status (i)
-            0, 1, 2, // Object Payload (..)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
+        let mut read_cur = Cursor::new(&buf[..]);
         let depacketized_object_stream_subgroup =
-            ObjectStreamSubgroup::depacketize(&mut buf).unwrap();
+            ObjectStreamSubgroup::depacketize(&mut read_cur).unwrap();
 
         let object_id = 0;
         let object_status = Some(ObjectStatus::Normal);
-        let object_payload = vec![0, 1, 2];
+        let object_payload = vec![];
 
         let expected_object_stream_subgroup =
             ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
@@ -221,8 +218,9 @@ mod success {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
+        let mut read_cur = Cursor::new(&buf[..]);
         let depacketized_object_stream_subgroup =
-            ObjectStreamSubgroup::depacketize(&mut buf).unwrap();
+            ObjectStreamSubgroup::depacketize(&mut read_cur).unwrap();
 
         let object_id = 0;
         let object_status = Some(ObjectStatus::Normal);
@@ -246,8 +244,9 @@ mod success {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
+        let mut read_cur = Cursor::new(&buf[..]);
         let depacketized_object_stream_subgroup =
-            ObjectStreamSubgroup::depacketize(&mut buf).unwrap();
+            ObjectStreamSubgroup::depacketize(&mut read_cur).unwrap();
 
         let object_id = 0;
         let object_status = Some(ObjectStatus::DoesNotExist);
@@ -268,8 +267,9 @@ mod failure {
     use crate::messages::data_streams::object_stream_subgroup::{
         ObjectStatus, ObjectStreamSubgroup,
     };
-    use crate::messages::moqt_payload::MOQTPayload;
+    use crate::messages::data_streams::DataStreams;
     use bytes::BytesMut;
+    use std::io::Cursor;
 
     #[test]
     fn packetize_object_stream_subgroup_not_normal_and_not_empty_payload() {
@@ -284,21 +284,6 @@ mod failure {
     }
 
     #[test]
-    fn depacketize_object_stream_subgroup_not_normal_and_not_empty_payload() {
-        let bytes_array = [
-            0, // Object ID (i)
-            3, // Object Payload Length (i)
-            5, // Object Status (i)
-            0, 1, 2, // Object Payload (..)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_object_stream_subgroup = ObjectStreamSubgroup::depacketize(&mut buf);
-
-        assert!(depacketized_object_stream_subgroup.is_err());
-    }
-
-    #[test]
     #[should_panic]
     fn depacketize_object_stream_subgroup_wrong_parameter_length() {
         let bytes_array = [
@@ -309,8 +294,8 @@ mod failure {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-
-        let _ = ObjectStreamSubgroup::depacketize(&mut buf);
+        let mut read_cur = Cursor::new(&buf[..]);
+        let _ = ObjectStreamSubgroup::depacketize(&mut read_cur);
     }
 
     #[test]
@@ -322,7 +307,8 @@ mod failure {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let depacketized_object_stream_subgroup = ObjectStreamSubgroup::depacketize(&mut buf);
+        let mut read_cur = Cursor::new(&buf[..]);
+        let depacketized_object_stream_subgroup = ObjectStreamSubgroup::depacketize(&mut read_cur);
 
         assert!(depacketized_object_stream_subgroup.is_err());
     }
