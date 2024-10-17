@@ -1,8 +1,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-#[macro_use]
+
 use json_patch;
-use serde_json::{from_value, json};
+use serde_json;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
@@ -313,7 +313,7 @@ mod patch_success {
             _ => panic!("unexpected"),
         };
 
-        let p: json_patch::Patch = from_value(json!([
+        let p: json_patch::Patch = serde_json::from_value(serde_json::json!([
           {
             "op": "add",
             "path": "/tracks/-",
@@ -334,7 +334,7 @@ mod patch_success {
         base_common_catalog = base_common_catalog.patch(p).unwrap();
         assert_eq!(
             base_common_catalog.to_json(),
-            json!({
+            serde_json::json!({
               "version": 1,
               "streamingFormat": "1",
               "streamingFormatVersion": "0.2",
