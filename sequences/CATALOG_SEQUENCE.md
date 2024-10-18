@@ -30,10 +30,11 @@ sequenceDiagram
     Consumer(Server) ->> Producer(Server): Cache and Forward
     Producer(Server) ->> Consumer(Client): OBJECT(CATALOG)
 
-    Producer(Client) ->> Consumer(Server): OBJECT(CATALOG_PATCH)
-    Consumer(Server) ->> Producer(Server): Cache and Forward
-    Producer(Server) ->> Consumer(Client): OBJECT(CATALOG_PATCH)
-
+    loop
+        Producer(Client) ->> Consumer(Server): OBJECT(CATALOG_PATCH)
+        Consumer(Server) ->> Producer(Server): Cache and Forward
+        Producer(Server) ->> Consumer(Client): OBJECT(CATALOG_PATCH)
+    end
     Note over Producer(Client), Consumer(Client) : SUBSCRIBE by using CATALOG information
 
 ```
