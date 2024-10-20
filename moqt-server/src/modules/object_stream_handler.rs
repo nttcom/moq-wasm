@@ -1,15 +1,17 @@
 use crate::constants::TerminationErrorCode;
 use crate::modules::object_cache_storage::CacheObject;
 use crate::modules::object_cache_storage::ObjectCacheStorageWrapper;
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use moqt_core::messages::data_streams::object_stream_track::ObjectStreamTrack;
-use moqt_core::messages::moqt_payload::MOQTPayload;
+use moqt_core::messages::data_streams::DataStreams;
 use moqt_core::moqt_client::MOQTClientStatus;
 use moqt_core::{data_stream_type::DataStreamType, MOQTClient};
+use std::io::Cursor;
 
 #[derive(Debug, PartialEq)]
 pub enum ObjectStreamProcessResult {
     Success,
+    Continue,
     Failure(TerminationErrorCode, String),
 }
 
@@ -20,9 +22,18 @@ pub async fn object_stream_handler(
     client: &mut MOQTClient,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
 ) -> ObjectStreamProcessResult {
+    let payload_length = read_buf.len();
+    tracing::trace!("object_stream_handler! {}", payload_length);
+
+    // Check if the data is exist
+    if payload_length == 0 {
+        return ObjectStreamProcessResult::Continue;
+    }
+
     // TODO: Set the accurate duration
-    let duration = 10000;
-    tracing::trace!("object_stream_handler! {}", read_buf.len());
+    let duration = 100000;
+
+    let mut read_cur = Cursor::new(&read_buf[..]);
 
     // check subscription and judge if it is invalid timing
     if client.status() != MOQTClientStatus::SetUp {
@@ -34,11 +45,15 @@ pub async fn object_stream_handler(
         );
     }
 
+    tracing::debug!("object_stream: read_buf: {:?}", read_buf);
+
     match header_type {
         DataStreamType::StreamHeaderTrack => {
-            let result = ObjectStreamTrack::depacketize(read_buf);
+            let result = ObjectStreamTrack::depacketize(&mut read_cur);
             match result {
                 Ok(object) => {
+                    read_buf.advance(read_cur.position() as usize);
+
                     let cache_object = CacheObject::Track(object);
                     object_cache_storage
                         .set_object(client.id, subscribe_id, cache_object, duration)
@@ -46,10 +61,9 @@ pub async fn object_stream_handler(
                         .unwrap();
                 }
                 Err(err) => {
-                    return ObjectStreamProcessResult::Failure(
-                        TerminationErrorCode::ProtocolViolation,
-                        err.to_string(),
-                    );
+                    tracing::warn!("{:#?}", err);
+                    read_cur.set_position(0);
+                    return ObjectStreamProcessResult::Continue;
                 }
             }
         }

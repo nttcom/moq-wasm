@@ -26,7 +26,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
     let mut pubsub_relation = PubSubRelation::new();
 
     while let Some(cmd) = rx.recv().await {
-        tracing::debug!("command received: {:#?}", cmd);
+        tracing::trace!("command received: {:#?}", cmd);
         match cmd {
             SetupPublisher {
                 max_subscribe_id,

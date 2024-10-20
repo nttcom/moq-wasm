@@ -1,5 +1,6 @@
 mod modules;
 use crate::modules::object_stream_handler::object_stream_handler;
+use crate::modules::object_stream_handler::ObjectStreamProcessResult;
 use crate::modules::stream_header_handler::StreamHeaderProcessResult;
 use crate::modules::{
     buffer_manager,
@@ -9,7 +10,7 @@ use crate::modules::{
     send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
     stream_header_handler::stream_header_handler,
 };
-use anyhow::{bail, Context, Ok, Result};
+use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
 use modules::object_cache_storage::{
     object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
@@ -25,13 +26,14 @@ use moqt_core::{
         control_messages::{
             subscribe::Subscribe, subscribe_error::SubscribeError, subscribe_ok::SubscribeOk,
         },
+        data_streams::DataStreams,
         moqt_payload::MOQTPayload,
     },
     variable_integer::write_variable_integer,
     MOQTClient,
 };
 use std::time::Duration;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, thread};
 use tokio::sync::{
     mpsc,
     mpsc::{Receiver, Sender},
@@ -301,6 +303,9 @@ async fn handle_connection(
                 });
                 let stream_id = recv_stream.id().into_u64();
 
+                let shared_recv_stream = Arc::new(Mutex::new(recv_stream));
+                let shared_recv_stream = Arc::clone(&shared_recv_stream);
+
                 let buffer_tx = buffer_tx.clone();
                 let pubsub_relation_tx = pubsub_relation_tx.clone();
                 let object_cache_tx = object_cache_tx.clone();
@@ -313,7 +318,7 @@ async fn handle_connection(
                     let mut stream = UniRecvStream {
                     stable_id,
                     stream_id,
-                    recv_stream,
+                    shared_recv_stream,
                 };
                     handle_incoming_uni_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_ch_txes, close_conn_tx, object_cache_tx).instrument(session_span_clone).await
 
@@ -390,6 +395,13 @@ async fn handle_connection(
         );
     let _ = pubsub_relation_manager.delete_client(stable_id).await;
 
+    // Delete object cache related to the client
+    // FIXME: It should not be deleted if the cache should be stored
+    //   (Now, it is deleted immediately because to clean up cpu and memory)
+    let mut object_cache_storage =
+        modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
+    let _ = object_cache_storage.delete_client(stable_id).await;
+
     // Delete senders to the client
     send_stream_tx
         .send(SendStreamDispatchCommand::Delete {
@@ -412,7 +424,7 @@ async fn handle_connection(
 struct UniRecvStream {
     stable_id: usize,
     stream_id: u64,
-    recv_stream: RecvStream,
+    shared_recv_stream: Arc<Mutex<RecvStream>>,
 }
 
 async fn handle_incoming_uni_stream(
@@ -425,13 +437,16 @@ async fn handle_incoming_uni_stream(
     object_cache_tx: Sender<ObjectCacheStorageCommand>,
 ) -> Result<()> {
     let mut header_read = false;
-    let mut buffer = vec![0; 65536].into_boxed_slice();
 
     let stable_id = stream.stable_id;
     let mut upstream_subscribe_id: u64 = 0;
     let mut stream_header_type: DataStreamType = DataStreamType::ObjectDatagram;
     let stream_id = stream.stream_id;
-    let recv_stream = &mut stream.recv_stream;
+    let mut client = client.lock().await;
+    let close_conn_tx_clone = close_conn_tx.clone();
+    let buffer_tx_clone = buffer_tx.clone();
+    let shared_recv_stream = &mut stream.shared_recv_stream;
+    let shared_recv_stream = Arc::clone(shared_recv_stream);
 
     let mut pubsub_relation_manager =
         modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
@@ -441,39 +456,70 @@ async fn handle_incoming_uni_stream(
     let mut object_cache_storage =
         modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
 
+    let buf = buffer_manager::request_buffer(buffer_tx_clone, stable_id, stream_id).await;
+    let buf_clone = Arc::clone(&buf);
+
+    // Loop for reading the stream
+    tokio::spawn(
+        async move {
+            loop {
+                let mut buffer = vec![0; 65536].into_boxed_slice();
+                let mut recv_stream = shared_recv_stream.lock().await;
+
+                let bytes_read: usize = match recv_stream.read(&mut buffer).await {
+                    Ok(byte_read) => byte_read.unwrap(),
+                    Err(err) => {
+                        tracing::error!("Failed to read from stream");
+                        let _ = close_conn_tx_clone
+                            .send((
+                                u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                                err.to_string(),
+                            ))
+                            .await;
+                        break;
+                    }
+                };
+
+                tracing::debug!("bytes_read: {}", bytes_read);
+
+                let read_buf = BytesMut::from(&buffer[..bytes_read]);
+
+                {
+                    buf_clone.lock().await.extend_from_slice(&read_buf);
+                }
+
+                tracing::debug!("buf size: {}", buf_clone.lock().await.len());
+            }
+        }
+        .in_current_span(),
+    );
+
+    // Loop for the handling the message
     loop {
-        let bytes_read = match recv_stream.read(&mut buffer).await? {
-            Some(bytes_read) => bytes_read,
-            None => bail!("Failed to read from stream"),
-        };
-
-        tracing::debug!("bytes_read: {}", bytes_read);
-
-        let read_buf = BytesMut::from(&buffer[..bytes_read]);
-        let buf = buffer_manager::request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
-        let mut buf = buf.lock().await;
-        buf.extend_from_slice(&read_buf);
-
-        let mut client = client.lock().await;
-
         if !header_read {
             // Read header
-            let result = stream_header_handler(
-                &mut buf,
-                &mut client,
-                &mut pubsub_relation_manager,
-                &mut object_cache_storage,
-            )
-            .await;
+
+            let result: StreamHeaderProcessResult;
+            {
+                let mut process_buf = buf.lock().await;
+                result = stream_header_handler(
+                    &mut process_buf,
+                    &mut client,
+                    &mut pubsub_relation_manager,
+                    &mut object_cache_storage,
+                )
+                .await;
+            }
 
             match result {
                 StreamHeaderProcessResult::Success((subscribe_id, header_type)) => {
+                    tracing::trace!("stream_header_read success");
                     upstream_subscribe_id = subscribe_id;
                     stream_header_type = header_type.clone();
 
                     // Open send uni-directional stream for subscribers
                     let subscribers = pubsub_relation_manager
-                        .get_related_subscribers(stable_id, stream_id)
+                        .get_related_subscribers(stable_id, upstream_subscribe_id)
                         .await
                         .unwrap();
 
@@ -492,21 +538,47 @@ async fn handle_incoming_uni_stream(
 
                     header_read = true;
                 }
+                StreamHeaderProcessResult::Continue => {
+                    tracing::trace!("retry stream_header_read");
+                    continue;
+                }
                 StreamHeaderProcessResult::Failure(code, message) => {
+                    tracing::error!("stream_header_read failure: {:?}", message);
                     close_conn_tx.send((u8::from(code) as u64, message)).await?;
                     break;
                 }
             }
-        } else {
-            // Read Object Stream
-            object_stream_handler(
+        }
+
+        let result: ObjectStreamProcessResult;
+
+        // Read Object Stream
+        {
+            let mut process_buf = buf.lock().await;
+
+            result = object_stream_handler(
                 stream_header_type.clone(),
                 upstream_subscribe_id,
-                &mut buf,
+                &mut process_buf,
                 &mut client,
                 &mut object_cache_storage,
             )
             .await;
+        }
+
+        match result {
+            ObjectStreamProcessResult::Success => {
+                tracing::trace!("object_stream_read success");
+            }
+            ObjectStreamProcessResult::Continue => {
+                tracing::trace!("retry object_stream_read");
+                continue;
+            }
+            ObjectStreamProcessResult::Failure(code, message) => {
+                tracing::error!("object_stream_read failure: {:?}", message);
+                close_conn_tx.send((u8::from(code) as u64, message)).await?;
+                break;
+            }
         }
     }
 
@@ -531,13 +603,15 @@ struct UniSendStream {
 
 async fn relaying_track_stream(
     stream: &mut UniSendStream,
-    buffer_tx: Sender<BufferCommand>,
+    _buffer_tx: Sender<BufferCommand>,
     pubsub_relation_tx: Sender<PubSubRelationCommand>,
     close_conn_tx: Sender<(u64, String)>,
     object_cache_tx: Sender<ObjectCacheStorageCommand>,
 ) -> Result<()> {
+    let sleep_time = Duration::from_millis(10);
+
     let downstream_session_id = stream.stable_id;
-    let downstream_stream_id = stream.stream_id;
+    let _downstream_stream_id = stream.stream_id;
     let downstream_subscribe_id = stream.subscribe_id;
     let send_stream = &mut stream.send_stream;
 
@@ -549,7 +623,7 @@ async fn relaying_track_stream(
     let mut object_cache_storage =
         modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
 
-    // Get the information of the original publisher who has the track or subgroup being requested
+    // Get the information of the original publisher who has the track being requested
     let (upstream_session_id, upstream_subscribe_id) = pubsub_relation_manager
         .get_related_publisher(downstream_session_id, downstream_subscribe_id)
         .await?;
@@ -559,6 +633,7 @@ async fn relaying_track_stream(
         .unwrap();
     let downstream_track_alias = downstream_subscription.get_track_alias();
 
+    // Validate the forwarding preference as Track
     match pubsub_relation_manager
         .get_upstream_forwarding_preference(upstream_session_id, upstream_subscribe_id)
         .await?
@@ -598,7 +673,16 @@ async fn relaying_track_stream(
             header.set_track_alias(downstream_track_alias);
             header.packetize(&mut buf);
 
-            send_stream.write_all(&buf).await?;
+            let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
+            message_buf.extend(write_variable_integer(
+                u8::from(DataStreamType::StreamHeaderTrack) as u64,
+            ));
+            message_buf.extend(buf);
+
+            if let Err(e) = send_stream.write_all(&message_buf).await {
+                tracing::warn!("Failed to write to stream: {:?}", e);
+                bail!(e);
+            }
         }
         _ => {
             let msg = "cache header not matched";
@@ -612,63 +696,92 @@ async fn relaying_track_stream(
         }
     }
 
-    // TODO: Change the method of obtaining objects according to the subscribe request
-    // Get the first object from the cache storage and send it to the client
-    let mut object_cache_id = match object_cache_storage
-        .get_first_object(upstream_session_id, upstream_subscribe_id)
-        .await?
-    {
-        (id, CacheObject::Track(object)) => {
-            let mut buf = BytesMut::new();
-            object.packetize(&mut buf);
-            send_stream.write_all(&buf).await?;
+    let mut object_cache_id: Option<usize> = None;
 
-            id
-        }
-        _ => {
-            let msg = "cache object not matched";
-            close_conn_tx
-                .send((
-                    u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64,
-                    msg.to_string(),
-                ))
-                .await?;
-            bail!(msg)
-        }
-    };
-
-    loop {
-        // TODO: Implement the processing when the content ends
+    while object_cache_id.is_none() {
+        // TODO: Change the method of obtaining objects according to the subscribe request
         // Get the first object from the cache storage and send it to the client
         object_cache_id = match object_cache_storage
-            .get_next_object(upstream_session_id, upstream_subscribe_id, object_cache_id)
-            .await?
+            .get_first_object(upstream_session_id, upstream_subscribe_id)
+            .await
         {
-            (id, CacheObject::Track(object)) => {
+            Ok(Some((id, CacheObject::Track(object)))) => {
                 let mut buf = BytesMut::new();
                 object.packetize(&mut buf);
-                send_stream.write_all(&buf).await?;
 
-                id
+                let mut message_buf = BytesMut::with_capacity(buf.len());
+                message_buf.extend(buf);
+
+                if let Err(e) = send_stream.write_all(&message_buf).await {
+                    tracing::warn!("Failed to write to stream: {:?}", e);
+                    bail!(e);
+                }
+
+                Some(id)
+            }
+            Ok(None) => {
+                thread::sleep(sleep_time);
+                object_cache_id
             }
             _ => {
-                let msg = "cache object not matched";
+                let msg = "cache is not exist";
                 close_conn_tx
                     .send((
-                        u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64,
+                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
                         msg.to_string(),
                     ))
                     .await?;
-
                 break;
             }
         };
     }
 
-    buffer_tx
+    loop {
+        // TODO: Implement the processing when the content ends
+        // Get the first object from the cache storage and send it to the client
+        object_cache_id = match object_cache_storage
+            .get_next_object(
+                upstream_session_id,
+                upstream_subscribe_id,
+                object_cache_id.unwrap(),
+            )
+            .await
+        {
+            Ok(Some((id, CacheObject::Track(object)))) => {
+                let mut buf = BytesMut::new();
+                object.packetize(&mut buf);
+
+                let mut message_buf = BytesMut::with_capacity(buf.len());
+                message_buf.extend(buf);
+
+                if let Err(e) = send_stream.write_all(&message_buf).await {
+                    tracing::warn!("Failed to write to stream: {:?}", e);
+                    bail!(e);
+                }
+
+                Some(id)
+            }
+            Ok(None) => {
+                thread::sleep(sleep_time);
+                object_cache_id
+            }
+            _ => {
+                let msg = "cache is not exist";
+                close_conn_tx
+                    .send((
+                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        msg.to_string(),
+                    ))
+                    .await?;
+                break;
+            }
+        };
+    }
+
+    _buffer_tx
         .send(BufferCommand::ReleaseStream {
             session_id: downstream_session_id,
-            stream_id: downstream_stream_id,
+            stream_id: _downstream_stream_id,
         })
         .await?;
 
@@ -801,7 +914,7 @@ async fn wait_and_relay_control_message(
         }
 
         tracing::info!("Control message is relayed.");
-        tracing::debug!("relayed message: {:?}", message_buf.to_vec());
+        // tracing::debug!("relayed message: {:?}", message_buf.to_vec());
     }
 }
 
