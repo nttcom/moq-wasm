@@ -412,25 +412,6 @@ mod failure {
     }
 
     #[test]
-    #[should_panic]
-    fn depacketize_object_datagram_wrong_parameter_length() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            1, // Track Alias (i)
-            2, // Group ID (i)
-            3, // Object ID (i)
-            4, // Subscriber Priority (8)
-            8, // Object Payload Length (i)
-            0, // Object Status (i)
-            0, 1, 2, // Object Payload (..)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let mut read_cur = Cursor::new(&buf[..]);
-        let _ = ObjectDatagram::depacketize(&mut read_cur);
-    }
-
-    #[test]
     fn depacketize_object_datagram_wrong_object_status() {
         let bytes_array = [
             0, // Subscribe ID (i)

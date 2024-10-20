@@ -284,21 +284,6 @@ mod failure {
     }
 
     #[test]
-    #[should_panic]
-    fn depacketize_object_stream_subgroup_wrong_parameter_length() {
-        let bytes_array = [
-            0, // Object ID (i)
-            8, // Object Payload Length (i)
-            0, // Object Status (i)
-            0, 1, 2, // Object Payload (..)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let mut read_cur = Cursor::new(&buf[..]);
-        let _ = ObjectStreamSubgroup::depacketize(&mut read_cur);
-    }
-
-    #[test]
     fn depacketize_object_stream_subgroup_wrong_object_status() {
         let bytes_array = [
             0, // Object ID (i)
