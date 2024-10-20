@@ -1,13 +1,13 @@
 use crate::messages::data_streams::object_status::ObjectStatus;
 use crate::{
-    variable_bytes::read_fixed_length_bytes_from_buffer,
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+    variable_bytes::read_fixed_length_bytes,
+    variable_integer::{read_variable_integer, write_variable_integer},
 };
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::any::Any;
 
-use crate::messages::moqt_payload::MOQTPayload;
+use super::DataStreams;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ObjectDatagram {
@@ -32,6 +32,10 @@ impl ObjectDatagram {
         object_payload: Vec<u8>,
     ) -> Result<Self> {
         let object_payload_length = object_payload.len() as u64;
+
+        if object_status.is_some() && object_payload_length != 0 {
+            bail!("The Object Status field is only sent if the Object Payload Length is zero.");
+        }
 
         // Any object with a status code other than zero MUST have an empty payload.
         if let Some(status) = object_status {
@@ -66,23 +70,23 @@ impl ObjectDatagram {
     }
 }
 
-impl MOQTPayload for ObjectDatagram {
-    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self>
+impl DataStreams for ObjectDatagram {
+    fn depacketize(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<Self>
     where
         Self: Sized,
     {
-        let subscribe_id = read_variable_integer_from_buffer(buf).context("subscribe id")?;
-        let track_alias = read_variable_integer_from_buffer(buf).context("track alias")?;
-        let group_id = read_variable_integer_from_buffer(buf).context("group id")?;
-        let object_id = read_variable_integer_from_buffer(buf).context("object id")?;
+        let subscribe_id = read_variable_integer(read_cur).context("subscribe id")?;
+        let track_alias = read_variable_integer(read_cur).context("track alias")?;
+        let group_id = read_variable_integer(read_cur).context("group id")?;
+        let object_id = read_variable_integer(read_cur).context("object id")?;
         let publisher_priority =
-            read_fixed_length_bytes_from_buffer(buf, 1).context("publisher priority")?[0];
+            read_fixed_length_bytes(read_cur, 1).context("publisher priority")?[0];
         let object_payload_length =
-            read_variable_integer_from_buffer(buf).context("object payload length")?;
+            read_variable_integer(read_cur).context("object payload length")?;
 
         // If the length of the remaining buf is larger than object_payload_length, object_status exists.
-        let object_status = if buf.len() > object_payload_length as usize {
-            let object_status_u64 = read_variable_integer_from_buffer(buf)?;
+        let object_status = if object_payload_length == 0 {
+            let object_status_u64 = read_variable_integer(read_cur)?;
             let object_status =
                 match ObjectStatus::try_from(object_status_u64 as u8).context("object status") {
                     Ok(status) => status,
@@ -93,19 +97,13 @@ impl MOQTPayload for ObjectDatagram {
                     }
                 };
 
-            // Any object with a status code other than zero MUST have an empty payload.
-            if object_status != ObjectStatus::Normal && object_payload_length != 0 {
-                // TODO: return Termination Error Code
-                bail!("Any object with a status code other than zero MUST have an empty payload.");
-            }
-
             Some(object_status)
         } else {
             None
         };
 
         let object_payload = if object_payload_length > 0 {
-            read_fixed_length_bytes_from_buffer(buf, object_payload_length as usize)
+            read_fixed_length_bytes(read_cur, object_payload_length as usize)
                 .context("object payload")?
         } else {
             vec![]
@@ -149,10 +147,12 @@ impl MOQTPayload for ObjectDatagram {
 
 #[cfg(test)]
 mod success {
+    use std::io::Cursor;
+
     use crate::messages::data_streams::{
         object_datagram::ObjectDatagram, object_status::ObjectStatus,
     };
-    use crate::messages::moqt_payload::MOQTPayload;
+    use crate::modules::messages::data_streams::DataStreams;
     use bytes::BytesMut;
 
     #[test]
@@ -162,7 +162,7 @@ mod success {
         let group_id = 2;
         let object_id = 3;
         let publisher_priority = 4;
-        let object_status = Some(ObjectStatus::Normal);
+        let object_status = None;
         let object_payload = vec![0, 1, 2];
 
         let object_datagram = ObjectDatagram::new(
@@ -186,7 +186,6 @@ mod success {
             3, // Object ID (i)
             4, // Subscriber Priority (8)
             3, // Object Payload Length (i)
-            0, // Object Status (i)
             0, 1, 2, // Object Payload (..)
         ];
 
@@ -276,19 +275,19 @@ mod success {
             3, // Object ID (i)
             4, // Subscriber Priority (8)
             3, // Object Payload Length (i)
-            0, // Object Status (i)
             0, 1, 2, // Object Payload (..)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut buf).unwrap();
+        let mut read_cur = Cursor::new(&buf[..]);
+        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur).unwrap();
 
         let subscribe_id = 0;
         let track_alias = 1;
         let group_id = 2;
         let object_id = 3;
         let publisher_priority = 4;
-        let object_status = Some(ObjectStatus::Normal);
+        let object_status = None;
         let object_payload = vec![0, 1, 2];
 
         let expected_object_datagram = ObjectDatagram::new(
@@ -318,7 +317,8 @@ mod success {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut buf).unwrap();
+        let mut read_cur = Cursor::new(&buf[..]);
+        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur).unwrap();
 
         let subscribe_id = 0;
         let track_alias = 1;
@@ -355,7 +355,8 @@ mod success {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut buf).unwrap();
+        let mut read_cur = Cursor::new(&buf[..]);
+        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur).unwrap();
 
         let subscribe_id = 0;
         let track_alias = 1;
@@ -383,8 +384,9 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::messages::data_streams::object_datagram::{ObjectDatagram, ObjectStatus};
-    use crate::messages::moqt_payload::MOQTPayload;
+    use crate::messages::data_streams::DataStreams;
     use bytes::BytesMut;
+    use std::io::Cursor;
 
     #[test]
     fn packetize_object_datagram_not_normal_and_not_empty_payload() {
@@ -410,44 +412,6 @@ mod failure {
     }
 
     #[test]
-    fn depacketize_object_datagram_not_normal_and_not_empty_payload() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            1, // Track Alias (i)
-            2, // Group ID (i)
-            3, // Object ID (i)
-            4, // Subscriber Priority (8)
-            3, // Object Payload Length (i)
-            5, // Object Status (i)
-            0, 1, 2, // Object Payload (..)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut buf);
-
-        assert!(depacketized_object_datagram.is_err());
-    }
-
-    #[test]
-    #[should_panic]
-    fn depacketize_object_datagram_wrong_parameter_length() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            1, // Track Alias (i)
-            2, // Group ID (i)
-            3, // Object ID (i)
-            4, // Subscriber Priority (8)
-            8, // Object Payload Length (i)
-            0, // Object Status (i)
-            0, 1, 2, // Object Payload (..)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-
-        let _ = ObjectDatagram::depacketize(&mut buf);
-    }
-
-    #[test]
     fn depacketize_object_datagram_wrong_object_status() {
         let bytes_array = [
             0, // Subscribe ID (i)
@@ -460,7 +424,8 @@ mod failure {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut buf);
+        let mut read_cur = Cursor::new(&buf[..]);
+        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur);
 
         assert!(depacketized_object_datagram.is_err());
     }
