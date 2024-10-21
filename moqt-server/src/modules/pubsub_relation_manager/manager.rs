@@ -458,6 +458,76 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
 
                 resp.send(Ok(true)).unwrap();
             }
+            DeletePubSubRelation {
+                upstream_session_id,
+                upstream_subscribe_id,
+                downstream_session_id,
+                downstream_subscribe_id,
+                resp,
+            } => {
+                let result = pubsub_relation.delete_relation(
+                    upstream_session_id,
+                    upstream_subscribe_id,
+                    downstream_session_id,
+                    downstream_subscribe_id,
+                );
+
+                match result {
+                    Ok(_) => resp.send(Ok(())).unwrap(),
+                    Err(err) => {
+                        tracing::error!("delete_relation: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                    }
+                }
+            }
+            DeleteUpstreamSubscription {
+                upstream_session_id,
+                upstream_subscribe_id,
+                resp,
+            } => {
+                // Return an error if the publisher does not exist
+                let consumer = match consumers.get_mut(&upstream_session_id) {
+                    Some(consumer) => consumer,
+                    None => {
+                        let msg = "publisher not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                match consumer.delete_subscription(upstream_subscribe_id) {
+                    Ok(_) => resp.send(Ok(())).unwrap(),
+                    Err(err) => {
+                        tracing::error!("delete_subscription: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                    }
+                }
+            }
+            DeleteDownstreamSubscription {
+                downstream_session_id,
+                downstream_subscribe_id,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get_mut(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                match producer.delete_subscription(downstream_subscribe_id) {
+                    Ok(_) => resp.send(Ok(())).unwrap(),
+                    Err(err) => {
+                        tracing::error!("delete_subscription: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                    }
+                }
+            }
             #[cfg(test)]
             GetNodeAndRelationClone { resp } => {
                 let consumer = consumers.clone();

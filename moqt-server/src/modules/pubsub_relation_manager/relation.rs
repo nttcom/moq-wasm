@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 
 type SubscriberSessionId = usize;
@@ -55,5 +55,30 @@ impl PubSubRelation {
     }
 
     // TODO: Define the behavior if the last subscriber unsubscribes from the track
-    // fn delete_relation
+
+    pub(crate) fn delete_relation(
+        &mut self,
+        upstream_session_id: PublisherSessionId,
+        upstream_subscribe_id: PublisherSubscribeId,
+        downstream_session_id: SubscriberSessionId,
+        downstream_subscribe_id: SubscriberSubscribeId,
+    ) -> Result<()> {
+        let key = (upstream_session_id, upstream_subscribe_id);
+        let value = (downstream_session_id, downstream_subscribe_id);
+
+        match self.records.get_mut(&key) {
+            Some(subscribers) => {
+                let index = subscribers
+                    .iter()
+                    .position(|&x| x == value)
+                    .ok_or_else(|| anyhow!("subscriber not found"))?;
+                subscribers.remove(index);
+            }
+            None => {
+                return Err(anyhow!("publisher not found in pubsub relation"));
+            }
+        }
+
+        Ok(())
+    }
 }
