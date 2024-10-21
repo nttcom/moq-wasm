@@ -6,7 +6,7 @@ Both server and browser client are written in Rust.
 
 Supported version: draft-ietf-moq-transport-06
 
-- [ ] Control Messages
+- [ ] Control Message
   - [x] CLIENT_SETUP / SERVER_SETUP
   - [ ] GOAWAY
   - [x] ANNOUNCE
@@ -29,13 +29,7 @@ Supported version: draft-ietf-moq-transport-06
   - [ ] SUBSCRIBE_NAMESPACE_OK
   - [ ] SUBSCRIBE_NAMESPACE_ERROR
 - [ ] Data Streams
-  - [ ] Object Datagram Message
-  - [x] Stream Header Track
-  - [ ]　 Subgroup Stream
-- [ ] Features
-  - [x] Manage Publisher / Subscriber
-  - [ ] Priorities
-  - [ ] Cache
+  - [ ]
 
 ## Modules
 
@@ -53,12 +47,12 @@ Supported version: draft-ietf-moq-transport-06
 ### moqt-server-sample
 
 - Sample server application
-  - Supported Roles: PubSub
+  - Supported Role: PubSub
 
 ### moqt-client-sample
 
 - Module for browser client and sample browser client application
-  - Supported Roles: Publisher, Subscriber, PubSub
+  - Supported Role: Publisher, Subscriber, PubSub
 
 ## How to run
 
