@@ -1,7 +1,7 @@
 use num_enum::IntoPrimitive;
 
-// for draft-ietf-moq-transport-06
-pub const MOQ_TRANSPORT_VERSION: u32 = 0xff000006;
+// for draft-ietf-moq-transport-01
+pub const MOQ_TRANSPORT_VERSION: u32 = 0xff000001;
 
 #[derive(Debug, IntoPrimitive, PartialEq, Clone, Copy)]
 #[repr(u8)]
