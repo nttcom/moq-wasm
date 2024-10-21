@@ -4,7 +4,6 @@ mod utils;
 use anyhow::Result;
 #[cfg(web_sys_unstable_apis)]
 use bytes::{Buf, BufMut, BytesMut};
-
 #[cfg(web_sys_unstable_apis)]
 use moqt_core::{
     control_message_type::ControlMessageType,
@@ -609,7 +608,20 @@ impl MOQTClient {
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
-            JsFuture::from(writer.write_with_chunk(&buffer)).await
+
+            // log(std::format!("uni: send value: {} {:#x?}", buf.len(), buf).as_str());
+            let mut read_cur = Cursor::new(&buf[..]);
+            let result = ObjectStreamTrack::depacketize(&mut read_cur).unwrap();
+
+            // log(std::format!("uni: send value: {:#?}", result).as_str());
+
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    log(std::format!("sent: id: {:#?}", result.object_id()).as_str());
+                    Ok(ok)
+                }
+                Err(e) => Err(e),
+            }
         } else {
             return Err(JsValue::from_str("object_stream_writer is None"));
         }
@@ -954,7 +966,7 @@ async fn object_header_handler(
         Ok(v) => {
             let data_stream_type = DataStreamType::try_from(v as u8)?;
 
-            log(std::format!("data_stream_type_value: {:#?}", data_stream_type).as_str());
+            log(std::format!("data_stream_type_value: {:#x?}", data_stream_type).as_str());
 
             match data_stream_type {
                 DataStreamType::StreamHeaderTrack => {
@@ -996,11 +1008,25 @@ async fn object_stream_track_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     buf: &mut BytesMut,
 ) -> Result<()> {
-    let mut read_cur = Cursor::new(&buf[..]);
-    let object_stream_track = ObjectStreamTrack::depacketize(&mut read_cur)?;
-    buf.advance(read_cur.position() as usize);
+    // log(std::format!("object_stream_track_handler: {:#?}", buf).as_str());
 
-    log(std::format!("object_stream_track: {:#x?}", object_stream_track).as_str());
+    use moqt_core::messages::data_streams::object_stream_track;
+
+    let mut read_cur = Cursor::new(&buf[..]);
+    let object_stream_track = match ObjectStreamTrack::depacketize(&mut read_cur) {
+        Ok(v) => {
+            log(std::format!("object_id: {:#?}", v.object_id()).as_str());
+            buf.advance(read_cur.position() as usize);
+            v
+        }
+        Err(e) => {
+            read_cur.set_position(0);
+            log(std::format!("retry because: {:#?}", e).as_str());
+            return Ok(());
+        }
+    };
+
+    //log(std::format!("object_stream_track: {:#x?}", object_stream_track).as_str());
 
     if let Some(callback) = callbacks.borrow().object_stream_track_callback() {
         callback
