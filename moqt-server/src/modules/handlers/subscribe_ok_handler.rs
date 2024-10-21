@@ -20,20 +20,20 @@ pub(crate) async fn subscribe_ok_handler(
     let upstream_subscribe_id = subscribe_ok_message.subscribe_id();
 
     // Determine the SUBSCRIBER who sent the SUBSCRIBE using the track_namespace and track_name
-    let ids_and_aliases = pubsub_relation_manager_repository
+    let downstream_ids = pubsub_relation_manager_repository
         .get_requesting_downstream_session_ids_and_subscribe_ids(
             upstream_subscribe_id,
             upstream_session_id,
         )
         .await?;
-    match ids_and_aliases {
-        Some(ids_and_aliases) => {
+    match downstream_ids {
+        Some(downstream_ids) => {
             let _ = pubsub_relation_manager_repository
                 .activate_upstream_subscription(upstream_session_id, upstream_subscribe_id)
                 .await;
 
             // Notify all waiting subscribers with the SUBSCRIBE_OK message
-            for (downstream_session_id, downstream_subscribe_id) in ids_and_aliases.iter() {
+            for (downstream_session_id, downstream_subscribe_id) in downstream_ids.iter() {
                 let mut relaying_subscribe_ok_message = subscribe_ok_message.clone();
                 relaying_subscribe_ok_message.set_subscribe_id(*downstream_subscribe_id);
                 let message: Box<dyn MOQTPayload> = Box::new(relaying_subscribe_ok_message.clone());
