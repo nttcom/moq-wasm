@@ -4,16 +4,32 @@ Both server and browser client are written in Rust.
 
 ## Implementation
 
-- [x] Send/Recv SETUP message
-- [x] Send/Recv ANNOUNCE message
-- [x] Send/Recv SUBSCRIBE message
-- [x] Echo back OBJECT message
-- [ ] Send/Recv GOAWAY message
-- [ ] Send/Recv SUBSCRIBE_FIN/SUBSCRIBE_RST message
-- [x] Transfer SUBSCRIBE message
-  - [x] Manage stream of publishers
-- [x] Transfer OBJECT message
-  - [x] Manage subscriptions
+Supported version: draft-ietf-moq-transport-06
+
+- [ ] Control Message
+  - [x] CLIENT_SETUP / SERVER_SETUP
+  - [ ] GOAWAY
+  - [x] ANNOUNCE
+  - [x] SUBSCRIBE
+  - [ ] SUBSCRIBE_UPDATE
+  - [ ] UNSUBSCRIBE
+  - [x] ANNOUNCE_OK
+  - [ ] ANNOUNCE_ERROR
+  - [ ] ANNOUNCE_CANCEL
+  - [ ] TRACK_STATUS_REQUEST
+  - [ ] SUBSCRIBE_NAMESPACE
+  - [ ] UNSUBSCRIBE_NAMESPACE
+  - [x] SUBSCRIBE_OK
+  - [ ] SUBSCRIBE_ERROR
+  - [ ] SUBSCRIBE_DONE
+  - [ ] MAX_SUBSCRIBE_ID
+  - [x] ANNOUNCE
+  - [ ] UNANNOUNCE
+  - [ ] TRACK_STATUS
+  - [ ] SUBSCRIBE_NAMESPACE_OK
+  - [ ] SUBSCRIBE_NAMESPACE_ERROR
+- [ ] Data Streams
+  - [ ]
 
 ## Modules
 
@@ -31,10 +47,12 @@ Both server and browser client are written in Rust.
 ### moqt-server-sample
 
 - Sample server application
+  - Supported Role: PubSub
 
 ### moqt-client-sample
 
 - Module for browser client and sample browser client application
+  - Supported Role: Publisher, Subscriber, PubSub
 
 ## How to run
 
