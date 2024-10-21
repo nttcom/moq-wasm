@@ -14,7 +14,7 @@ Supported version: draft-ietf-moq-transport-06
   - [ ] SUBSCRIBE_UPDATE
   - [ ] UNSUBSCRIBE
   - [x] ANNOUNCE_OK
-  - [ ] ANNOUNCE_ERROR
+  - [x] ANNOUNCE_ERROR
   - [ ] ANNOUNCE_CANCEL
   - [ ] TRACK_STATUS_REQUEST
   - [ ] SUBSCRIBE_NAMESPACE
