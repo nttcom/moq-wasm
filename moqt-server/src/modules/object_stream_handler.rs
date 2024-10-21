@@ -33,8 +33,6 @@ pub async fn object_stream_handler(
     // TODO: Set the accurate duration
     let duration = 100000;
 
-    tracing::trace!("object_stream_handler! {}", read_buf.len());
-
     let mut read_cur = Cursor::new(&read_buf[..]);
 
     // check subscription and judge if it is invalid timing
