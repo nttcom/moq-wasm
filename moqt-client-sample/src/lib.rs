@@ -24,12 +24,9 @@ use moqt_core::{
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     messages::moqt_payload::MOQTPayload,
-    subscription_models::{
-        nodes::{
-            consumer_node::Consumer, node_registory::SubscriptionNodeRegistory,
-            producer_node::Producer,
-        },
-        subscriptions::Subscription,
+    models::subscriptions::{
+        nodes::{consumers::Consumer, producers::Producer, registry::SubscriptionNodeRegistry},
+        Subscription,
     },
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
@@ -311,7 +308,7 @@ impl MOQTClient {
             let (subscribe_id, track_alias) = self
                 .subscription_node
                 .borrow_mut()
-                .find_unused_subscribe_id_and_track_alias()
+                .create_latest_subscribe_id_and_track_alias()
                 .unwrap();
             let priority = 0;
             let group_order = GroupOrder::Ascending;
@@ -439,26 +436,22 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendSubscribeErrorMessage)]
     pub async fn send_subscribe_error_message(
         &self,
-        track_namespace: js_sys::Array,
-        track_name: String,
+        subscribe_id: u64,
         error_code: u64,
         reason_phrase: String,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
-            let length = track_namespace.length();
-            let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
-            for i in 0..length {
-                let js_element = track_namespace.get(i);
-                let string_element = js_element
-                    .as_string()
-                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
-                track_namespace_vec.push(string_element);
-            }
+            // Find unused subscribe_id and track_alias automatically
+            let valid_track_alias = self
+                .subscription_node
+                .borrow_mut()
+                .create_valid_track_alias()
+                .unwrap();
             let subscribe_error_message = SubscribeError::new(
-                track_namespace_vec,
-                track_name,
+                subscribe_id,
                 SubscribeErrorCode::try_from(error_code as u8).unwrap(),
                 reason_phrase,
+                valid_track_alias,
             );
             let mut subscribe_error_message_buf = BytesMut::new();
             subscribe_error_message.packetize(&mut subscribe_error_message_buf);
@@ -831,11 +824,19 @@ impl SubscriptionNode {
         }
     }
 
-    fn find_unused_subscribe_id_and_track_alias(&self) -> Result<(u64, u64)> {
+    fn create_latest_subscribe_id_and_track_alias(&self) -> Result<(u64, u64)> {
         if let Some(consumer) = &self.consumer {
-            consumer.find_unused_subscribe_id_and_track_alias()
+            consumer.create_latest_subscribe_id_and_track_alias()
         } else {
             Err(anyhow::anyhow!("consumer is None"))
+        }
+    }
+
+    fn create_valid_track_alias(&self) -> Result<u64> {
+        if let Some(producer) = &self.producer {
+            producer.create_valid_track_alias()
+        } else {
+            Err(anyhow::anyhow!("producer is None"))
         }
     }
 
@@ -911,9 +912,7 @@ impl SubscriptionNode {
                 }
             }
 
-            match producer.is_within_max_subscribe_id(subscribe_message.subscribe_id())
-                && producer.is_subscribe_id_unique(subscribe_message.subscribe_id())
-            {
+            match producer.is_subscribe_id_valid(subscribe_message.subscribe_id()) {
                 true => {}
                 false => {
                     let error_code = SubscribeErrorCode::InvalidRange;
@@ -921,7 +920,7 @@ impl SubscriptionNode {
                 }
             }
 
-            match producer.is_track_alias_unique(subscribe_message.track_alias()) {
+            match producer.is_track_alias_valid(subscribe_message.track_alias()) {
                 true => {}
                 false => {
                     let error_code = SubscribeErrorCode::RetryTrackAlias;

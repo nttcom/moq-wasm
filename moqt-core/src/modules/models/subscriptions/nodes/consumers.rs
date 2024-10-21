@@ -140,6 +140,11 @@ impl SubscriptionNodeRegistry for Consumer {
         is_unique
     }
 
+    fn create_valid_track_alias(&self) -> Result<TrackAlias> {
+        unimplemented!()
+    }
+
+    // TODO: Separate this function into two functions.
     fn create_latest_subscribe_id_and_track_alias(&self) -> Result<(SubscribeId, TrackAlias)> {
         let subscribe_id = self.latest_subscribe_id;
         match self.is_subscribe_id_valid(subscribe_id) {
@@ -568,6 +573,14 @@ mod success {
         let result = variables.consumer.is_track_alias_valid(track_alias);
 
         assert!(result);
+    }
+
+    #[test]
+    #[should_panic]
+    fn create_valid_track_alias() {
+        let consumer = Consumer::new(10);
+
+        let _ = consumer.create_valid_track_alias().unwrap();
     }
 
     #[test]
