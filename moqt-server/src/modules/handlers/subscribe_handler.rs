@@ -3,21 +3,33 @@ use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerReposito
 use moqt_core::{
     constants::StreamDirection,
     messages::{
-        control_messages::{subscribe::Subscribe, subscribe_ok::SubscribeOk},
+        control_messages::{
+            subscribe::Subscribe,
+            subscribe_error::{SubscribeError, SubscribeErrorCode},
+            subscribe_ok::SubscribeOk,
+        },
         moqt_payload::MOQTPayload,
     },
     MOQTClient, SendStreamDispatcherRepository,
 };
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum SubscribeResponse {
+    Success(SubscribeOk),
+    Failure(SubscribeError),
+}
 
 pub(crate) async fn subscribe_handler(
     subscribe_message: Subscribe,
     client: &mut MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
-) -> Result<Option<SubscribeOk>> {
+) -> Result<Option<SubscribeResponse>> {
     tracing::trace!("subscribe_handler start.");
 
     tracing::debug!("subscribe_message: {:#?}", subscribe_message);
+
+    // TODO: validate Unauthorized
 
     if !pubsub_relation_manager_repository
         .is_valid_downstream_subscribe_id(subscribe_message.subscribe_id(), client.id)
@@ -30,8 +42,18 @@ pub(crate) async fn subscribe_handler(
         .is_valid_downstream_track_alias(subscribe_message.track_alias(), client.id)
         .await?
     {
-        // TODO: return TerminationErrorCode
-        bail!("DuplicateTrackAlias");
+        // TODO: create accurate track alias
+        let reason_phrase = "Invalid Track Alias".to_string();
+        let subscribe_error = SubscribeError::new(
+            subscribe_message.subscribe_id(),
+            SubscribeErrorCode::RetryTrackAlias,
+            reason_phrase,
+            100, // track alias
+        );
+
+        return Ok(Some(SubscribeResponse::Failure(subscribe_error)));
+
+        // TODO: return TerminationErrorCode::DuplicateTrackAlias
     }
 
     // If the track exists, return ther track as it is
@@ -43,33 +65,48 @@ pub(crate) async fn subscribe_handler(
         .await
         .unwrap()
     {
-        let _ = set_downstream_subscription(
+        match set_downstream_subscription(
             pubsub_relation_manager_repository,
             &subscribe_message,
             client,
         )
-        .await;
+        .await
+        {
+            Ok(_) => {
+                // Generate and return subscribe_ok message
 
-        // Generate and return subscribe_ok message
+                // TODO: Implement the get object info when implement cache mechanism
+                // TODO: validate Invalid Range
+                let expires = 0;
+                let content_exist = false;
+                let largest_group_id = None;
+                let largest_object_id = None;
+                let subscribe_parameters = vec![];
 
-        // TODO: Implement the get object info when implement cache mechanism
-        let expires = 0;
-        let content_exist = false;
-        let largest_group_id = None;
-        let largest_object_id = None;
-        let subscribe_parameters = vec![];
+                let subscribe_ok = SubscribeOk::new(
+                    subscribe_message.subscribe_id(),
+                    expires,
+                    subscribe_message.group_order(),
+                    content_exist,
+                    largest_group_id,
+                    largest_object_id,
+                    subscribe_parameters,
+                );
 
-        let subscribe_ok = SubscribeOk::new(
-            subscribe_message.subscribe_id(),
-            expires,
-            subscribe_message.group_order(),
-            content_exist,
-            largest_group_id,
-            largest_object_id,
-            subscribe_parameters,
-        );
+                return Ok(Some(SubscribeResponse::Success(subscribe_ok)));
+            }
+            Err(e) => {
+                let reason_phrase = "InternalError: ".to_string() + &e.to_string();
+                let subscribe_error = SubscribeError::new(
+                    subscribe_message.subscribe_id(),
+                    SubscribeErrorCode::InternalError,
+                    reason_phrase,
+                    subscribe_message.track_alias(),
+                );
 
-        return Ok(Some(subscribe_ok));
+                return Ok(Some(SubscribeResponse::Failure(subscribe_error)));
+            }
+        }
     }
 
     // Since only the track_namespace is recorded in ANNOUNCE, use track_namespace to determine the publisher
@@ -92,7 +129,15 @@ pub(crate) async fn subscribe_handler(
                     (upstream_subscribe_id, upstream_track_alias)
                 }
                 Err(e) => {
-                    bail!("cannot register publisher and subscriber: {:?}", e);
+                    let reason_phrase = "InternalError: ".to_string() + &e.to_string();
+                    let subscribe_error = SubscribeError::new(
+                        subscribe_message.subscribe_id(),
+                        SubscribeErrorCode::InternalError,
+                        reason_phrase,
+                        subscribe_message.track_alias(),
+                    );
+
+                    return Ok(Some(SubscribeResponse::Failure(subscribe_error)));
                 }
             };
 
@@ -112,6 +157,7 @@ pub(crate) async fn subscribe_handler(
 
             // Notify to the publisher about the SUBSCRIBE message
             // TODO: Wait for the SUBSCRIBE_OK message to be returned on a transaction
+            // TODO: validate Timeout
             match send_stream_dispatcher_repository
                 .send_message_to_send_stream_thread(session_id, message, StreamDirection::Bi)
                 .await
@@ -128,10 +174,15 @@ pub(crate) async fn subscribe_handler(
                     tracing::trace!("subscribe_handler complete.");
                 }
                 Err(e) => {
-                    tracing::warn!("relay subscribe failed: {:?}", e);
+                    let reason_phrase = "InternalError: ".to_string() + &e.to_string();
+                    let subscribe_error = SubscribeError::new(
+                        subscribe_message.subscribe_id(),
+                        SubscribeErrorCode::InternalError,
+                        reason_phrase,
+                        subscribe_message.track_alias(),
+                    );
 
-                    // TODO: return TerminationErrorCode
-                    bail!("relay subscribe failed");
+                    return Ok(Some(SubscribeResponse::Failure(subscribe_error)));
                 }
             }
 
@@ -139,7 +190,17 @@ pub(crate) async fn subscribe_handler(
         }
 
         // TODO: Check if “publisher not found” should turn into closing connection
-        None => bail!("publisher session id not found"),
+        None => {
+            let reason_phrase = "publisher not found".to_string();
+            let subscribe_error = SubscribeError::new(
+                subscribe_message.subscribe_id(),
+                SubscribeErrorCode::TrackDoesNotExist,
+                reason_phrase,
+                subscribe_message.track_alias(),
+            );
+
+            Ok(Some(SubscribeResponse::Failure(subscribe_error)))
+        }
     }
 }
 
@@ -542,6 +603,7 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::modules::handlers::subscribe_handler::subscribe_handler;
+    use crate::modules::handlers::subscribe_handler::SubscribeResponse;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -550,6 +612,8 @@ mod failure {
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use moqt_core::constants::StreamDirection;
+
+    use moqt_core::messages::control_messages::subscribe_error::SubscribeErrorCode;
     use moqt_core::messages::{
         control_messages::{
             subscribe::{FilterType, GroupOrder, Subscribe},
@@ -662,6 +726,7 @@ mod failure {
         )
         .await;
 
+        // Too Meny Subscribers
         assert!(result.is_err());
     }
 
@@ -740,7 +805,14 @@ mod failure {
         )
         .await;
 
-        assert!(result.is_err());
+        assert!(result.is_ok());
+
+        if let Some(SubscribeResponse::Failure(subscribe_error)) = result.unwrap() {
+            assert_eq!(
+                subscribe_error.error_code(),
+                SubscribeErrorCode::InternalError
+            );
+        }
     }
 
     #[tokio::test]
@@ -820,7 +892,14 @@ mod failure {
         )
         .await;
 
-        assert!(result.is_err());
+        assert!(result.is_ok());
+
+        if let Some(SubscribeResponse::Failure(subscribe_error)) = result.unwrap() {
+            assert_eq!(
+                subscribe_error.error_code(),
+                SubscribeErrorCode::TrackDoesNotExist
+            );
+        }
     }
 
     #[tokio::test]
@@ -1024,6 +1103,13 @@ mod failure {
         )
         .await;
 
-        assert!(result.is_err());
+        assert!(result.is_ok());
+
+        if let Some(SubscribeResponse::Failure(subscribe_error)) = result.unwrap() {
+            assert_eq!(
+                subscribe_error.error_code(),
+                SubscribeErrorCode::RetryTrackAlias
+            );
+        }
     }
 }
