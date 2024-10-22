@@ -30,7 +30,7 @@ Supported version: draft-ietf-moq-transport-06
   - [ ] SUBSCRIBE_NAMESPACE_ERROR
 - [ ] Data Streams
   - [ ] Object Datagram Message
-  - [x] Stream Header Track
+  - [x] Track Stream
   - [ ] Subgroup Stream
 - [ ] Features
   - [x] Manage Publisher / Subscriber
