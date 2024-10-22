@@ -2,7 +2,7 @@
 
 ## draft-ietf-moq-transport-06
 
-Comming Soon..
+coming soon
 
 ## draft-ietf-moq-transport-01
 
