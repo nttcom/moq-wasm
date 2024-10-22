@@ -50,6 +50,7 @@ pub(crate) async fn subscribe_error_handler(
                 let mut relaying_subscribe_error_message = subscribe_error_message.clone();
 
                 relaying_subscribe_error_message.set_subscribe_id(*downstream_subscribe_id);
+                // TODO: set downstream_track_alias if the error type is other than Retry Track Alias
 
                 let message: Box<dyn MOQTPayload> =
                     Box::new(relaying_subscribe_error_message.clone());
