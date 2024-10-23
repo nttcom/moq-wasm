@@ -16,6 +16,7 @@ use modules::object_cache_storage::{
     object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
 };
 pub use moqt_core::constants;
+use moqt_core::messages::control_messages::subscribe::FilterType;
 use moqt_core::models::tracks::ForwardingPreference;
 use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
@@ -632,6 +633,9 @@ async fn relaying_track_stream(
         .await?
         .unwrap();
     let downstream_track_alias = downstream_subscription.get_track_alias();
+    let filter_type = downstream_subscription.get_filter_type();
+    let (start_group, start_object) = downstream_subscription.get_absolute_start();
+    let (end_group, end_object) = downstream_subscription.get_absolute_end();
 
     // Validate the forwarding preference as Track
     match pubsub_relation_manager
@@ -701,10 +705,31 @@ async fn relaying_track_stream(
     while object_cache_id.is_none() {
         // TODO: Change the method of obtaining objects according to the subscribe request
         // Get the first object from the cache storage and send it to the client
-        object_cache_id = match object_cache_storage
-            .get_first_object(upstream_session_id, upstream_subscribe_id)
-            .await
-        {
+
+        let result = match filter_type {
+            FilterType::LatestGroup => {
+                object_cache_storage
+                    .get_latest_group(upstream_session_id, upstream_subscribe_id)
+                    .await
+            }
+            FilterType::LatestObject => {
+                object_cache_storage
+                    .get_latest_object(upstream_session_id, upstream_subscribe_id)
+                    .await
+            }
+            FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
+                object_cache_storage
+                    .get_absolute_object(
+                        upstream_session_id,
+                        upstream_subscribe_id,
+                        start_group.unwrap(),
+                        start_object.unwrap(),
+                    )
+                    .await
+            }
+        };
+
+        object_cache_id = match result {
             Ok(Some((id, CacheObject::Track(object)))) => {
                 let mut buf = BytesMut::new();
                 object.packetize(&mut buf);
@@ -757,6 +782,16 @@ async fn relaying_track_stream(
                 if let Err(e) = send_stream.write_all(&message_buf).await {
                     tracing::warn!("Failed to write to stream: {:?}", e);
                     bail!(e);
+                }
+
+                if filter_type == FilterType::AbsoluteRange {
+                    let is_end = (object.group_id() == end_group.unwrap()
+                        && object.object_id() == end_object.unwrap())
+                        || (object.group_id() > end_group.unwrap());
+
+                    if is_end {
+                        break;
+                    }
                 }
 
                 Some(id)

@@ -47,6 +47,9 @@ pub trait SubscriptionNodeRegistry {
         &self,
         subscribe_id: SubscribeId,
     ) -> Result<Option<ForwardingPreference>>;
+    fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<FilterType>;
+    fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
+    fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
 
     fn is_subscribe_id_valid(&self, subscribe_id: SubscribeId) -> bool;
     fn is_track_alias_valid(&self, track_alias: TrackAlias) -> bool;

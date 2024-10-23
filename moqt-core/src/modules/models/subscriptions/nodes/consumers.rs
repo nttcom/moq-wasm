@@ -146,6 +146,18 @@ impl SubscriptionNodeRegistry for Consumer {
         Ok(forwarding_preference)
     }
 
+    fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<FilterType> {
+        unimplemented!("subscribe_id: {}", subscribe_id)
+    }
+
+    fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
+        unimplemented!("subscribe_id: {}", subscribe_id)
+    }
+
+    fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
+        unimplemented!("subscribe_id: {}", subscribe_id)
+    }
+
     fn is_subscribe_id_valid(&self, subscribe_id: SubscribeId) -> bool {
         let is_less_than_max_subscribe_id = subscribe_id < self.max_subscriber_id;
         let is_unique = !self.subscriptions.contains_key(&subscribe_id);
@@ -540,6 +552,147 @@ mod success {
             .delete_subscription(variables.subscribe_id);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn set_forwarding_preference() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.consumer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let forwarding_preference = ForwardingPreference::Datagram;
+
+        let result = variables
+            .consumer
+            .set_forwarding_preference(variables.subscribe_id, forwarding_preference);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn get_forwarding_preference() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.consumer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let forwarding_preference = ForwardingPreference::Datagram;
+
+        let _ = variables
+            .consumer
+            .set_forwarding_preference(variables.subscribe_id, forwarding_preference.clone());
+
+        let result = variables
+            .consumer
+            .get_forwarding_preference(variables.subscribe_id)
+            .unwrap()
+            .unwrap();
+
+        print!("{:?}", result);
+
+        assert_eq!(result, forwarding_preference);
+    }
+
+    #[test]
+    #[should_panic]
+    fn get_filter_type() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.consumer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let _ = variables
+            .consumer
+            .get_filter_type(variables.subscribe_id)
+            .unwrap();
+    }
+    #[test]
+    #[should_panic]
+    fn get_absolute_start() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.consumer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let _ = variables
+            .consumer
+            .get_absolute_start(variables.subscribe_id)
+            .unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn get_absolute_end() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.consumer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let _ = variables
+            .consumer
+            .get_absolute_end(variables.subscribe_id)
+            .unwrap();
     }
 
     #[test]
