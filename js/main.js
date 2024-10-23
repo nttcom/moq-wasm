@@ -4,6 +4,11 @@ import init, { MOQTClient } from './pkg/moqt_client_sample'
 init().then(async () => {
   console.log('init wasm-pack')
 
+  let subscribeId
+  let trackAlias
+  let headerSend = false
+  let objectId = 0n
+
   const connectBtn = document.getElementById('connectBtn')
   connectBtn.addEventListener('click', async () => {
     const url = document.form.url.value
@@ -25,6 +30,10 @@ init().then(async () => {
       console.log({ subscribeMessage })
       if (isSuccess) {
         let expire = 0n
+        subscribeId = BigInt(subscribeMessage.subscribe_id)
+        trackAlias = BigInt(subscribeMessage.track_alias)
+
+        console.log('subscribeId', subscribeId, 'trackAlias', trackAlias)
         let subscribeId = BigInt(subscribeMessage.subscribe_id)
 
         await client.sendSubscribeOkMessage(subscribeId, expire, authInfo)
@@ -48,6 +57,7 @@ init().then(async () => {
       const authInfo = form['auth-info'].value
       const versions = form['versions'].value.split(',').map(BigInt)
       const role = Array.from(form['role']).filter((elem) => elem.checked)[0].value
+      const commonCatalogFormat = form['common-catalog-format'].value
       const isAddPath = !!form['add-path'].checked
 
       console.log({ streamDatagram, messageType, versions, role, isAddPath })
@@ -68,6 +78,19 @@ init().then(async () => {
           break
         case 'unsubscribe':
           await client.sendUnsubscribeMessage(trackNamespace, trackName)
+          break
+        case 'object-catalog':
+          await client.sendObjectStreamTrack(subscribeId, groupId, objectId++, objectPayload)
+          break
+        case 'object-track':
+          if (!headerSend) {
+            await client.sendStreamHeaderTrackMessage(subscribeId, trackAlias, 0)
+            headerSend = true
+          }
+          let groupId = 0n
+          let objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+          // let objectPayload = new Uint8Array([0x00, 0x01, 0x02, 0x03])
+          await client.sendObjectStreamTrack(subscribeId, groupId, objectId++, objectPayload)
           break
       }
     }

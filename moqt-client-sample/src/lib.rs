@@ -70,6 +70,7 @@ pub struct MOQTClient {
     subscription_node: Rc<RefCell<SubscriptionNode>>,
     transport: Rc<RefCell<Option<web_sys::WebTransport>>>,
     control_stream_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
+    object_stream_writers: Rc<RefCell<HashMap<u64, web_sys::WritableStreamDefaultWriter>>>,
     callbacks: Rc<RefCell<MOQTCallbacks>>,
 }
 
@@ -84,6 +85,7 @@ impl MOQTClient {
             subscription_node: Rc::new(RefCell::new(SubscriptionNode::new())),
             transport: Rc::new(RefCell::new(None)),
             control_stream_writer: Rc::new(RefCell::new(None)),
+            object_stream_writers: Rc::new(RefCell::new(HashMap::new())),
             callbacks: Rc::new(RefCell::new(MOQTCallbacks::new())),
         }
     }
@@ -111,6 +113,20 @@ impl MOQTClient {
         self.callbacks
             .borrow_mut()
             .set_subscribe_response_callback(callback);
+    }
+
+    #[wasm_bindgen(js_name = onStreamHeaderTrack)]
+    pub fn set_stream_header_track_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_stream_header_track_callback(callback);
+    }
+
+    #[wasm_bindgen(js_name = onObjectStreamTrack)]
+    pub fn set_object_stream_track_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_object_stream_track_callback(callback);
     }
 
     #[wasm_bindgen(js_name = sendSetupMessage)]
@@ -426,6 +442,22 @@ impl MOQTClient {
                     self.subscription_node
                         .borrow_mut()
                         .activate_as_publisher(subscribe_id);
+
+                    let send_uni_stream = web_sys::WritableStream::from(
+                        JsFuture::from(
+                            self.transport
+                                .borrow()
+                                .as_ref()
+                                .unwrap()
+                                .create_unidirectional_stream(),
+                        )
+                        .await?,
+                    );
+                    let send_uni_stream_writer = send_uni_stream.get_writer()?;
+
+                    self.object_stream_writers
+                        .borrow_mut()
+                        .insert(subscribe_id, send_uni_stream_writer);
                     Ok(ok)
                 }
                 Err(e) => Err(e),
@@ -517,6 +549,33 @@ impl MOQTClient {
             JsFuture::from(writer.write_with_chunk(&buffer)).await
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
+        }
+    }
+
+    #[wasm_bindgen(js_name = sendObjectStreamTrack)]
+    pub async fn send_object_stream_track(
+        &self,
+        subscribe_id: u64,
+        group_id: u64,
+        object_id: u64,
+        object_payload: Vec<u8>,
+    ) -> Result<JsValue, JsValue> {
+        let object_stream_writers = self.object_stream_writers.borrow();
+        if let Some(writer) = object_stream_writers.get(&subscribe_id) {
+            let object_stream_track =
+                ObjectStreamTrack::new(group_id, object_id, None, object_payload).unwrap();
+            let mut object_stream_track_buf = BytesMut::new();
+            let _ = object_stream_track.packetize(&mut object_stream_track_buf);
+
+            let mut buf = Vec::new();
+            // Message Payload and Payload Length
+            buf.extend(object_stream_track_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+            JsFuture::from(writer.write_with_chunk(&buffer)).await
+        } else {
+            return Err(JsValue::from_str("object_stream_writer is None"));
         }
     }
 

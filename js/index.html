@@ -26,7 +26,9 @@
           <label><input type="radio" name="message-type" id="" value="setup" checked />SETUP</label>
           <br />
           <label><input type="radio" name="message-type" id="" value="object" />OBJECT</label>
-          <label><input type="radio" name="message-type" id="" value="object-wo-length" />OBJECT W/O LENGTH</label>
+          <label
+            ><input type="radio" name="message-type" id="" value="object-catalog" />OBJECT Common Catalog Format</label
+          >
           <br />
           <label><input type="radio" name="message-type" id="" value="announce" />ANNOUNCE</label>
           <label><input type="radio" name="message-type" id="" value="unannounce" />UNANNOUNCE</label>
@@ -49,6 +51,30 @@
             <br />
             <br />
             <label>AuthInfo: <input type="text" name="auth-info" id="" value="secret" /> </label>
+            <br />
+            <label>Common Catalog Format:</label>
+            <br />
+            <textarea name="common-catalog-format" style="height: 320px; width: 800px" placeholder="JSON">
+{
+  "streamingFormat": "1",
+  "streamingFormatVersion": "0.2",
+  "commonTrackFields": {
+    "namespace": "conference.example.com/conference123/alice",
+    "packaging": "loc",
+    "renderGroup": 1
+  },
+  "tracks": [
+    {
+      "name": "video",
+      "selectionParams":{"codec":"av01.0.08M.10.0.110.09","width":1920,"height":1080,"framerate":30,"bitrate":1500000}
+    },
+    {
+      "name": "audio",
+      "selectionParams":{"codec":"opus","samplerate":48000,"channelConfig":"2","bitrate":32000}
+    }
+  ]
+}
+            </textarea>
             <br />
             <label><input type="checkbox" name="add-path" id="" />Add path parameter</label>
             <br />
