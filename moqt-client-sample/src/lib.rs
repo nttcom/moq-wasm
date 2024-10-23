@@ -1010,8 +1010,6 @@ async fn object_stream_track_handler(
 ) -> Result<()> {
     // log(std::format!("object_stream_track_handler: {:#?}", buf).as_str());
 
-    use moqt_core::messages::data_streams::object_stream_track;
-
     let mut read_cur = Cursor::new(&buf[..]);
     let object_stream_track = match ObjectStreamTrack::depacketize(&mut read_cur) {
         Ok(v) => {
