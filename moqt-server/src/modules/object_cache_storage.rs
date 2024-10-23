@@ -547,7 +547,7 @@ impl ObjectCacheStorageWrapper {
         }
     }
 
-    async fn get_absolute_object(
+    pub(crate) async fn get_absolute_object(
         &mut self,
         session_id: usize,
         subscribe_id: u64,
@@ -622,7 +622,7 @@ impl ObjectCacheStorageWrapper {
         }
     }
 
-    async fn get_latest_object(
+    pub(crate) async fn get_latest_object(
         &mut self,
         session_id: usize,
         subscribe_id: u64,
@@ -645,7 +645,7 @@ impl ObjectCacheStorageWrapper {
         }
     }
 
-    async fn get_latest_group(
+    pub(crate) async fn get_latest_group(
         &mut self,
         session_id: usize,
         subscribe_id: u64,

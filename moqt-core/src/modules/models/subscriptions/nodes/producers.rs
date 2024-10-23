@@ -140,6 +140,36 @@ impl SubscriptionNodeRegistry for Producer {
         unimplemented!("subscribe_id: {}", subscribe_id)
     }
 
+    fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<FilterType> {
+        let filter_type = self
+            .subscriptions
+            .get(&subscribe_id)
+            .map(|subscription| subscription.get_filter_type())
+            .unwrap();
+
+        Ok(filter_type)
+    }
+
+    fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
+        let (start_group, start_object) = self
+            .subscriptions
+            .get(&subscribe_id)
+            .map(|subscription| subscription.get_absolute_start())
+            .unwrap();
+
+        Ok((start_group, start_object))
+    }
+
+    fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
+        let (end_group, end_object) = self
+            .subscriptions
+            .get(&subscribe_id)
+            .map(|subscription| subscription.get_absolute_end())
+            .unwrap();
+
+        Ok((end_group, end_object))
+    }
+
     fn is_subscribe_id_valid(&self, subscribe_id: SubscribeId) -> bool {
         let is_less_than_max_subscribe_id = subscribe_id < self.max_subscriber_id;
         let is_unique = !self.subscriptions.contains_key(&subscribe_id);
@@ -516,6 +546,152 @@ mod success {
             .delete_subscription(variables.subscribe_id);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn set_forwarding_preference() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let forwarding_preference = ForwardingPreference::Datagram;
+
+        let result = variables
+            .producer
+            .set_forwarding_preference(variables.subscribe_id, forwarding_preference);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[should_panic]
+    fn get_forwarding_preference() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let forwarding_preference = ForwardingPreference::Datagram;
+
+        let _ = variables
+            .producer
+            .set_forwarding_preference(variables.subscribe_id, forwarding_preference.clone());
+
+        let _ = variables
+            .producer
+            .get_forwarding_preference(variables.subscribe_id)
+            .unwrap()
+            .unwrap();
+    }
+
+    #[test]
+    fn get_filter_type() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let result = variables
+            .producer
+            .get_filter_type(variables.subscribe_id)
+            .unwrap();
+
+        assert_eq!(result, variables.filter_type);
+    }
+
+    #[test]
+    fn get_absolute_start() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let result = variables
+            .producer
+            .get_absolute_start(variables.subscribe_id)
+            .unwrap();
+
+        let expected_result = (variables.start_group, variables.start_object);
+
+        assert_eq!(result, expected_result);
+    }
+
+    #[test]
+    fn get_absolute_end() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let result = variables
+            .producer
+            .get_absolute_end(variables.subscribe_id)
+            .unwrap();
+
+        let expected_result = (variables.end_group, variables.end_object);
+
+        assert_eq!(result, expected_result);
     }
 
     #[test]
