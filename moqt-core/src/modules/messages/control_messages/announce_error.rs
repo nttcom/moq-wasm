@@ -51,13 +51,6 @@ impl MOQTPayload for AnnounceError {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        /*
-            ANNOUNCE_ERROR {
-                Track Namespace(b),
-                Error Code (i),
-                Reason Phrase (b),
-            }
-        */
         // Track Namespace Number of elements
         let track_namespace_tuple_length = self.track_namespace.len();
         buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
