@@ -7,6 +7,10 @@ pub mod server_setup;
 pub mod setup_parameters;
 pub mod subscribe;
 pub mod subscribe_error;
+pub mod subscribe_namespace;
+pub mod subscribe_namespace_error;
+pub mod subscribe_namespace_ok;
+
 pub mod subscribe_ok;
 pub mod unannounce;
 pub mod unsubscribe;
