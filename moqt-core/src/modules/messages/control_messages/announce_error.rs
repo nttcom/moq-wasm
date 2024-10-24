@@ -17,7 +17,6 @@ pub struct AnnounceError {
     reason_phrase: String,
 }
 
-// draft-03
 impl AnnounceError {
     pub fn new(track_namespace: Vec<String>, error_code: u64, reason_phrase: String) -> Self {
         AnnounceError {
