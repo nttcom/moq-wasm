@@ -70,14 +70,6 @@ impl MOQTPayload for VersionSpecificParameter {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        /*
-            Parameter {
-                Parameter Type (i),
-                Parameter Length (i),
-                Parameter Value (..),
-            }
-        */
-
         match self {
             VersionSpecificParameter::AuthorizationInfo(param) => {
                 buf.extend(write_variable_integer(u64::from(param.parameter_type)));
