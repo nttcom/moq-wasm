@@ -113,7 +113,7 @@ impl DataStreams for ObjectStreamSubgroup {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::data_streams::DataStreams;
+    use super::DataStreams;
     use crate::messages::data_streams::{
         object_status::ObjectStatus, object_stream_subgroup::ObjectStreamSubgroup,
     };
@@ -267,7 +267,7 @@ mod failure {
     use crate::messages::data_streams::object_stream_subgroup::{
         ObjectStatus, ObjectStreamSubgroup,
     };
-    use crate::messages::data_streams::DataStreams;
+    use super::DataStreams;
     use bytes::BytesMut;
     use std::io::Cursor;
 

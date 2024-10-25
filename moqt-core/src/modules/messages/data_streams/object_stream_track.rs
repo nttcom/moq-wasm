@@ -124,7 +124,7 @@ impl DataStreams for ObjectStreamTrack {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::data_streams::DataStreams;
+    use super::DataStreams;
     use crate::messages::data_streams::{
         object_status::ObjectStatus, object_stream_track::ObjectStreamTrack,
     };
@@ -287,8 +287,8 @@ mod success {
 
 #[cfg(test)]
 mod failure {
+    use super::DataStreams;
     use crate::messages::data_streams::object_stream_track::{ObjectStatus, ObjectStreamTrack};
-    use crate::messages::data_streams::DataStreams;
     use bytes::BytesMut;
     use std::io::Cursor;
 
