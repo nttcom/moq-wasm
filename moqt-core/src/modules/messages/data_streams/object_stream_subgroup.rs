@@ -264,10 +264,10 @@ mod success {
 
 #[cfg(test)]
 mod failure {
+    use super::DataStreams;
     use crate::messages::data_streams::object_stream_subgroup::{
         ObjectStatus, ObjectStreamSubgroup,
     };
-    use super::DataStreams;
     use bytes::BytesMut;
     use std::io::Cursor;
 
