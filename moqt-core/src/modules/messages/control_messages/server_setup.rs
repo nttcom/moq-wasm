@@ -90,7 +90,7 @@ mod success {
 
         let expected_bytes_array = [
             192, // Selected Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 1, // Supported Version(i): Value(0xff000001) in 62bit
+            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
@@ -104,7 +104,7 @@ mod success {
     fn depacketize_server_setup() {
         let bytes_array = [
             192, // Selected Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 1, // Supported Version(i): Value(0xff000001) in 62bit
+            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
