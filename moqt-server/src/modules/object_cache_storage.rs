@@ -1,14 +1,11 @@
 use anyhow::{bail, Result};
 use moqt_core::messages::data_streams::{
     object_datagram::ObjectDatagram, object_stream_subgroup::ObjectStreamSubgroup,
-    object_stream_track::ObjectStreamTrack,
-};
-use moqt_core::messages::data_streams::{
-    stream_header_subgroup::StreamHeaderSubgroup, stream_header_track::StreamHeaderTrack,
+    object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
+    stream_header_track::StreamHeaderTrack,
 };
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use ttl_cache::TtlCache;
@@ -63,7 +60,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
     while let Some(cmd) = rx.recv().await {
         tracing::trace!("command received: {:#?}", cmd);
         match cmd {
-            SetChannel {
+            SetSubscription {
                 session_id,
                 subscribe_id,
                 cache_header,
@@ -379,7 +376,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            DeleteChannel {
+            DeleteSubscription {
                 session_id,
                 subscribe_id,
                 resp,
@@ -405,7 +402,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum ObjectCacheStorageCommand {
-    SetChannel {
+    SetSubscription {
         session_id: usize,
         subscribe_id: u64,
         cache_header: CacheHeader,
@@ -451,7 +448,7 @@ pub(crate) enum ObjectCacheStorageCommand {
         subscribe_id: u64,
         resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
     },
-    DeleteChannel {
+    DeleteSubscription {
         session_id: usize,
         subscribe_id: u64,
         resp: oneshot::Sender<Result<()>>,
@@ -480,7 +477,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = SetChannel {
+        let cmd = SetSubscription {
             session_id,
             subscribe_id,
             cache_header,
@@ -671,7 +668,7 @@ impl ObjectCacheStorageWrapper {
     async fn delete_channel(&mut self, session_id: usize, subscribe_id: u64) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = DeleteChannel {
+        let cmd = DeleteSubscription {
             session_id,
             subscribe_id,
             resp: resp_tx,

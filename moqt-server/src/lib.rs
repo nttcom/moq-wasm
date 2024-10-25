@@ -1,14 +1,12 @@
 mod modules;
-use crate::modules::object_stream_handler::object_stream_handler;
-use crate::modules::object_stream_handler::ObjectStreamProcessResult;
-use crate::modules::stream_header_handler::StreamHeaderProcessResult;
+use crate::modules::object_stream_handler::{object_stream_handler, ObjectStreamProcessResult};
+use crate::modules::stream_header_handler::{stream_header_handler, StreamHeaderProcessResult};
 use crate::modules::{
     buffer_manager,
     buffer_manager::{buffer_manager, BufferCommand},
     control_message_handler::*,
     pubsub_relation_manager::{commands::PubSubRelationCommand, manager::pubsub_relation_manager},
     send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
-    stream_header_handler::stream_header_handler,
 };
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
@@ -16,7 +14,6 @@ use modules::object_cache_storage::{
     object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
 };
 pub use moqt_core::constants;
-use moqt_core::messages::control_messages::subscribe::FilterType;
 use moqt_core::models::tracks::ForwardingPreference;
 use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
@@ -25,7 +22,8 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::{
-            subscribe::Subscribe, subscribe_error::SubscribeError, subscribe_ok::SubscribeOk,
+            subscribe::FilterType, subscribe::Subscribe, subscribe_error::SubscribeError,
+            subscribe_ok::SubscribeOk,
         },
         data_streams::DataStreams,
         moqt_payload::MOQTPayload,
@@ -47,7 +45,7 @@ use wtransport::{
 };
 
 type SubscribeId = u64;
-type SenderToOpenChannel = Sender<(SubscribeId, DataStreamType)>;
+type SenderToOpenSubscription = Sender<(SubscribeId, DataStreamType)>;
 
 // Callback to validate the Auth parameter
 pub enum AuthCallbackType {
@@ -141,8 +139,8 @@ impl MOQT {
         // Start object cache thread
         tokio::spawn(async move { object_cache_storage(&mut object_cache_rx).await });
 
-        let open_ch_txes: HashMap<usize, SenderToOpenChannel> = HashMap::new();
-        let shared_open_ch_txes = Arc::new(Mutex::new(open_ch_txes));
+        let open_subscription_txes: HashMap<usize, SenderToOpenSubscription> = HashMap::new();
+        let shared_open_subscription_txes = Arc::new(Mutex::new(open_subscription_txes));
 
         // Start wtransport server
         let config = ServerConfig::builder()
@@ -169,7 +167,7 @@ impl MOQT {
             let pubsub_relation_tx = pubsub_relation_tx.clone();
             let send_stream_tx = send_stream_tx.clone();
             let object_cache_tx = object_cache_tx.clone();
-            let open_ch_txes = shared_open_ch_txes.clone();
+            let open_subscription_txes = shared_open_subscription_txes.clone();
             let incoming_session = server.accept().await;
             let connection_span = tracing::info_span!("Connection", id);
 
@@ -180,7 +178,7 @@ impl MOQT {
                     pubsub_relation_tx,
                     send_stream_tx,
                     object_cache_tx,
-                    open_ch_txes,
+                    open_subscription_txes,
                     incoming_session,
                 )
                 .instrument(connection_span)
@@ -198,7 +196,7 @@ async fn handle_connection(
     pubsub_relation_tx: mpsc::Sender<PubSubRelationCommand>,
     send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
     object_cache_tx: mpsc::Sender<ObjectCacheStorageCommand>,
-    open_ch_txes: Arc<Mutex<HashMap<usize, SenderToOpenChannel>>>,
+    open_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     incoming_session: IncomingSession,
 ) -> Result<()> {
     tracing::trace!("Waiting for session request...");
@@ -222,10 +220,14 @@ async fn handle_connection(
     });
 
     // For opening a new data stream
-    let (open_ch_tx, mut open_ch_rx) = mpsc::channel::<(SubscribeId, DataStreamType)>(32);
-    open_ch_txes.lock().await.insert(stable_id, open_ch_tx);
+    let (open_subscription_tx, mut open_subscription_rx) =
+        mpsc::channel::<(SubscribeId, DataStreamType)>(32);
+    open_subscription_txes
+        .lock()
+        .await
+        .insert(stable_id, open_subscription_tx);
 
-    let (close_conn_tx, mut close_conn_rx) = mpsc::channel::<(u64, String)>(32);
+    let (close_connection_tx, mut close_connection_rx) = mpsc::channel::<(u64, String)>(32);
 
     // TODO: FIXME: Need to store information between threads for QUIC-level reconnection support
     let mut is_control_stream_opened = false;
@@ -238,7 +240,7 @@ async fn handle_connection(
                 if is_control_stream_opened {
                     // Only 1 control stream is allowed
                     tracing::error!("Control stream already opened");
-                    close_conn_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    close_connection_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
                 }
                 is_control_stream_opened = true;
@@ -259,7 +261,7 @@ async fn handle_connection(
                 let buffer_tx = buffer_tx.clone();
                 let pubsub_relation_tx = pubsub_relation_tx.clone();
                 let send_stream_tx = send_stream_tx.clone();
-                let close_conn_tx = close_conn_tx.clone();
+                let close_connection_tx = close_connection_tx.clone();
                 let client= client.clone();
 
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
@@ -279,7 +281,7 @@ async fn handle_connection(
                         recv_stream,
                         shared_send_stream: send_stream,
                     };
-                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, close_conn_tx, send_stream_tx).instrument(session_span_clone).await
+                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, close_connection_tx, send_stream_tx).instrument(session_span_clone).await
 
                 // Propagate the current span (Connection)
                 }.in_current_span());
@@ -310,8 +312,8 @@ async fn handle_connection(
                 let buffer_tx = buffer_tx.clone();
                 let pubsub_relation_tx = pubsub_relation_tx.clone();
                 let object_cache_tx = object_cache_tx.clone();
-                let open_ch_txes = open_ch_txes.clone();
-                let close_conn_tx = close_conn_tx.clone();
+                let open_subscription_txes = open_subscription_txes.clone();
+                let close_connection_tx = close_connection_tx.clone();
                 let client = client.clone();
                 let session_span_clone = session_span.clone();
 
@@ -321,19 +323,19 @@ async fn handle_connection(
                     stream_id,
                     shared_recv_stream,
                 };
-                    handle_incoming_uni_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_ch_txes, close_conn_tx, object_cache_tx).instrument(session_span_clone).await
+                    handle_incoming_uni_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_subscription_txes, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
 
                 // Propagate the current span (Connection)
                 }.in_current_span());
 
             },
             // Waiting for a uni-directional send stream open request and relaying the message
-            Some((subscribe_id, data_stream_type)) = open_ch_rx.recv() => {
+            Some((subscribe_id, data_stream_type)) = open_subscription_rx.recv() => {
 
                 if !is_control_stream_opened {
                     // Decline the request if the control stream is not opened
                     tracing::error!("Control stream is not opened yet");
-                    close_conn_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    close_connection_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
                 }
 
@@ -348,7 +350,7 @@ async fn handle_connection(
                         let pubsub_relation_tx = pubsub_relation_tx.clone();
                         let object_cache_tx = object_cache_tx.clone();
 
-                        let close_conn_tx = close_conn_tx.clone();
+                        let close_connection_tx = close_connection_tx.clone();
                         let session_span_clone = session_span.clone();
                         let send_stream = connection.open_uni().await?.await?;
                         let stream_id = send_stream.id().into_u64();
@@ -360,7 +362,7 @@ async fn handle_connection(
                             subscribe_id,
                             send_stream,
                         };
-                        relaying_track_stream(&mut stream, buffer_tx, pubsub_relation_tx, close_conn_tx, object_cache_tx).instrument(session_span_clone).await
+                        relaying_track_stream(&mut stream, buffer_tx, pubsub_relation_tx, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
 
                         // Propagate the current span (Connection)
                         }.in_current_span());
@@ -379,8 +381,8 @@ async fn handle_connection(
 
             },
             // TODO: Not implemented yet
-            Some((_code, _reason)) = close_conn_rx.recv() => {
-                tracing::error!("Close channel received");
+            Some((_code, _reason)) = close_connection_rx.recv() => {
+                tracing::error!("Close connection received");
                 // FIXME: I want to close the connection, but VarInt is not exported, so I'll leave it as is
                 // Maybe it's in wtransport-proto?
                 // connection.close(VarInt)
@@ -433,8 +435,8 @@ async fn handle_incoming_uni_stream(
     client: Arc<Mutex<MOQTClient>>,
     buffer_tx: Sender<BufferCommand>,
     pubsub_relation_tx: Sender<PubSubRelationCommand>,
-    open_ch_txes: Arc<Mutex<HashMap<usize, SenderToOpenChannel>>>,
-    close_conn_tx: Sender<(u64, String)>,
+    open_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    close_connection_tx: Sender<(u64, String)>,
     object_cache_tx: Sender<ObjectCacheStorageCommand>,
 ) -> Result<()> {
     let mut header_read = false;
@@ -444,7 +446,7 @@ async fn handle_incoming_uni_stream(
     let mut stream_header_type: DataStreamType = DataStreamType::ObjectDatagram;
     let stream_id = stream.stream_id;
     let mut client = client.lock().await;
-    let close_conn_tx_clone = close_conn_tx.clone();
+    let close_connection_tx_clone = close_connection_tx.clone();
     let buffer_tx_clone = buffer_tx.clone();
     let shared_recv_stream = &mut stream.shared_recv_stream;
     let shared_recv_stream = Arc::clone(shared_recv_stream);
@@ -471,7 +473,7 @@ async fn handle_incoming_uni_stream(
                     Ok(byte_read) => byte_read.unwrap(),
                     Err(err) => {
                         tracing::error!("Failed to read from stream");
-                        let _ = close_conn_tx_clone
+                        let _ = close_connection_tx_clone
                             .send((
                                 u8::from(constants::TerminationErrorCode::InternalError) as u64,
                                 err.to_string(),
@@ -525,14 +527,14 @@ async fn handle_incoming_uni_stream(
                         .unwrap();
 
                     for (downstream_session_id, downstream_subscribe_id) in subscribers {
-                        let open_ch_tx = open_ch_txes
+                        let open_subscription_tx = open_subscription_txes
                             .lock()
                             .await
                             .get(&downstream_session_id)
                             .unwrap()
                             .clone();
 
-                        open_ch_tx
+                        open_subscription_tx
                             .send((downstream_subscribe_id, stream_header_type.clone()))
                             .await?;
                     }
@@ -545,7 +547,9 @@ async fn handle_incoming_uni_stream(
                 }
                 StreamHeaderProcessResult::Failure(code, message) => {
                     tracing::error!("stream_header_read failure: {:?}", message);
-                    close_conn_tx.send((u8::from(code) as u64, message)).await?;
+                    close_connection_tx
+                        .send((u8::from(code) as u64, message))
+                        .await?;
                     break;
                 }
             }
@@ -577,7 +581,9 @@ async fn handle_incoming_uni_stream(
             }
             ObjectStreamProcessResult::Failure(code, message) => {
                 tracing::error!("object_stream_read failure: {:?}", message);
-                close_conn_tx.send((u8::from(code) as u64, message)).await?;
+                close_connection_tx
+                    .send((u8::from(code) as u64, message))
+                    .await?;
                 break;
             }
         }
@@ -590,7 +596,7 @@ async fn handle_incoming_uni_stream(
         })
         .await?;
 
-    open_ch_txes.lock().await.remove(&stable_id);
+    open_subscription_txes.lock().await.remove(&stable_id);
 
     Ok(())
 }
@@ -606,7 +612,7 @@ async fn relaying_track_stream(
     stream: &mut UniSendStream,
     _buffer_tx: Sender<BufferCommand>,
     pubsub_relation_tx: Sender<PubSubRelationCommand>,
-    close_conn_tx: Sender<(u64, String)>,
+    close_connection_tx: Sender<(u64, String)>,
     object_cache_tx: Sender<ObjectCacheStorageCommand>,
 ) -> Result<()> {
     let sleep_time = Duration::from_millis(10);
@@ -654,7 +660,7 @@ async fn relaying_track_stream(
         }
         _ => {
             let msg = "Invalid forwarding preference";
-            close_conn_tx
+            close_connection_tx
                 .send((
                     u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64,
                     msg.to_string(),
@@ -690,7 +696,7 @@ async fn relaying_track_stream(
         }
         _ => {
             let msg = "cache header not matched";
-            close_conn_tx
+            close_connection_tx
                 .send((
                     u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64,
                     msg.to_string(),
@@ -750,7 +756,7 @@ async fn relaying_track_stream(
             }
             _ => {
                 let msg = "cache is not exist";
-                close_conn_tx
+                close_connection_tx
                     .send((
                         u8::from(constants::TerminationErrorCode::InternalError) as u64,
                         msg.to_string(),
@@ -802,7 +808,7 @@ async fn relaying_track_stream(
             }
             _ => {
                 let msg = "cache is not exist";
-                close_conn_tx
+                close_connection_tx
                     .send((
                         u8::from(constants::TerminationErrorCode::InternalError) as u64,
                         msg.to_string(),
@@ -835,7 +841,7 @@ async fn handle_incoming_bi_stream(
     client: Arc<Mutex<MOQTClient>>,
     buffer_tx: Sender<BufferCommand>,
     pubsub_relation_tx: Sender<PubSubRelationCommand>,
-    close_conn_tx: Sender<(u64, String)>,
+    close_connection_tx: Sender<(u64, String)>,
     send_stream_tx: Sender<SendStreamDispatchCommand>,
 ) -> Result<()> {
     let mut buffer = vec![0; 65536].into_boxed_slice();
@@ -888,7 +894,9 @@ async fn handle_incoming_bi_stream(
             }
             MessageProcessResult::SuccessWithoutResponse => {}
             MessageProcessResult::Failure(code, message) => {
-                close_conn_tx.send((u8::from(code) as u64, message)).await?;
+                close_connection_tx
+                    .send((u8::from(code) as u64, message))
+                    .await?;
                 break;
             }
             MessageProcessResult::Fragment => (),

@@ -1,4 +1,4 @@
-use crate::messages::data_streams::DataStreams;
+use super::DataStreams;
 use crate::{
     variable_bytes::read_fixed_length_bytes,
     variable_integer::{read_variable_integer, write_variable_integer},
@@ -74,8 +74,8 @@ impl DataStreams for StreamHeaderTrack {
 
 #[cfg(test)]
 mod success {
+    use super::DataStreams;
     use crate::messages::data_streams::stream_header_track::StreamHeaderTrack;
-    use crate::messages::data_streams::DataStreams;
     use bytes::BytesMut;
     use std::io::Cursor;
 

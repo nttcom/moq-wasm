@@ -85,6 +85,7 @@ impl DataStreams for ObjectDatagram {
             read_variable_integer(read_cur).context("object payload length")?;
 
         // If the length of the remaining buf is larger than object_payload_length, object_status exists.
+        // The Object Status field is only sent if the Object Payload Length is zero.
         let object_status = if object_payload_length == 0 {
             let object_status_u64 = read_variable_integer(read_cur)?;
             let object_status =
@@ -383,8 +384,8 @@ mod success {
 
 #[cfg(test)]
 mod failure {
+    use super::DataStreams;
     use crate::messages::data_streams::object_datagram::{ObjectDatagram, ObjectStatus};
-    use crate::messages::data_streams::DataStreams;
     use bytes::BytesMut;
     use std::io::Cursor;
 
