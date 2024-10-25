@@ -32,7 +32,7 @@ pub(crate) async fn stream_header_track_handler(
 
     let cache_header = CacheHeader::Track(stream_header_track_message);
     object_cache_storage
-        .set_channel(upstream_session_id, upstream_subscribe_id, cache_header)
+        .set_subscription(upstream_session_id, upstream_subscribe_id, cache_header)
         .await?;
 
     Ok(upstream_subscribe_id)
