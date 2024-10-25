@@ -606,15 +606,14 @@ impl MOQTClient {
             // Message Payload and Payload Length
             buf.extend(object_stream_track_buf);
 
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-
             // log(std::format!("uni: send value: {} {:#x?}", buf.len(), buf).as_str());
             let mut read_cur = Cursor::new(&buf[..]);
             let result = ObjectStreamTrack::depacketize(&mut read_cur).unwrap();
 
             // log(std::format!("uni: send value: {:#?}", result).as_str());
 
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(ok) => {
                     log(std::format!("sent: id: {:#?}", result.object_id()).as_str());
