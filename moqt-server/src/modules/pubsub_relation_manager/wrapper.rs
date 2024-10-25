@@ -171,7 +171,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         downstream_subscribe_id: u64,
     ) -> Result<Option<Subscription>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<Subscription>>>();
-        let cmd = PubSubRelationCommand::GetDownstreamSubscriptionByIds {
+        let cmd = PubSubRelationCommand::GetDownstreamSubscriptionBySessionIdAndSubscribeId {
             downstream_session_id,
             downstream_subscribe_id,
             resp: resp_tx,

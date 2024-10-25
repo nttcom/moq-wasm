@@ -211,7 +211,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
 
                 resp.send(result).unwrap();
             }
-            GetDownstreamSubscriptionByIds {
+            GetDownstreamSubscriptionBySessionIdAndSubscribeId {
                 downstream_session_id,
                 downstream_subscribe_id,
                 resp,
