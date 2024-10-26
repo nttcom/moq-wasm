@@ -31,13 +31,10 @@ init().then(async () => {
       let subscribeId = BigInt(subscribeMessage.subscribe_id)
       if (isSuccess) {
         let expire = 0n
-<<<<<<< HEAD
-=======
         subscribeId = BigInt(subscribeMessage.subscribe_id)
         trackAlias = BigInt(subscribeMessage.track_alias)
 
         console.log('subscribeId', subscribeId, 'trackAlias', trackAlias)
->>>>>>> draft-06
 
         await client.sendSubscribeOkMessage(subscribeId, expire, authInfo)
       } else {
