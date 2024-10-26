@@ -80,6 +80,8 @@ pub(crate) async fn subscribe_namespace_handler(
 
             Ok(None)
         }
+
+        // TODO: Separate namespace prefix overlap error
         Err(err) => {
             tracing::error!("subscribe_namespace_handler: err: {:?}", err.to_string());
 
