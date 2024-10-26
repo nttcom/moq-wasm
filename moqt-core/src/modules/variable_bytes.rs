@@ -58,6 +58,13 @@ pub fn read_fixed_length_bytes(buf: &mut std::io::Cursor<&[u8]>, length: usize) 
         bail!("buffer is empty in read_variable_bytes");
     }
 
+    if buf.remaining() < length {
+        bail!(
+            "buffer does not have enough length. actual: {}, expected: {}",
+            buf.remaining() + 1,
+            length + 1
+        )
+    }
     let value = buf.get_ref()[buf.position() as usize..buf.position() as usize + length]
         .as_ref()
         .to_vec();

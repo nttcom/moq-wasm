@@ -1,5 +1,6 @@
 pub mod constants;
 pub mod control_message_type;
+pub mod data_stream_type;
 pub mod messages;
 pub mod models;
 pub mod moqt_client;

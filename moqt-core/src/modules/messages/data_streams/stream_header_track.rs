@@ -1,14 +1,13 @@
+use super::DataStreams;
 use crate::{
-    variable_bytes::read_fixed_length_bytes_from_buffer,
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+    variable_bytes::read_fixed_length_bytes,
+    variable_integer::{read_variable_integer, write_variable_integer},
 };
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::any::Any;
 
-use crate::messages::moqt_payload::MOQTPayload;
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct StreamHeaderTrack {
     subscribe_id: u64,
     track_alias: u64,
@@ -24,20 +23,32 @@ impl StreamHeaderTrack {
         })
     }
 
+    pub fn subscribe_id(&self) -> u64 {
+        self.subscribe_id
+    }
+
     pub fn track_alias(&self) -> u64 {
         self.track_alias
     }
+
+    pub fn set_subscribe_id(&mut self, subscribe_id: u64) {
+        self.subscribe_id = subscribe_id;
+    }
+
+    pub fn set_track_alias(&mut self, track_alias: u64) {
+        self.track_alias = track_alias;
+    }
 }
 
-impl MOQTPayload for StreamHeaderTrack {
-    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self>
+impl DataStreams for StreamHeaderTrack {
+    fn depacketize(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<Self>
     where
         Self: Sized,
     {
-        let subscribe_id = read_variable_integer_from_buffer(buf).context("subscribe id")?;
-        let track_alias = read_variable_integer_from_buffer(buf).context("track alias")?;
+        let subscribe_id = read_variable_integer(read_cur).context("subscribe id")?;
+        let track_alias = read_variable_integer(read_cur).context("track alias")?;
         let publisher_priority =
-            read_fixed_length_bytes_from_buffer(buf, 1).context("publisher priority")?[0];
+            read_fixed_length_bytes(read_cur, 1).context("publisher priority")?[0];
 
         tracing::trace!("Depacketized Stream Header Track message.");
 
@@ -63,9 +74,10 @@ impl MOQTPayload for StreamHeaderTrack {
 
 #[cfg(test)]
 mod success {
+    use super::DataStreams;
     use crate::messages::data_streams::stream_header_track::StreamHeaderTrack;
-    use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
+    use std::io::Cursor;
 
     #[test]
     fn packetize_stream_header_track() {
@@ -97,7 +109,9 @@ mod success {
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let depacketized_stream_header_track = StreamHeaderTrack::depacketize(&mut buf).unwrap();
+        let mut read_cur = Cursor::new(&buf[..]);
+        let depacketized_stream_header_track =
+            StreamHeaderTrack::depacketize(&mut read_cur).unwrap();
 
         let subscribe_id = 0;
         let track_alias = 1;
