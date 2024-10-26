@@ -580,6 +580,69 @@ mod success {
     }
 
     #[tokio::test]
+    async fn set_downstream_announced_namespace() {
+        let max_subscribe_id = 10;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let downstream_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+        let result = pubsub_relation_manager
+            .set_downstream_announced_namespace(track_namespace.clone(), downstream_session_id)
+            .await;
+        assert!(result.is_ok());
+
+        // Check if the track_namespace is set
+        let (_, producers, _) =
+            test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
+
+        let producer = producers.get(&downstream_session_id).unwrap();
+        let announced_namespaces = producer.get_namespaces().unwrap();
+        let announced_namespace = announced_namespaces.first().unwrap().to_vec();
+
+        assert_eq!(announced_namespace, track_namespace);
+    }
+
+    #[tokio::test]
+    async fn set_downstream_subscribed_namespace_prefix() {
+        let max_subscribe_id = 10;
+        let track_namespace_prefix = Vec::from(["test".to_string(), "test".to_string()]);
+        let downstream_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+        let result = pubsub_relation_manager
+            .set_downstream_subscribed_namespace_prefix(
+                track_namespace_prefix.clone(),
+                downstream_session_id,
+            )
+            .await;
+        assert!(result.is_ok());
+
+        // Check if the track_namespace_prefix is set
+        let (_, producers, _) =
+            test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
+
+        let producer = producers.get(&downstream_session_id).unwrap();
+        let subscribed_namespace_prefixes = producer.get_namespace_prefixes().unwrap();
+        let subscribed_namespace_prefix = subscribed_namespace_prefixes.first().unwrap().to_vec();
+
+        assert_eq!(subscribed_namespace_prefix, track_namespace_prefix);
+    }
+
+    #[tokio::test]
     async fn setup_subscriber() {
         let max_subscribe_id = 10;
         let downstream_session_id = 1;
@@ -1367,6 +1430,205 @@ mod success {
             .unwrap();
 
         assert!(subscription.is_active());
+    }
+
+    #[tokio::test]
+    async fn get_upstream_namespaces_matches_prefix_exist() {
+        let max_subscribe_id = 10;
+        let upstream_session_id = 1;
+        let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string(), "ccc".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+        let track_namespace_prefix = Vec::from(["aaa".to_string(), "bbb".to_string()]);
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_publisher(max_subscribe_id, upstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+
+        let namespaces = pubsub_relation_manager
+            .get_upstream_namespaces_matches_prefix(track_namespace_prefix)
+            .await
+            .unwrap();
+
+        assert_eq!(namespaces, vec![track_namespace]);
+    }
+
+    #[tokio::test]
+    async fn get_upstream_namespaces_matches_prefix_not_exist() {
+        let max_subscribe_id = 10;
+        let upstream_session_id = 1;
+        let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string(), "ccc".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+        let track_namespace_prefix = Vec::from(["aa".to_string()]);
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_publisher(max_subscribe_id, upstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+
+        let namespaces = pubsub_relation_manager
+            .get_upstream_namespaces_matches_prefix(track_namespace_prefix)
+            .await
+            .unwrap();
+
+        let expected_namespaces: Vec<Vec<String>> = vec![];
+
+        assert_eq!(namespaces, expected_namespaces);
+    }
+
+    #[tokio::test]
+    async fn is_namespace_already_announced_exist() {
+        let max_subscribe_id = 10;
+        let downstream_session_id = 1;
+        let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string()]);
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_downstream_announced_namespace(track_namespace.clone(), downstream_session_id)
+            .await;
+
+        let result = pubsub_relation_manager
+            .is_namespace_already_announced(track_namespace.clone(), downstream_session_id)
+            .await;
+
+        let is_announced = result.unwrap();
+        assert!(is_announced);
+    }
+
+    #[tokio::test]
+    async fn is_namespace_already_announced_not_exist() {
+        let max_subscribe_id = 10;
+        let downstream_session_id = 1;
+        let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string()]);
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+
+        let result = pubsub_relation_manager
+            .is_namespace_already_announced(track_namespace.clone(), downstream_session_id)
+            .await;
+
+        let is_announced = result.unwrap();
+        assert!(!is_announced);
+    }
+
+    #[tokio::test]
+    async fn get_downstream_session_ids_by_upstream_namespace() {
+        let max_subscribe_id = 10;
+        let upstream_session_id = 1;
+        let downstream_session_ids = [2, 3];
+        let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string(), "ccc".to_string()]);
+        let track_namespace_prefixes = Vec::from([
+            Vec::from(["aaa".to_string()]),
+            Vec::from(["bbb".to_string()]),
+        ]);
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+
+        //   pub 1 <- sub 2, 3
+        let _ = pubsub_relation_manager
+            .setup_publisher(max_subscribe_id, upstream_session_id)
+            .await;
+
+        let _ = pubsub_relation_manager
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .await;
+
+        for i in [0, 1] {
+            let _ = pubsub_relation_manager
+                .setup_subscriber(max_subscribe_id, downstream_session_ids[i])
+                .await;
+
+            let _ = pubsub_relation_manager
+                .set_downstream_subscribed_namespace_prefix(
+                    track_namespace_prefixes[i].clone(),
+                    downstream_session_ids[i],
+                )
+                .await;
+        }
+
+        let result = pubsub_relation_manager
+            .get_downstream_session_ids_by_upstream_namespace(track_namespace)
+            .await;
+
+        assert!(result.is_ok());
+
+        let expected_downstream_session_ids = vec![downstream_session_ids[0]];
+
+        assert_eq!(result.unwrap(), expected_downstream_session_ids);
     }
 
     #[tokio::test]
