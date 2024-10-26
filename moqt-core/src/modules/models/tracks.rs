@@ -32,6 +32,10 @@ impl Track {
         self.forwarding_preference = Some(forwarding_preference);
     }
 
+    pub fn get_forwarding_preference(&self) -> Option<ForwardingPreference> {
+        self.forwarding_preference.clone()
+    }
+
     pub fn get_track_namespace_and_name(&self) -> (Vec<String>, String) {
         (self.track_namespace.clone(), self.track_name.to_string())
     }
@@ -107,7 +111,7 @@ mod succsess {
     }
 
     #[test]
-    fn test_get_track_alias() {
+    fn get_track_alias() {
         let track_alias = 0;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "track_name".to_string();
@@ -121,5 +125,26 @@ mod succsess {
         );
 
         assert_eq!(track.get_track_alias(), track_alias);
+    }
+
+    #[test]
+    fn set_and_get_forwarding_preference() {
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let forwarding_preference = ForwardingPreference::Datagram;
+
+        let mut track = Track::new(
+            track_alias,
+            track_namespace.clone(),
+            track_name.clone(),
+            None,
+        );
+
+        track.set_forwarding_preference(forwarding_preference.clone());
+
+        let result_forwarding_preference = track.get_forwarding_preference().unwrap();
+
+        assert_eq!(result_forwarding_preference, forwarding_preference);
     }
 }

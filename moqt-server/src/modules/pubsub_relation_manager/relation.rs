@@ -54,6 +54,23 @@ impl PubSubRelation {
         self.records.get(&key)
     }
 
+    pub(crate) fn get_publisher(
+        &self,
+        downstream_session_id: SubscriberSessionId,
+        downstream_subscribe_id: SubscriberSubscribeId,
+    ) -> Option<(PublisherSessionId, PublisherSubscribeId)> {
+        for ((upstream_session_id, upstream_subscribe_id), subscribers) in &self.records {
+            for (session_id, subscribe_id) in subscribers {
+                if *session_id == downstream_session_id && *subscribe_id == downstream_subscribe_id
+                {
+                    return Some((*upstream_session_id, *upstream_subscribe_id));
+                }
+            }
+        }
+
+        None
+    }
+
     // TODO: Define the behavior if the last subscriber unsubscribes from the track
 
     pub(crate) fn delete_relation(

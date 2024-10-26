@@ -73,14 +73,6 @@ impl MOQTPayload for Announce {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        /*
-            ANNOUNCE Message {
-                Track Namespace(b),
-                Number of Parameters (i),
-                Parameters (..) ...,
-            }
-        */
-
         // Track Namespace Number of elements
         let track_namespace_tuple_length = self.track_namespace.len();
         buf.extend(write_variable_integer(track_namespace_tuple_length as u64));

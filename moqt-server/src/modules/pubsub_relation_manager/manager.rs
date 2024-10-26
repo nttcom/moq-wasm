@@ -26,7 +26,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
     let mut pubsub_relation = PubSubRelation::new();
 
     while let Some(cmd) = rx.recv().await {
-        tracing::debug!("command received: {:#?}", cmd);
+        tracing::trace!("command received: {:#?}", cmd);
         match cmd {
             SetupPublisher {
                 max_subscribe_id,
@@ -195,7 +195,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 let is_existing = consumer.is_some();
                 resp.send(Ok(is_existing)).unwrap();
             }
-            GetUpstreamSubscription {
+            GetUpstreamSubscriptionByFullTrackName {
                 track_namespace,
                 track_name,
                 resp,
@@ -208,6 +208,16 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                         consumer.get_subscription_by_full_track_name(track_namespace, track_name)
                     })
                     .unwrap();
+
+                resp.send(result).unwrap();
+            }
+            GetDownstreamSubscriptionBySessionIdAndSubscribeId {
+                downstream_session_id,
+                downstream_subscribe_id,
+                resp,
+            } => {
+                let producer = producers.get(&downstream_session_id).unwrap();
+                let result = producer.get_subscription(downstream_subscribe_id);
 
                 resp.send(result).unwrap();
             }
@@ -527,6 +537,115 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                         resp.send(Err(anyhow!(err))).unwrap();
                     }
                 }
+            }
+            SetDownstreamForwardingPreference {
+                downstream_session_id,
+                downstream_subscribe_id,
+                forwarding_preference,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get_mut(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+                match producer
+                    .set_forwarding_preference(downstream_subscribe_id, forwarding_preference)
+                {
+                    Ok(_) => resp.send(Ok(())).unwrap(),
+                    Err(err) => {
+                        tracing::error!("set_forwarding_preference: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                    }
+                }
+            }
+            SetUpstreamForwardingPreference {
+                upstream_session_id,
+                upstream_subscribe_id,
+                forwarding_preference,
+                resp,
+            } => {
+                // Return an error if the publisher does not exist
+                let consumer = match consumers.get_mut(&upstream_session_id) {
+                    Some(consumer) => consumer,
+                    None => {
+                        let msg = "publisher not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                match consumer
+                    .set_forwarding_preference(upstream_subscribe_id, forwarding_preference)
+                {
+                    Ok(_) => resp.send(Ok(())).unwrap(),
+                    Err(err) => {
+                        tracing::error!("set_forwarding_preference: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                    }
+                }
+            }
+            GetUpstreamForwardingPreference {
+                upstream_session_id,
+                upstream_subscribe_id,
+                resp,
+            } => {
+                // Return an error if the publisher does not exist
+                let consumer = match consumers.get(&upstream_session_id) {
+                    Some(consumer) => consumer,
+                    None => {
+                        let msg = "publisher not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let forwarding_preference = consumer
+                    .get_forwarding_preference(upstream_subscribe_id)
+                    .unwrap();
+                resp.send(Ok(forwarding_preference)).unwrap();
+            }
+            GetRelatedSubscribers {
+                upstream_session_id,
+                upstream_subscribe_id,
+                resp,
+            } => {
+                let subscribers =
+                    pubsub_relation.get_subscribers(upstream_session_id, upstream_subscribe_id);
+
+                let subscribers = match subscribers {
+                    Some(subscribers) => subscribers.clone(),
+                    None => vec![],
+                };
+
+                resp.send(Ok(subscribers)).unwrap();
+            }
+            GetRelatedPublisher {
+                downstream_session_id,
+                downstream_subscribe_id,
+                resp,
+            } => {
+                let publisher =
+                    pubsub_relation.get_publisher(downstream_session_id, downstream_subscribe_id);
+
+                let publisher = match publisher {
+                    Some(publisher) => publisher,
+                    None => {
+                        let msg = "publisher not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                resp.send(Ok(publisher)).unwrap();
             }
             #[cfg(test)]
             GetNodeAndRelationClone { resp } => {
