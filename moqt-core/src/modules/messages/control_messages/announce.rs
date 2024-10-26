@@ -21,11 +21,8 @@ pub struct Announce {
 }
 
 impl Announce {
-    pub fn new(
-        track_namespace: Vec<String>,
-        number_of_parameters: u8,
-        parameters: Vec<VersionSpecificParameter>,
-    ) -> Self {
+    pub fn new(track_namespace: Vec<String>, parameters: Vec<VersionSpecificParameter>) -> Self {
+        let number_of_parameters = parameters.len() as u8;
         Announce {
             track_namespace,
             number_of_parameters,
@@ -106,15 +103,13 @@ mod success {
     #[test]
     fn packetize_announce_with_parameter() {
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let number_of_parameters = 1;
 
         let parameter_value = "test".to_string();
         let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
             parameter_value.clone(),
         ));
         let parameters = vec![parameter];
-        let announce_message =
-            Announce::new(track_namespace.clone(), number_of_parameters, parameters);
+        let announce_message = Announce::new(track_namespace.clone(), parameters);
         let mut buf = bytes::BytesMut::new();
         announce_message.packetize(&mut buf);
 
@@ -151,14 +146,12 @@ mod success {
         let depacketized_announce_message = Announce::depacketize(&mut buf).unwrap();
 
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let number_of_parameters = 1;
         let parameter_value = "test".to_string();
         let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
             parameter_value.clone(),
         ));
         let parameters = vec![parameter];
-        let expected_announce_message =
-            Announce::new(track_namespace.clone(), number_of_parameters, parameters);
+        let expected_announce_message = Announce::new(track_namespace.clone(), parameters);
 
         assert_eq!(depacketized_announce_message, expected_announce_message);
     }
@@ -166,10 +159,8 @@ mod success {
     #[test]
     fn packetize_announce_without_parameter() {
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let number_of_parameters = 0;
         let parameters = vec![];
-        let announce_message =
-            Announce::new(track_namespace.clone(), number_of_parameters, parameters);
+        let announce_message = Announce::new(track_namespace.clone(), parameters);
         let mut buf = bytes::BytesMut::new();
         announce_message.packetize(&mut buf);
 
@@ -200,10 +191,8 @@ mod success {
         let depacketized_announce_message = Announce::depacketize(&mut buf).unwrap();
 
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let number_of_parameters = 0;
         let parameters = vec![];
-        let expected_announce_message =
-            Announce::new(track_namespace.clone(), number_of_parameters, parameters);
+        let expected_announce_message = Announce::new(track_namespace.clone(), parameters);
 
         assert_eq!(depacketized_announce_message, expected_announce_message);
     }
