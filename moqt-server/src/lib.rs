@@ -13,6 +13,7 @@ use crate::modules::{
 };
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
+pub use moqt_core::constants;
 use moqt_core::{
     constants::{StreamDirection, UnderlayType},
     control_message_type::ControlMessageType,
@@ -41,9 +42,6 @@ use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
 use wtransport::{
     endpoint::IncomingSession, Endpoint, Identity, RecvStream, SendStream, ServerConfig,
 };
-
-pub use moqt_core::constants;
-
 type SubscribeId = u64;
 type SenderToOpenSubscription = Sender<(SubscribeId, DataStreamType)>;
 
