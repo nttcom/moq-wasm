@@ -99,7 +99,16 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 downstream_session_id,
                 resp,
             } => {
-                let producer = producers.get_mut(&downstream_session_id).unwrap();
+                let producer = match producers.get_mut(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
                 match producer.set_namespace_prefix(track_namespace_prefix) {
                     Ok(_) => {
                         resp.send(Ok(())).unwrap();
