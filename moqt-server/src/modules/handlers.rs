@@ -1,4 +1,5 @@
 pub(crate) mod announce_handler;
+pub(crate) mod announce_ok_handler;
 pub(crate) mod server_setup_handler;
 pub(crate) mod subscribe_handler;
 pub(crate) mod subscribe_namespace_handler;

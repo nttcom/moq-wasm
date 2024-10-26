@@ -4,6 +4,8 @@ use crate::constants::TerminationErrorCode;
 use crate::modules::handlers::{
     announce_handler::AnnounceResponse, unannounce_handler::unannounce_handler,
 };
+use crate::modules::server_processes::announce_error_message::process_announce_error_message;
+use crate::modules::server_processes::announce_ok_message::process_announce_ok_message;
 use crate::modules::server_processes::subscribe_namespace_message::process_subscribe_namespace_message;
 use crate::modules::server_processes::{
     announce_message::process_announce_message, client_setup_message::process_client_setup_message,
@@ -214,8 +216,38 @@ pub async fn control_message_handler(
                 }
             }
         }
-        // ControlMessageType::AnnounceOk => {}
-        // ControlMessageType::AnnounceError => {}
+        ControlMessageType::AnnounceOk => {
+            match process_announce_ok_message(
+                &mut payload_buf,
+                client,
+                pubsub_relation_manager_repository,
+            )
+            .await
+            {
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
+                }
+                Err(err) => {
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
+        ControlMessageType::AnnounceError => {
+            match process_announce_error_message(&mut payload_buf).await {
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
+                }
+                Err(err) => {
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
         ControlMessageType::SubscribeNamespace => {
             match process_subscribe_namespace_message(
                 &mut payload_buf,
