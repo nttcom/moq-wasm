@@ -9,18 +9,22 @@ use crate::modules::{
 use anyhow::{bail, Context, Ok, Result};
 use bytes::BytesMut;
 pub use moqt_core::constants;
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     constants::{StreamDirection, UnderlayType},
     control_message_type::ControlMessageType,
     messages::{
         control_messages::{
-            subscribe::Subscribe, subscribe_error::SubscribeError, subscribe_ok::SubscribeOk,
+            announce_ok::AnnounceOk, subscribe::Subscribe, subscribe_error::SubscribeError,
+            subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
         },
         moqt_payload::MOQTPayload,
     },
     variable_integer::write_variable_integer,
     MOQTClient,
+};
+use moqt_core::{
+    messages::control_messages::announce::Announce,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -417,6 +421,28 @@ async fn wait_and_relay_control_message(
             tracing::info!(
                 "Relayed Message Type: {:?}",
                 ControlMessageType::SubscribeError
+            );
+        } else if message.as_any().downcast_ref::<Announce>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::Announce) as u64,
+            ));
+            tracing::info!("Relayed Message Type: {:?}", ControlMessageType::Announce);
+        } else if message.as_any().downcast_ref::<AnnounceOk>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::AnnounceOk) as u64,
+            ));
+            tracing::info!("Relayed Message Type: {:?}", ControlMessageType::AnnounceOk);
+        } else if message
+            .as_any()
+            .downcast_ref::<SubscribeNamespace>()
+            .is_some()
+        {
+            message_buf.extend(write_variable_integer(u8::from(
+                ControlMessageType::SubscribeNamespace,
+            ) as u64));
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::SubscribeNamespace
             );
         } else {
             tracing::warn!("Unsupported message type for bi-directional stream");
