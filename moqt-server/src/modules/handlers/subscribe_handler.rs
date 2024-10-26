@@ -162,12 +162,6 @@ pub(crate) async fn subscribe_handler(
             let relaying_subscribe_message: Box<dyn MOQTPayload> =
                 Box::new(message_payload.clone());
 
-            tracing::debug!(
-                "message: {:#?} is sent to relay handler for client {:?}",
-                message_payload.clone(),
-                session_id
-            );
-
             // Notify to the publisher about the SUBSCRIBE message
             // TODO: Wait for the SUBSCRIBE_OK message to be returned on a transaction
             // TODO: validate Timeout
@@ -199,6 +193,12 @@ pub(crate) async fn subscribe_handler(
                     return Ok(Some(SubscribeResponse::Failure(subscribe_error)));
                 }
             }
+
+            tracing::debug!(
+                "message: {:#?} is sent to relay handler for client {:?}",
+                message_payload.clone(),
+                session_id
+            );
 
             Ok(None)
         }
