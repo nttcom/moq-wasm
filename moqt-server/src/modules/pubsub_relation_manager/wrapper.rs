@@ -63,6 +63,48 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             Err(err) => bail!(err),
         }
     }
+    async fn set_downstream_announced_namespace(
+        &self,
+        track_namespace: Vec<String>,
+        downstream_session_id: usize,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
+
+        let cmd = PubSubRelationCommand::SetDownstreamAnnouncedNamespace {
+            track_namespace,
+            downstream_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => bail!(err),
+        }
+    }
+    async fn set_downstream_subscribed_namespace_prefix(
+        &self,
+        track_namespace_prefix: Vec<String>,
+        downstream_session_id: usize,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
+
+        let cmd = PubSubRelationCommand::SetDownstreamSubscribedNamespacePrefix {
+            track_namespace_prefix,
+            downstream_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => bail!(err),
+        }
+    }
     async fn setup_subscriber(
         &self,
         max_subscribe_id: u64,
@@ -357,6 +399,59 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
 
         match result {
             Ok(activation_occured) => Ok(activation_occured),
+            Err(err) => bail!(err),
+        }
+    }
+    async fn get_upstream_namespaces_matches_prefix(
+        &self,
+        track_namespace_prefix: Vec<String>,
+    ) -> Result<Vec<Vec<String>>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Vec<Vec<String>>>>();
+        let cmd = GetUpstreamNamespacesMatchesPrefix {
+            track_namespace_prefix,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(namespaces) => Ok(namespaces),
+            Err(err) => bail!(err),
+        }
+    }
+    async fn is_namespace_already_announced(
+        &self,
+        track_namespace: Vec<String>,
+        downstream_session_id: usize,
+    ) -> Result<bool> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<bool>>();
+        let cmd = IsNamespaceAlreadyAnnounced {
+            track_namespace,
+            downstream_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(is_announced) => Ok(is_announced),
+            Err(err) => bail!(err),
+        }
+    }
+    async fn get_downstream_session_ids_by_upstream_namespace(
+        &self,
+        track_namespace: Vec<String>,
+    ) -> Result<Vec<usize>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Vec<usize>>>();
+        let cmd = GetDownstreamSessionIdsByUpstreamNamespace {
+            track_namespace,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(session_ids) => Ok(session_ids),
             Err(err) => bail!(err),
         }
     }
