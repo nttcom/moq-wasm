@@ -73,14 +73,12 @@ mod success {
     async fn normal_case() {
         // Generate ANNOUNCE message
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let number_of_parameters = 1;
 
         let parameter_value = "test".to_string();
         let parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(parameter_value));
         let parameters = vec![parameter];
-        let announce_message =
-            Announce::new(track_namespace.clone(), number_of_parameters, parameters);
+        let announce_message = Announce::new(track_namespace.clone(), parameters);
         let mut buf = bytes::BytesMut::new();
         announce_message.packetize(&mut buf);
 
@@ -135,14 +133,12 @@ mod failure {
     async fn publisher_already_exists() {
         // Generate ANNOUNCE message
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let number_of_parameters = 1;
 
         let parameter_value = "test".to_string();
         let parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(parameter_value));
         let parameters = vec![parameter];
-        let announce_message =
-            Announce::new(track_namespace.clone(), number_of_parameters, parameters);
+        let announce_message = Announce::new(track_namespace.clone(), parameters);
         let mut buf = bytes::BytesMut::new();
         announce_message.packetize(&mut buf);
 
