@@ -116,41 +116,55 @@ pub(crate) async fn subscribe_handler(
         .unwrap();
     match upstream_session_id {
         Some(session_id) => {
-            let (upstream_subscribe_id, _) = match set_downstream_and_upstream_subscription(
-                pubsub_relation_manager_repository,
-                &subscribe_message,
-                client,
-                session_id,
-            )
-            .await
-            {
-                Ok((upstream_subscribe_id, upstream_track_alias)) => {
-                    (upstream_subscribe_id, upstream_track_alias)
-                }
-                Err(e) => {
-                    let reason_phrase = "InternalError: ".to_string() + &e.to_string();
-                    let subscribe_error = SubscribeError::new(
-                        subscribe_message.subscribe_id(),
-                        SubscribeErrorCode::InternalError,
-                        reason_phrase,
-                        subscribe_message.track_alias(),
-                    );
+            let (upstream_subscribe_id, upstream_track_alias) =
+                match set_downstream_and_upstream_subscription(
+                    pubsub_relation_manager_repository,
+                    &subscribe_message,
+                    client,
+                    session_id,
+                )
+                .await
+                {
+                    Ok((upstream_subscribe_id, upstream_track_alias)) => {
+                        (upstream_subscribe_id, upstream_track_alias)
+                    }
+                    Err(e) => {
+                        let reason_phrase = "InternalError: ".to_string() + &e.to_string();
+                        let subscribe_error = SubscribeError::new(
+                            subscribe_message.subscribe_id(),
+                            SubscribeErrorCode::InternalError,
+                            reason_phrase,
+                            subscribe_message.track_alias(),
+                        );
 
-                    return Ok(Some(SubscribeResponse::Failure(subscribe_error)));
-                }
-            };
-
-            let mut relaying_subscribe_message = subscribe_message.clone();
+                        return Ok(Some(SubscribeResponse::Failure(subscribe_error)));
+                    }
+                };
 
             // Replace the subscribe_id and track_alias in the SUBSCRIBE message to request to the upstream publisher
-            relaying_subscribe_message.set_subscribe_id(upstream_subscribe_id);
-            relaying_subscribe_message.set_track_alias(upstream_subscribe_id);
+            // TODO: auth parameter
+            let message_payload = Subscribe::new(
+                upstream_subscribe_id,
+                upstream_track_alias,
+                subscribe_message.track_namespace().clone(),
+                subscribe_message.track_name().to_string(),
+                subscribe_message.subscriber_priority(),
+                subscribe_message.group_order(),
+                subscribe_message.filter_type(),
+                subscribe_message.start_group(),
+                subscribe_message.start_object(),
+                subscribe_message.end_group(),
+                subscribe_message.end_object(),
+                subscribe_message.subscribe_parameters().clone(),
+            )
+            .unwrap();
 
-            let message: Box<dyn MOQTPayload> = Box::new(relaying_subscribe_message.clone());
+            let relaying_subscribe_message: Box<dyn MOQTPayload> =
+                Box::new(message_payload.clone());
 
             tracing::debug!(
                 "message: {:#?} is sent to relay handler for client {:?}",
-                relaying_subscribe_message,
+                message_payload.clone(),
                 session_id
             );
 
@@ -158,18 +172,19 @@ pub(crate) async fn subscribe_handler(
             // TODO: Wait for the SUBSCRIBE_OK message to be returned on a transaction
             // TODO: validate Timeout
             match send_stream_dispatcher_repository
-                .send_message_to_send_stream_thread(session_id, message, StreamDirection::Bi)
+                .send_message_to_send_stream_thread(
+                    session_id,
+                    relaying_subscribe_message,
+                    StreamDirection::Bi,
+                )
                 .await
             {
                 Ok(_) => {
                     tracing::info!(
                         "subscribed track_namespace: {:?}",
-                        relaying_subscribe_message.track_namespace(),
+                        message_payload.track_namespace(),
                     );
-                    tracing::info!(
-                        "subscribed track_name: {:?}",
-                        relaying_subscribe_message.track_name()
-                    );
+                    tracing::info!("subscribed track_name: {:?}", message_payload.track_name());
                     tracing::trace!("subscribe_handler complete.");
                 }
                 Err(e) => {

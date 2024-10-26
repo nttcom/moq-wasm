@@ -47,27 +47,30 @@ pub(crate) async fn subscribe_error_handler(
                     }
                 }
 
-                let mut relaying_subscribe_error_message = subscribe_error_message.clone();
-
-                relaying_subscribe_error_message.set_subscribe_id(*downstream_subscribe_id);
                 // TODO: set downstream_track_alias if the error type is other than Retry Track Alias
 
-                let message: Box<dyn MOQTPayload> =
-                    Box::new(relaying_subscribe_error_message.clone());
-
-                tracing::debug!(
-                    "message: {:#?} is sent to relay handler for client {:?}",
-                    relaying_subscribe_error_message,
-                    downstream_session_id
+                let message_payload = SubscribeError::new(
+                    *downstream_subscribe_id,
+                    subscribe_error_message.error_code(),
+                    subscribe_error_message.reason_phrase().to_string(),
+                    subscribe_error_message.track_alias(),
                 );
+                let relaying_subscribe_error_message: Box<dyn MOQTPayload> =
+                    Box::new(message_payload.clone());
 
                 send_stream_dispatcher_repository
                     .send_message_to_send_stream_thread(
                         *downstream_session_id,
-                        message,
+                        relaying_subscribe_error_message,
                         StreamDirection::Bi,
                     )
                     .await?;
+
+                tracing::debug!(
+                    "message: {:#?} is sent to relay handler for client {:?}",
+                    message_payload,
+                    downstream_session_id
+                );
 
                 tracing::trace!("subscribe_error_handler complete.");
             }

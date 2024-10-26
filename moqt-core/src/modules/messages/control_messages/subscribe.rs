@@ -120,6 +120,7 @@ impl Subscribe {
     pub fn track_namespace(&self) -> &Vec<String> {
         &self.track_namespace
     }
+
     pub fn track_name(&self) -> &str {
         &self.track_name
     }
@@ -152,12 +153,8 @@ impl Subscribe {
         self.end_object
     }
 
-    pub fn set_subscribe_id(&mut self, subscribe_id: u64) {
-        self.subscribe_id = subscribe_id;
-    }
-
-    pub fn set_track_alias(&mut self, track_alias: u64) {
-        self.track_alias = track_alias;
+    pub fn subscribe_parameters(&self) -> &Vec<VersionSpecificParameter> {
+        &self.subscribe_parameters
     }
 }
 
