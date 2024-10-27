@@ -24,6 +24,9 @@ init().then(async () => {
 
     client.onAnnounce(async (announceMessage) => {
       console.log({ announceMessage })
+      let announcedNamespace = announceMessage.track_namespace
+
+      await client.sendAnnounceOkMessage(announcedNamespace)
     })
 
     client.onAnnounceResponce(async (announceResponceMessage) => {

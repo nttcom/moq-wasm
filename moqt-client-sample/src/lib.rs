@@ -150,20 +150,6 @@ impl MOQTClient {
             .set_object_stream_track_callback(callback);
     }
 
-    #[wasm_bindgen(js_name = onStreamHeaderTrack)]
-    pub fn set_stream_header_track_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_stream_header_track_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onObjectStreamTrack)]
-    pub fn set_object_stream_track_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_object_stream_track_callback(callback);
-    }
-
     #[wasm_bindgen(js_name = sendSetupMessage)]
     pub async fn send_setup_message(
         &mut self,
@@ -272,17 +258,45 @@ impl MOQTClient {
             // send
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
-                    // Register the announceing track
-                    self.subscription_node
-                        .borrow_mut()
-                        .set_namespace(track_namespace_vec);
+            JsFuture::from(writer.write_with_chunk(&buffer)).await
+        } else {
+            Err(JsValue::from_str("control_stream_writer is None"))
+        }
+    }
 
-                    Ok(ok)
-                }
-                Err(e) => Err(e),
+    #[wasm_bindgen(js_name = sendAnnounceOkMessage)]
+    pub async fn send_announce_ok_message(
+        &self,
+        track_namespace: js_sys::Array,
+    ) -> Result<JsValue, JsValue> {
+        if let Some(writer) = &*self.control_stream_writer.borrow() {
+            let length = track_namespace.length();
+            let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
+            for i in 0..length {
+                let js_element = track_namespace.get(i);
+                let string_element = js_element
+                    .as_string()
+                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
+                track_namespace_vec.push(string_element);
             }
+
+            let announce_ok_message = AnnounceOk::new(track_namespace_vec.clone());
+            let mut announce_ok_message_buf = BytesMut::new();
+            announce_ok_message.packetize(&mut announce_ok_message_buf);
+
+            let mut buf = Vec::new();
+            // Message Type
+            buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::AnnounceOk) as u64,
+            ));
+            // Message Payload and Payload Length
+            buf.extend(write_variable_integer(announce_ok_message_buf.len() as u64));
+            buf.extend(announce_ok_message_buf);
+
+            // send
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+            JsFuture::from(writer.write_with_chunk(&buffer)).await
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
         }
@@ -795,8 +809,6 @@ async fn bi_directional_stream_read_thread(
     subscription_node: Rc<RefCell<SubscriptionNode>>,
     reader: &ReadableStreamDefaultReader,
 ) -> Result<(), JsValue> {
-    use bytes::buf;
-
     log("control_stream_read_thread");
 
     loop {
@@ -882,6 +894,10 @@ async fn control_message_handler(
                     let announce_ok_message = AnnounceOk::depacketize(&mut payload_buf)?;
                     log(std::format!("announce_ok_message: {:#x?}", announce_ok_message).as_str());
 
+                    let _ = subscription_node
+                        .borrow_mut()
+                        .set_namespace(announce_ok_message.track_namespace().clone());
+
                     if let Some(callback) = callbacks.borrow().announce_responce_callback() {
                         let v = serde_wasm_bindgen::to_value(&announce_ok_message).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
@@ -960,13 +976,18 @@ async fn control_message_handler(
                 ControlMessageType::SubscribeNamespaceOk => {
                     let subscribe_namespace_ok_message =
                         SubscribeNamespaceOk::depacketize(&mut payload_buf)?;
+
+                    let _ = subscription_node.borrow_mut().set_namespace_prefix(
+                        subscribe_namespace_ok_message
+                            .track_namespace_prefix()
+                            .clone(),
+                    );
+
                     log(std::format!(
                         "subscribe_namespace_ok_message: {:#x?}",
                         subscribe_namespace_ok_message
                     )
                     .as_str());
-
-                    // add track_namespace_prefix to registry
 
                     if let Some(callback) =
                         callbacks.borrow().subscribe_namespace_response_callback()
@@ -1185,6 +1206,12 @@ impl SubscriptionNode {
     fn set_namespace(&mut self, track_namespace: Vec<String>) {
         if let Some(producer) = &mut self.producer {
             let _ = producer.set_namespace(track_namespace);
+        }
+    }
+
+    fn set_namespace_prefix(&mut self, track_namespace_prefix: Vec<String>) {
+        if let Some(consumer) = &mut self.consumer {
+            let _ = consumer.set_namespace_prefix(track_namespace_prefix);
         }
     }
 
