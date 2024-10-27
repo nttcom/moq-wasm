@@ -81,12 +81,13 @@ pub(crate) async fn announce_handler(
         }
         // TODO: Allow namespace overlap
         Err(err) => {
-            tracing::error!("announce_handler: err: {:?}", err.to_string());
+            let msg = std::format!("announce_handler: set namespace err: {:?}", err.to_string());
+            tracing::error!(msg);
 
             Ok(Some(AnnounceError::new(
                 announce_message.track_namespace().clone(),
                 1,
-                String::from("internal error"),
+                msg,
             )))
         }
     }
