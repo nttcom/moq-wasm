@@ -75,8 +75,24 @@ impl Subscription {
         self.status == Status::Requesting
     }
 
+    pub fn get_filter_type(&self) -> FilterType {
+        self.filter_type
+    }
+
+    pub fn get_absolute_start(&self) -> (Option<u64>, Option<u64>) {
+        (self.start_group, self.start_object)
+    }
+
+    pub fn get_absolute_end(&self) -> (Option<u64>, Option<u64>) {
+        (self.end_group, self.end_object)
+    }
+
     pub fn set_forwarding_preference(&mut self, forwarding_preference: ForwardingPreference) {
         self.track.set_forwarding_preference(forwarding_preference);
+    }
+
+    pub fn get_forwarding_preference(&self) -> Option<ForwardingPreference> {
+        self.track.get_forwarding_preference()
     }
 
     pub fn get_track_namespace_and_name(&self) -> (Vec<String>, String) {
@@ -258,6 +274,27 @@ mod success {
     }
 
     #[test]
+    fn get_filter_type() {
+        let variable = test_helper_fn::common_subscription_variable();
+
+        let subscription = Subscription::new(
+            variable.track_alias,
+            variable.track_namespace,
+            variable.track_name,
+            variable.subscriber_priority,
+            variable.group_order,
+            variable.filter_type,
+            variable.start_group,
+            variable.start_object,
+            variable.end_group,
+            variable.end_object,
+            None,
+        );
+
+        assert_eq!(subscription.get_filter_type(), variable.filter_type);
+    }
+
+    #[test]
     fn get_track_namespace_and_name() {
         let variable = test_helper_fn::common_subscription_variable();
 
@@ -321,5 +358,32 @@ mod success {
         );
 
         assert_eq!(subscription.get_group_order(), variable.group_order);
+    }
+
+    #[test]
+    fn set_and_get_forwarding_preference() {
+        let variable = test_helper_fn::common_subscription_variable();
+
+        let forwarding_preference = ForwardingPreference::Track;
+
+        let mut subscription = Subscription::new(
+            variable.track_alias,
+            variable.track_namespace,
+            variable.track_name,
+            variable.subscriber_priority,
+            variable.group_order,
+            variable.filter_type,
+            variable.start_group,
+            variable.start_object,
+            variable.end_group,
+            variable.end_object,
+            None,
+        );
+
+        subscription.set_forwarding_preference(forwarding_preference.clone());
+
+        let result_forwarding_preference = subscription.get_forwarding_preference().unwrap();
+
+        assert_eq!(result_forwarding_preference, forwarding_preference);
     }
 }
