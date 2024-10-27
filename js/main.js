@@ -82,7 +82,7 @@ init().then(async () => {
           await client.sendSetupMessage(role, versions, maxSubscribeId)
           break
         case 'announce':
-          await client.sendAnnounceMessage(trackNamespace, 1, authInfo)
+          await client.sendAnnounceMessage(trackNamespace, authInfo)
           break
         case 'unannounce':
           await client.sendUnannounceMessage(trackNamespace)

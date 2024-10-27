@@ -225,7 +225,6 @@ impl MOQTClient {
     pub async fn send_announce_message(
         &self,
         track_namespace: js_sys::Array,
-        number_of_parameters: u8,
         auth_info: String, // param[0]
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
