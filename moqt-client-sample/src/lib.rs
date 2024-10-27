@@ -781,6 +781,8 @@ async fn bi_directional_stream_read_thread(
     subscription_node: Rc<RefCell<SubscriptionNode>>,
     reader: &ReadableStreamDefaultReader,
 ) -> Result<(), JsValue> {
+    use bytes::buf;
+
     log("control_stream_read_thread");
 
     loop {
@@ -804,11 +806,15 @@ async fn bi_directional_stream_read_thread(
             buf.put_u8(i);
         }
 
-        if let Err(e) =
-            control_message_handler(callbacks.clone(), subscription_node.clone(), &mut buf).await
-        {
-            log(std::format!("error: {:#?}", e).as_str());
-            return Err(js_sys::Error::new(&e.to_string()).into());
+        while buf.has_remaining() {
+            if let Err(e) =
+                control_message_handler(callbacks.clone(), subscription_node.clone(), &mut buf)
+                    .await
+            {
+                log(std::format!("error: {:#?}", e).as_str());
+                break;
+                // return Err(js_sys::Error::new(&e.to_string()).into());
+            }
         }
     }
 
@@ -823,18 +829,19 @@ async fn control_message_handler(
     mut buf: &mut BytesMut,
 ) -> Result<()> {
     let message_type_value = read_variable_integer_from_buffer(&mut buf);
-    let _payload_length = read_variable_integer_from_buffer(&mut buf);
 
     // TODO: Check stream type
     match message_type_value {
         Ok(v) => {
             let message_type = ControlMessageType::try_from(v as u8)?;
+            let payload_length = read_variable_integer_from_buffer(&mut buf)?;
+            let mut payload_buf = buf.split_to(payload_length as usize);
 
             log(std::format!("message_type_value: {:#?}", message_type).as_str());
 
             match message_type {
                 ControlMessageType::ServerSetup => {
-                    let server_setup_message = ServerSetup::depacketize(&mut buf)?;
+                    let server_setup_message = ServerSetup::depacketize(&mut payload_buf)?;
 
                     log(
                         std::format!("server_setup_message: {:#x?}", server_setup_message).as_str(),
@@ -849,7 +856,7 @@ async fn control_message_handler(
                     }
                 }
                 ControlMessageType::Announce => {
-                    let announce_message = Announce::depacketize(&mut buf)?;
+                    let announce_message = Announce::depacketize(&mut payload_buf)?;
                     log(std::format!("announce_message: {:#x?}", announce_message).as_str());
 
                     if let Some(callback) = callbacks.borrow().announce_callback() {
@@ -858,7 +865,7 @@ async fn control_message_handler(
                     }
                 }
                 ControlMessageType::AnnounceOk => {
-                    let announce_ok_message = AnnounceOk::depacketize(&mut buf)?;
+                    let announce_ok_message = AnnounceOk::depacketize(&mut payload_buf)?;
                     log(std::format!("announce_ok_message: {:#x?}", announce_ok_message).as_str());
 
                     if let Some(callback) = callbacks.borrow().announce_responce_callback() {
@@ -867,7 +874,7 @@ async fn control_message_handler(
                     }
                 }
                 ControlMessageType::AnnounceError => {
-                    let announce_error_message = AnnounceError::depacketize(&mut buf)?;
+                    let announce_error_message = AnnounceError::depacketize(&mut payload_buf)?;
                     log(
                         std::format!("announce_error_message: {:#x?}", announce_error_message)
                             .as_str(),
@@ -879,7 +886,7 @@ async fn control_message_handler(
                     }
                 }
                 ControlMessageType::Subscribe => {
-                    let subscribe_message = Subscribe::depacketize(&mut buf)?;
+                    let subscribe_message = Subscribe::depacketize(&mut payload_buf)?;
                     log(std::format!("subscribe_message: {:#x?}", subscribe_message).as_str());
 
                     let result = subscription_node
@@ -910,7 +917,7 @@ async fn control_message_handler(
                     }
                 }
                 ControlMessageType::SubscribeOk => {
-                    let subscribe_ok_message = SubscribeOk::depacketize(&mut buf)?;
+                    let subscribe_ok_message = SubscribeOk::depacketize(&mut payload_buf)?;
                     log(
                         std::format!("subscribe_ok_message: {:#x?}", subscribe_ok_message).as_str(),
                     );
@@ -925,7 +932,7 @@ async fn control_message_handler(
                     }
                 }
                 ControlMessageType::SubscribeError => {
-                    let subscribe_error_message = SubscribeError::depacketize(&mut buf)?;
+                    let subscribe_error_message = SubscribeError::depacketize(&mut payload_buf)?;
                     log(
                         std::format!("subscribe_error_message: {:#x?}", subscribe_error_message)
                             .as_str(),
@@ -938,7 +945,7 @@ async fn control_message_handler(
                 }
                 ControlMessageType::SubscribeNamespaceOk => {
                     let subscribe_namespace_ok_message =
-                        SubscribeNamespaceOk::depacketize(&mut buf)?;
+                        SubscribeNamespaceOk::depacketize(&mut payload_buf)?;
                     log(std::format!(
                         "subscribe_namespace_ok_message: {:#x?}",
                         subscribe_namespace_ok_message
@@ -957,7 +964,7 @@ async fn control_message_handler(
                 }
                 ControlMessageType::SubscribeNamespaceError => {
                     let subscribe_namespace_error_message =
-                        SubscribeNamespaceError::depacketize(&mut buf)?;
+                        SubscribeNamespaceError::depacketize(&mut payload_buf)?;
                     log(std::format!(
                         "subscribe_namespace_error_message: {:#x?}",
                         subscribe_namespace_error_message
