@@ -150,6 +150,20 @@ impl MOQTClient {
             .set_object_stream_track_callback(callback);
     }
 
+    #[wasm_bindgen(js_name = onStreamHeaderTrack)]
+    pub fn set_stream_header_track_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_stream_header_track_callback(callback);
+    }
+
+    #[wasm_bindgen(js_name = onObjectStreamTrack)]
+    pub fn set_object_stream_track_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_object_stream_track_callback(callback);
+    }
+
     #[wasm_bindgen(js_name = sendSetupMessage)]
     pub async fn send_setup_message(
         &mut self,
