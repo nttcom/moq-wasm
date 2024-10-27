@@ -1,6 +1,7 @@
 use anyhow::Result;
 use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
 use moqt_core::models::subscriptions::Subscription;
+use moqt_core::models::tracks::ForwardingPreference;
 use tokio::sync::oneshot;
 
 #[cfg(test)]
@@ -51,9 +52,14 @@ pub(crate) enum PubSubRelationCommand {
         track_name: String,
         resp: oneshot::Sender<Result<bool>>,
     },
-    GetUpstreamSubscription {
+    GetUpstreamSubscriptionByFullTrackName {
         track_namespace: Vec<String>,
         track_name: String,
+        resp: oneshot::Sender<Result<Option<Subscription>>>,
+    },
+    GetDownstreamSubscriptionBySessionIdAndSubscribeId {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
         resp: oneshot::Sender<Result<Option<Subscription>>>,
     },
     GetUpstreamSessionId {
@@ -138,6 +144,33 @@ pub(crate) enum PubSubRelationCommand {
     DeleteClient {
         session_id: usize,
         resp: oneshot::Sender<Result<bool>>,
+    },
+    SetDownstreamForwardingPreference {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        forwarding_preference: ForwardingPreference,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    SetUpstreamForwardingPreference {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        forwarding_preference: ForwardingPreference,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    GetUpstreamForwardingPreference {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<ForwardingPreference>>>,
+    },
+    GetRelatedSubscribers {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Vec<(usize, u64)>>>,
+    },
+    GetRelatedPublisher {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<(usize, u64)>>,
     },
     #[cfg(test)]
     GetNodeAndRelationClone {
