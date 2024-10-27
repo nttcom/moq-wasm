@@ -21,6 +21,10 @@ init().then(async () => {
       console.log({ announceMessage })
     })
 
+    client.onAnnounceResponce(async (announceResponceMessage) => {
+      console.log({ announceResponceMessage })
+    })
+
     client.onSubscribe(async (subscribeMessage, isSuccess, code) => {
       console.log({ subscribeMessage })
       if (isSuccess) {
@@ -35,6 +39,10 @@ init().then(async () => {
 
     client.onSubscribeResponse(async (subscribeResponse) => {
       console.log({ subscribeResponse })
+    })
+
+    client.onSubscribeNamespaceResponse(async (subscribeNamespaceResponse) => {
+      console.log({ subscribeNamespaceResponse })
     })
 
     const sendBtn = document.getElementById('sendBtn')
@@ -68,6 +76,9 @@ init().then(async () => {
           break
         case 'unsubscribe':
           await client.sendUnsubscribeMessage(trackNamespace, trackName)
+          break
+        case 'subscribe-namespace':
+          await client.sendSubscribeNamespaceMessage(trackNamespace, authInfo)
           break
       }
     }
