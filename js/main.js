@@ -4,6 +4,11 @@ import init, { MOQTClient } from './pkg/moqt_client_sample'
 init().then(async () => {
   console.log('init wasm-pack')
 
+  let subscribeId
+  let trackAlias
+  let headerSend = false
+  let objectId = 0n
+
   const connectBtn = document.getElementById('connectBtn')
   connectBtn.addEventListener('click', async () => {
     const url = document.form.url.value
@@ -29,7 +34,10 @@ init().then(async () => {
       console.log({ subscribeMessage })
       if (isSuccess) {
         let expire = 0n
-        let subscribeId = BigInt(subscribeMessage.subscribe_id)
+        subscribeId = BigInt(subscribeMessage.subscribe_id)
+        trackAlias = BigInt(subscribeMessage.track_alias)
+
+        console.log('subscribeId', subscribeId, 'trackAlias', trackAlias)
 
         await client.sendSubscribeOkMessage(subscribeId, expire, authInfo)
       } else {
@@ -43,6 +51,14 @@ init().then(async () => {
 
     client.onSubscribeNamespaceResponse(async (subscribeNamespaceResponse) => {
       console.log({ subscribeNamespaceResponse })
+    })
+
+    client.onStreamHeaderTrack(async (streamHeaderTrack) => {
+      console.log({ streamHeaderTrack })
+    })
+
+    client.onObjectStreamTrack(async (objectStreamTrack) => {
+      console.log({ objectStreamTrack })
     })
 
     const sendBtn = document.getElementById('sendBtn')
@@ -79,6 +95,16 @@ init().then(async () => {
           break
         case 'subscribe-namespace':
           await client.sendSubscribeNamespaceMessage(trackNamespace, authInfo)
+          break
+        case 'object-track':
+          if (!headerSend) {
+            await client.sendStreamHeaderTrackMessage(subscribeId, trackAlias, 0)
+            headerSend = true
+          }
+          let groupId = 0n
+          let objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+          // let objectPayload = new Uint8Array([0x00, 0x01, 0x02, 0x03])
+          await client.sendObjectStreamTrack(subscribeId, groupId, objectId++, objectPayload)
           break
       }
     }
