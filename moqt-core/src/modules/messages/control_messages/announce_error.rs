@@ -25,6 +25,14 @@ impl AnnounceError {
             reason_phrase,
         }
     }
+
+    pub fn track_namespace(&self) -> &Vec<String> {
+        &self.track_namespace
+    }
+
+    pub fn error_code(&self) -> u64 {
+        self.error_code
+    }
 }
 
 impl MOQTPayload for AnnounceError {
