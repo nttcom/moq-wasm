@@ -80,13 +80,19 @@ pub(crate) async fn subscribe_namespace_handler(
 
             Ok(None)
         }
+
+        // TODO: Separate namespace prefix overlap error
         Err(err) => {
-            tracing::error!("subscribe_namespace_handler: err: {:?}", err.to_string());
+            let msg = std::format!(
+                "subscribe_namespace_handler: set namespace prefix err: {:?}",
+                err.to_string()
+            );
+            tracing::error!(msg);
 
             Ok(Some(SubscribeNamespaceError::new(
                 track_namespace_prefix,
                 1,
-                String::from("internal error"),
+                msg,
             )))
         }
     }
