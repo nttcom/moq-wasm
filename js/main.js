@@ -53,6 +53,14 @@ init().then(async () => {
       console.log({ objectStreamTrack })
     })
 
+    client.onStreamHeaderSubgroup(async (streamHeaderSubgroup) => {
+      console.log({ streamHeaderSubgroup })
+    })
+
+    client.onObjectStreamSubgroup(async (objectStreamSubgroup) => {
+      console.log({ objectStreamSubgroup })
+    })
+
     const sendBtn = document.getElementById('sendBtn')
 
     const send = async () => {
@@ -65,6 +73,7 @@ init().then(async () => {
       const versions = form['versions'].value.split(',').map(BigInt)
       const role = Array.from(form['role']).filter((elem) => elem.checked)[0].value
       const isAddPath = !!form['add-path'].checked
+      let objectPayload
 
       console.log({ streamDatagram, messageType, versions, role, isAddPath })
 
@@ -91,9 +100,20 @@ init().then(async () => {
             headerSend = true
           }
           let groupId = 0n
-          let objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+          objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
           // let objectPayload = new Uint8Array([0x00, 0x01, 0x02, 0x03])
           await client.sendObjectStreamTrack(subscribeId, groupId, objectId++, objectPayload)
+          break
+        case 'object-subgroup':
+          if (!headerSend) {
+            let groupId = 0n
+            let subgroupId = 0n
+            await client.sendStreamHeaderSubgroupMessage(subscribeId, trackAlias, groupId, subgroupId, 0)
+            headerSend = true
+          }
+
+          objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+          await client.sendObjectStreamSubgroup(subscribeId, objectId++, objectPayload)
           break
       }
     }

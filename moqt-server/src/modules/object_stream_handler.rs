@@ -2,6 +2,7 @@ use crate::constants::TerminationErrorCode;
 use crate::modules::object_cache_storage::CacheObject;
 use crate::modules::object_cache_storage::ObjectCacheStorageWrapper;
 use bytes::{Buf, BytesMut};
+use moqt_core::messages::data_streams::object_stream_subgroup::ObjectStreamSubgroup;
 use moqt_core::messages::data_streams::object_stream_track::ObjectStreamTrack;
 use moqt_core::messages::data_streams::DataStreams;
 use moqt_core::moqt_client::MOQTClientStatus;
@@ -68,7 +69,23 @@ pub async fn object_stream_handler(
             }
         }
         DataStreamType::StreamHeaderSubgroup => {
-            unimplemented!();
+            let result = ObjectStreamSubgroup::depacketize(&mut read_cur);
+            match result {
+                Ok(object) => {
+                    read_buf.advance(read_cur.position() as usize);
+
+                    let cache_object = CacheObject::Subgroup(object);
+                    object_cache_storage
+                        .set_object(client.id, subscribe_id, cache_object, duration)
+                        .await
+                        .unwrap();
+                }
+                Err(err) => {
+                    tracing::warn!("{:#?}", err);
+                    read_cur.set_position(0);
+                    return ObjectStreamProcessResult::Continue;
+                }
+            }
         }
         unknown => {
             return ObjectStreamProcessResult::Failure(
