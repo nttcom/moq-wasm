@@ -53,8 +53,12 @@ impl SubscribeError {
         self.error_code
     }
 
-    pub fn set_subscribe_id(&mut self, subscribe_id: u64) {
-        self.subscribe_id = subscribe_id;
+    pub fn reason_phrase(&self) -> &String {
+        &self.reason_phrase
+    }
+
+    pub fn track_alias(&self) -> u64 {
+        self.track_alias
     }
 }
 

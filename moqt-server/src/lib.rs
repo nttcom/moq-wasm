@@ -20,10 +20,11 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::{
-            subscribe::FilterType, subscribe::Subscribe, subscribe_error::SubscribeError,
+            subscribe::{FilterType, Subscribe},
+            subscribe_error::SubscribeError,
             subscribe_ok::SubscribeOk,
         },
-        data_streams::DataStreams,
+        data_streams::{stream_header_track::StreamHeaderTrack, DataStreams},
         moqt_payload::MOQTPayload,
     },
     models::tracks::ForwardingPreference,
@@ -675,10 +676,13 @@ async fn relaying_track_stream(
     {
         CacheHeader::Track(header) => {
             let mut buf = BytesMut::new();
-            let mut header = header.clone();
+            let header = StreamHeaderTrack::new(
+                downstream_subscribe_id,
+                downstream_track_alias,
+                header.publisher_priority(),
+            )
+            .unwrap();
 
-            header.set_subscribe_id(downstream_subscribe_id);
-            header.set_track_alias(downstream_track_alias);
             header.packetize(&mut buf);
 
             let mut message_buf = BytesMut::with_capacity(buf.len() + 8);

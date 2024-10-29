@@ -31,12 +31,8 @@ impl StreamHeaderTrack {
         self.track_alias
     }
 
-    pub fn set_subscribe_id(&mut self, subscribe_id: u64) {
-        self.subscribe_id = subscribe_id;
-    }
-
-    pub fn set_track_alias(&mut self, track_alias: u64) {
-        self.track_alias = track_alias;
+    pub fn publisher_priority(&self) -> u8 {
+        self.publisher_priority
     }
 }
 
