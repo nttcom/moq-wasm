@@ -1,6 +1,6 @@
-use std::{any::Any, io::Cursor};
-
 use anyhow::{Context, Result};
+use serde::Serialize;
+use std::{any::Any, io::Cursor};
 
 use crate::{
     modules::{
@@ -13,7 +13,7 @@ use crate::{
 
 use crate::messages::moqt_payload::MOQTPayload;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct Announce {
     pub(crate) track_namespace: Vec<String>,
     pub(crate) number_of_parameters: u8,

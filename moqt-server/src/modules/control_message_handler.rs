@@ -1,13 +1,13 @@
 use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
-use crate::modules::handlers::{
-    announce_handler::AnnounceResponse, unannounce_handler::unannounce_handler,
-};
-use crate::modules::server_processes::subscribe_namespace_message::process_subscribe_namespace_message;
+use crate::modules::handlers::unannounce_handler::unannounce_handler;
 use crate::modules::server_processes::{
-    announce_message::process_announce_message, client_setup_message::process_client_setup_message,
+    announce_error_message::process_announce_error_message,
+    announce_message::process_announce_message, announce_ok_message::process_announce_ok_message,
+    client_setup_message::process_client_setup_message,
     subscribe_message::process_subscribe_message,
+    subscribe_namespace_message::process_subscribe_namespace_message,
     subscribe_ok_message::process_subscribe_ok_message,
 };
 use anyhow::{bail, Result};
@@ -199,12 +199,15 @@ pub async fn control_message_handler(
                 client,
                 &mut write_buf,
                 pubsub_relation_manager_repository,
+                send_stream_dispatcher_repository,
             )
             .await
             {
-                Ok(announce_result) => match announce_result {
-                    AnnounceResponse::Success(_) => ControlMessageType::AnnounceOk,
-                    AnnounceResponse::Failure(_) => ControlMessageType::AnnounceError,
+                Ok(result) => match result {
+                    Some(_) => ControlMessageType::AnnounceError,
+                    None => {
+                        return MessageProcessResult::SuccessWithoutResponse;
+                    }
                 },
                 Err(err) => {
                     return MessageProcessResult::Failure(
@@ -214,8 +217,38 @@ pub async fn control_message_handler(
                 }
             }
         }
-        // ControlMessageType::AnnounceOk => {}
-        // ControlMessageType::AnnounceError => {}
+        ControlMessageType::AnnounceOk => {
+            match process_announce_ok_message(
+                &mut payload_buf,
+                client,
+                pubsub_relation_manager_repository,
+            )
+            .await
+            {
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
+                }
+                Err(err) => {
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
+        ControlMessageType::AnnounceError => {
+            match process_announce_error_message(&mut payload_buf).await {
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
+                }
+                Err(err) => {
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
         ControlMessageType::SubscribeNamespace => {
             match process_subscribe_namespace_message(
                 &mut payload_buf,
