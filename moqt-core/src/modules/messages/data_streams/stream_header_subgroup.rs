@@ -33,12 +33,24 @@ impl StreamHeaderSubgroup {
         })
     }
 
+    pub fn subscribe_id(&self) -> u64 {
+        self.subscribe_id
+    }
+
     pub fn track_alias(&self) -> u64 {
         self.track_alias
     }
 
     pub fn group_id(&self) -> u64 {
         self.group_id
+    }
+
+    pub fn subgroup_id(&self) -> u64 {
+        self.subgroup_id
+    }
+
+    pub fn publisher_priority(&self) -> u8 {
+        self.publisher_priority
     }
 }
 

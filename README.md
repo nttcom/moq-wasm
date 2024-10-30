@@ -31,7 +31,7 @@ Supported version: draft-ietf-moq-transport-06
 - [ ] Data Streams
   - [ ] Object Datagram Message
   - [x] Track Stream
-  - [ ] Subgroup Stream
+  - [x] Subgroup Stream
 - [ ] Features
   - [x] Manage Publisher / Subscriber
   - [x] Forword Messages

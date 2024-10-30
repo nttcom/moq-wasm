@@ -1,6 +1,7 @@
 use crate::constants::TerminationErrorCode;
 use crate::modules::object_cache_storage::ObjectCacheStorageWrapper;
 use crate::modules::server_processes::stream_track_header::process_stream_header_track;
+use crate::modules::server_processes::stream_track_subgroup::process_stream_header_subgroup;
 use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
 use moqt_core::moqt_client::MOQTClientStatus;
@@ -105,7 +106,26 @@ pub async fn stream_header_handler(
             }
         }
         DataStreamType::StreamHeaderSubgroup => {
-            unimplemented!();
+            match process_stream_header_subgroup(
+                &mut read_cur,
+                pubsub_relation_manager_repository,
+                object_cache_storage,
+                client,
+            )
+            .await
+            {
+                Ok(subscribe_id) => {
+                    read_buf.advance(read_cur.position() as usize);
+                    subscribe_id
+                }
+                Err(err) => {
+                    read_buf.advance(read_cur.position() as usize);
+                    return StreamHeaderProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    );
+                }
+            }
         }
         unknown => {
             return StreamHeaderProcessResult::Failure(
