@@ -17,17 +17,17 @@ Supported version: draft-ietf-moq-transport-06
   - [x] ANNOUNCE_ERROR
   - [ ] ANNOUNCE_CANCEL
   - [ ] TRACK_STATUS_REQUEST
-  - [ ] SUBSCRIBE_NAMESPACE
+  - [x] SUBSCRIBE_NAMESPACE
   - [ ] UNSUBSCRIBE_NAMESPACE
   - [x] SUBSCRIBE_OK
-  - [ ] SUBSCRIBE_ERROR
+  - [x] SUBSCRIBE_ERROR
   - [ ] SUBSCRIBE_DONE
   - [ ] MAX_SUBSCRIBE_ID
   - [x] ANNOUNCE
   - [ ] UNANNOUNCE
   - [ ] TRACK_STATUS
-  - [ ] SUBSCRIBE_NAMESPACE_OK
-  - [ ] SUBSCRIBE_NAMESPACE_ERROR
+  - [x] SUBSCRIBE_NAMESPACE_OK
+  - [x] SUBSCRIBE_NAMESPACE_ERROR
 - [ ] Data Streams
   - [ ] Object Datagram Message
   - [x] Track Stream

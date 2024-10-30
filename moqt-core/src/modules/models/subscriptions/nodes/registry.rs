@@ -53,6 +53,7 @@ pub trait SubscriptionNodeRegistry {
 
     fn is_subscribe_id_valid(&self, subscribe_id: SubscribeId) -> bool;
     fn is_track_alias_valid(&self, track_alias: TrackAlias) -> bool;
+    fn create_valid_track_alias(&self) -> Result<TrackAlias>;
     fn create_latest_subscribe_id_and_track_alias(&self) -> Result<(SubscribeId, TrackAlias)>;
 
     fn set_namespace(&mut self, namespace: TrackNamespace) -> Result<()>;

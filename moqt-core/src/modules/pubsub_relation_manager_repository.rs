@@ -18,6 +18,16 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         track_namespace: Vec<String>,
         upstream_session_id: usize,
     ) -> Result<()>;
+    async fn set_downstream_announced_namespace(
+        &self,
+        track_namespace: Vec<String>,
+        downstream_session_id: usize,
+    ) -> Result<()>;
+    async fn set_downstream_subscribed_namespace_prefix(
+        &self,
+        track_namespace_prefix: Vec<String>,
+        downstream_session_id: usize,
+    ) -> Result<()>;
     async fn setup_subscriber(
         &self,
         max_subscribe_id: u64,
@@ -107,12 +117,42 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         upstream_session_id: usize,
         subscribe_id: u64,
     ) -> Result<bool>;
+    async fn get_upstream_namespaces_matches_prefix(
+        &self,
+        track_namespace_prefix: Vec<String>,
+    ) -> Result<Vec<Vec<String>>>;
+    async fn is_namespace_already_announced(
+        &self,
+        track_namespace: Vec<String>,
+        downstream_session_id: usize,
+    ) -> Result<bool>;
+    async fn get_downstream_session_ids_by_upstream_namespace(
+        &self,
+        track_namespace: Vec<String>,
+    ) -> Result<Vec<usize>>;
     async fn delete_upstream_announced_namespace(
         &self,
         track_namespace: Vec<String>,
         upstream_session_id: usize,
     ) -> Result<bool>;
     async fn delete_client(&self, session_id: usize) -> Result<bool>;
+    async fn delete_pubsub_relation(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<()>;
+    async fn delete_upstream_subscription(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<()>;
+    async fn delete_downstream_subscription(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<()>;
     async fn set_downstream_forwarding_preference(
         &self,
         downstream_session_id: usize,

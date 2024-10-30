@@ -17,6 +17,10 @@ impl AnnounceOk {
     pub fn new(track_namespace: Vec<String>) -> Self {
         Self { track_namespace }
     }
+
+    pub fn track_namespace(&self) -> &Vec<String> {
+        &self.track_namespace
+    }
 }
 
 impl MOQTPayload for AnnounceOk {

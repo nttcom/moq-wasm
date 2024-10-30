@@ -24,10 +24,18 @@ init().then(async () => {
 
     client.onAnnounce(async (announceMessage) => {
       console.log({ announceMessage })
+      let announcedNamespace = announceMessage.track_namespace
+
+      await client.sendAnnounceOkMessage(announcedNamespace)
+    })
+
+    client.onAnnounceResponce(async (announceResponceMessage) => {
+      console.log({ announceResponceMessage })
     })
 
     client.onSubscribe(async (subscribeMessage, isSuccess, code) => {
       console.log({ subscribeMessage })
+      let subscribeId = BigInt(subscribeMessage.subscribe_id)
       if (isSuccess) {
         let expire = 0n
         subscribeId = BigInt(subscribeMessage.subscribe_id)
@@ -37,12 +45,18 @@ init().then(async () => {
 
         await client.sendSubscribeOkMessage(subscribeId, expire, authInfo)
       } else {
-        // TODO: send subscribe error
+        // TODO: set accurate reasonPhrase
+        let reasonPhrase = 'subscribe error'
+        await client.sendSubscribeError(subscribeMessage.subscribe_id, code, reasonPhrase)
       }
     })
 
     client.onSubscribeResponse(async (subscribeResponse) => {
       console.log({ subscribeResponse })
+    })
+
+    client.onSubscribeNamespaceResponse(async (subscribeNamespaceResponse) => {
+      console.log({ subscribeNamespaceResponse })
     })
 
     client.onStreamHeaderTrack(async (streamHeaderTrack) => {
@@ -83,7 +97,7 @@ init().then(async () => {
           await client.sendSetupMessage(role, versions, maxSubscribeId)
           break
         case 'announce':
-          await client.sendAnnounceMessage(trackNamespace, 1, authInfo)
+          await client.sendAnnounceMessage(trackNamespace, authInfo)
           break
         case 'unannounce':
           await client.sendUnannounceMessage(trackNamespace)
@@ -94,14 +108,21 @@ init().then(async () => {
         case 'unsubscribe':
           await client.sendUnsubscribeMessage(trackNamespace, trackName)
           break
+        case 'subscribe-namespace':
+          await client.sendSubscribeNamespaceMessage(trackNamespace, authInfo)
+          break
         case 'object-track':
           if (!headerSend) {
             await client.sendStreamHeaderTrackMessage(subscribeId, trackAlias, 0)
             headerSend = true
           }
           let groupId = 0n
+<<<<<<< HEAD
           objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
           // let objectPayload = new Uint8Array([0x00, 0x01, 0x02, 0x03])
+=======
+          let objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+>>>>>>> draft-06
           await client.sendObjectStreamTrack(subscribeId, groupId, objectId++, objectPayload)
           break
         case 'object-subgroup':

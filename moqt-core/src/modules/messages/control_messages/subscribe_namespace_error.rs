@@ -26,6 +26,18 @@ impl SubscribeNamespaceError {
             reason_phrase,
         }
     }
+
+    pub fn track_namespace_prefix(&self) -> &Vec<String> {
+        &self.track_namespace_prefix
+    }
+
+    pub fn error_code(&self) -> u64 {
+        self.error_code
+    }
+
+    pub fn reason_phrase(&self) -> &String {
+        &self.reason_phrase
+    }
 }
 
 impl MOQTPayload for SubscribeNamespaceError {

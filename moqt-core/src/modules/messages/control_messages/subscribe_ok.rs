@@ -48,8 +48,28 @@ impl SubscribeOk {
         self.subscribe_id
     }
 
-    pub fn set_subscribe_id(&mut self, subscribe_id: u64) {
-        self.subscribe_id = subscribe_id;
+    pub fn expires(&self) -> u64 {
+        self.expires
+    }
+
+    pub fn group_order(&self) -> GroupOrder {
+        self.group_order
+    }
+
+    pub fn content_exists(&self) -> bool {
+        self.content_exists
+    }
+
+    pub fn largest_group_id(&self) -> Option<u64> {
+        self.largest_group_id
+    }
+
+    pub fn largest_object_id(&self) -> Option<u64> {
+        self.largest_object_id
+    }
+
+    pub fn subscribe_parameters(&self) -> &Vec<VersionSpecificParameter> {
+        &self.subscribe_parameters
     }
 }
 
