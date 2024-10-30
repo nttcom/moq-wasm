@@ -35,7 +35,6 @@ init().then(async () => {
 
     client.onSubscribe(async (subscribeMessage, isSuccess, code) => {
       console.log({ subscribeMessage })
-      let subscribeId = BigInt(subscribeMessage.subscribe_id)
       if (isSuccess) {
         let expire = 0n
         subscribeId = BigInt(subscribeMessage.subscribe_id)
@@ -117,7 +116,7 @@ init().then(async () => {
             headerSend = true
           }
           let groupId = 0n
-          let objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+          objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
           await client.sendObjectStreamTrack(subscribeId, groupId, objectId++, objectPayload)
           break
         case 'object-subgroup':
