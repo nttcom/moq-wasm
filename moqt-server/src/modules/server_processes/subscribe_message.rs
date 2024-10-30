@@ -43,7 +43,6 @@ pub(crate) async fn process_subscribe_message(
     match result.as_ref() {
         Ok(Some(subscribe_error)) => {
             subscribe_error.packetize(write_buf);
-
             result
         }
         Ok(None) => result,

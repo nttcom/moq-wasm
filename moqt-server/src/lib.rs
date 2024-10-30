@@ -20,11 +20,18 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::{
+            announce::Announce,
+            announce_ok::AnnounceOk,
             subscribe::{FilterType, Subscribe},
             subscribe_error::SubscribeError,
+            subscribe_namespace::SubscribeNamespace,
+            subscribe_namespace_ok::SubscribeNamespaceOk,
             subscribe_ok::SubscribeOk,
         },
-        data_streams::{stream_header_track::StreamHeaderTrack, DataStreams},
+        data_streams::{
+            stream_header_subgroup::StreamHeaderSubgroup, stream_header_track::StreamHeaderTrack,
+            DataStreams,
+        },
         moqt_payload::MOQTPayload,
     },
     models::tracks::ForwardingPreference,
@@ -341,10 +348,10 @@ async fn handle_connection(
                 }
 
                 match data_stream_type {
-                    DataStreamType::StreamHeaderTrack => {
+                    DataStreamType::StreamHeaderTrack | DataStreamType::StreamHeaderSubgroup => {
                         let session_span = tracing::info_span!("Session", stable_id);
                         session_span.in_scope(|| {
-                            tracing::info!("Open UNI Send stream");
+                            tracing::info!("Open UNI Send stream for stream type: {:?}", data_stream_type);
                         });
 
                         let buffer_tx = buffer_tx.clone();
@@ -363,15 +370,12 @@ async fn handle_connection(
                             subscribe_id,
                             send_stream,
                         };
-                        relaying_track_stream(&mut stream, buffer_tx, pubsub_relation_tx, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
+                        relaying_object_stream(&mut stream, data_stream_type, buffer_tx, pubsub_relation_tx, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
 
                         // Propagate the current span (Connection)
                         }.in_current_span());
 
 
-                    }
-                    DataStreamType::StreamHeaderSubgroup => {
-                        unimplemented!();
                     }
                     DataStreamType::ObjectDatagram => {
                         // TODO: Open datagram thread
@@ -609,17 +613,20 @@ struct UniSendStream {
     send_stream: SendStream,
 }
 
-async fn relaying_track_stream(
+async fn relaying_object_stream(
     stream: &mut UniSendStream,
-    _buffer_tx: Sender<BufferCommand>,
+    data_stream_type: DataStreamType,
+    buffer_tx: Sender<BufferCommand>,
     pubsub_relation_tx: Sender<PubSubRelationCommand>,
     close_connection_tx: Sender<(u64, String)>,
     object_cache_tx: Sender<ObjectCacheStorageCommand>,
 ) -> Result<()> {
     let sleep_time = Duration::from_millis(10);
 
+    let mut subgroup_header: Option<StreamHeaderSubgroup> = None; // For end group of AbsoluteRange
+
     let downstream_session_id = stream.stable_id;
-    let _downstream_stream_id = stream.stream_id;
+    let downstream_stream_id = stream.stream_id;
     let downstream_subscribe_id = stream.subscribe_id;
     let send_stream = &mut stream.send_stream;
 
@@ -650,6 +657,19 @@ async fn relaying_track_stream(
         .await?
     {
         Some(ForwardingPreference::Track) => {
+            if data_stream_type != DataStreamType::StreamHeaderTrack {
+                let msg = std::format!(
+                    "uni send stream's data stream type is wrong (expected Track, but got {:?})",
+                    data_stream_type
+                );
+                close_connection_tx
+                    .send((
+                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        msg.clone(),
+                    ))
+                    .await?;
+                bail!(msg)
+            }
             pubsub_relation_manager
                 .set_downstream_forwarding_preference(
                     downstream_session_id,
@@ -657,7 +677,28 @@ async fn relaying_track_stream(
                     ForwardingPreference::Track,
                 )
                 .await?;
-            ForwardingPreference::Track
+        }
+        Some(ForwardingPreference::Subgroup) => {
+            if data_stream_type != DataStreamType::StreamHeaderSubgroup {
+                let msg = std::format!(
+                    "uni send stream's data stream type is wrong (expected Subgroup, but got {:?})",
+                    data_stream_type
+                );
+                close_connection_tx
+                    .send((
+                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        msg.clone(),
+                    ))
+                    .await?;
+                bail!(msg)
+            }
+            pubsub_relation_manager
+                .set_downstream_forwarding_preference(
+                    downstream_session_id,
+                    downstream_subscribe_id,
+                    ForwardingPreference::Subgroup,
+                )
+                .await?;
         }
         _ => {
             let msg = "Invalid forwarding preference";
@@ -698,6 +739,32 @@ async fn relaying_track_stream(
                 bail!(e);
             }
         }
+        CacheHeader::Subgroup(header) => {
+            let mut buf = BytesMut::new();
+            let header = StreamHeaderSubgroup::new(
+                downstream_subscribe_id,
+                downstream_track_alias,
+                header.group_id(),
+                header.subgroup_id(),
+                header.publisher_priority(),
+            )
+            .unwrap();
+
+            subgroup_header = Some(header.clone());
+
+            header.packetize(&mut buf);
+
+            let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
+            message_buf.extend(write_variable_integer(
+                u8::from(DataStreamType::StreamHeaderSubgroup) as u64,
+            ));
+            message_buf.extend(buf);
+
+            if let Err(e) = send_stream.write_all(&message_buf).await {
+                tracing::warn!("Failed to write to stream: {:?}", e);
+                bail!(e);
+            }
+        }
         _ => {
             let msg = "cache header not matched";
             close_connection_tx
@@ -713,9 +780,7 @@ async fn relaying_track_stream(
     let mut object_cache_id: Option<usize> = None;
 
     while object_cache_id.is_none() {
-        // TODO: Change the method of obtaining objects according to the subscribe request
-        // Get the first object from the cache storage and send it to the client
-
+        // Get the first object from the cache storage
         let result = match filter_type {
             FilterType::LatestGroup => {
                 object_cache_storage
@@ -740,6 +805,7 @@ async fn relaying_track_stream(
         };
 
         object_cache_id = match result {
+            // Send the object to the client if the first cache is exist as track
             Ok(Some((id, CacheObject::Track(object)))) => {
                 let mut buf = BytesMut::new();
                 object.packetize(&mut buf);
@@ -754,6 +820,22 @@ async fn relaying_track_stream(
 
                 Some(id)
             }
+            // Send the object to the client if the first cache is exist as subgroup
+            Ok(Some((id, CacheObject::Subgroup(object)))) => {
+                let mut buf = BytesMut::new();
+                object.packetize(&mut buf);
+
+                let mut message_buf = BytesMut::with_capacity(buf.len());
+                message_buf.extend(buf);
+
+                if let Err(e) = send_stream.write_all(&message_buf).await {
+                    tracing::warn!("Failed to write to stream: {:?}", e);
+                    bail!(e);
+                }
+
+                Some(id)
+            }
+            // Will be retried if the first cache is not exist
             Ok(None) => {
                 thread::sleep(sleep_time);
                 object_cache_id
@@ -772,8 +854,7 @@ async fn relaying_track_stream(
     }
 
     loop {
-        // TODO: Implement the processing when the content ends
-        // Get the first object from the cache storage and send it to the client
+        // Get the next object from the cache storage
         object_cache_id = match object_cache_storage
             .get_next_object(
                 upstream_session_id,
@@ -782,6 +863,7 @@ async fn relaying_track_stream(
             )
             .await
         {
+            // Send the object to the client if the next cache is exist as track
             Ok(Some((id, CacheObject::Track(object)))) => {
                 let mut buf = BytesMut::new();
                 object.packetize(&mut buf);
@@ -794,6 +876,7 @@ async fn relaying_track_stream(
                     bail!(e);
                 }
 
+                // Judge whether ids are reached to end of the range if the filter type is AbsoluteRange
                 if filter_type == FilterType::AbsoluteRange {
                     let is_end = (object.group_id() == end_group.unwrap()
                         && object.object_id() == end_object.unwrap())
@@ -806,6 +889,34 @@ async fn relaying_track_stream(
 
                 Some(id)
             }
+            // Send the object to the client if the next cache is exist as subgroup
+            Ok(Some((id, CacheObject::Subgroup(object)))) => {
+                let mut buf = BytesMut::new();
+                object.packetize(&mut buf);
+
+                let mut message_buf = BytesMut::with_capacity(buf.len());
+                message_buf.extend(buf);
+
+                if let Err(e) = send_stream.write_all(&message_buf).await {
+                    tracing::warn!("Failed to write to stream: {:?}", e);
+                    bail!(e);
+                }
+
+                // Judge whether ids are reached to end of the range if the filter type is AbsoluteRange
+                let header = subgroup_header.as_ref().unwrap();
+                if filter_type == FilterType::AbsoluteRange {
+                    let is_end = (header.group_id() == end_group.unwrap()
+                        && object.object_id() == end_object.unwrap())
+                        || (header.group_id() > end_group.unwrap());
+
+                    if is_end {
+                        break;
+                    }
+                }
+
+                Some(id)
+            }
+            // Will be retried if the next cache is not exist
             Ok(None) => {
                 thread::sleep(sleep_time);
                 object_cache_id
@@ -823,10 +934,10 @@ async fn relaying_track_stream(
         };
     }
 
-    _buffer_tx
+    buffer_tx
         .send(BufferCommand::ReleaseStream {
             session_id: downstream_session_id,
-            stream_id: _downstream_stream_id,
+            stream_id: downstream_stream_id,
         })
         .await?;
 
@@ -954,6 +1065,40 @@ async fn wait_and_relay_control_message(
             tracing::info!(
                 "Relayed Message Type: {:?}",
                 ControlMessageType::SubscribeError
+            );
+        } else if message.as_any().downcast_ref::<Announce>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::Announce) as u64,
+            ));
+            tracing::info!("Relayed Message Type: {:?}", ControlMessageType::Announce);
+        } else if message.as_any().downcast_ref::<AnnounceOk>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::AnnounceOk) as u64,
+            ));
+            tracing::info!("Relayed Message Type: {:?}", ControlMessageType::AnnounceOk);
+        } else if message
+            .as_any()
+            .downcast_ref::<SubscribeNamespace>()
+            .is_some()
+        {
+            message_buf.extend(write_variable_integer(u8::from(
+                ControlMessageType::SubscribeNamespace,
+            ) as u64));
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::SubscribeNamespace
+            );
+        } else if message
+            .as_any()
+            .downcast_ref::<SubscribeNamespaceOk>()
+            .is_some()
+        {
+            message_buf.extend(write_variable_integer(u8::from(
+                ControlMessageType::SubscribeNamespaceOk,
+            ) as u64));
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::SubscribeNamespaceOk
             );
         } else {
             tracing::warn!("Unsupported message type for bi-directional stream");

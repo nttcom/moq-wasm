@@ -8,6 +8,7 @@ init().then(async () => {
   let trackAlias
   let headerSend = false
   let objectId = 0n
+  let objectPayload
 
   const connectBtn = document.getElementById('connectBtn')
   connectBtn.addEventListener('click', async () => {
@@ -24,11 +25,17 @@ init().then(async () => {
 
     client.onAnnounce(async (announceMessage) => {
       console.log({ announceMessage })
+      let announcedNamespace = announceMessage.track_namespace
+
+      await client.sendAnnounceOkMessage(announcedNamespace)
+    })
+
+    client.onAnnounceResponce(async (announceResponceMessage) => {
+      console.log({ announceResponceMessage })
     })
 
     client.onSubscribe(async (subscribeMessage, isSuccess, code) => {
       console.log({ subscribeMessage })
-      let subscribeId = BigInt(subscribeMessage.subscribe_id)
       if (isSuccess) {
         let expire = 0n
         subscribeId = BigInt(subscribeMessage.subscribe_id)
@@ -48,12 +55,24 @@ init().then(async () => {
       console.log({ subscribeResponse })
     })
 
+    client.onSubscribeNamespaceResponse(async (subscribeNamespaceResponse) => {
+      console.log({ subscribeNamespaceResponse })
+    })
+
     client.onStreamHeaderTrack(async (streamHeaderTrack) => {
       console.log({ streamHeaderTrack })
     })
 
     client.onObjectStreamTrack(async (objectStreamTrack) => {
       console.log({ objectStreamTrack })
+    })
+
+    client.onStreamHeaderSubgroup(async (streamHeaderSubgroup) => {
+      console.log({ streamHeaderSubgroup })
+    })
+
+    client.onObjectStreamSubgroup(async (objectStreamSubgroup) => {
+      console.log({ objectStreamSubgroup })
     })
 
     const sendBtn = document.getElementById('sendBtn')
@@ -68,6 +87,7 @@ init().then(async () => {
       const versions = form['versions'].value.split(',').map(BigInt)
       const role = Array.from(form['role']).filter((elem) => elem.checked)[0].value
       const isAddPath = !!form['add-path'].checked
+      let objectPayload
 
       console.log({ streamDatagram, messageType, versions, role, isAddPath })
 
@@ -77,7 +97,7 @@ init().then(async () => {
           await client.sendSetupMessage(role, versions, maxSubscribeId)
           break
         case 'announce':
-          await client.sendAnnounceMessage(trackNamespace, 1, authInfo)
+          await client.sendAnnounceMessage(trackNamespace, authInfo)
           break
         case 'unannounce':
           await client.sendUnannounceMessage(trackNamespace)
@@ -88,15 +108,28 @@ init().then(async () => {
         case 'unsubscribe':
           await client.sendUnsubscribeMessage(trackNamespace, trackName)
           break
+        case 'subscribe-namespace':
+          await client.sendSubscribeNamespaceMessage(trackNamespace, authInfo)
+          break
         case 'object-track':
           if (!headerSend) {
             await client.sendStreamHeaderTrackMessage(subscribeId, trackAlias, 0)
             headerSend = true
           }
           let groupId = 0n
-          let objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
-          // let objectPayload = new Uint8Array([0x00, 0x01, 0x02, 0x03])
+          objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
           await client.sendObjectStreamTrack(subscribeId, groupId, objectId++, objectPayload)
+          break
+        case 'object-subgroup':
+          if (!headerSend) {
+            let groupId = 0n
+            let subgroupId = 0n
+            await client.sendStreamHeaderSubgroupMessage(subscribeId, trackAlias, groupId, subgroupId, 0)
+            headerSend = true
+          }
+
+          objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+          await client.sendObjectStreamSubgroup(subscribeId, objectId++, objectPayload)
           break
       }
     }
