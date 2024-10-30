@@ -1,13 +1,15 @@
 use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
+use crate::modules::handlers::subscribe_handler::SubscribeResponse;
 use crate::modules::handlers::{
     announce_handler::AnnounceResponse, unannounce_handler::unannounce_handler,
 };
-use crate::modules::server_processes::subscribe_namespace_message::process_subscribe_namespace_message;
 use crate::modules::server_processes::{
     announce_message::process_announce_message, client_setup_message::process_client_setup_message,
+    subscribe_error_message::process_subscribe_error_message,
     subscribe_message::process_subscribe_message,
+    subscribe_namespace_message::process_subscribe_namespace_message,
     subscribe_ok_message::process_subscribe_ok_message,
 };
 use anyhow::{bail, Result};
@@ -130,15 +132,13 @@ pub async fn control_message_handler(
             )
             .await
             {
-                Ok(result) => {
-                    match result {
-                        Some(_) => (),
-                        None => {
-                            return MessageProcessResult::SuccessWithoutResponse;
-                        }
+                Ok(result) => match result {
+                    Some(SubscribeResponse::Success(_)) => ControlMessageType::SubscribeOk,
+                    Some(SubscribeResponse::Failure(_)) => ControlMessageType::SubscribeError,
+                    None => {
+                        return MessageProcessResult::SuccessWithoutResponse;
                     }
-                    ControlMessageType::SubscribeOk
-                }
+                },
                 Err(err) => {
                     return MessageProcessResult::Failure(
                         TerminationErrorCode::InternalError,
@@ -168,11 +168,35 @@ pub async fn control_message_handler(
                 }
             }
         }
-        // ControlMessageType::SubscribeError => {
-        //     if client.status() != MOQTClientStatus::SetUp {
-        //         return MessageProcessResult::Failure;
-        //     }
-        // }
+        ControlMessageType::SubscribeError => {
+            if client.status() != MOQTClientStatus::SetUp {
+                let message = String::from("Invalid timing");
+                tracing::error!(message);
+                return MessageProcessResult::Failure(
+                    TerminationErrorCode::ProtocolViolation,
+                    message,
+                );
+            }
+
+            match process_subscribe_error_message(
+                &mut payload_buf,
+                pubsub_relation_manager_repository,
+                send_stream_dispatcher_repository,
+                client,
+            )
+            .await
+            {
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
+                }
+                Err(err) => {
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
         ControlMessageType::UnSubscribe => {
             let unsubscribe_message = UnAnnounce::depacketize(&mut payload_buf);
 

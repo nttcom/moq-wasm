@@ -476,26 +476,22 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendSubscribeErrorMessage)]
     pub async fn send_subscribe_error_message(
         &self,
-        track_namespace: js_sys::Array,
-        track_name: String,
+        subscribe_id: u64,
         error_code: u64,
         reason_phrase: String,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
-            let length = track_namespace.length();
-            let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
-            for i in 0..length {
-                let js_element = track_namespace.get(i);
-                let string_element = js_element
-                    .as_string()
-                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
-                track_namespace_vec.push(string_element);
-            }
+            // Find unused subscribe_id and track_alias automatically
+            let valid_track_alias = self
+                .subscription_node
+                .borrow_mut()
+                .create_valid_track_alias()
+                .unwrap();
             let subscribe_error_message = SubscribeError::new(
-                track_namespace_vec,
-                track_name,
+                subscribe_id,
                 SubscribeErrorCode::try_from(error_code as u8).unwrap(),
                 reason_phrase,
+                valid_track_alias,
             );
             let mut subscribe_error_message_buf = BytesMut::new();
             subscribe_error_message.packetize(&mut subscribe_error_message_buf);
@@ -606,20 +602,17 @@ impl MOQTClient {
             // Message Payload and Payload Length
             buf.extend(object_stream_track_buf);
 
-            // log(std::format!("uni: send value: {} {:#x?}", buf.len(), buf).as_str());
-            let mut read_cur = Cursor::new(&buf[..]);
-            let result = ObjectStreamTrack::depacketize(&mut read_cur).unwrap();
-
-            // log(std::format!("uni: send value: {:#?}", result).as_str());
-
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(ok) => {
-                    log(std::format!("sent: id: {:#?}", result.object_id()).as_str());
+                    log(std::format!("sent: object id: {:#?}", object_id).as_str());
                     Ok(ok)
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    log(std::format!("err: {:?}", e).as_str());
+                    Err(e)
+                }
             }
         } else {
             return Err(JsValue::from_str("object_stream_writer is None"));
@@ -894,6 +887,7 @@ async fn uni_directional_stream_read_thread(
 
     let mut header_read = false;
     let mut data_stream_type = DataStreamType::ObjectDatagram;
+    let mut buf = BytesMut::new();
 
     loop {
         let ret = reader.read();
@@ -909,9 +903,6 @@ async fn uni_directional_stream_read_thread(
 
         let ret_value = js_sys::Uint8Array::from(ret_value).to_vec();
 
-        log(std::format!("uni: recv value: {} {:#x?}", ret_value.len(), ret_value).as_str());
-
-        let mut buf = BytesMut::with_capacity(ret_value.len());
         for i in ret_value {
             buf.put_u8(i);
         }
@@ -921,8 +912,7 @@ async fn uni_directional_stream_read_thread(
                 data_stream_type = match object_header_handler(callbacks.clone(), &mut buf).await {
                     Ok(v) => v,
                     Err(e) => {
-                        log(std::format!("error: {:#?}", e).as_str());
-                        return Err(js_sys::Error::new(&e.to_string()).into());
+                        break;
                     }
                 };
 
@@ -939,7 +929,7 @@ async fn uni_directional_stream_read_thread(
                             object_stream_track_handler(callbacks.clone(), &mut buf).await
                         {
                             log(std::format!("error: {:#?}", e).as_str());
-                            return Err(js_sys::Error::new(&e.to_string()).into());
+                            break;
                         }
                     }
                     _ => {
@@ -1019,7 +1009,7 @@ async fn object_stream_track_handler(
         Err(e) => {
             read_cur.set_position(0);
             log(std::format!("retry because: {:#?}", e).as_str());
-            return Ok(());
+            return Err(e);
         }
     };
 
@@ -1070,6 +1060,14 @@ impl SubscriptionNode {
             consumer.create_latest_subscribe_id_and_track_alias()
         } else {
             Err(anyhow::anyhow!("consumer is None"))
+        }
+    }
+
+    fn create_valid_track_alias(&self) -> Result<u64> {
+        if let Some(producer) = &self.producer {
+            producer.create_valid_track_alias()
+        } else {
+            Err(anyhow::anyhow!("producer is None"))
         }
     }
 

@@ -186,6 +186,16 @@ impl SubscriptionNodeRegistry for Producer {
         is_unique
     }
 
+    fn create_valid_track_alias(&self) -> Result<TrackAlias> {
+        let mut track_alias = 0;
+
+        while !self.is_track_alias_valid(track_alias) {
+            track_alias += 1;
+        }
+
+        Ok(track_alias)
+    }
+
     fn create_latest_subscribe_id_and_track_alias(&self) -> Result<(SubscribeId, TrackAlias)> {
         unimplemented!()
     }
@@ -757,6 +767,34 @@ mod success {
         let result = variables.producer.is_track_alias_valid(track_alias);
 
         assert!(result);
+    }
+
+    #[test]
+    fn create_valid_track_alias() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let result = variables.producer.create_valid_track_alias();
+
+        assert!(result.is_ok());
+
+        let expected_alias = variables.track_alias + 1;
+
+        assert_eq!(result.unwrap(), expected_alias);
     }
 
     #[test]

@@ -136,6 +136,23 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         upstream_session_id: usize,
     ) -> Result<bool>;
     async fn delete_client(&self, session_id: usize) -> Result<bool>;
+    async fn delete_pubsub_relation(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<()>;
+    async fn delete_upstream_subscription(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<()>;
+    async fn delete_downstream_subscription(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<()>;
     async fn set_downstream_forwarding_preference(
         &self,
         downstream_session_id: usize,

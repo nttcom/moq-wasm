@@ -28,6 +28,7 @@ init().then(async () => {
 
     client.onSubscribe(async (subscribeMessage, isSuccess, code) => {
       console.log({ subscribeMessage })
+      let subscribeId = BigInt(subscribeMessage.subscribe_id)
       if (isSuccess) {
         let expire = 0n
         subscribeId = BigInt(subscribeMessage.subscribe_id)
@@ -37,7 +38,9 @@ init().then(async () => {
 
         await client.sendSubscribeOkMessage(subscribeId, expire, authInfo)
       } else {
-        // TODO: send subscribe error
+        // TODO: set accurate reasonPhrase
+        let reasonPhrase = 'subscribe error'
+        await client.sendSubscribeError(subscribeMessage.subscribe_id, code, reasonPhrase)
       }
     })
 
@@ -92,7 +95,6 @@ init().then(async () => {
           }
           let groupId = 0n
           let objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
-          // let objectPayload = new Uint8Array([0x00, 0x01, 0x02, 0x03])
           await client.sendObjectStreamTrack(subscribeId, groupId, objectId++, objectPayload)
           break
       }
