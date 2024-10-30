@@ -20,8 +20,9 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::{
-            subscribe::{FilterType, Subscribe},
-            subscribe_error::SubscribeError,
+            announce::Announce, announce_ok::AnnounceOk, subscribe::FilterType,
+            subscribe::Subscribe, subscribe_error::SubscribeError,
+            subscribe_namespace::SubscribeNamespace, subscribe_namespace_ok::SubscribeNamespaceOk,
             subscribe_ok::SubscribeOk,
         },
         data_streams::{stream_header_track::StreamHeaderTrack, DataStreams},
@@ -944,6 +945,40 @@ async fn wait_and_relay_control_message(
             tracing::info!(
                 "Relayed Message Type: {:?}",
                 ControlMessageType::SubscribeError
+            );
+        } else if message.as_any().downcast_ref::<Announce>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::Announce) as u64,
+            ));
+            tracing::info!("Relayed Message Type: {:?}", ControlMessageType::Announce);
+        } else if message.as_any().downcast_ref::<AnnounceOk>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::AnnounceOk) as u64,
+            ));
+            tracing::info!("Relayed Message Type: {:?}", ControlMessageType::AnnounceOk);
+        } else if message
+            .as_any()
+            .downcast_ref::<SubscribeNamespace>()
+            .is_some()
+        {
+            message_buf.extend(write_variable_integer(u8::from(
+                ControlMessageType::SubscribeNamespace,
+            ) as u64));
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::SubscribeNamespace
+            );
+        } else if message
+            .as_any()
+            .downcast_ref::<SubscribeNamespaceOk>()
+            .is_some()
+        {
+            message_buf.extend(write_variable_integer(u8::from(
+                ControlMessageType::SubscribeNamespaceOk,
+            ) as u64));
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::SubscribeNamespaceOk
             );
         } else {
             tracing::warn!("Unsupported message type for bi-directional stream");

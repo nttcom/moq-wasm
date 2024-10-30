@@ -231,11 +231,26 @@ impl SubscriptionNodeRegistry for Producer {
     }
 
     fn set_namespace_prefix(&mut self, namespace_prefix: TrackNamespace) -> Result<()> {
-        if self
-            .subscribed_namespace_prefixes
-            .contains(&namespace_prefix)
-        {
-            bail!("Namespace prefix already exists.");
+        // Compare the given prefix with the prefixes that have already been registered from the beginning,
+        // and if the given prefix matches the first half of the already registered prefix, or if the already
+        // registered prefix matches the first half of the given prefix, an error will occur.
+        // For example, if ["aaa", bbb] is already registered, ["aaa"] cannot be registered.
+        for prefix in &self.subscribed_namespace_prefixes {
+            let mut is_same_halfway = true;
+            for (index, prefix_element) in prefix.iter().enumerate() {
+                if index >= namespace_prefix.len() {
+                    break;
+                }
+
+                if prefix_element != &namespace_prefix[index] {
+                    is_same_halfway = false;
+                    break;
+                }
+            }
+
+            if is_same_halfway {
+                bail!("Namespace prefix already exists.");
+            }
         }
 
         self.subscribed_namespace_prefixes.push(namespace_prefix);

@@ -27,6 +27,14 @@ impl SubscribeNamespace {
             parameters,
         }
     }
+
+    pub fn track_namespace_prefix(&self) -> &Vec<String> {
+        &self.track_namespace_prefix
+    }
+
+    pub fn parameters(&self) -> &Vec<VersionSpecificParameter> {
+        &self.parameters
+    }
 }
 
 impl MOQTPayload for SubscribeNamespace {

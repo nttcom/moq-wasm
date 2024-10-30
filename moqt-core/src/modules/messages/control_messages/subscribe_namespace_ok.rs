@@ -18,6 +18,10 @@ impl SubscribeNamespaceOk {
             track_namespace_prefix,
         }
     }
+
+    pub fn track_namespace_prefix(&self) -> &Vec<String> {
+        &self.track_namespace_prefix
+    }
 }
 
 impl MOQTPayload for SubscribeNamespaceOk {
