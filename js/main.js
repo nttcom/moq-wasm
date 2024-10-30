@@ -24,6 +24,13 @@ init().then(async () => {
 
     client.onAnnounce(async (announceMessage) => {
       console.log({ announceMessage })
+      let announcedNamespace = announceMessage.track_namespace
+
+      await client.sendAnnounceOkMessage(announcedNamespace)
+    })
+
+    client.onAnnounceResponce(async (announceResponceMessage) => {
+      console.log({ announceResponceMessage })
     })
 
     client.onSubscribe(async (subscribeMessage, isSuccess, code) => {
@@ -46,6 +53,10 @@ init().then(async () => {
 
     client.onSubscribeResponse(async (subscribeResponse) => {
       console.log({ subscribeResponse })
+    })
+
+    client.onSubscribeNamespaceResponse(async (subscribeNamespaceResponse) => {
+      console.log({ subscribeNamespaceResponse })
     })
 
     client.onStreamHeaderTrack(async (streamHeaderTrack) => {
@@ -77,7 +88,7 @@ init().then(async () => {
           await client.sendSetupMessage(role, versions, maxSubscribeId)
           break
         case 'announce':
-          await client.sendAnnounceMessage(trackNamespace, 1, authInfo)
+          await client.sendAnnounceMessage(trackNamespace, authInfo)
           break
         case 'unannounce':
           await client.sendUnannounceMessage(trackNamespace)
@@ -87,6 +98,9 @@ init().then(async () => {
           break
         case 'unsubscribe':
           await client.sendUnsubscribeMessage(trackNamespace, trackName)
+          break
+        case 'subscribe-namespace':
+          await client.sendSubscribeNamespaceMessage(trackNamespace, authInfo)
           break
         case 'object-track':
           if (!headerSend) {

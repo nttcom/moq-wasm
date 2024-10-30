@@ -1,24 +1,27 @@
 use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
-use crate::modules::handlers::subscribe_handler::SubscribeResponse;
-use crate::modules::handlers::{
-    announce_handler::AnnounceResponse, unannounce_handler::unannounce_handler,
-};
-use crate::modules::server_processes::subscribe_error_message::process_subscribe_error_message;
-use crate::modules::server_processes::{
-    announce_message::process_announce_message, client_setup_message::process_client_setup_message,
-    subscribe_message::process_subscribe_message,
-    subscribe_ok_message::process_subscribe_ok_message,
+use crate::modules::{
+    handlers::{subscribe_handler::SubscribeResponse, unannounce_handler::unannounce_handler},
+    server_processes::{
+        announce_error_message::process_announce_error_message,
+        announce_message::process_announce_message,
+        announce_ok_message::process_announce_ok_message,
+        client_setup_message::process_client_setup_message,
+        subscribe_error_message::process_subscribe_error_message,
+        subscribe_message::process_subscribe_message,
+        subscribe_namespace_message::process_subscribe_namespace_message,
+        subscribe_ok_message::process_subscribe_ok_message,
+    },
 };
 use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     constants::UnderlayType,
     control_message_type::ControlMessageType,
     messages::{control_messages::unannounce::UnAnnounce, moqt_payload::MOQTPayload},
     moqt_client::MOQTClientStatus,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::{read_variable_integer, write_variable_integer},
     MOQTClient, SendStreamDispatcherRepository,
 };
@@ -87,17 +90,20 @@ pub async fn control_message_handler(
     let mut payload_buf = read_buf.split_to(payload_length as usize);
     let mut write_buf = BytesMut::new();
 
+    // Validate the timing of the message
+    let is_invalid_timing_setup =
+        message_type.is_setup_message() && client.status() != MOQTClientStatus::Connected;
+    let is_invalid_timing_control =
+        message_type.is_control_message() && client.status() != MOQTClientStatus::SetUp;
+
+    if is_invalid_timing_control || is_invalid_timing_setup {
+        let message = String::from("Invalid timing");
+        tracing::error!(message);
+        return MessageProcessResult::Failure(TerminationErrorCode::ProtocolViolation, message);
+    }
+
     let return_message_type = match message_type {
         ControlMessageType::ClientSetup => {
-            if client.status() != MOQTClientStatus::Connected {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::ProtocolViolation,
-                    message,
-                );
-            }
-
             match process_client_setup_message(
                 &mut payload_buf,
                 client,
@@ -118,15 +124,6 @@ pub async fn control_message_handler(
             }
         }
         ControlMessageType::Subscribe => {
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::ProtocolViolation,
-                    message,
-                );
-            }
-
             // TODO: Wait for subscribe_ok from the original publisher if the upstream subscription does not exist.
             match process_subscribe_message(
                 &mut payload_buf,
@@ -153,15 +150,6 @@ pub async fn control_message_handler(
             }
         }
         ControlMessageType::SubscribeOk => {
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::ProtocolViolation,
-                    message,
-                );
-            }
-
             // TODO: Merge to process_subscribe_message.
             match process_subscribe_ok_message(
                 &mut payload_buf,
@@ -212,15 +200,6 @@ pub async fn control_message_handler(
             }
         }
         ControlMessageType::UnSubscribe => {
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::ProtocolViolation,
-                    message,
-                );
-            }
-
             let unsubscribe_message = UnAnnounce::depacketize(&mut payload_buf);
 
             if let Err(err) = unsubscribe_message {
@@ -241,26 +220,20 @@ pub async fn control_message_handler(
             return MessageProcessResult::Success(BytesMut::with_capacity(0));
         }
         ControlMessageType::Announce => {
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::ProtocolViolation,
-                    message,
-                );
-            }
-
             match process_announce_message(
                 &mut payload_buf,
                 client,
                 &mut write_buf,
                 pubsub_relation_manager_repository,
+                send_stream_dispatcher_repository,
             )
             .await
             {
-                Ok(announce_result) => match announce_result {
-                    AnnounceResponse::Success(_) => ControlMessageType::AnnounceOk,
-                    AnnounceResponse::Failure(_) => ControlMessageType::AnnounceError,
+                Ok(result) => match result {
+                    Some(_) => ControlMessageType::AnnounceError,
+                    None => {
+                        return MessageProcessResult::SuccessWithoutResponse;
+                    }
                 },
                 Err(err) => {
                     return MessageProcessResult::Failure(
@@ -270,26 +243,63 @@ pub async fn control_message_handler(
                 }
             }
         }
-        // ControlMessageType::AnnounceOk => {
-        //     if client.status() != MOQTClientStatus::SetUp {
-        //         return MessageProcessResult::Failure;
-        //     }
-        // }
-        // ControlMessageType::AnnounceError => {
-        //     if client.status() != MOQTClientStatus::SetUp {
-        //         return MessageProcessResult::Failure;
-        //     }
-        // }
-        ControlMessageType::UnAnnounce => {
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::ProtocolViolation,
-                    message,
-                );
+        ControlMessageType::AnnounceOk => {
+            match process_announce_ok_message(
+                &mut payload_buf,
+                client,
+                pubsub_relation_manager_repository,
+            )
+            .await
+            {
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
+                }
+                Err(err) => {
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    );
+                }
             }
-
+        }
+        ControlMessageType::AnnounceError => {
+            match process_announce_error_message(&mut payload_buf).await {
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
+                }
+                Err(err) => {
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
+        ControlMessageType::SubscribeNamespace => {
+            match process_subscribe_namespace_message(
+                &mut payload_buf,
+                client,
+                &mut write_buf,
+                pubsub_relation_manager_repository,
+                send_stream_dispatcher_repository,
+            )
+            .await
+            {
+                Ok(result) => match result {
+                    Some(_) => ControlMessageType::SubscribeNamespaceError,
+                    None => {
+                        return MessageProcessResult::SuccessWithoutResponse;
+                    }
+                },
+                Err(err) => {
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    );
+                }
+            }
+        }
+        ControlMessageType::UnAnnounce => {
             let unannounce_message = UnAnnounce::depacketize(&mut payload_buf);
 
             if let Err(err) = unannounce_message {

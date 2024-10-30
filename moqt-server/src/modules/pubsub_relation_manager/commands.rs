@@ -22,6 +22,16 @@ pub(crate) enum PubSubRelationCommand {
         upstream_session_id: usize,
         resp: oneshot::Sender<Result<()>>,
     },
+    SetDownstreamAnnouncedNamespace {
+        track_namespace: Vec<String>,
+        downstream_session_id: usize,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    SetDownstreamSubscribedNamespacePrefix {
+        track_namespace_prefix: Vec<String>,
+        downstream_session_id: usize,
+        resp: oneshot::Sender<Result<()>>,
+    },
     SetupSubscriber {
         max_subscribe_id: u64,
         downstream_session_id: usize,
@@ -112,6 +122,19 @@ pub(crate) enum PubSubRelationCommand {
         upstream_session_id: usize,
         subscribe_id: u64,
         resp: oneshot::Sender<Result<bool>>,
+    },
+    GetUpstreamNamespacesMatchesPrefix {
+        track_namespace_prefix: Vec<String>,
+        resp: oneshot::Sender<Result<Vec<Vec<String>>>>,
+    },
+    IsNamespaceAlreadyAnnounced {
+        track_namespace: Vec<String>,
+        downstream_session_id: usize,
+        resp: oneshot::Sender<Result<bool>>,
+    },
+    GetDownstreamSessionIdsByUpstreamNamespace {
+        track_namespace: Vec<String>,
+        resp: oneshot::Sender<Result<Vec<usize>>>,
     },
     DeleteUpstreamAnnouncedNamespace {
         track_namespace: Vec<String>,
