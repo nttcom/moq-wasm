@@ -22,37 +22,43 @@ pub enum SubscribeErrorCode {
     Timeout = 0x5,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeError {
-    track_namespace: Vec<String>,
-    track_name: String,
+    subscribe_id: u64,
     error_code: SubscribeErrorCode,
     reason_phrase: String,
+    track_alias: u64,
 }
 
 impl SubscribeError {
     pub fn new(
-        track_namespace: Vec<String>,
-        track_name: String,
+        subscribe_id: u64,
         error_code: SubscribeErrorCode,
         reason_phrase: String,
+        track_alias: u64,
     ) -> SubscribeError {
         SubscribeError {
-            track_namespace,
-            track_name,
+            subscribe_id,
             error_code,
             reason_phrase,
+            track_alias,
         }
     }
 
-    pub fn track_namespace(&self) -> &Vec<String> {
-        &self.track_namespace
+    pub fn subscribe_id(&self) -> u64 {
+        self.subscribe_id
     }
-    pub fn track_name(&self) -> &str {
-        &self.track_name
-    }
+
     pub fn error_code(&self) -> SubscribeErrorCode {
         self.error_code
+    }
+
+    pub fn reason_phrase(&self) -> &String {
+        &self.reason_phrase
+    }
+
+    pub fn track_alias(&self) -> u64 {
+        self.track_alias
     }
 }
 
@@ -61,45 +67,33 @@ impl MOQTPayload for SubscribeError {
     where
         Self: Sized,
     {
-        let track_namespace_tuple_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
-            .context("track namespace length")?;
-        let mut track_namespace_tuple: Vec<String> = Vec::new();
-        for _ in 0..track_namespace_tuple_length {
-            let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)
-                .context("track namespace")?;
-            track_namespace_tuple.push(track_namespace);
-        }
-        let track_name =
-            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track name")?;
+        let subscribe_id = read_variable_integer_from_buffer(buf).context("subscribe id")?;
+
         let error_code_u64 = read_variable_integer_from_buffer(buf)?;
         let error_code =
             SubscribeErrorCode::try_from(error_code_u64 as u8).context("error code")?;
         let reason_phrase =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
 
+        let track_alias = read_variable_integer_from_buffer(buf).context("track alias")?;
+
         tracing::trace!("Depacketized Subscribe Error message.");
 
         Ok(SubscribeError {
-            track_namespace: track_namespace_tuple,
-            track_name,
+            subscribe_id,
             error_code,
             reason_phrase,
+            track_alias,
         })
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Number of elements
-        let track_namespace_tuple_length = self.track_namespace.len();
-        buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
-        for track_namespace in &self.track_namespace {
-            // Track Namespace
-            buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
-        }
-        buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
+        buf.extend(write_variable_integer(self.subscribe_id));
         buf.extend(write_variable_integer(u8::from(self.error_code) as u64));
         buf.extend(write_variable_bytes(
             &self.reason_phrase.as_bytes().to_vec(),
         ));
+        buf.extend(write_variable_integer(self.track_alias));
 
         tracing::trace!("Packetized Subscribe Error message.");
     }
@@ -121,30 +115,21 @@ mod success {
 
     #[test]
     fn packetize() {
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "test".to_string();
+        let subscribe_id = 0;
         let error_code = SubscribeErrorCode::InvalidRange;
         let reason_phrase = "error".to_string();
-        let subscribe_error = SubscribeError::new(
-            track_namespace.clone(),
-            track_name.clone(),
-            error_code,
-            reason_phrase.clone(),
-        );
+        let track_alias = 1;
+        let subscribe_error =
+            SubscribeError::new(subscribe_id, error_code, reason_phrase.clone(), track_alias);
         let mut buf = BytesMut::new();
         subscribe_error.packetize(&mut buf);
 
         let expected_bytes_array = [
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Name (b): Length
-            116, 101, 115, 116, // Track Name (b): Value("test")
-            1,   // Error Code (i)
-            5,   // Reason Phrase Length (i)
+            0, // Subscribe ID (i)
+            1, // Error Code (i)
+            5, // Reason Phrase Length (i)
             101, 114, 114, 111, 114, // Reason Phrase (...): Value("error")
+            1,   // Track Alias (i)
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
@@ -152,29 +137,23 @@ mod success {
     #[test]
     fn depacketize() {
         let bytes_array = [
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Name (b): Length
-            116, 101, 115, 116, // Track Name (b): Value("test")
-            2,   // Error Code (i)
-            5,   // Reason Phrase Length (i)
+            0, // Subscribe ID (i)
+            2, // Error Code (i)
+            5, // Reason Phrase Length (i)
             101, 114, 114, 111, 114, // Reason Phrase (...): Value("error")
+            1,   // Track Alias (i)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
         let subscribe_error = SubscribeError::depacketize(&mut buf).unwrap();
 
-        assert_eq!(
-            subscribe_error.track_namespace(),
-            &Vec::from(["test".to_string(), "test".to_string()])
-        );
-        assert_eq!(subscribe_error.track_name(), "test");
-        assert_eq!(
-            subscribe_error.error_code(),
-            SubscribeErrorCode::RetryTrackAlias
-        );
+        let subscribe_id = 0;
+        let error_code = SubscribeErrorCode::RetryTrackAlias;
+        let reason_phrase = "error".to_string();
+        let track_alias = 1;
+        let expected_subscribe_error =
+            SubscribeError::new(subscribe_id, error_code, reason_phrase.clone(), track_alias);
+
+        assert_eq!(subscribe_error, expected_subscribe_error);
     }
 }

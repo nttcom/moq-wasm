@@ -20,37 +20,47 @@ pub(crate) async fn subscribe_ok_handler(
     let upstream_subscribe_id = subscribe_ok_message.subscribe_id();
 
     // Determine the SUBSCRIBER who sent the SUBSCRIBE using the track_namespace and track_name
-    let ids_and_aliases = pubsub_relation_manager_repository
+    let downstream_ids = pubsub_relation_manager_repository
         .get_requesting_downstream_session_ids_and_subscribe_ids(
             upstream_subscribe_id,
             upstream_session_id,
         )
         .await?;
-    match ids_and_aliases {
-        Some(ids_and_aliases) => {
+    match downstream_ids {
+        Some(downstream_ids) => {
             let _ = pubsub_relation_manager_repository
                 .activate_upstream_subscription(upstream_session_id, upstream_subscribe_id)
                 .await;
 
             // Notify all waiting subscribers with the SUBSCRIBE_OK message
-            for (downstream_session_id, downstream_subscribe_id) in ids_and_aliases.iter() {
-                let mut relaying_subscribe_ok_message = subscribe_ok_message.clone();
-                relaying_subscribe_ok_message.set_subscribe_id(*downstream_subscribe_id);
-                let message: Box<dyn MOQTPayload> = Box::new(relaying_subscribe_ok_message.clone());
-
-                tracing::debug!(
-                    "message: {:#?} is sent to relay handler for client {:?}",
-                    relaying_subscribe_ok_message,
-                    downstream_session_id
+            // Replace the subscribe_id in the SUBSCRIBE_OK message to responce to the downstream subscribers
+            // TODO: auth parameter
+            for (downstream_session_id, downstream_subscribe_id) in downstream_ids.iter() {
+                let message_payload = SubscribeOk::new(
+                    *downstream_subscribe_id,
+                    subscribe_ok_message.expires(),
+                    subscribe_ok_message.group_order(),
+                    subscribe_ok_message.content_exists(),
+                    subscribe_ok_message.largest_group_id(),
+                    subscribe_ok_message.largest_object_id(),
+                    subscribe_ok_message.subscribe_parameters().clone(),
                 );
+                let relaying_subscribe_ok_message: Box<dyn MOQTPayload> =
+                    Box::new(message_payload.clone());
 
                 send_stream_dispatcher_repository
                     .send_message_to_send_stream_thread(
                         *downstream_session_id,
-                        message,
+                        relaying_subscribe_ok_message,
                         StreamDirection::Bi,
                     )
                     .await?;
+
+                tracing::debug!(
+                    "message: {:#?} is sent to relay handler for client {:?}",
+                    message_payload,
+                    downstream_session_id
+                );
 
                 pubsub_relation_manager_repository
                     .activate_downstream_subscription(

@@ -20,7 +20,7 @@ Supported version: draft-ietf-moq-transport-06
   - [ ] SUBSCRIBE_NAMESPACE
   - [ ] UNSUBSCRIBE_NAMESPACE
   - [x] SUBSCRIBE_OK
-  - [ ] SUBSCRIBE_ERROR
+  - [x] SUBSCRIBE_ERROR
   - [ ] SUBSCRIBE_DONE
   - [ ] MAX_SUBSCRIBE_ID
   - [x] ANNOUNCE
