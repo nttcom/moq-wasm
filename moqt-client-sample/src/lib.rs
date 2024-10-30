@@ -1209,7 +1209,7 @@ async fn uni_directional_stream_read_thread(
             if !header_read {
                 data_stream_type = match object_header_handler(callbacks.clone(), &mut buf).await {
                     Ok(v) => v,
-                    Err(e) => {
+                    Err(_e) => {
                         break;
                     }
                 };
@@ -1237,9 +1237,6 @@ async fn uni_directional_stream_read_thread(
                             log(std::format!("error: {:#?}", e).as_str());
                             return Err(js_sys::Error::new(&e.to_string()).into());
                         }
-                    }
-                    _ => {
-                        unimplemented!()
                     }
                 }
             }

@@ -174,7 +174,6 @@ pub(crate) async fn subscribe_handler(
                             reason_phrase,
                             subscribe_message.track_alias(),
                         );
-
                         return Ok(Some(subscribe_error));
                     }
                 };
@@ -227,7 +226,6 @@ pub(crate) async fn subscribe_handler(
                         reason_phrase,
                         subscribe_message.track_alias(),
                     );
-
                     return Ok(Some(subscribe_error));
                 }
             }
