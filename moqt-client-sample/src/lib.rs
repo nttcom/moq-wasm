@@ -17,6 +17,9 @@ use moqt_core::{
         setup_parameters::{MaxSubscribeID, Role, RoleCase, SetupParameter},
         subscribe::{FilterType, GroupOrder, Subscribe},
         subscribe_error::{SubscribeError, SubscribeErrorCode},
+        subscribe_namespace::SubscribeNamespace,
+        subscribe_namespace_error::SubscribeNamespaceError,
+        subscribe_namespace_ok::SubscribeNamespaceOk,
         subscribe_ok::SubscribeOk,
         unannounce::UnAnnounce,
         unsubscribe::Unsubscribe,
@@ -24,7 +27,8 @@ use moqt_core::{
     },
     messages::{
         data_streams::{
-            object_stream_track::ObjectStreamTrack, stream_header_track::StreamHeaderTrack,
+            object_stream_subgroup::ObjectStreamSubgroup, object_stream_track::ObjectStreamTrack,
+            stream_header_subgroup::StreamHeaderSubgroup, stream_header_track::StreamHeaderTrack,
             DataStreams,
         },
         moqt_payload::MOQTPayload,
@@ -108,6 +112,13 @@ impl MOQTClient {
         self.callbacks.borrow_mut().set_announce_callback(callback);
     }
 
+    #[wasm_bindgen(js_name = onAnnounceResponce)]
+    pub fn set_announce_responce_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_announce_responce_callback(callback);
+    }
+
     #[wasm_bindgen(js_name = onSubscribe)]
     pub fn set_subscribe_callback(&mut self, callback: js_sys::Function) {
         self.callbacks.borrow_mut().set_subscribe_callback(callback);
@@ -118,6 +129,12 @@ impl MOQTClient {
         self.callbacks
             .borrow_mut()
             .set_subscribe_response_callback(callback);
+    }
+    #[wasm_bindgen(js_name = onSubscribeNamespaceResponse)]
+    pub fn set_subscribe_namespace_response_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_subscribe_namespace_response_callback(callback);
     }
 
     #[wasm_bindgen(js_name = onStreamHeaderTrack)]
@@ -132,6 +149,20 @@ impl MOQTClient {
         self.callbacks
             .borrow_mut()
             .set_object_stream_track_callback(callback);
+    }
+
+    #[wasm_bindgen(js_name = onStreamHeaderSubgroup)]
+    pub fn set_stream_header_subgroup_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_stream_header_subgroup_callback(callback);
+    }
+
+    #[wasm_bindgen(js_name = onObjectStreamSubgroup)]
+    pub fn set_object_stream_subgroup_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_object_stream_subgroup_callback(callback);
     }
 
     #[wasm_bindgen(js_name = sendSetupMessage)]
@@ -175,6 +206,7 @@ impl MOQTClient {
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 // Setup nodes along with the role
                 Ok(ok) => {
+                    log(std::format!("sent: client_setup: {:#x?}", client_setup_message).as_str());
                     match role {
                         RoleCase::Publisher => {
                             self.subscription_node
@@ -209,7 +241,6 @@ impl MOQTClient {
     pub async fn send_announce_message(
         &self,
         track_namespace: js_sys::Array,
-        number_of_parameters: u8,
         auth_info: String, // param[0]
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
@@ -226,11 +257,8 @@ impl MOQTClient {
                 track_namespace_vec.push(string_element);
             }
 
-            let announce_message = Announce::new(
-                track_namespace_vec.clone(),
-                number_of_parameters,
-                vec![auth_info_parameter],
-            );
+            let announce_message =
+                Announce::new(track_namespace_vec.clone(), vec![auth_info_parameter]);
             let mut announce_message_buf = BytesMut::new();
             announce_message.packetize(&mut announce_message_buf);
 
@@ -248,11 +276,51 @@ impl MOQTClient {
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(ok) => {
-                    // Register the announceing track
-                    self.subscription_node
-                        .borrow_mut()
-                        .set_namespace(track_namespace_vec);
+                    log(std::format!("sent: announce: {:#x?}", announce_message).as_str());
+                    Ok(ok)
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            Err(JsValue::from_str("control_stream_writer is None"))
+        }
+    }
 
+    #[wasm_bindgen(js_name = sendAnnounceOkMessage)]
+    pub async fn send_announce_ok_message(
+        &self,
+        track_namespace: js_sys::Array,
+    ) -> Result<JsValue, JsValue> {
+        if let Some(writer) = &*self.control_stream_writer.borrow() {
+            let length = track_namespace.length();
+            let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
+            for i in 0..length {
+                let js_element = track_namespace.get(i);
+                let string_element = js_element
+                    .as_string()
+                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
+                track_namespace_vec.push(string_element);
+            }
+
+            let announce_ok_message = AnnounceOk::new(track_namespace_vec.clone());
+            let mut announce_ok_message_buf = BytesMut::new();
+            announce_ok_message.packetize(&mut announce_ok_message_buf);
+
+            let mut buf = Vec::new();
+            // Message Type
+            buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::AnnounceOk) as u64,
+            ));
+            // Message Payload and Payload Length
+            buf.extend(write_variable_integer(announce_ok_message_buf.len() as u64));
+            buf.extend(announce_ok_message_buf);
+
+            // send
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    log(std::format!("sent: announce_ok: {:#x?}", announce_ok_message).as_str());
                     Ok(ok)
                 }
                 Err(e) => Err(e),
@@ -295,7 +363,13 @@ impl MOQTClient {
             // send
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
-            JsFuture::from(writer.write_with_chunk(&buffer)).await
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    log(std::format!("sent: unannounce: {:#x?}", unannounce_message).as_str());
+                    Ok(ok)
+                }
+                Err(e) => Err(e),
+            }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
         }
@@ -373,6 +447,7 @@ impl MOQTClient {
 
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(ok) => {
+                    log(std::format!("sent: subscribe: {:#x?}", subscribe_message).as_str());
                     // Register the subscribing track
                     self.subscription_node
                         .borrow_mut()
@@ -444,6 +519,7 @@ impl MOQTClient {
 
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(ok) => {
+                    log(std::format!("sent: subscribe_ok: {:#x?}", subscribe_ok_message).as_str());
                     self.subscription_node
                         .borrow_mut()
                         .activate_as_publisher(subscribe_id);
@@ -464,6 +540,61 @@ impl MOQTClient {
                         .borrow_mut()
                         .insert(subscribe_id, send_uni_stream_writer);
 
+                    Ok(ok)
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            Err(JsValue::from_str("control_stream_writer is None"))
+        }
+    }
+
+    #[wasm_bindgen(js_name = sendSubscribeNamespaceMessage)]
+    pub async fn send_subscribe_namespace_message(
+        &self,
+        track_namespace_prefix: js_sys::Array,
+        auth_info: String,
+    ) -> Result<JsValue, JsValue> {
+        if let Some(writer) = &*self.control_stream_writer.borrow() {
+            let auth_info =
+                VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
+            let length = track_namespace_prefix.length();
+            let mut track_namespace_prefix_vec: Vec<String> = Vec::with_capacity(length as usize);
+            for i in 0..length {
+                let js_element = track_namespace_prefix.get(i);
+                let string_element = js_element
+                    .as_string()
+                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
+                track_namespace_prefix_vec.push(string_element);
+            }
+
+            let version_specific_parameters = vec![auth_info];
+            let subscribe_namespace_message =
+                SubscribeNamespace::new(track_namespace_prefix_vec, version_specific_parameters);
+            let mut subscribe_namespace_message_buf = BytesMut::new();
+            subscribe_namespace_message.packetize(&mut subscribe_namespace_message_buf);
+
+            let mut buf = Vec::new();
+            // Message Type
+            buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::SubscribeNamespace) as u64,
+            ));
+            // Message Payload and Payload Length
+            buf.extend(write_variable_integer(
+                subscribe_namespace_message_buf.len() as u64,
+            ));
+            buf.extend(subscribe_namespace_message_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    log(std::format!(
+                        "sent: subscribe_namespace: {:#x?}",
+                        subscribe_namespace_message
+                    )
+                    .as_str());
                     Ok(ok)
                 }
                 Err(e) => Err(e),
@@ -510,7 +641,16 @@ impl MOQTClient {
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
 
-            JsFuture::from(writer.write_with_chunk(&buffer)).await
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    log(
+                        std::format!("sent: subscribe_error: {:#x?}", subscribe_error_message)
+                            .as_str(),
+                    );
+                    Ok(ok)
+                }
+                Err(e) => Err(e),
+            }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
         }
@@ -548,7 +688,13 @@ impl MOQTClient {
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
 
-            JsFuture::from(writer.write_with_chunk(&buffer)).await
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    log(std::format!("sent: unsubscribe: {:#x?}", unsubscribe_message).as_str());
+                    Ok(ok)
+                }
+                Err(e) => Err(e),
+            }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
         }
@@ -577,7 +723,17 @@ impl MOQTClient {
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
-            JsFuture::from(writer.write_with_chunk(&buffer)).await
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    log(std::format!(
+                        "sent: stream_header_track: {:#x?}",
+                        stream_header_track_message
+                    )
+                    .as_str());
+                    Ok(ok)
+                }
+                Err(e) => Err(e),
+            }
         } else {
             return Err(JsValue::from_str("object_stream_writer is None"));
         }
@@ -602,20 +758,90 @@ impl MOQTClient {
             // Message Payload and Payload Length
             buf.extend(object_stream_track_buf);
 
-            // log(std::format!("uni: send value: {} {:#x?}", buf.len(), buf).as_str());
-            let mut read_cur = Cursor::new(&buf[..]);
-            let result = ObjectStreamTrack::depacketize(&mut read_cur).unwrap();
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    log(std::format!("sent: object id: {:#?}", object_id).as_str());
+                    Ok(ok)
+                }
+                Err(e) => {
+                    log(std::format!("err: {:?}", e).as_str());
+                    Err(e)
+                }
+            }
+        } else {
+            return Err(JsValue::from_str("object_stream_writer is None"));
+        }
+    }
 
-            // log(std::format!("uni: send value: {:#?}", result).as_str());
+    #[wasm_bindgen(js_name = sendStreamHeaderSubgroupMessage)]
+    pub async fn send_stream_header_subgroup_message(
+        &self,
+        subscribe_id: u64,
+        track_alias: u64,
+        group_id: u64,
+        subgroup_id: u64,
+        publisher_priority: u8,
+    ) -> Result<JsValue, JsValue> {
+        let object_stream_writers = self.object_stream_writers.borrow();
+        if let Some(writer) = object_stream_writers.get(&subscribe_id) {
+            let stream_header_subgroup_message = StreamHeaderSubgroup::new(
+                subscribe_id,
+                track_alias,
+                group_id,
+                subgroup_id,
+                publisher_priority,
+            )
+            .unwrap();
+            let mut stream_header_subgroup_message_buf = BytesMut::new();
+            let _ =
+                stream_header_subgroup_message.packetize(&mut stream_header_subgroup_message_buf);
+
+            let mut buf = Vec::new();
+            // Message Type
+            buf.extend(write_variable_integer(
+                u8::from(DataStreamType::StreamHeaderSubgroup) as u64,
+            ));
+            buf.extend(stream_header_subgroup_message_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+            JsFuture::from(writer.write_with_chunk(&buffer)).await
+        } else {
+            return Err(JsValue::from_str("object_stream_writer is None"));
+        }
+    }
+
+    #[wasm_bindgen(js_name = sendObjectStreamSubgroup)]
+    pub async fn send_object_stream_subgroup(
+        &self,
+        subscribe_id: u64,
+        object_id: u64,
+        object_payload: Vec<u8>,
+    ) -> Result<JsValue, JsValue> {
+        let object_stream_writers = self.object_stream_writers.borrow();
+        if let Some(writer) = object_stream_writers.get(&subscribe_id) {
+            let object_stream_subgroup =
+                ObjectStreamSubgroup::new(object_id, None, object_payload).unwrap();
+            let mut object_stream_subgroup_buf = BytesMut::new();
+            let _ = object_stream_subgroup.packetize(&mut object_stream_subgroup_buf);
+
+            let mut buf = Vec::new();
+            // Message Payload and Payload Length
+            buf.extend(object_stream_subgroup_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(ok) => {
-                    log(std::format!("sent: id: {:#?}", result.object_id()).as_str());
+                    log(std::format!("sent: object id: {:#?}", object_id).as_str());
                     Ok(ok)
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    log(std::format!("err: {:?}", e).as_str());
+                    Err(e)
+                }
             }
         } else {
             return Err(JsValue::from_str("object_stream_writer is None"));
@@ -743,11 +969,15 @@ async fn bi_directional_stream_read_thread(
             buf.put_u8(i);
         }
 
-        if let Err(e) =
-            control_message_handler(callbacks.clone(), subscription_node.clone(), &mut buf).await
-        {
-            log(std::format!("error: {:#?}", e).as_str());
-            return Err(js_sys::Error::new(&e.to_string()).into());
+        while buf.has_remaining() {
+            if let Err(e) =
+                control_message_handler(callbacks.clone(), subscription_node.clone(), &mut buf)
+                    .await
+            {
+                log(std::format!("error: {:#?}", e).as_str());
+                break;
+                // return Err(js_sys::Error::new(&e.to_string()).into());
+            }
         }
     }
 
@@ -762,21 +992,23 @@ async fn control_message_handler(
     mut buf: &mut BytesMut,
 ) -> Result<()> {
     let message_type_value = read_variable_integer_from_buffer(&mut buf);
-    let _payload_length = read_variable_integer_from_buffer(&mut buf);
 
     // TODO: Check stream type
     match message_type_value {
         Ok(v) => {
             let message_type = ControlMessageType::try_from(v as u8)?;
+            let payload_length = read_variable_integer_from_buffer(&mut buf)?;
+            let mut payload_buf = buf.split_to(payload_length as usize);
 
             log(std::format!("message_type_value: {:#?}", message_type).as_str());
 
             match message_type {
                 ControlMessageType::ServerSetup => {
-                    let server_setup_message = ServerSetup::depacketize(&mut buf)?;
+                    let server_setup_message = ServerSetup::depacketize(&mut payload_buf)?;
 
                     log(
-                        std::format!("server_setup_message: {:#x?}", server_setup_message).as_str(),
+                        std::format!("recv: server_setup_message: {:#x?}", server_setup_message)
+                            .as_str(),
                     );
 
                     if let Some(callback) = callbacks.borrow().setup_callback() {
@@ -787,30 +1019,49 @@ async fn control_message_handler(
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
-                ControlMessageType::AnnounceOk => {
-                    let announce_ok_message = AnnounceOk::depacketize(&mut buf)?;
-                    log(std::format!("announce_ok_message: {:#x?}", announce_ok_message).as_str());
+                ControlMessageType::Announce => {
+                    let announce_message = Announce::depacketize(&mut payload_buf)?;
+                    log(std::format!("recv: announce_message: {:#x?}", announce_message).as_str());
 
                     if let Some(callback) = callbacks.borrow().announce_callback() {
+                        let v = serde_wasm_bindgen::to_value(&announce_message).unwrap();
+                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                    }
+                }
+                ControlMessageType::AnnounceOk => {
+                    let announce_ok_message = AnnounceOk::depacketize(&mut payload_buf)?;
+                    log(
+                        std::format!("recv: announce_ok_message: {:#x?}", announce_ok_message)
+                            .as_str(),
+                    );
+
+                    let _ = subscription_node
+                        .borrow_mut()
+                        .set_namespace(announce_ok_message.track_namespace().clone());
+
+                    if let Some(callback) = callbacks.borrow().announce_responce_callback() {
                         let v = serde_wasm_bindgen::to_value(&announce_ok_message).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
                 ControlMessageType::AnnounceError => {
-                    let announce_error_message = AnnounceError::depacketize(&mut buf)?;
-                    log(
-                        std::format!("announce_error_message: {:#x?}", announce_error_message)
-                            .as_str(),
-                    );
+                    let announce_error_message = AnnounceError::depacketize(&mut payload_buf)?;
+                    log(std::format!(
+                        "recv: announce_error_message: {:#x?}",
+                        announce_error_message
+                    )
+                    .as_str());
 
-                    if let Some(callback) = callbacks.borrow().announce_callback() {
+                    if let Some(callback) = callbacks.borrow().announce_responce_callback() {
                         let v = serde_wasm_bindgen::to_value(&announce_error_message).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
                 ControlMessageType::Subscribe => {
-                    let subscribe_message = Subscribe::depacketize(&mut buf)?;
-                    log(std::format!("subscribe_message: {:#x?}", subscribe_message).as_str());
+                    let subscribe_message = Subscribe::depacketize(&mut payload_buf)?;
+                    log(
+                        std::format!("recv: subscribe_message: {:#x?}", subscribe_message).as_str(),
+                    );
 
                     let result = subscription_node
                         .borrow_mut()
@@ -840,9 +1091,10 @@ async fn control_message_handler(
                     }
                 }
                 ControlMessageType::SubscribeOk => {
-                    let subscribe_ok_message = SubscribeOk::depacketize(&mut buf)?;
+                    let subscribe_ok_message = SubscribeOk::depacketize(&mut payload_buf)?;
                     log(
-                        std::format!("subscribe_ok_message: {:#x?}", subscribe_ok_message).as_str(),
+                        std::format!("recv: subscribe_ok_message: {:#x?}", subscribe_ok_message)
+                            .as_str(),
                     );
 
                     let _ = subscription_node
@@ -855,14 +1107,55 @@ async fn control_message_handler(
                     }
                 }
                 ControlMessageType::SubscribeError => {
-                    let subscribe_error_message = SubscribeError::depacketize(&mut buf)?;
-                    log(
-                        std::format!("subscribe_error_message: {:#x?}", subscribe_error_message)
-                            .as_str(),
-                    );
+                    let subscribe_error_message = SubscribeError::depacketize(&mut payload_buf)?;
+                    log(std::format!(
+                        "recv: subscribe_error_message: {:#x?}",
+                        subscribe_error_message
+                    )
+                    .as_str());
 
                     if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
                         let v = serde_wasm_bindgen::to_value(&subscribe_error_message).unwrap();
+                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                    }
+                }
+                ControlMessageType::SubscribeNamespaceOk => {
+                    let subscribe_namespace_ok_message =
+                        SubscribeNamespaceOk::depacketize(&mut payload_buf)?;
+                    log(std::format!(
+                        "recv: subscribe_namespace_ok_message: {:#x?}",
+                        subscribe_namespace_ok_message
+                    )
+                    .as_str());
+
+                    let _ = subscription_node.borrow_mut().set_namespace_prefix(
+                        subscribe_namespace_ok_message
+                            .track_namespace_prefix()
+                            .clone(),
+                    );
+
+                    if let Some(callback) =
+                        callbacks.borrow().subscribe_namespace_response_callback()
+                    {
+                        let v =
+                            serde_wasm_bindgen::to_value(&subscribe_namespace_ok_message).unwrap();
+                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                    }
+                }
+                ControlMessageType::SubscribeNamespaceError => {
+                    let subscribe_namespace_error_message =
+                        SubscribeNamespaceError::depacketize(&mut payload_buf)?;
+                    log(std::format!(
+                        "recv: subscribe_namespace_error_message: {:#x?}",
+                        subscribe_namespace_error_message
+                    )
+                    .as_str());
+
+                    if let Some(callback) =
+                        callbacks.borrow().subscribe_namespace_response_callback()
+                    {
+                        let v = serde_wasm_bindgen::to_value(&subscribe_namespace_error_message)
+                            .unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
@@ -886,10 +1179,13 @@ async fn uni_directional_stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
 ) -> Result<(), JsValue> {
+    use moqt_core::data_stream_type::DataStreamType;
+
     log("uni_directional_stream_read_thread");
 
     let mut header_read = false;
     let mut data_stream_type = DataStreamType::ObjectDatagram;
+    let mut buf = BytesMut::new();
 
     loop {
         let ret = reader.read();
@@ -905,9 +1201,6 @@ async fn uni_directional_stream_read_thread(
 
         let ret_value = js_sys::Uint8Array::from(ret_value).to_vec();
 
-        log(std::format!("uni: recv value: {} {:#x?}", ret_value.len(), ret_value).as_str());
-
-        let mut buf = BytesMut::with_capacity(ret_value.len());
         for i in ret_value {
             buf.put_u8(i);
         }
@@ -917,8 +1210,7 @@ async fn uni_directional_stream_read_thread(
                 data_stream_type = match object_header_handler(callbacks.clone(), &mut buf).await {
                     Ok(v) => v,
                     Err(e) => {
-                        log(std::format!("error: {:#?}", e).as_str());
-                        return Err(js_sys::Error::new(&e.to_string()).into());
+                        break;
                     }
                 };
 
@@ -933,6 +1225,14 @@ async fn uni_directional_stream_read_thread(
                     DataStreamType::StreamHeaderTrack => {
                         if let Err(e) =
                             object_stream_track_handler(callbacks.clone(), &mut buf).await
+                        {
+                            log(std::format!("error: {:#?}", e).as_str());
+                            break;
+                        }
+                    }
+                    DataStreamType::StreamHeaderSubgroup => {
+                        if let Err(e) =
+                            object_stream_subgroup_handler(callbacks.clone(), &mut buf).await
                         {
                             log(std::format!("error: {:#?}", e).as_str());
                             return Err(js_sys::Error::new(&e.to_string()).into());
@@ -968,7 +1268,10 @@ async fn object_header_handler(
                     let stream_header_track = StreamHeaderTrack::depacketize(&mut read_cur)?;
                     buf.advance(read_cur.position() as usize);
 
-                    log(std::format!("stream_header_track: {:#x?}", stream_header_track).as_str());
+                    log(
+                        std::format!("recv: stream_header_track: {:#x?}", stream_header_track)
+                            .as_str(),
+                    );
 
                     if let Some(callback) = callbacks.borrow().stream_header_track_callback() {
                         callback
@@ -979,7 +1282,21 @@ async fn object_header_handler(
                     }
                 }
                 DataStreamType::StreamHeaderSubgroup => {
-                    unimplemented!();
+                    let stream_header_subgroup = StreamHeaderSubgroup::depacketize(&mut read_cur)?;
+                    buf.advance(read_cur.position() as usize);
+
+                    log(
+                        std::format!("stream_header_subgroup: {:#x?}", stream_header_subgroup)
+                            .as_str(),
+                    );
+
+                    if let Some(callback) = callbacks.borrow().stream_header_subgroup_callback() {
+                        callback
+                            .call1(&JsValue::null(), &JsValue::from("called2"))
+                            .unwrap();
+                        let v = serde_wasm_bindgen::to_value(&stream_header_subgroup).unwrap();
+                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                    }
                 }
                 _ => {
                     // TODO: impl rest of message type
@@ -1003,8 +1320,6 @@ async fn object_stream_track_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     buf: &mut BytesMut,
 ) -> Result<()> {
-    // log(std::format!("object_stream_track_handler: {:#?}", buf).as_str());
-
     let mut read_cur = Cursor::new(&buf[..]);
     let object_stream_track = match ObjectStreamTrack::depacketize(&mut read_cur) {
         Ok(v) => {
@@ -1015,17 +1330,45 @@ async fn object_stream_track_handler(
         Err(e) => {
             read_cur.set_position(0);
             log(std::format!("retry because: {:#?}", e).as_str());
-            return Ok(());
+            return Err(e);
         }
     };
-
-    //log(std::format!("object_stream_track: {:#x?}", object_stream_track).as_str());
 
     if let Some(callback) = callbacks.borrow().object_stream_track_callback() {
         callback
             .call1(&JsValue::null(), &JsValue::from("called2"))
             .unwrap();
         let v = serde_wasm_bindgen::to_value(&object_stream_track).unwrap();
+        callback.call1(&JsValue::null(), &(v)).unwrap();
+    }
+
+    Ok(())
+}
+
+#[cfg(web_sys_unstable_apis)]
+async fn object_stream_subgroup_handler(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    buf: &mut BytesMut,
+) -> Result<()> {
+    let mut read_cur = Cursor::new(&buf[..]);
+    let object_stream_subgroup = match ObjectStreamSubgroup::depacketize(&mut read_cur) {
+        Ok(v) => {
+            log(std::format!("object_id: {:#?}", v.object_id()).as_str());
+            buf.advance(read_cur.position() as usize);
+            v
+        }
+        Err(e) => {
+            read_cur.set_position(0);
+            log(std::format!("retry because: {:#?}", e).as_str());
+            return Err(e);
+        }
+    };
+
+    if let Some(callback) = callbacks.borrow().object_stream_subgroup_callback() {
+        callback
+            .call1(&JsValue::null(), &JsValue::from("called2"))
+            .unwrap();
+        let v = serde_wasm_bindgen::to_value(&object_stream_subgroup).unwrap();
         callback.call1(&JsValue::null(), &(v)).unwrap();
     }
 
@@ -1058,6 +1401,12 @@ impl SubscriptionNode {
     fn set_namespace(&mut self, track_namespace: Vec<String>) {
         if let Some(producer) = &mut self.producer {
             let _ = producer.set_namespace(track_namespace);
+        }
+    }
+
+    fn set_namespace_prefix(&mut self, track_namespace_prefix: Vec<String>) {
+        if let Some(consumer) = &mut self.consumer {
+            let _ = consumer.set_namespace_prefix(track_namespace_prefix);
         }
     }
 
@@ -1218,10 +1567,14 @@ impl SubscriptionNode {
 struct MOQTCallbacks {
     setup_callback: Option<js_sys::Function>,
     announce_callback: Option<js_sys::Function>,
+    announce_responce_callback: Option<js_sys::Function>,
     subscribe_callback: Option<js_sys::Function>,
     subscribe_response_callback: Option<js_sys::Function>,
+    subscribe_namespace_response_callback: Option<js_sys::Function>,
     stream_header_track_callback: Option<js_sys::Function>,
     object_stream_track_callback: Option<js_sys::Function>,
+    stream_header_subgroup_callback: Option<js_sys::Function>,
+    object_stream_subgroup_callback: Option<js_sys::Function>,
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -1230,10 +1583,14 @@ impl MOQTCallbacks {
         MOQTCallbacks {
             setup_callback: None,
             announce_callback: None,
+            announce_responce_callback: None,
             subscribe_callback: None,
             subscribe_response_callback: None,
+            subscribe_namespace_response_callback: None,
             stream_header_track_callback: None,
             object_stream_track_callback: None,
+            stream_header_subgroup_callback: None,
+            object_stream_subgroup_callback: None,
         }
     }
 
@@ -1253,6 +1610,14 @@ impl MOQTCallbacks {
         self.announce_callback = Some(callback);
     }
 
+    pub fn announce_responce_callback(&self) -> Option<js_sys::Function> {
+        self.announce_responce_callback.clone()
+    }
+
+    pub fn set_announce_responce_callback(&mut self, callback: js_sys::Function) {
+        self.announce_responce_callback = Some(callback);
+    }
+
     pub fn subscribe_callback(&self) -> Option<js_sys::Function> {
         self.subscribe_callback.clone()
     }
@@ -1269,6 +1634,14 @@ impl MOQTCallbacks {
         self.subscribe_response_callback = Some(callback);
     }
 
+    pub fn subscribe_namespace_response_callback(&self) -> Option<js_sys::Function> {
+        self.subscribe_namespace_response_callback.clone()
+    }
+
+    pub fn set_subscribe_namespace_response_callback(&mut self, callback: js_sys::Function) {
+        self.subscribe_namespace_response_callback = Some(callback);
+    }
+
     pub fn stream_header_track_callback(&self) -> Option<js_sys::Function> {
         self.stream_header_track_callback.clone()
     }
@@ -1283,5 +1656,21 @@ impl MOQTCallbacks {
 
     pub fn set_object_stream_track_callback(&mut self, callback: js_sys::Function) {
         self.object_stream_track_callback = Some(callback);
+    }
+
+    pub fn stream_header_subgroup_callback(&self) -> Option<js_sys::Function> {
+        self.stream_header_subgroup_callback.clone()
+    }
+
+    pub fn set_stream_header_subgroup_callback(&mut self, callback: js_sys::Function) {
+        self.stream_header_subgroup_callback = Some(callback);
+    }
+
+    pub fn object_stream_subgroup_callback(&self) -> Option<js_sys::Function> {
+        self.object_stream_subgroup_callback.clone()
+    }
+
+    pub fn set_object_stream_subgroup_callback(&mut self, callback: js_sys::Function) {
+        self.object_stream_subgroup_callback = Some(callback);
     }
 }

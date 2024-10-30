@@ -6,7 +6,7 @@ use anyhow::anyhow;
 use moqt_core::models::subscriptions::nodes::{
     consumers::Consumer, producers::Producer, registry::SubscriptionNodeRegistry,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, vec};
 use tokio::sync::mpsc;
 
 type DownstreamSessionId = usize;
@@ -16,6 +16,23 @@ pub(crate) type Consumers = HashMap<UpstreamSessionId, Consumer>;
 pub(crate) type Producers = HashMap<DownstreamSessionId, Producer>;
 
 // [Original Publisher: (Producer) ] -> [Relay: (Consumer) - <PubSubRelation> - (Producer) ] -> [End Subscriber: (Consumer)]
+
+fn is_namespace_prefix_match(
+    track_namespace: Vec<String>,
+    track_namespace_prefix: Vec<String>,
+) -> bool {
+    if track_namespace.len() < track_namespace_prefix.len() {
+        return false;
+    }
+
+    for (i, prefix) in track_namespace_prefix.iter().enumerate() {
+        if track_namespace[i] != *prefix {
+            return false;
+        }
+    }
+
+    true
+}
 
 // Called as a separate thread
 pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelationCommand>) {
@@ -48,13 +65,72 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 upstream_session_id,
                 resp,
             } => {
-                let consumer = consumers.get_mut(&upstream_session_id).unwrap();
+                let consumer = match consumers.get_mut(&upstream_session_id) {
+                    Some(consumer) => consumer,
+                    None => {
+                        let msg = "publisher not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
                 match consumer.set_namespace(track_namespace) {
                     Ok(_) => {
                         resp.send(Ok(())).unwrap();
                     }
                     Err(err) => {
                         let msg = format!("set_namespace: err: {:?}", err.to_string());
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                    }
+                }
+            }
+            SetDownstreamAnnouncedNamespace {
+                track_namespace,
+                downstream_session_id,
+                resp,
+            } => {
+                let producer = match producers.get_mut(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+                match producer.set_namespace(track_namespace) {
+                    Ok(_) => {
+                        resp.send(Ok(())).unwrap();
+                    }
+                    Err(err) => {
+                        let msg = format!("set_namespace: err: {:?}", err.to_string());
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                    }
+                }
+            }
+            SetDownstreamSubscribedNamespacePrefix {
+                track_namespace_prefix,
+                downstream_session_id,
+                resp,
+            } => {
+                let producer = match producers.get_mut(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                match producer.set_namespace_prefix(track_namespace_prefix) {
+                    Ok(_) => {
+                        resp.send(Ok(())).unwrap();
+                    }
+                    Err(err) => {
+                        let msg = format!("set_namespace_prefix: err: {:?}", err.to_string());
                         tracing::error!(msg);
                         resp.send(Err(anyhow!(msg))).unwrap();
                     }
@@ -400,6 +476,58 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                         resp.send(Err(anyhow!(err))).unwrap();
                     }
                 }
+            }
+            GetUpstreamNamespacesMatchesPrefix {
+                track_namespace_prefix,
+                resp,
+            } => {
+                let mut namespaces = vec![];
+                for consumer in consumers.values() {
+                    for consumer_namespace in consumer.get_namespaces().unwrap() {
+                        if is_namespace_prefix_match(
+                            consumer_namespace.clone(),
+                            track_namespace_prefix.clone(),
+                        ) {
+                            namespaces.push(consumer_namespace.clone());
+                        }
+                    }
+                }
+                resp.send(Ok(namespaces)).unwrap();
+            }
+            IsNamespaceAlreadyAnnounced {
+                track_namespace,
+                downstream_session_id,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get_mut(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let is_announced = producer.has_namespace(track_namespace);
+                resp.send(Ok(is_announced)).unwrap();
+            }
+            GetDownstreamSessionIdsByUpstreamNamespace {
+                track_namespace,
+                resp,
+            } => {
+                let mut downstream_session_ids = vec![];
+                for (downstream_session_id, producer) in &producers {
+                    let downstream_subscribe_prefix = producer.get_namespace_prefixes().unwrap();
+                    for prefix in downstream_subscribe_prefix {
+                        if is_namespace_prefix_match(track_namespace.clone(), prefix.clone()) {
+                            downstream_session_ids.push(*downstream_session_id);
+                        }
+                    }
+                }
+
+                resp.send(Ok(downstream_session_ids)).unwrap();
             }
             DeleteUpstreamAnnouncedNamespace {
                 track_namespace,

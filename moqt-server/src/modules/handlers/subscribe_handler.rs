@@ -52,7 +52,6 @@ pub(crate) async fn subscribe_handler(
             reason_phrase,
             100, // track alias
         );
-
         return Ok(Some(subscribe_error));
 
         // TODO: return TerminationErrorCode::DuplicateTrackAlias
