@@ -92,7 +92,6 @@ init().then(async () => {
           }
           let groupId = 0n
           let objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
-          // let objectPayload = new Uint8Array([0x00, 0x01, 0x02, 0x03])
           await client.sendObjectStreamTrack(subscribeId, groupId, objectId++, objectPayload)
           break
       }
