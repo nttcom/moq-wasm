@@ -44,7 +44,7 @@ use wtransport::{
     endpoint::IncomingSession, Endpoint, Identity, RecvStream, SendStream, ServerConfig,
 };
 type SubscribeId = u64;
-type SenderToOpenSubscription = Sender<(SubscribeId, DataStreamType)>;
+pub(crate) type SenderToOpenSubscription = Sender<(SubscribeId, DataStreamType)>;
 
 // Callback to validate the Auth parameter
 pub enum AuthCallbackType {
@@ -261,7 +261,9 @@ async fn handle_connection(
                 let pubsub_relation_tx = pubsub_relation_tx.clone();
                 let send_stream_tx = send_stream_tx.clone();
                 let close_connection_tx = close_connection_tx.clone();
+                let object_cache_tx = object_cache_tx.clone();
                 let client= client.clone();
+                let open_subscription_txes = open_subscription_txes.clone();
 
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
                 send_stream_tx.send(SendStreamDispatchCommand::Set {
@@ -280,7 +282,7 @@ async fn handle_connection(
                         recv_stream,
                         shared_send_stream: send_stream,
                     };
-                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, close_connection_tx, send_stream_tx).instrument(session_span_clone).await
+                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_subscription_txes, close_connection_tx, send_stream_tx, object_cache_tx).instrument(session_span_clone).await
 
                 // Propagate the current span (Connection)
                 }.in_current_span());
@@ -838,13 +840,16 @@ struct BiStream {
     shared_send_stream: Arc<Mutex<SendStream>>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_incoming_bi_stream(
     stream: &mut BiStream,
     client: Arc<Mutex<MOQTClient>>,
     buffer_tx: Sender<BufferCommand>,
     pubsub_relation_tx: Sender<PubSubRelationCommand>,
+    open_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     close_connection_tx: Sender<(u64, String)>,
     send_stream_tx: Sender<SendStreamDispatchCommand>,
+    object_cache_tx: Sender<ObjectCacheStorageCommand>,
 ) -> Result<()> {
     let mut buffer = vec![0; 65536].into_boxed_slice();
 
@@ -859,6 +864,9 @@ async fn handle_incoming_bi_stream(
         );
     let mut send_stream_dispatcher =
         modules::send_stream_dispatcher::SendStreamDispatcher::new(send_stream_tx.clone());
+
+    let mut object_cache_storage =
+        modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
 
     loop {
         let bytes_read = match recv_stream.read(&mut buffer).await? {
@@ -879,8 +887,10 @@ async fn handle_incoming_bi_stream(
             &mut buf,
             UnderlayType::WebTransport,
             &mut client,
+            open_subscription_txes.clone(),
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
+            &mut object_cache_storage,
         )
         .await;
 
