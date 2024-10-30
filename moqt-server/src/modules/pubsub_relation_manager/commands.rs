@@ -122,6 +122,23 @@ pub(crate) enum PubSubRelationCommand {
         session_id: usize,
         resp: oneshot::Sender<Result<bool>>,
     },
+    DeletePubSubRelation {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    DeleteUpstreamSubscription {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    DeleteDownstreamSubscription {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<()>>,
+    },
     SetDownstreamForwardingPreference {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,

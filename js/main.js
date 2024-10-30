@@ -28,6 +28,7 @@ init().then(async () => {
 
     client.onSubscribe(async (subscribeMessage, isSuccess, code) => {
       console.log({ subscribeMessage })
+      let subscribeId = BigInt(subscribeMessage.subscribe_id)
       if (isSuccess) {
         let expire = 0n
         subscribeId = BigInt(subscribeMessage.subscribe_id)
@@ -37,7 +38,9 @@ init().then(async () => {
 
         await client.sendSubscribeOkMessage(subscribeId, expire, authInfo)
       } else {
-        // TODO: send subscribe error
+        // TODO: set accurate reasonPhrase
+        let reasonPhrase = 'subscribe error'
+        await client.sendSubscribeError(subscribeMessage.subscribe_id, code, reasonPhrase)
       }
     })
 
