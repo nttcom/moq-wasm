@@ -8,8 +8,8 @@ use crate::modules::{
 };
 use anyhow::{bail, Context, Ok, Result};
 use bytes::BytesMut;
+use modules::datagram_handler::datagram_handler;
 pub use moqt_core::constants;
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     constants::{StreamDirection, UnderlayType},
     control_message_type::ControlMessageType,
@@ -23,6 +23,10 @@ use moqt_core::{
     variable_integer::write_variable_integer,
     MOQTClient,
 };
+use moqt_core::{
+    messages::data_streams::object_datagram::ObjectDatagram,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{
@@ -33,7 +37,7 @@ use tokio::sync::{
 use tracing::{self, Instrument};
 use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
 use wtransport::{
-    endpoint::IncomingSession, Endpoint, Identity, RecvStream, SendStream, ServerConfig,
+    endpoint::IncomingSession, Connection, Endpoint, Identity, RecvStream, SendStream, ServerConfig,
 };
 
 // Callback to validate the Auth parameter
@@ -183,8 +187,11 @@ async fn handle_connection(
         session_request.path()
     );
 
-    let connection = session_request.accept().await?;
-    let stable_id = connection.stable_id();
+    let connection = Arc::new(Mutex::new(session_request.accept().await?));
+    let stable_id = {
+        let connection_guard = connection.lock().await;
+        connection_guard.stable_id()
+    };
 
     let client = Arc::new(Mutex::new(MOQTClient::new(stable_id)));
 
@@ -202,9 +209,10 @@ async fn handle_connection(
 
     #[allow(unused_variables)]
     loop {
+        let connection_guard = connection.lock().await;
         tokio::select! {
             // Waiting for a bi-directional stream and processing the received message
-            stream = connection.accept_bi() => {
+            stream = connection_guard.accept_bi() => {
                 if is_control_stream_opened {
                     // Only 1 control stream is allowed
                     tracing::error!("Control stream already opened");
@@ -228,12 +236,12 @@ async fn handle_connection(
 
                 let buffer_tx = buffer_tx.clone();
                 let track_namespace_tx = track_namespace_tx.clone();
-                let send_stream_tx = send_stream_tx.clone();
+                let send_stream_tx_clone = send_stream_tx.clone();
                 let close_conn_tx = close_conn_tx.clone();
-                let client= client.clone();
+                let client_clone = client.clone();
 
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-                send_stream_tx.send(SendStreamDispatchCommand::Set {
+                send_stream_tx_clone.send(SendStreamDispatchCommand::Set {
                     session_id: stable_id,
                     stream_direction: StreamDirection::Bi,
                     sender: message_tx,
@@ -249,7 +257,7 @@ async fn handle_connection(
                         recv_stream,
                         shread_send_stream: send_stream,
                     };
-                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_conn_tx, send_stream_tx).instrument(session_span_clone).await
+                    handle_incoming_bi_stream(&mut stream, client_clone, buffer_tx, track_namespace_tx, close_conn_tx, send_stream_tx_clone).instrument(session_span_clone).await
 
                 // Propagate the current span (Connection)
                 }.in_current_span());
@@ -263,19 +271,49 @@ async fn handle_connection(
 
                 // Propagate the current span (Connection)
                 }.in_current_span());
+
+                let (datagram_tx, datagram_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+                let send_stream_tx_clone = send_stream_tx.clone();
+                send_stream_tx_clone.send(SendStreamDispatchCommand::Set {
+                    session_id: stable_id,
+                    stream_direction: StreamDirection::Datagram,
+                    sender: datagram_tx,
+                }).await?;
+
+
+                let connection_clone = Arc::clone(&connection);
+                tokio::spawn(async move {
+                    wait_and_relay_datagram(connection_clone, datagram_rx).instrument(session_span).await;
+                }.in_current_span());
+
             },
             // Waiting for a uni-directional recv stream and processing the received message
-            stream = connection.accept_uni() => {
+            stream = connection_guard.accept_uni() => {
                 // TODO: handle recv uni-directional stream and open send stream with open_ch_tx
                 unimplemented!();
             },
-            datagram = connection.receive_datagram() => {
+            datagram = connection_guard.receive_datagram() => {
                 let datagram = datagram?;
-                let str_data = std::str::from_utf8(&datagram)?;
+                let datagram_payload = datagram.payload();
+                let mut bytes_mut = BytesMut::from(&datagram_payload[..]);
+                let object_datagram = ObjectDatagram::depacketize(&mut bytes_mut)?;
+                tracing::info!("Received (dgram) '{:#?}' from client", object_datagram);
 
-                tracing::info!("Received (dgram) '{str_data}' from client");
+                let mut pubsub_relation_manager =
+                    modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
+                        track_namespace_tx.clone(),
+                    );
+                let mut send_stream_dispatcher =
+                    modules::send_stream_dispatcher::SendStreamDispatcher::new(send_stream_tx.clone());
 
-                connection.send_datagram(b"ACK")?;
+
+                let daragram_result = datagram_handler(
+                    client.clone(),
+                    object_datagram,
+                    &mut pubsub_relation_manager,
+                    &mut send_stream_dispatcher,
+                )
+                .await;
             }
             // Waiting for a uni-directional send stream open request and relaying the message
             Some(data_stream_type) = open_ch_rx.recv() => {
@@ -468,6 +506,41 @@ async fn wait_and_relay_control_message(
 
         tracing::info!("Control message is relayed.");
         tracing::debug!("relayed message: {:?}", message_buf.to_vec());
+    }
+}
+
+async fn wait_and_relay_datagram(
+    connection: Arc<Mutex<Connection>>,
+    mut datagram_rx: Receiver<Arc<Box<dyn MOQTPayload>>>,
+) {
+    while let Some(message) = datagram_rx.recv().await {
+        let mut write_buf = BytesMut::new();
+        message.packetize(&mut write_buf);
+        let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
+        if message.as_any().downcast_ref::<ObjectDatagram>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(DataStreamType::ObjectDatagram) as u64,
+            ));
+        } else {
+            tracing::warn!("Unsupported message type for datagram");
+            continue;
+        }
+        message_buf.extend(write_variable_integer(write_buf.len() as u64));
+        message_buf.extend(write_buf);
+        tracing::info!("hogehoghoge");
+
+        let locked_connection = connection.lock().await;
+
+        match locked_connection.send_datagram(&message_buf) {
+            Result::Ok(_) => {
+                tracing::info!("Datagram is relayed.");
+                tracing::debug!("relayed message: {:?}", message_buf.to_vec());
+            }
+            Err(e) => {
+                tracing::warn!("Failed to write to datagram: {:?}", e);
+                break;
+            }
+        }
     }
 }
 

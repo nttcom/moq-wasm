@@ -719,12 +719,15 @@ async fn datagram_read_thread(
     log("datagram_read_thread");
 
     loop {
+        log("datagram_read_thread");
         let ret = reader.read();
         let ret = JsFuture::from(ret).await?;
 
         let ret_value = js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?;
         let ret_done = js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?;
         let ret_done = js_sys::Boolean::from(ret_done).value_of();
+        log(std::format!("receive datagram: {:#?}", ret_value).as_str());
+        log(std::format!("receive datagram done: {:#?}", ret_done).as_str());
 
         if ret_done {
             break;

@@ -147,6 +147,7 @@ impl SendStreamDispatcherRepository for SendStreamDispatcher {
         let sender = resp_rx
             .await?
             .ok_or_else(|| anyhow::anyhow!("sender not found"))?;
+        tracing::info!("found sender: {:?}", sender);
         let message_arc = Arc::new(message);
         let _ = sender.send(message_arc).await;
         Ok(())

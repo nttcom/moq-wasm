@@ -322,6 +322,29 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             Err(err) => bail!(err),
         }
     }
+
+    async fn get_downstream_session_ids_and_subscribe_ids(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Vec<(usize, u64)>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Vec<(usize, u64)>>>();
+        let cmd = PubSubRelationCommand::GetDownstreamSessionIdsAndSubscribeIds {
+            upstream_session_id,
+            upstream_subscribe_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(downstream_session_ids_and_subscribe_ids) => {
+                Ok(downstream_session_ids_and_subscribe_ids)
+            }
+            Err(err) => bail!(err),
+        }
+    }
+
     async fn activate_downstream_subscription(
         &self,
         downstream_session_id: usize,
@@ -1148,7 +1171,7 @@ mod success {
             test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
 
         let subscriber = pubsub_relation
-            .get_subscribers(upstream_session_id, upstream_subscribe_id)
+            .get_subscriptions(upstream_session_id, upstream_subscribe_id)
             .unwrap()
             .to_vec();
 
@@ -1517,11 +1540,11 @@ mod success {
         // Assert that the relation is deleted
         // Remain: pub 1 <- sub 3, 4
         let pub1_relation =
-            pubsub_relation.get_subscribers(upstream_session_ids[0], upstream_subscribe_ids[0]);
+            pubsub_relation.get_subscriptions(upstream_session_ids[0], upstream_subscribe_ids[0]);
         assert!(pub1_relation.is_some());
 
         let pub2_relation =
-            pubsub_relation.get_subscribers(upstream_session_ids[1], upstream_subscribe_ids[1]);
+            pubsub_relation.get_subscriptions(upstream_session_ids[1], upstream_subscribe_ids[1]);
         assert!(pub2_relation.is_none());
     }
 

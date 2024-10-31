@@ -408,7 +408,7 @@ mod success {
         println!("{:?}", pubsub_relation);
 
         let subscribers = pubsub_relation
-            .get_subscribers(upstream_session_id, expected_upstream_subscribe_id)
+            .get_subscriptions(upstream_session_id, expected_upstream_subscribe_id)
             .unwrap();
 
         let (downstream_session_id, downstream_subscribe_id) = subscribers.first().unwrap();
@@ -529,7 +529,7 @@ mod success {
         assert_eq!(producers.len(), 1);
 
         let subscribers = pubsub_relation
-            .get_subscribers(upstream_session_id, upstream_subscribe_id)
+            .get_subscriptions(upstream_session_id, upstream_subscribe_id)
             .unwrap();
 
         let (downstream_session_id, downstream_subscribe_id) = subscribers.first().unwrap();

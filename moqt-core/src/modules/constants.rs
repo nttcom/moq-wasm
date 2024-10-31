@@ -27,4 +27,5 @@ pub enum UnderlayType {
 pub enum StreamDirection {
     Uni,
     Bi,
+    Datagram,
 }

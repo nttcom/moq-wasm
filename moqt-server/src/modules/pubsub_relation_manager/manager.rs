@@ -141,7 +141,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 }
 
                 let subscribers =
-                    pubsub_relation.get_subscribers(upstream_session_id, upstream_subscribe_id);
+                    pubsub_relation.get_subscriptions(upstream_session_id, upstream_subscribe_id);
 
                 // Check if it is in the requesting state
                 let requesting_subscribers: Option<Vec<(usize, u64)>> = match subscribers {
@@ -149,10 +149,10 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                         let mut requesting_subscribers = vec![];
 
                         for (downstream_session_id, downstream_subscribe_id) in subscribers {
-                            let producer = producers.get(downstream_session_id).unwrap();
-                            if producer.is_requesting(*downstream_subscribe_id) {
+                            let producer = producers.get(&downstream_session_id).unwrap();
+                            if producer.is_requesting(downstream_subscribe_id) {
                                 requesting_subscribers
-                                    .push((*downstream_session_id, *downstream_subscribe_id));
+                                    .push((downstream_session_id, downstream_subscribe_id));
                             }
                         }
 
@@ -211,6 +211,18 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
 
                 resp.send(result).unwrap();
             }
+            GetDownstreamSessionIdsAndSubscribeIds {
+                upstream_session_id,
+                upstream_subscribe_id,
+                resp,
+            } => {
+                let downstream_subscriptions = pubsub_relation
+                    .get_subscriptions(upstream_session_id, upstream_subscribe_id)
+                    .unwrap();
+
+                resp.send(Ok(downstream_subscriptions)).unwrap();
+            }
+
             SetDownstreamSubscription {
                 downstream_session_id,
                 subscribe_id,

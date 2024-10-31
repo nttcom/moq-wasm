@@ -45,13 +45,13 @@ impl PubSubRelation {
         Ok(())
     }
 
-    pub(crate) fn get_subscribers(
+    pub(crate) fn get_subscriptions(
         &self,
         upstream_session_id: PublisherSessionId,
         upstream_subscribe_id: PublisherSubscribeId,
-    ) -> Option<&Vec<(SubscriberSessionId, SubscriberSubscribeId)>> {
+    ) -> Option<Vec<(SubscriberSessionId, SubscriberSubscribeId)>> {
         let key = (upstream_session_id, upstream_subscribe_id);
-        self.records.get(&key)
+        self.records.get(&key).cloned()
     }
 
     // TODO: Define the behavior if the last subscriber unsubscribes from the track

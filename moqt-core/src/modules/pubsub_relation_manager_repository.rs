@@ -90,6 +90,11 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
     ) -> Result<()>;
+    async fn get_downstream_session_ids_and_subscribe_ids(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Vec<(usize, u64)>>;
     async fn activate_downstream_subscription(
         &self,
         downstream_session_id: usize,

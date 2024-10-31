@@ -50,6 +50,11 @@ pub(crate) enum PubSubRelationCommand {
         track_namespace: Vec<String>,
         resp: oneshot::Sender<Result<Option<usize>>>,
     },
+    GetDownstreamSessionIdsAndSubscribeIds {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Vec<(usize, u64)>>>,
+    },
     GetRequestingDownstreamSessionIdsAndSubscribeIds {
         upstream_subscribe_id: u64,
         upstream_session_id: usize,
