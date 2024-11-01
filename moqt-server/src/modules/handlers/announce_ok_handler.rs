@@ -43,7 +43,7 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -59,12 +59,8 @@ mod success {
             .await;
 
         // Execute announce_ok_handler and get result
-        let result = announce_ok_handler(
-            announce_ok_message,
-            &mut client,
-            &mut pubsub_relation_manager,
-        )
-        .await;
+        let result =
+            announce_ok_handler(announce_ok_message, &client, &mut pubsub_relation_manager).await;
 
         assert!(result.is_ok());
     }

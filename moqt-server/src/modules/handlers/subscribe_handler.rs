@@ -420,7 +420,7 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -463,7 +463,7 @@ mod success {
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
             subscribe,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -528,7 +528,7 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -586,7 +586,7 @@ mod success {
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
             subscribe,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -676,7 +676,7 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper (register subscriber in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -734,7 +734,7 @@ mod failure {
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
             subscribe,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -780,7 +780,7 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -813,7 +813,7 @@ mod failure {
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
             subscribe,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -865,7 +865,7 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper (without set publisher)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -900,7 +900,7 @@ mod failure {
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
             subscribe,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -958,7 +958,7 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1001,7 +1001,7 @@ mod failure {
         // Execute subscribe_handler and get result
         let _ = subscribe_handler(
             subscribes[0].clone(),
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -1009,7 +1009,7 @@ mod failure {
 
         let result = subscribe_handler(
             subscribes[1].clone(),
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -1060,7 +1060,7 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1103,7 +1103,7 @@ mod failure {
         // Execute subscribe_handler and get result
         let _ = subscribe_handler(
             subscribes[0].clone(),
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -1111,7 +1111,7 @@ mod failure {
 
         let result = subscribe_handler(
             subscribes[1].clone(),
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
