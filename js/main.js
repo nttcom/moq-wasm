@@ -4,19 +4,34 @@ import init, { MOQTClient } from './pkg/moqt_client_sample'
 init().then(async () => {
   console.log('init wasm-pack')
 
-  let subscribeId
-  let trackAlias
   let headerSend = false
   let objectId = 0n
+  let trackGroupId = 0n
 
   const connectBtn = document.getElementById('connectBtn')
   connectBtn.addEventListener('click', async () => {
     const url = document.form.url.value
     const authInfo = form['auth-info'].value
+    const receivedTextElement = document.getElementById('received-text')
 
     const client = new MOQTClient(url)
     console.log(client.id, client)
     console.log('URL:', client.url())
+
+    const describeReceivedObject = (payload) => {
+      // change line
+      let brElement = document.createElement('br')
+      receivedTextElement.prepend(brElement)
+
+      // decode the object array to its text
+      const receivedArray = new Uint8Array(payload)
+      const receivedText = new TextDecoder().decode(receivedArray)
+
+      // show received text
+      let receivedElement = document.createElement('p')
+      receivedElement.textContent = receivedText
+      receivedTextElement.prepend(receivedElement)
+    }
 
     client.onSetup(async (serverSetup) => {
       console.log({ serverSetup })
@@ -35,14 +50,14 @@ init().then(async () => {
 
     client.onSubscribe(async (subscribeMessage, isSuccess, code) => {
       console.log({ subscribeMessage })
+
+      let receivedSubscribeId = BigInt(subscribeMessage.subscribe_id)
+      let receivedTrackAlias = BigInt(subscribeMessage.track_alias)
+      console.log('subscribeId', receivedSubscribeId, 'trackAlias', receivedTrackAlias)
+
       if (isSuccess) {
         let expire = 0n
-        subscribeId = BigInt(subscribeMessage.subscribe_id)
-        trackAlias = BigInt(subscribeMessage.track_alias)
-
-        console.log('subscribeId', subscribeId, 'trackAlias', trackAlias)
-
-        await client.sendSubscribeOkMessage(subscribeId, expire, authInfo)
+        await client.sendSubscribeOkMessage(receivedSubscribeId, expire, authInfo)
       } else {
         // TODO: set accurate reasonPhrase
         let reasonPhrase = 'subscribe error'
@@ -64,6 +79,7 @@ init().then(async () => {
 
     client.onObjectStreamTrack(async (objectStreamTrack) => {
       console.log({ objectStreamTrack })
+      describeReceivedObject(objectStreamTrack.object_payload)
     })
 
     client.onStreamHeaderSubgroup(async (streamHeaderSubgroup) => {
@@ -72,69 +88,168 @@ init().then(async () => {
 
     client.onObjectStreamSubgroup(async (objectStreamSubgroup) => {
       console.log({ objectStreamSubgroup })
+      describeReceivedObject(objectStreamSubgroup.object_payload)
     })
 
-    const sendBtn = document.getElementById('sendBtn')
+    const objectIdElement = document.getElementById('objectId')
+    const trackGroupIdElement = document.getElementById('trackGroupId')
 
-    const send = async () => {
-      console.log('send btn clicked')
-      const streamDatagram = Array.from(form['stream-datagram']).filter((elem) => elem.checked)[0].value
-      const messageType = form['message-type'].value
-      const trackNamespace = form['track-namespace'].value.split('/')
-      const trackName = form['track-name'].value
-      const authInfo = form['auth-info'].value
-      const versions = form['versions'].value.split(',').map(BigInt)
+    const sendSetupBtn = document.getElementById('sendSetupBtn')
+    sendSetupBtn.addEventListener('click', async () => {
+      console.log('send setup btn clicked')
       const role = Array.from(form['role']).filter((elem) => elem.checked)[0].value
-      const isAddPath = !!form['add-path'].checked
-      let objectPayload
+      const versions = form['versions'].value.split(',').map(BigInt)
+      const maxSubscribeId = form['max-subscribe-id'].value
 
-      console.log({ streamDatagram, messageType, versions, role, isAddPath })
+      await client.sendSetupMessage(role, versions, BigInt(maxSubscribeId))
+    })
 
-      switch (messageType) {
-        case 'setup':
-          let maxSubscribeId = 5n
-          await client.sendSetupMessage(role, versions, maxSubscribeId)
-          break
-        case 'announce':
-          await client.sendAnnounceMessage(trackNamespace, authInfo)
-          break
-        case 'unannounce':
-          await client.sendUnannounceMessage(trackNamespace)
-          break
-        case 'subscribe':
-          await client.sendSubscribeMessage(trackNamespace, trackName, authInfo)
-          break
-        case 'unsubscribe':
-          await client.sendUnsubscribeMessage(trackNamespace, trackName)
-          break
-        case 'subscribe-namespace':
-          await client.sendSubscribeNamespaceMessage(trackNamespace, authInfo)
-          break
-        case 'object-track':
-          if (!headerSend) {
-            await client.sendStreamHeaderTrackMessage(subscribeId, trackAlias, 0)
-            headerSend = true
-          }
-          let groupId = 0n
-          objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
-          await client.sendObjectStreamTrack(subscribeId, groupId, objectId++, objectPayload)
-          break
-        case 'object-subgroup':
-          if (!headerSend) {
-            let groupId = 0n
-            let subgroupId = 0n
-            await client.sendStreamHeaderSubgroupMessage(subscribeId, trackAlias, groupId, subgroupId, 0)
-            headerSend = true
-          }
+    const sendAnnounceBtn = document.getElementById('sendAnnounceBtn')
+    sendAnnounceBtn.addEventListener('click', async () => {
+      console.log('send announce btn clicked')
+      const trackNamespace = form['announce-track-namespace'].value.split('/')
+      const authInfo = form['auth-info'].value
 
-          objectPayload = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
-          await client.sendObjectStreamSubgroup(subscribeId, objectId++, objectPayload)
-          break
+      await client.sendAnnounceMessage(trackNamespace, authInfo)
+    })
+
+    const sendSubscribeNamespaceBtn = document.getElementById('sendSubscribeNamespaceBtn')
+    sendSubscribeNamespaceBtn.addEventListener('click', async () => {
+      console.log('send subscribe namespace btn clicked')
+      const trackNamespacePrefix = form['track-namespace-prefix'].value.split('/')
+      const authInfo = form['auth-info'].value
+
+      await client.sendSubscribeNamespaceMessage(trackNamespacePrefix, authInfo)
+    })
+
+    const sendSubscribeBtn = document.getElementById('sendSubscribeBtn')
+    sendSubscribeBtn.addEventListener('click', async () => {
+      console.log('send subscribe btn clicked')
+      const subscribeId = form['subscribe-subscribe-id'].value
+      const trackAlias = form['subscribe-track-alias'].value
+      const trackNamespace = form['subscribe-track-namespace'].value.split('/')
+      const trackName = form['track-name'].value
+      const subscriberPriority = form['subscriber-priority'].value
+      const groupOrder = Array.from(form['group-order']).filter((elem) => elem.checked)[0].value
+      const filterType = Array.from(form['filter-type']).filter((elem) => elem.checked)[0].value
+      const startGroup = form['start-group'].value
+      const startObject = form['start-object'].value
+      const endGroup = form['end-group'].value
+      const endObject = form['end-object'].value
+
+      const authInfo = form['auth-info'].value
+
+      await client.sendSubscribeMessage(
+        BigInt(subscribeId),
+        BigInt(trackAlias),
+        trackNamespace,
+        trackName,
+        subscriberPriority,
+        groupOrder,
+        filterType,
+        BigInt(startGroup),
+        BigInt(startObject),
+        BigInt(endGroup),
+        BigInt(endObject),
+        authInfo
+      )
+    })
+
+    const sendTrackObjectBtn = document.getElementById('sendTrackObjectBtn')
+    sendTrackObjectBtn.addEventListener('click', async () => {
+      console.log('send track stream object btn clicked')
+      const subscribeId = form['object-subscribe-id'].value
+      const trackAlias = form['object-track-alias'].value
+      const publisherPriority = form['publisher-priority'].value
+      const objectPayloadString = form['object-payload'].value
+
+      // encode the text to the object array
+      const objectPayloadArray = new TextEncoder().encode(objectPayloadString)
+
+      // send header if it is the first time
+      if (!headerSend) {
+        await client.sendStreamHeaderTrackMessage(BigInt(subscribeId), BigInt(trackAlias), publisherPriority)
+        headerSend = true
       }
-    }
 
-    sendBtn.addEventListener('click', send)
+      await client.sendObjectStreamTrack(BigInt(subscribeId), trackGroupId, objectId++, objectPayloadArray)
+      objectIdElement.textContent = objectId
+    })
+
+    const sendSubgroupObjectBtn = document.getElementById('sendSubgroupObjectBtn')
+    sendSubgroupObjectBtn.addEventListener('click', async () => {
+      console.log('send subgroup stream object btn clicked')
+      const subscribeId = form['object-subscribe-id'].value
+      const groupId = form['subgroup-group-id'].value
+      const subgroupId = form['subgroup-id'].value
+      const trackAlias = form['object-track-alias'].value
+      const publisherPriority = form['publisher-priority'].value
+      const objectPayloadString = form['object-payload'].value
+
+      // encode the text to the object array
+      const objectPayloadArray = new TextEncoder().encode(objectPayloadString)
+
+      // send header if it is the first time
+      if (!headerSend) {
+        await client.sendStreamHeaderSubgroupMessage(
+          BigInt(subscribeId),
+          BigInt(trackAlias),
+          BigInt(groupId),
+          BigInt(subgroupId),
+          publisherPriority
+        )
+        headerSend = true
+      }
+
+      await client.sendObjectStreamSubgroup(subscribeId, objectId++, objectPayloadArray)
+      objectIdElement.textContent = objectId
+    })
+
+    const ascendTrackGroupBtn = document.getElementById('ascendTrackGroupIdBtn')
+    ascendTrackGroupBtn.addEventListener('click', async () => {
+      trackGroupId++
+      objectId = 0n
+      console.log('ascend trackGroupId', trackGroupId)
+
+      trackGroupIdElement.textContent = trackGroupId
+      objectIdElement.textContent = objectId
+    })
+
+    const descendTrackGroupBtn = document.getElementById('descendTrackGroupIdBtn')
+    descendTrackGroupBtn.addEventListener('click', async () => {
+      if (trackGroupId === 0n) {
+        return
+      }
+      trackGroupId--
+      objectId = 0n
+      console.log('descend trackGroupId', trackGroupId)
+      trackGroupIdElement.textContent = trackGroupId
+      objectIdElement.textContent = objectId
+    })
 
     await client.start()
+  })
+
+  const dataStreamType = document.querySelectorAll('input[name="data-stream-type"]')
+  const subgroupHeaderContents = document.getElementById('subgroupHeaderContents')
+  const trackObjectContents = document.getElementById('trackObjectContents')
+  const sendTrackObject = document.getElementById('sendTrackObject')
+  const sendSubgroupObject = document.getElementById('sendSubgroupObject')
+
+  // change ui within track/subgroup
+  dataStreamType.forEach((elem) => {
+    elem.addEventListener('change', async () => {
+      if (elem.value === 'track') {
+        trackObjectContents.style.display = 'block'
+        subgroupHeaderContents.style.display = 'none'
+        sendTrackObject.style.display = 'block'
+        sendSubgroupObject.style.display = 'none'
+      } else if (elem.value === 'subgroup') {
+        trackObjectContents.style.display = 'none'
+        subgroupHeaderContents.style.display = 'block'
+        sendTrackObject.style.display = 'none'
+        sendSubgroupObject.style.display = 'block'
+      }
+    })
   })
 })
