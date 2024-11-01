@@ -12,7 +12,6 @@ type SenderToSendStreamThread = mpsc::Sender<Arc<Box<dyn MOQTPayload>>>;
 use SendStreamDispatchCommand::*;
 // Called as a separate thread
 pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDispatchCommand>) {
-    tracing::trace!("send_stream_dispatcher start");
     // {
     //   "${session_id}" : {
     //     "StreamDirection::Uni" : tx,
@@ -23,7 +22,6 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
         HashMap::<usize, HashMap<StreamDirection, SenderToSendStreamThread>>::new();
 
     while let Some(cmd) = rx.recv().await {
-        tracing::debug!("command received: {:#?}", cmd);
         match cmd {
             Set {
                 session_id,
@@ -32,7 +30,6 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
             } => {
                 let inner_map = dispatcher.entry(session_id).or_default();
                 inner_map.insert(stream_direction, sender);
-                tracing::debug!("set: {:?} of {:?}", stream_direction, session_id);
             }
             List {
                 stream_direction,
@@ -61,12 +58,10 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
                     .get(&session_id)
                     .and_then(|inner_map| inner_map.get(&stream_direction))
                     .cloned();
-                tracing::debug!("get: {:?}", sender);
                 let _ = resp.send(sender);
             }
             Delete { session_id } => {
                 dispatcher.remove(&session_id);
-                tracing::debug!("delete: {:?}", session_id);
             }
         }
     }
@@ -147,7 +142,6 @@ impl SendStreamDispatcherRepository for SendStreamDispatcher {
         let sender = resp_rx
             .await?
             .ok_or_else(|| anyhow::anyhow!("sender not found"))?;
-        tracing::info!("found sender: {:?}", sender);
         let message_arc = Arc::new(message);
         let _ = sender.send(message_arc).await;
         Ok(())
