@@ -4,7 +4,7 @@ use moqt_core::{messages::control_messages::announce_ok::AnnounceOk, MOQTClient}
 
 pub(crate) async fn announce_ok_handler(
     announce_ok_message: AnnounceOk,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
 ) -> Result<()> {
     tracing::trace!("announce_ok_handler start.");

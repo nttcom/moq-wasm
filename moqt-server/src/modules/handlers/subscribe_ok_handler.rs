@@ -10,7 +10,7 @@ pub(crate) async fn subscribe_ok_handler(
     subscribe_ok_message: SubscribeOk,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
 ) -> Result<()> {
     tracing::trace!("subscribe_ok_handler start.");
 

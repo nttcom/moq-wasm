@@ -21,7 +21,7 @@ pub(crate) enum SubscribeResponse {
 
 pub(crate) async fn subscribe_handler(
     subscribe_message: Subscribe,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<Option<SubscribeResponse>> {

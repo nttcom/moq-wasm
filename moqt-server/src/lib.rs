@@ -508,11 +508,11 @@ async fn handle_incoming_uni_stream(
             let result: StreamHeaderProcessResult;
             {
                 let mut process_buf = buf.lock().await;
-                let mut client = client.lock().await;
+                let client = client.lock().await;
 
                 result = stream_header_handler(
                     &mut process_buf,
-                    &mut client,
+                    &client,
                     &mut pubsub_relation_manager,
                     &mut object_cache_storage,
                 )
@@ -565,13 +565,13 @@ async fn handle_incoming_uni_stream(
         // Read Object Stream
         {
             let mut process_buf = buf.lock().await;
-            let mut client = client.lock().await;
+            let client = client.lock().await;
 
             result = object_stream_handler(
                 stream_header_type.clone(),
                 upstream_subscribe_id,
                 &mut process_buf,
-                &mut client,
+                &client,
                 &mut object_cache_storage,
             )
             .await;

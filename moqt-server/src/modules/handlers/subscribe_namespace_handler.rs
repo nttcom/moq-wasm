@@ -15,7 +15,7 @@ use moqt_core::{
 
 pub(crate) async fn subscribe_namespace_handler(
     subscribe_namespace_message: SubscribeNamespace,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<Option<SubscribeNamespaceError>> {

@@ -10,7 +10,7 @@ use moqt_core::{
 
 pub(crate) async fn announce_handler(
     announce_message: Announce,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<Option<AnnounceError>> {
