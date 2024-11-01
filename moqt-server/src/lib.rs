@@ -987,16 +987,19 @@ async fn handle_incoming_bi_stream(
         let mut buf = buf.lock().await;
         buf.extend_from_slice(&read_buf);
 
-        let mut client = client.lock().await;
-        // TODO: Move the implementation of control_message_handler to the server side since it is only used by the server
-        let message_result = control_message_handler(
-            &mut buf,
-            UnderlayType::WebTransport,
-            &mut client,
-            &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
-        )
-        .await;
+        let message_result: MessageProcessResult;
+        {
+            let mut client = client.lock().await;
+            // TODO: Move the implementation of control_message_handler to the server side since it is only used by the server
+            message_result = control_message_handler(
+                &mut buf,
+                UnderlayType::WebTransport,
+                &mut client,
+                &mut pubsub_relation_manager,
+                &mut send_stream_dispatcher,
+            )
+            .await;
+        }
 
         tracing::debug!("message_result: {:?}", message_result);
 
