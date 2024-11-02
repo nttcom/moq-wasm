@@ -69,7 +69,7 @@ Supported version: draft-ietf-moq-transport-06
 cd moqt-server-sample
 mkdir keys
 cd keys
-openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -out cert.pem -subj '/CN=Test Certificate' -extfile subjectnames.txt
+openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -out cert.pem -subj '/CN=Test Certificate' -addext "subjectAltName = DNS:localhost,IP:34.147.225.127"
 
 ```
 
