@@ -1,19 +1,19 @@
-use std::io::Cursor;
-
 use crate::constants::TerminationErrorCode;
+use crate::modules::server_processes::announce_error_message::process_announce_error_message;
+use crate::modules::server_processes::announce_ok_message::process_announce_ok_message;
+use crate::modules::server_processes::subscribe_namespace_message::process_subscribe_namespace_message;
 use crate::modules::{
-    handlers::{subscribe_handler::SubscribeResponse, unannounce_handler::unannounce_handler},
+    handlers::unannounce_handler::unannounce_handler,
+    object_cache_storage::ObjectCacheStorageWrapper,
     server_processes::{
-        announce_error_message::process_announce_error_message,
         announce_message::process_announce_message,
-        announce_ok_message::process_announce_ok_message,
         client_setup_message::process_client_setup_message,
         subscribe_error_message::process_subscribe_error_message,
         subscribe_message::process_subscribe_message,
-        subscribe_namespace_message::process_subscribe_namespace_message,
         subscribe_ok_message::process_subscribe_ok_message,
     },
 };
+use crate::SenderToOpenSubscription;
 use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
 use moqt_core::{
@@ -25,6 +25,8 @@ use moqt_core::{
     variable_integer::{read_variable_integer, write_variable_integer},
     MOQTClient, SendStreamDispatcherRepository,
 };
+use std::{collections::HashMap, io::Cursor, sync::Arc};
+use tokio::sync::Mutex;
 
 #[derive(Debug, PartialEq)]
 pub enum MessageProcessResult {
@@ -55,8 +57,10 @@ pub async fn control_message_handler(
     read_buf: &mut BytesMut,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
+    open_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    object_cache_storage: &mut ObjectCacheStorageWrapper,
 ) -> MessageProcessResult {
     tracing::trace!("control_message_handler! {}", read_buf.len());
 
@@ -131,12 +135,13 @@ pub async fn control_message_handler(
                 &mut write_buf,
                 pubsub_relation_manager_repository,
                 send_stream_dispatcher_repository,
+                object_cache_storage,
+                open_subscription_txes,
             )
             .await
             {
                 Ok(result) => match result {
-                    Some(SubscribeResponse::Success(_)) => ControlMessageType::SubscribeOk,
-                    Some(SubscribeResponse::Failure(_)) => ControlMessageType::SubscribeError,
+                    Some(_) => ControlMessageType::SubscribeError,
                     None => {
                         return MessageProcessResult::SuccessWithoutResponse;
                     }
@@ -171,15 +176,6 @@ pub async fn control_message_handler(
             }
         }
         ControlMessageType::SubscribeError => {
-            if client.status() != MOQTClientStatus::SetUp {
-                let message = String::from("Invalid timing");
-                tracing::error!(message);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::ProtocolViolation,
-                    message,
-                );
-            }
-
             match process_subscribe_error_message(
                 &mut payload_buf,
                 pubsub_relation_manager_repository,
@@ -346,21 +342,27 @@ pub async fn control_message_handler(
 
 #[cfg(test)]
 pub(crate) mod test_helper_fn {
-
-    use crate::modules::control_message_handler::control_message_handler;
-    use crate::modules::control_message_handler::MessageProcessResult;
-    use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
-        wrapper::PubSubRelationManagerWrapper,
+    use crate::modules::{
+        control_message_handler::{control_message_handler, MessageProcessResult},
+        object_cache_storage::{
+            object_cache_storage, ObjectCacheStorageCommand, ObjectCacheStorageWrapper,
+        },
+        pubsub_relation_manager::{
+            commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+            wrapper::PubSubRelationManagerWrapper,
+        },
+        send_stream_dispatcher::{
+            send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
+        },
     };
-    use crate::modules::send_stream_dispatcher::{
-        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-    };
+    use crate::SenderToOpenSubscription;
     use bytes::BytesMut;
-    use moqt_core::constants::UnderlayType;
-    use moqt_core::variable_integer::write_variable_integer;
-    use moqt_core::{moqt_client::MOQTClientStatus, MOQTClient};
-    use tokio::sync::mpsc;
+    use moqt_core::{
+        constants::UnderlayType, moqt_client::MOQTClientStatus,
+        variable_integer::write_variable_integer, MOQTClient,
+    };
+    use std::{collections::HashMap, sync::Arc};
+    use tokio::sync::{mpsc, Mutex};
 
     pub async fn packetize_buf_and_execute_control_message_handler(
         message_type_u8: u8,
@@ -391,13 +393,25 @@ pub(crate) mod test_helper_fn {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
+        // start object cache storage thread
+        let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
+        tokio::spawn(async move { object_cache_storage(&mut cache_rx).await });
+
+        let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
+
+        // Prepare open subscription sender
+        let open_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
         // Execute control_message_handler and get result
         control_message_handler(
             &mut buf,
             UnderlayType::WebTransport,
             &mut client,
+            open_subscription_txes,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
+            &mut object_cache_storage,
         )
         .await
     }
@@ -405,11 +419,8 @@ pub(crate) mod test_helper_fn {
 
 #[cfg(test)]
 mod success {
-    use crate::modules::control_message_handler::MessageProcessResult;
-    use moqt_core::control_message_type::ControlMessageType;
-    use moqt_core::moqt_client::MOQTClientStatus;
-
-    use crate::modules::control_message_handler::test_helper_fn;
+    use crate::modules::control_message_handler::{test_helper_fn, MessageProcessResult};
+    use moqt_core::{control_message_type::ControlMessageType, moqt_client::MOQTClientStatus};
 
     #[tokio::test]
     async fn client_setup() {
@@ -468,12 +479,11 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::constants::TerminationErrorCode;
-    use crate::modules::control_message_handler::MessageProcessResult;
-    use moqt_core::control_message_type::ControlMessageType;
-    use moqt_core::moqt_client::MOQTClientStatus;
-
-    use crate::modules::control_message_handler::test_helper_fn;
+    use crate::modules::control_message_handler::{test_helper_fn, MessageProcessResult};
+    use moqt_core::{
+        constants::TerminationErrorCode, control_message_type::ControlMessageType,
+        moqt_client::MOQTClientStatus,
+    };
 
     #[tokio::test]
     async fn client_setup_invalid_timing() {

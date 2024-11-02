@@ -8,6 +8,7 @@ init().then(async () => {
   let trackAlias
   let headerSend = false
   let objectId = 0n
+  let objectPayload
 
   const connectBtn = document.getElementById('connectBtn')
   connectBtn.addEventListener('click', async () => {
