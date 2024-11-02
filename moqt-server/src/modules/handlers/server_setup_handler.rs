@@ -1,5 +1,6 @@
 use crate::constants;
 use anyhow::{bail, Result};
+use moqt_core::messages::control_messages::setup_parameters::MaxSubscribeID;
 use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     constants::UnderlayType,
@@ -89,8 +90,12 @@ pub(crate) async fn setup_handler(
     // Create a setup parameter with role set to 3 and assign it.
     // Normally, the server should determine the role here, but for now, let's set it to 3.
     let role_parameter = SetupParameter::Role(Role::new(RoleCase::PubSub));
-    let server_setup_message =
-        ServerSetup::new(constants::MOQ_TRANSPORT_VERSION, vec![role_parameter]);
+    let max_subscribe_id_parameter =
+        SetupParameter::MaxSubscribeID(MaxSubscribeID::new(max_subscribe_id));
+    let server_setup_message = ServerSetup::new(
+        constants::MOQ_TRANSPORT_VERSION,
+        vec![role_parameter, max_subscribe_id_parameter],
+    );
     // State: Connected -> Setup
     client.update_status(MOQTClientStatus::SetUp);
 
