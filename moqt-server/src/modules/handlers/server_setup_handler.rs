@@ -37,7 +37,7 @@ pub(crate) async fn setup_handler(
         bail!("Supported version is not included");
     }
 
-    let mut max_subscribe_id: u64 = 0;
+    let mut max_subscribe_id: u64 = 10;
 
     for setup_parameter in &client_setup_message.setup_parameters {
         match setup_parameter {
