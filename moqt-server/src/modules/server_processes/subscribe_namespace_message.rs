@@ -13,7 +13,7 @@ use moqt_core::{
 
 pub(crate) async fn process_subscribe_namespace_message(
     payload_buf: &mut BytesMut,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     write_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,

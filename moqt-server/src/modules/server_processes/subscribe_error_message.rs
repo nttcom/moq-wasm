@@ -11,7 +11,7 @@ pub(crate) async fn process_subscribe_error_message(
     payload_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
 ) -> Result<()> {
     let subscribe_error_message = match SubscribeError::depacketize(payload_buf) {
         Ok(subscribe_error_message) => subscribe_error_message,

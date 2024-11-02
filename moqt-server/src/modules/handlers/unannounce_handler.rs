@@ -4,7 +4,7 @@ use moqt_core::{messages::control_messages::unannounce::UnAnnounce, MOQTClient};
 
 pub(crate) async fn unannounce_handler(
     unannounce_message: UnAnnounce,
-    _client: &mut MOQTClient, // TODO: Not implemented yet
+    _client: &MOQTClient, // TODO: Not implemented yet
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
 ) -> Result<()> {
     tracing::trace!("unannounce_handler start.");
