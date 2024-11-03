@@ -13,6 +13,7 @@ use crate::modules::{
 };
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
+use modules::object_datagram_handler::object_datagram_handler;
 pub use moqt_core::constants;
 use moqt_core::{
     constants::{StreamDirection, UnderlayType},
@@ -29,8 +30,8 @@ use moqt_core::{
             subscribe_ok::SubscribeOk,
         },
         data_streams::{
-            stream_header_subgroup::StreamHeaderSubgroup, stream_header_track::StreamHeaderTrack,
-            DataStreams,
+            object_datagram::ObjectDatagram, stream_header_subgroup::StreamHeaderSubgroup,
+            stream_header_track::StreamHeaderTrack, DataStreams,
         },
         moqt_payload::MOQTPayload,
     },
@@ -234,9 +235,13 @@ async fn handle_connection(
         .insert(stable_id, open_subscription_tx);
 
     let (close_connection_tx, mut close_connection_rx) = mpsc::channel::<(u64, String)>(32);
+    let (datagram_tx, mut datagram_rx) = mpsc::channel::<BytesMut>(1024);
 
     // TODO: FIXME: Need to store information between threads for QUIC-level reconnection support
     let mut is_control_stream_opened = false;
+
+    let mut object_cache_storage =
+        modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
 
     #[allow(unused_variables)]
     loop {
@@ -338,6 +343,28 @@ async fn handle_connection(
                 }.in_current_span());
 
             },
+            datagram = connection.receive_datagram() => {
+                let datagram = datagram?;
+                let datagram_payload = datagram.payload();
+                let mut read_buf = BytesMut::from(&datagram_payload[..]);
+
+                let mut pubsub_relation_manager =
+                    modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
+                        pubsub_relation_tx.clone(),
+                    );
+
+                let open_subscription_txes = open_subscription_txes.clone();
+                let client = Arc::clone(&client);
+
+                let daragram_result = object_datagram_handler(
+                    &mut read_buf,
+                    client,
+                    &mut pubsub_relation_manager,
+                    &mut object_cache_storage,
+                    open_subscription_txes
+                )
+                .await;
+            },
             // Waiting for a uni-directional send stream open request and relaying the message
             Some((subscribe_id, data_stream_type)) = open_subscription_rx.recv() => {
 
@@ -379,13 +406,40 @@ async fn handle_connection(
 
                     }
                     DataStreamType::ObjectDatagram => {
-                        // TODO: Open datagram thread
-                        unimplemented!();
+                        let session_span = tracing::info_span!("Session", stable_id);
+                        session_span.in_scope(|| {
+                            tracing::info!("Open UNI Datagram send thread for type: {:?}", data_stream_type);
+                        });
+
+                        let pubsub_relation_tx = pubsub_relation_tx.clone();
+                        let object_cache_tx = object_cache_tx.clone();
+
+                        let close_connection_tx = close_connection_tx.clone();
+                        let session_span_clone = session_span.clone();
+
+                        let datagram_tx = datagram_tx.clone();
+
+                        tokio::spawn(async move {
+
+                        match relaying_object_datagram(datagram_tx, stable_id, subscribe_id, data_stream_type, pubsub_relation_tx, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
+                        {
+                            Ok(_) => {}
+                            Err(e) => {
+                                tracing::error!("Failed to relay object datagram: {:?}", e);
+                            }
+                        }
+
+                        // Propagate the current span (Connection)
+                        }.in_current_span());
                     }
                 }
 
 
             },
+            Some(datagram_object_buf) = datagram_rx.recv() => {
+                let _ = connection.send_datagram(&datagram_object_buf);
+
+            }
             // TODO: Not implemented yet
             Some((_code, _reason)) = close_connection_rx.recv() => {
                 tracing::error!("Close connection received");
@@ -614,6 +668,226 @@ struct UniSendStream {
     stream_id: u64,
     subscribe_id: u64,
     send_stream: SendStream,
+}
+
+async fn relaying_object_datagram(
+    datagram_tx: Sender<BytesMut>,
+    downstream_session_id: usize,
+    downstream_subscribe_id: u64,
+    data_stream_type: DataStreamType,
+    pubsub_relation_tx: Sender<PubSubRelationCommand>,
+    close_connection_tx: Sender<(u64, String)>,
+    object_cache_tx: Sender<ObjectCacheStorageCommand>,
+) -> Result<()> {
+    let sleep_time = Duration::from_millis(10);
+
+    let pubsub_relation_manager =
+        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
+            pubsub_relation_tx.clone(),
+        );
+
+    let mut object_cache_storage =
+        modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
+
+    // Get the information of the original publisher who has the track being requested
+    let (upstream_session_id, upstream_subscribe_id) = pubsub_relation_manager
+        .get_related_publisher(downstream_session_id, downstream_subscribe_id)
+        .await?;
+    let downstream_subscription = pubsub_relation_manager
+        .get_downstream_subscription_by_ids(downstream_session_id, downstream_subscribe_id)
+        .await?
+        .unwrap();
+    let downstream_track_alias = downstream_subscription.get_track_alias();
+    let filter_type = downstream_subscription.get_filter_type();
+    let (start_group, start_object) = downstream_subscription.get_absolute_start();
+    let (end_group, end_object) = downstream_subscription.get_absolute_end();
+
+    // Validate the forwarding preference as Track
+    match pubsub_relation_manager
+        .get_upstream_forwarding_preference(upstream_session_id, upstream_subscribe_id)
+        .await?
+    {
+        Some(ForwardingPreference::Datagram) => {
+            if data_stream_type != DataStreamType::ObjectDatagram {
+                let msg = std::format!(
+                    "uni send datagram data stream type is wrong (expected Datagram, but got {:?})",
+                    data_stream_type
+                );
+                close_connection_tx
+                    .send((
+                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        msg.clone(),
+                    ))
+                    .await?;
+                bail!(msg)
+            }
+            pubsub_relation_manager
+                .set_downstream_forwarding_preference(
+                    downstream_session_id,
+                    downstream_subscribe_id,
+                    ForwardingPreference::Datagram,
+                )
+                .await?;
+        }
+        _ => {
+            let msg = "Invalid forwarding preference";
+            close_connection_tx
+                .send((
+                    u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64,
+                    msg.to_string(),
+                ))
+                .await?;
+            bail!(msg)
+        }
+    };
+
+    let mut object_cache_id: Option<usize> = None;
+
+    while object_cache_id.is_none() {
+        // Get the first object from the cache storage
+        let result = match filter_type {
+            FilterType::LatestGroup => {
+                object_cache_storage
+                    .get_latest_group(upstream_session_id, upstream_subscribe_id)
+                    .await
+            }
+            FilterType::LatestObject => {
+                object_cache_storage
+                    .get_latest_object(upstream_session_id, upstream_subscribe_id)
+                    .await
+            }
+            FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
+                object_cache_storage
+                    .get_absolute_object(
+                        upstream_session_id,
+                        upstream_subscribe_id,
+                        start_group.unwrap(),
+                        start_object.unwrap(),
+                    )
+                    .await
+            }
+        };
+
+        object_cache_id = match result {
+            // Send the object to the client if the first cache is exist as track
+            Ok(Some((id, CacheObject::Datagram(object)))) => {
+                let mut buf = BytesMut::new();
+                let object = ObjectDatagram::new(
+                    downstream_subscribe_id,
+                    downstream_track_alias,
+                    object.group_id(),
+                    object.object_id(),
+                    object.publisher_priority(),
+                    object.object_status(),
+                    object.object_payload(),
+                )
+                .unwrap();
+
+                object.packetize(&mut buf);
+
+                let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
+                message_buf.extend(write_variable_integer(
+                    u8::from(DataStreamType::ObjectDatagram) as u64,
+                ));
+
+                message_buf.extend(buf);
+
+                if let Err(e) = datagram_tx.send(message_buf).await {
+                    tracing::warn!("Failed to send datagram: {:?}", e);
+                    bail!(e);
+                }
+
+                Some(id)
+            }
+            // Will be retried if the first cache is not exist
+            Ok(None) => {
+                thread::sleep(sleep_time);
+                object_cache_id
+            }
+            _ => {
+                let msg = "cache is not exist";
+                close_connection_tx
+                    .send((
+                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        msg.to_string(),
+                    ))
+                    .await?;
+                break;
+            }
+        };
+    }
+
+    loop {
+        // Get the next object from the cache storage
+        object_cache_id = match object_cache_storage
+            .get_next_object(
+                upstream_session_id,
+                upstream_subscribe_id,
+                object_cache_id.unwrap(),
+            )
+            .await
+        {
+            // Send the object to the client if the next cache is exist as track
+            Ok(Some((id, CacheObject::Datagram(object)))) => {
+                let mut buf = BytesMut::new();
+                let object = ObjectDatagram::new(
+                    downstream_subscribe_id,
+                    downstream_track_alias,
+                    object.group_id(),
+                    object.object_id(),
+                    object.publisher_priority(),
+                    object.object_status(),
+                    object.object_payload(),
+                )
+                .unwrap();
+
+                object.packetize(&mut buf);
+
+                let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
+                message_buf.extend(write_variable_integer(
+                    u8::from(DataStreamType::ObjectDatagram) as u64,
+                ));
+
+                message_buf.extend(buf);
+
+                if let Err(e) = datagram_tx.send(message_buf).await {
+                    tracing::warn!("Failed to send datagram: {:?}", e);
+                    bail!(e);
+                }
+
+                // Judge whether ids are reached to end of the range if the filter type is AbsoluteRange
+                if filter_type == FilterType::AbsoluteRange {
+                    let is_end = (object.group_id() == end_group.unwrap()
+                        && object.object_id() == end_object.unwrap())
+                        || (object.group_id() > end_group.unwrap());
+
+                    if is_end {
+                        break;
+                    }
+                }
+
+                Some(id)
+            }
+
+            // Will be retried if the next cache is not exist
+            Ok(None) => {
+                thread::sleep(sleep_time);
+                object_cache_id
+            }
+            _ => {
+                let msg = "cache is not exist";
+                close_connection_tx
+                    .send((
+                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        msg.to_string(),
+                    ))
+                    .await?;
+                break;
+            }
+        };
+    }
+
+    Ok(())
 }
 
 async fn relaying_object_stream(
