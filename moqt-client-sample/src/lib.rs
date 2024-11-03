@@ -4,6 +4,7 @@ mod utils;
 use anyhow::Result;
 #[cfg(web_sys_unstable_apis)]
 use bytes::{Buf, BufMut, BytesMut};
+
 #[cfg(web_sys_unstable_apis)]
 use moqt_core::{
     control_message_type::ControlMessageType,
@@ -507,7 +508,11 @@ impl MOQTClient {
                 .get_publishing_subscription(subscribe_id)
                 .unwrap();
 
-            let group_order = subscription.get_group_order();
+            let group_order = match subscription.get_group_order() {
+                GroupOrder::Original => GroupOrder::Ascending, // TODO: it should be select from the user
+                GroupOrder::Ascending => GroupOrder::Ascending,
+                GroupOrder::Descending => GroupOrder::Descending,
+            };
 
             let version_specific_parameters = vec![auth_info];
             let subscribe_ok_message = SubscribeOk::new(
