@@ -88,6 +88,8 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     Some(cache_header) => {
                         resp.send(Ok(cache_header)).unwrap();
                     }
+
+                    // TODO: It is not error
                     None => {
                         resp.send(Err(anyhow::anyhow!("cache header not found")))
                             .unwrap();

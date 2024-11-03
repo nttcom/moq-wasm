@@ -57,6 +57,10 @@ impl ObjectDatagram {
         })
     }
 
+    pub fn subscribe_id(&self) -> u64 {
+        self.subscribe_id
+    }
+
     pub fn track_alias(&self) -> u64 {
         self.track_alias
     }
@@ -67,6 +71,18 @@ impl ObjectDatagram {
 
     pub fn object_id(&self) -> u64 {
         self.object_id
+    }
+
+    pub fn publisher_priority(&self) -> u8 {
+        self.publisher_priority
+    }
+
+    pub fn object_status(&self) -> Option<ObjectStatus> {
+        self.object_status
+    }
+
+    pub fn object_payload(&self) -> Vec<u8> {
+        self.object_payload.clone()
     }
 }
 

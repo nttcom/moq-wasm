@@ -316,14 +316,9 @@ pub async fn control_message_handler(
 
             return MessageProcessResult::Success(BytesMut::with_capacity(0));
         }
-        ControlMessageType::GoAway => {
-            todo!("GoAway");
-        }
         unknown => {
-            return MessageProcessResult::Failure(
-                TerminationErrorCode::ProtocolViolation,
-                format!("Unknown message type: {:?}", unknown),
-            );
+            tracing::warn!("Unsupported message type: {:?}", unknown);
+            return MessageProcessResult::SuccessWithoutResponse;
         }
     };
 
