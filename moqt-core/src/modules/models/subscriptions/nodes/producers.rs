@@ -81,6 +81,16 @@ impl SubscriptionNodeRegistry for Producer {
             .cloned())
     }
 
+    fn get_full_track_name(&self, track_alias: u64) -> Result<(Vec<String>, String)> {
+        let subscription = self
+            .subscriptions
+            .values()
+            .find(|subscription| subscription.get_track_alias() == track_alias)
+            .unwrap();
+
+        Ok(subscription.get_track_namespace_and_name())
+    }
+
     fn get_subscribe_id(
         &self,
         track_namespace: TrackNamespace,

@@ -262,6 +262,26 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             Err(err) => bail!(err),
         }
     }
+    async fn get_upstream_full_track_name(
+        &self,
+        upstream_session_id: usize,
+        track_alias: u64,
+    ) -> Result<(Vec<String>, String)> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<(Vec<String>, String)>>();
+        let cmd = PubSubRelationCommand::GetUpstreamFullTrackName {
+            upstream_session_id,
+            track_alias,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(full_track_name) => Ok(full_track_name),
+            Err(err) => bail!(err),
+        }
+    }
     async fn get_upstream_subscribe_id(
         &self,
         track_namespace: Vec<String>,

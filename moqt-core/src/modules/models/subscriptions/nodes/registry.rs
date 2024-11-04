@@ -29,6 +29,7 @@ pub trait SubscriptionNodeRegistry {
         track_namespace: TrackNamespace,
         track_name: String,
     ) -> Result<Option<Subscription>>;
+    fn get_full_track_name(&self, track_alias: u64) -> Result<(Vec<String>, String)>;
     fn get_subscribe_id(
         &self,
         track_namespace: TrackNamespace,

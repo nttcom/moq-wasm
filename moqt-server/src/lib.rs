@@ -24,9 +24,9 @@ use moqt_core::{
             announce::Announce,
             announce_ok::AnnounceOk,
             subscribe::{FilterType, Subscribe},
+            subscribe_announces::SubscribeAnnounces,
+            subscribe_announces_ok::SubscribeAnnouncesOk,
             subscribe_error::SubscribeError,
-            subscribe_namespace::SubscribeNamespace,
-            subscribe_namespace_ok::SubscribeNamespaceOk,
             subscribe_ok::SubscribeOk,
         },
         data_streams::{
@@ -83,7 +83,7 @@ impl MOQTConfig {
     // TODO: use getter/setter
     pub fn new() -> MOQTConfig {
         MOQTConfig {
-            port: 4433,
+            port: 4434,
             cert_path: "./cert.pem".to_string(),
             key_path: "./key.pem".to_string(),
             keep_alive_interval_sec: 3,
@@ -376,7 +376,7 @@ async fn handle_connection(
                 }
 
                 match data_stream_type {
-                    DataStreamType::StreamHeaderTrack | DataStreamType::StreamHeaderSubgroup => {
+                    DataStreamType::StreamHeaderTrack | DataStreamType::StreamHeaderSubgroup | DataStreamType::FetchHeader=> {
                         let session_span = tracing::info_span!("Session", stable_id);
                         session_span.in_scope(|| {
                             tracing::info!("Open UNI Send stream for stream type: {:?}", data_stream_type);
@@ -773,7 +773,6 @@ async fn relaying_object_datagram(
             Ok(Some((id, CacheObject::Datagram(object)))) => {
                 let mut buf = BytesMut::new();
                 let object = ObjectDatagram::new(
-                    downstream_subscribe_id,
                     downstream_track_alias,
                     object.group_id(),
                     object.object_id(),
@@ -831,7 +830,6 @@ async fn relaying_object_datagram(
             Ok(Some((id, CacheObject::Datagram(object)))) => {
                 let mut buf = BytesMut::new();
                 let object = ObjectDatagram::new(
-                    downstream_subscribe_id,
                     downstream_track_alias,
                     object.group_id(),
                     object.object_id(),
@@ -1019,7 +1017,6 @@ async fn relaying_object_stream(
         CacheHeader::Subgroup(header) => {
             let mut buf = BytesMut::new();
             let header = StreamHeaderSubgroup::new(
-                downstream_subscribe_id,
                 downstream_track_alias,
                 header.group_id(),
                 header.subgroup_id(),
@@ -1358,27 +1355,27 @@ async fn wait_and_relay_control_message(
             tracing::info!("Relayed Message Type: {:?}", ControlMessageType::AnnounceOk);
         } else if message
             .as_any()
-            .downcast_ref::<SubscribeNamespace>()
+            .downcast_ref::<SubscribeAnnounces>()
             .is_some()
         {
             message_buf.extend(write_variable_integer(u8::from(
-                ControlMessageType::SubscribeNamespace,
+                ControlMessageType::SubscribeAnnounces,
             ) as u64));
             tracing::info!(
                 "Relayed Message Type: {:?}",
-                ControlMessageType::SubscribeNamespace
+                ControlMessageType::SubscribeAnnounces
             );
         } else if message
             .as_any()
-            .downcast_ref::<SubscribeNamespaceOk>()
+            .downcast_ref::<SubscribeAnnouncesOk>()
             .is_some()
         {
             message_buf.extend(write_variable_integer(u8::from(
-                ControlMessageType::SubscribeNamespaceOk,
+                ControlMessageType::SubscribeAnnouncesOk,
             ) as u64));
             tracing::info!(
                 "Relayed Message Type: {:?}",
-                ControlMessageType::SubscribeNamespaceOk
+                ControlMessageType::SubscribeAnnouncesOk
             );
         } else {
             tracing::warn!("Unsupported message type for bi-directional stream");

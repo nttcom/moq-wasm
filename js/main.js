@@ -7,6 +7,8 @@ init().then(async () => {
   let headerSend = false
   let objectId = 0n
   let mutableGroupId = 0n
+  let receivedSubscribeId
+  let receivedTrackAlias
 
   const connectBtn = document.getElementById('connectBtn')
   connectBtn.addEventListener('click', async () => {
@@ -51,8 +53,8 @@ init().then(async () => {
     client.onSubscribe(async (subscribeMessage, isSuccess, code) => {
       console.log({ subscribeMessage })
 
-      let receivedSubscribeId = BigInt(subscribeMessage.subscribe_id)
-      let receivedTrackAlias = BigInt(subscribeMessage.track_alias)
+      receivedSubscribeId = BigInt(subscribeMessage.subscribe_id)
+      receivedTrackAlias = BigInt(subscribeMessage.track_alias)
       console.log('subscribeId', receivedSubscribeId, 'trackAlias', receivedTrackAlias)
 
       if (isSuccess) {
@@ -70,7 +72,7 @@ init().then(async () => {
       console.log({ subscribeResponse })
     })
 
-    client.onSubscribeNamespaceResponse(async (subscribeNamespaceResponse) => {
+    client.onSubscribeAnnouncesResponse(async (subscribeNamespaceResponse) => {
       console.log({ subscribeNamespaceResponse })
     })
 
@@ -119,13 +121,13 @@ init().then(async () => {
       await client.sendAnnounceMessage(trackNamespace, authInfo)
     })
 
-    const sendSubscribeNamespaceBtn = document.getElementById('sendSubscribeNamespaceBtn')
-    sendSubscribeNamespaceBtn.addEventListener('click', async () => {
-      console.log('send subscribe namespace btn clicked')
+    const sendSubscribeAnnouncesBtn = document.getElementById('sendSubscribeAnnouncesBtn')
+    sendSubscribeAnnouncesBtn.addEventListener('click', async () => {
+      console.log('send subscribe announces btn clicked')
       const trackNamespacePrefix = form['track-namespace-prefix'].value.split('/')
       const authInfo = form['auth-info'].value
 
-      await client.sendSubscribeNamespaceMessage(trackNamespacePrefix, authInfo)
+      await client.sendSubscribeAnnouncesMessage(trackNamespacePrefix, authInfo)
     })
 
     const sendSubscribeBtn = document.getElementById('sendSubscribeBtn')
@@ -164,8 +166,6 @@ init().then(async () => {
     const sendDatagramObjectBtn = document.getElementById('sendDatagramObjectBtn')
     sendDatagramObjectBtn.addEventListener('click', async () => {
       console.log('send datagram object btn clicked')
-      const subscribeId = form['object-subscribe-id'].value
-      const trackAlias = form['object-track-alias'].value
       const publisherPriority = form['publisher-priority'].value
       const objectPayloadString = form['object-payload'].value
 
@@ -173,8 +173,7 @@ init().then(async () => {
       const objectPayloadArray = new TextEncoder().encode(objectPayloadString)
 
       await client.sendObjectDatagram(
-        BigInt(subscribeId),
-        BigInt(trackAlias),
+        BigInt(receivedTrackAlias),
         mutableGroupId,
         objectId++,
         publisherPriority,
@@ -186,8 +185,6 @@ init().then(async () => {
     const sendTrackObjectBtn = document.getElementById('sendTrackObjectBtn')
     sendTrackObjectBtn.addEventListener('click', async () => {
       console.log('send track stream object btn clicked')
-      const subscribeId = form['object-subscribe-id'].value
-      const trackAlias = form['object-track-alias'].value
       const publisherPriority = form['publisher-priority'].value
       const objectPayloadString = form['object-payload'].value
 
@@ -196,21 +193,23 @@ init().then(async () => {
 
       // send header if it is the first time
       if (!headerSend) {
-        await client.sendStreamHeaderTrackMessage(BigInt(subscribeId), BigInt(trackAlias), publisherPriority)
+        await client.sendStreamHeaderTrackMessage(
+          BigInt(receivedSubscribeId),
+          BigInt(receivedTrackAlias),
+          publisherPriority
+        )
         headerSend = true
       }
 
-      await client.sendObjectStreamTrack(BigInt(subscribeId), mutableGroupId, objectId++, objectPayloadArray)
+      await client.sendObjectStreamTrack(BigInt(receivedSubscribeId), mutableGroupId, objectId++, objectPayloadArray)
       objectIdElement.textContent = objectId
     })
 
     const sendSubgroupObjectBtn = document.getElementById('sendSubgroupObjectBtn')
     sendSubgroupObjectBtn.addEventListener('click', async () => {
       console.log('send subgroup stream object btn clicked')
-      const subscribeId = form['object-subscribe-id'].value
       const groupId = form['subgroup-group-id'].value
       const subgroupId = form['subgroup-id'].value
-      const trackAlias = form['object-track-alias'].value
       const publisherPriority = form['publisher-priority'].value
       const objectPayloadString = form['object-payload'].value
 
@@ -220,8 +219,8 @@ init().then(async () => {
       // send header if it is the first time
       if (!headerSend) {
         await client.sendStreamHeaderSubgroupMessage(
-          BigInt(subscribeId),
-          BigInt(trackAlias),
+          BigInt(receivedSubscribeId),
+          BigInt(receivedTrackAlias),
           BigInt(groupId),
           BigInt(subgroupId),
           publisherPriority
@@ -229,7 +228,7 @@ init().then(async () => {
         headerSend = true
       }
 
-      await client.sendObjectStreamSubgroup(subscribeId, objectId++, objectPayloadArray)
+      await client.sendObjectStreamSubgroup(BigInt(receivedSubscribeId), objectId++, objectPayloadArray)
       objectIdElement.textContent = objectId
     })
 

@@ -10,9 +10,9 @@ use std::any::Any;
 use super::DataStreams;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ObjectDatagram {
-    track_alias: u64,
+pub struct ObjectStreamFetch {
     group_id: u64,
+    subgroup_id: u64,
     object_id: u64,
     publisher_priority: u8,
     object_payload_length: u64,
@@ -20,10 +20,10 @@ pub struct ObjectDatagram {
     object_payload: Vec<u8>,
 }
 
-impl ObjectDatagram {
+impl ObjectStreamFetch {
     pub fn new(
-        track_alias: u64,
         group_id: u64,
+        subgroup_id: u64,
         object_id: u64,
         publisher_priority: u8,
         object_status: Option<ObjectStatus>,
@@ -43,19 +43,15 @@ impl ObjectDatagram {
             }
         }
 
-        Ok(ObjectDatagram {
-            track_alias,
+        Ok(ObjectStreamFetch {
             group_id,
+            subgroup_id,
             object_id,
             publisher_priority,
             object_payload_length,
             object_status,
             object_payload,
         })
-    }
-
-    pub fn track_alias(&self) -> u64 {
-        self.track_alias
     }
 
     pub fn group_id(&self) -> u64 {
@@ -65,27 +61,15 @@ impl ObjectDatagram {
     pub fn object_id(&self) -> u64 {
         self.object_id
     }
-
-    pub fn publisher_priority(&self) -> u8 {
-        self.publisher_priority
-    }
-
-    pub fn object_status(&self) -> Option<ObjectStatus> {
-        self.object_status
-    }
-
-    pub fn object_payload(&self) -> Vec<u8> {
-        self.object_payload.clone()
-    }
 }
 
-impl DataStreams for ObjectDatagram {
+impl DataStreams for ObjectStreamFetch {
     fn depacketize(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<Self>
     where
         Self: Sized,
     {
-        let track_alias = read_variable_integer(read_cur).context("track alias")?;
         let group_id = read_variable_integer(read_cur).context("group id")?;
+        let subgroup_id = read_variable_integer(read_cur).context("subgroup id")?;
         let object_id = read_variable_integer(read_cur).context("object id")?;
         let publisher_priority =
             read_fixed_length_bytes(read_cur, 1).context("publisher priority")?[0];
@@ -93,7 +77,6 @@ impl DataStreams for ObjectDatagram {
             read_variable_integer(read_cur).context("object payload length")?;
 
         // If the length of the remaining buf is larger than object_payload_length, object_status exists.
-        // The Object Status field is only sent if the Object Payload Length is zero.
         let object_status = if object_payload_length == 0 {
             let object_status_u64 = read_variable_integer(read_cur)?;
             let object_status =
@@ -118,11 +101,11 @@ impl DataStreams for ObjectDatagram {
             vec![]
         };
 
-        tracing::trace!("Depacketized Object Datagram message.");
+        tracing::trace!("Depacketized Object Stream Fetch message.");
 
-        Ok(ObjectDatagram {
-            track_alias,
+        Ok(ObjectStreamFetch {
             group_id,
+            subgroup_id,
             object_id,
             publisher_priority,
             object_payload_length,
@@ -132,8 +115,8 @@ impl DataStreams for ObjectDatagram {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        buf.extend(write_variable_integer(self.track_alias));
         buf.extend(write_variable_integer(self.group_id));
+        buf.extend(write_variable_integer(self.subgroup_id));
         buf.extend(write_variable_integer(self.object_id));
         buf.extend(self.publisher_priority.to_be_bytes());
         buf.extend(write_variable_integer(self.object_payload_length));
@@ -144,9 +127,9 @@ impl DataStreams for ObjectDatagram {
         }
         buf.extend(&self.object_payload);
 
-        tracing::trace!("Packetized Object Datagram message.");
+        tracing::trace!("Packetized Object Stream Fetch message.");
     }
-    /// Method to enable downcasting from MOQTPayload to ObjectDatagram
+    /// Method to enable downcasting from MOQTPayload to ObjectStreamFetch
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -154,26 +137,25 @@ impl DataStreams for ObjectDatagram {
 
 #[cfg(test)]
 mod success {
+    use super::DataStreams;
+    use crate::messages::data_streams::{
+        object_status::ObjectStatus, object_stream_fetch::ObjectStreamFetch,
+    };
+    use bytes::BytesMut;
     use std::io::Cursor;
 
-    use crate::messages::data_streams::{
-        object_datagram::ObjectDatagram, object_status::ObjectStatus,
-    };
-    use crate::modules::messages::data_streams::DataStreams;
-    use bytes::BytesMut;
-
     #[test]
-    fn packetize_object_datagram_normal() {
-        let track_alias = 1;
-        let group_id = 2;
-        let object_id = 3;
-        let publisher_priority = 4;
+    fn packetize_object_stream_track_normal() {
+        let group_id = 0;
+        let subgroup_id = 1;
+        let object_id = 1;
+        let publisher_priority = 2;
         let object_status = None;
         let object_payload = vec![0, 1, 2];
 
-        let object_datagram = ObjectDatagram::new(
-            track_alias,
+        let object_stream_track = ObjectStreamFetch::new(
             group_id,
+            subgroup_id,
             object_id,
             publisher_priority,
             object_status,
@@ -182,13 +164,13 @@ mod success {
         .unwrap();
 
         let mut buf = bytes::BytesMut::new();
-        object_datagram.packetize(&mut buf);
+        object_stream_track.packetize(&mut buf);
 
         let expected_bytes_array = [
-            1, // Track Alias (i)
-            2, // Group ID (i)
-            3, // Object ID (i)
-            4, // Subscriber Priority (8)
+            0, // Group ID (i)
+            1, // Subgroup ID (i)
+            1, // Object ID (i)
+            2, // Publisher Priority (8)
             3, // Object Payload Length (i)
             0, 1, 2, // Object Payload (..)
         ];
@@ -197,17 +179,17 @@ mod success {
     }
 
     #[test]
-    fn packetize_object_datagram_normal_and_empty_payload() {
-        let track_alias = 1;
-        let group_id = 2;
-        let object_id = 3;
-        let publisher_priority = 4;
+    fn packetize_object_stream_track_normal_and_empty_payload() {
+        let group_id = 0;
+        let subgroup_id = 1;
+        let object_id = 1;
+        let publisher_priority = 2;
         let object_status = Some(ObjectStatus::Normal);
         let object_payload = vec![];
 
-        let object_datagram = ObjectDatagram::new(
-            track_alias,
+        let object_stream_track = ObjectStreamFetch::new(
             group_id,
+            subgroup_id,
             object_id,
             publisher_priority,
             object_status,
@@ -216,13 +198,13 @@ mod success {
         .unwrap();
 
         let mut buf = bytes::BytesMut::new();
-        object_datagram.packetize(&mut buf);
+        object_stream_track.packetize(&mut buf);
 
         let expected_bytes_array = [
-            1, // Track Alias (i)
-            2, // Group ID (i)
-            3, // Object ID (i)
-            4, // Subscriber Priority (8)
+            0, // Group ID (i)
+            1, // Subgroup ID (i)
+            1, // Object ID (i)
+            2, // Publisher Priority (8)
             0, // Object Payload Length (i)
             0, // Object Status (i)
         ];
@@ -231,17 +213,17 @@ mod success {
     }
 
     #[test]
-    fn packetize_object_datagram_not_normal() {
-        let track_alias = 1;
-        let group_id = 2;
-        let object_id = 3;
-        let publisher_priority = 4;
+    fn packetize_object_stream_track_not_normal() {
+        let group_id = 0;
+        let subgroup_id = 1;
+        let object_id = 1;
+        let publisher_priority = 2;
         let object_status = Some(ObjectStatus::EndOfGroup);
         let object_payload = vec![];
 
-        let object_datagram = ObjectDatagram::new(
-            track_alias,
+        let object_stream_track = ObjectStreamFetch::new(
             group_id,
+            subgroup_id,
             object_id,
             publisher_priority,
             object_status,
@@ -250,13 +232,13 @@ mod success {
         .unwrap();
 
         let mut buf = bytes::BytesMut::new();
-        object_datagram.packetize(&mut buf);
+        object_stream_track.packetize(&mut buf);
 
         let expected_bytes_array = [
-            1, // Track Alias (i)
-            2, // Group ID (i)
-            3, // Object ID (i)
-            4, // Subscriber Priority (8)
+            0, // Group ID (i)
+            1, // Subgroup ID (i)
+            1, // Object ID (i)
+            2, // Publisher Priority (8)
             0, // Object Payload Length (i)
             3, // Object Status (i)
         ];
@@ -265,30 +247,31 @@ mod success {
     }
 
     #[test]
-    fn depacketize_object_datagram_normal() {
+    fn depacketize_object_stream_track_normal() {
         let bytes_array = [
-            1, // Track Alias (i)
-            2, // Group ID (i)
-            3, // Object ID (i)
-            4, // Subscriber Priority (8)
+            0, // Group ID (i)
+            1, // Subgroup ID (i)
+            1, // Object ID (i)
+            2, // Publisher Priority (8)
             3, // Object Payload Length (i)
             0, 1, 2, // Object Payload (..)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
         let mut read_cur = Cursor::new(&buf[..]);
-        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur).unwrap();
+        let depacketized_object_stream_track =
+            ObjectStreamFetch::depacketize(&mut read_cur).unwrap();
 
-        let track_alias = 1;
-        let group_id = 2;
-        let object_id = 3;
-        let publisher_priority = 4;
+        let group_id = 0;
+        let subgroup_id = 1;
+        let object_id = 1;
+        let publisher_priority = 2;
         let object_status = None;
         let object_payload = vec![0, 1, 2];
 
-        let expected_object_datagram = ObjectDatagram::new(
-            track_alias,
+        let expected_object_stream_track = ObjectStreamFetch::new(
             group_id,
+            subgroup_id,
             object_id,
             publisher_priority,
             object_status,
@@ -296,34 +279,38 @@ mod success {
         )
         .unwrap();
 
-        assert_eq!(depacketized_object_datagram, expected_object_datagram);
+        assert_eq!(
+            depacketized_object_stream_track,
+            expected_object_stream_track
+        );
     }
 
     #[test]
-    fn depacketize_object_datagram_normal_and_empty_payload() {
+    fn depacketize_object_stream_track_normal_and_empty_payload() {
         let bytes_array = [
-            1, // Track Alias (i)
-            2, // Group ID (i)
-            3, // Object ID (i)
-            4, // Subscriber Priority (8)
+            0, // Group ID (i)
+            1, // Subgroup ID (i)
+            1, // Object ID (i)
+            2, // Publisher Priority (8)
             0, // Object Payload Length (i)
             0, // Object Status (i)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
         let mut read_cur = Cursor::new(&buf[..]);
-        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur).unwrap();
+        let depacketized_object_stream_track =
+            ObjectStreamFetch::depacketize(&mut read_cur).unwrap();
 
-        let track_alias = 1;
-        let group_id = 2;
-        let object_id = 3;
-        let publisher_priority = 4;
+        let group_id = 0;
+        let subgroup_id = 1;
+        let object_id = 1;
+        let publisher_priority = 2;
         let object_status = Some(ObjectStatus::Normal);
         let object_payload = vec![];
 
-        let expected_object_datagram = ObjectDatagram::new(
-            track_alias,
+        let expected_object_stream_track = ObjectStreamFetch::new(
             group_id,
+            subgroup_id,
             object_id,
             publisher_priority,
             object_status,
@@ -331,34 +318,38 @@ mod success {
         )
         .unwrap();
 
-        assert_eq!(depacketized_object_datagram, expected_object_datagram);
+        assert_eq!(
+            depacketized_object_stream_track,
+            expected_object_stream_track
+        );
     }
 
     #[test]
-    fn depacketize_object_datagram_not_normal() {
+    fn depacketize_object_stream_track_not_normal() {
         let bytes_array = [
-            1, // Track Alias (i)
-            2, // Group ID (i)
-            3, // Object ID (i)
-            4, // Subscriber Priority (8)
+            0, // Group ID (i)
+            1, // Subgroup ID (i)
+            1, // Object ID (i)
+            2, // Publisher Priority (8)
             0, // Object Payload Length (i)
             1, // Object Status (i)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
         let mut read_cur = Cursor::new(&buf[..]);
-        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur).unwrap();
+        let depacketized_object_stream_track =
+            ObjectStreamFetch::depacketize(&mut read_cur).unwrap();
 
-        let track_alias = 1;
-        let group_id = 2;
-        let object_id = 3;
-        let publisher_priority = 4;
+        let group_id = 0;
+        let subgroup_id = 1;
+        let object_id = 1;
+        let publisher_priority = 2;
         let object_status = Some(ObjectStatus::DoesNotExist);
         let object_payload = vec![];
 
-        let expected_object_datagram = ObjectDatagram::new(
-            track_alias,
+        let expected_object_stream_track = ObjectStreamFetch::new(
             group_id,
+            subgroup_id,
             object_id,
             publisher_priority,
             object_status,
@@ -366,53 +357,56 @@ mod success {
         )
         .unwrap();
 
-        assert_eq!(depacketized_object_datagram, expected_object_datagram);
+        assert_eq!(
+            depacketized_object_stream_track,
+            expected_object_stream_track
+        );
     }
 }
 
 #[cfg(test)]
 mod failure {
     use super::DataStreams;
-    use crate::messages::data_streams::object_datagram::{ObjectDatagram, ObjectStatus};
+    use crate::messages::data_streams::object_stream_fetch::{ObjectStatus, ObjectStreamFetch};
     use bytes::BytesMut;
     use std::io::Cursor;
 
     #[test]
-    fn packetize_object_datagram_not_normal_and_not_empty_payload() {
-        let track_alias = 1;
-        let group_id = 2;
-        let object_id = 3;
-        let publisher_priority = 4;
+    fn packetize_object_stream_track_not_normal_and_not_empty_payload() {
+        let group_id = 0;
+        let subgroup_id = 1;
+        let object_id = 1;
+        let publisher_priority = 2;
         let object_status = Some(ObjectStatus::EndOfTrackAndGroup);
         let object_payload = vec![0, 1, 2];
 
-        let object_datagram = ObjectDatagram::new(
-            track_alias,
+        let object_stream_track = ObjectStreamFetch::new(
             group_id,
+            subgroup_id,
             object_id,
             publisher_priority,
             object_status,
             object_payload,
         );
 
-        assert!(object_datagram.is_err());
+        assert!(object_stream_track.is_err());
     }
 
     #[test]
-    fn depacketize_object_datagram_wrong_object_status() {
+    fn depacketize_object_stream_track_wrong_object_status() {
         let bytes_array = [
-            1, // Track Alias (i)
-            2, // Group ID (i)
-            3, // Object ID (i)
-            4, // Subscriber Priority (8)
+            0, // Group ID (i)
+            1, // Subgroup ID (i)
+            1, // Object ID (i)
+            2, // Publisher Priority (8)
             0, // Object Payload Length (i)
             2, // Object Status (i)
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
         let mut read_cur = Cursor::new(&buf[..]);
-        let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur);
+        let depacketized_object_stream_track = ObjectStreamFetch::depacketize(&mut read_cur);
 
-        assert!(depacketized_object_datagram.is_err());
+        assert!(depacketized_object_stream_track.is_err());
     }
 }

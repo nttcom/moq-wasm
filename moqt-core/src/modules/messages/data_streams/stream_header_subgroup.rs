@@ -9,7 +9,6 @@ use std::any::Any;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct StreamHeaderSubgroup {
-    subscribe_id: u64,
     track_alias: u64,
     group_id: u64,
     subgroup_id: u64,
@@ -18,23 +17,17 @@ pub struct StreamHeaderSubgroup {
 
 impl StreamHeaderSubgroup {
     pub fn new(
-        subscribe_id: u64,
         track_alias: u64,
         group_id: u64,
         subgroup_id: u64,
         publisher_priority: u8,
     ) -> Result<Self> {
         Ok(StreamHeaderSubgroup {
-            subscribe_id,
             track_alias,
             group_id,
             subgroup_id,
             publisher_priority,
         })
-    }
-
-    pub fn subscribe_id(&self) -> u64 {
-        self.subscribe_id
     }
 
     pub fn track_alias(&self) -> u64 {
@@ -59,7 +52,6 @@ impl DataStreams for StreamHeaderSubgroup {
     where
         Self: Sized,
     {
-        let subscribe_id = read_variable_integer(read_cur).context("subscribe id")?;
         let track_alias = read_variable_integer(read_cur).context("track alias")?;
         let group_id = read_variable_integer(read_cur).context("group id")?;
         let subgroup_id = read_variable_integer(read_cur).context("subgroup id")?;
@@ -69,7 +61,6 @@ impl DataStreams for StreamHeaderSubgroup {
         tracing::trace!("Depacketized Stream Header Track message.");
 
         Ok(StreamHeaderSubgroup {
-            subscribe_id,
             track_alias,
             group_id,
             subgroup_id,
@@ -78,7 +69,6 @@ impl DataStreams for StreamHeaderSubgroup {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        buf.extend(write_variable_integer(self.subscribe_id));
         buf.extend(write_variable_integer(self.track_alias));
         buf.extend(write_variable_integer(self.group_id));
         buf.extend(write_variable_integer(self.subgroup_id));
@@ -101,26 +91,19 @@ mod success {
 
     #[test]
     fn packetize_stream_header_subgroup() {
-        let subscribe_id = 0;
         let track_alias = 1;
         let group_id = 2;
         let subgroup_id = 3;
         let publisher_priority = 4;
 
-        let stream_header_subgroup = StreamHeaderSubgroup::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let stream_header_subgroup =
+            StreamHeaderSubgroup::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
 
         let mut buf = bytes::BytesMut::new();
         stream_header_subgroup.packetize(&mut buf);
 
         let expected_bytes_array = [
-            0, // Subscribe ID (i)
             1, // Track Alias (i)
             2, // Group ID (i)
             3, // Subgroup ID (i)
@@ -133,7 +116,6 @@ mod success {
     #[test]
     fn depacketize_stream_header_subgroup() {
         let bytes_array = [
-            0, // Subscribe ID (i)
             1, // Track Alias (i)
             2, // Group ID (i)
             3, // Subgroup ID (i)
@@ -145,20 +127,14 @@ mod success {
         let depacketized_stream_header_subgroup =
             StreamHeaderSubgroup::depacketize(&mut read_cur).unwrap();
 
-        let subscribe_id = 0;
         let track_alias = 1;
         let group_id = 2;
         let subgroup_id = 3;
         let publisher_priority = 4;
 
-        let expected_stream_header_subgroup = StreamHeaderSubgroup::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let expected_stream_header_subgroup =
+            StreamHeaderSubgroup::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
 
         assert_eq!(
             depacketized_stream_header_subgroup,

@@ -72,6 +72,11 @@ pub(crate) enum PubSubRelationCommand {
         #[allow(clippy::type_complexity)]
         resp: oneshot::Sender<Result<Option<Vec<(usize, u64)>>>>,
     },
+    GetUpstreamFullTrackName {
+        upstream_session_id: usize,
+        track_alias: u64,
+        resp: oneshot::Sender<Result<(Vec<String>, String)>>,
+    },
     GetUpstreamSubscribeId {
         track_namespace: Vec<String>,
         track_name: String,

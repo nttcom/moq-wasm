@@ -8,23 +8,39 @@ use serde::Serialize;
 use std::any::Any;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
-pub struct SubscribeNamespaceOk {
+pub struct SubscribeAnnouncesError {
     track_namespace_prefix: Vec<String>,
+    error_code: u64,
+    reason_phrase: String,
 }
 
-impl SubscribeNamespaceOk {
-    pub fn new(track_namespace_prefix: Vec<String>) -> Self {
-        SubscribeNamespaceOk {
+impl SubscribeAnnouncesError {
+    pub fn new(
+        track_namespace_prefix: Vec<String>,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Self {
+        SubscribeAnnouncesError {
             track_namespace_prefix,
+            error_code,
+            reason_phrase,
         }
     }
 
     pub fn track_namespace_prefix(&self) -> &Vec<String> {
         &self.track_namespace_prefix
     }
+
+    pub fn error_code(&self) -> u64 {
+        self.error_code
+    }
+
+    pub fn reason_phrase(&self) -> &String {
+        &self.reason_phrase
+    }
 }
 
-impl MOQTPayload for SubscribeNamespaceOk {
+impl MOQTPayload for SubscribeAnnouncesError {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let track_namespace_prefix_tuple_length =
             u8::try_from(read_variable_integer_from_buffer(buf)?)
@@ -35,11 +51,16 @@ impl MOQTPayload for SubscribeNamespaceOk {
                 .context("track namespace prefix")?;
             track_namespace_prefix_tuple.push(track_namespace_prefix);
         }
+        let error_code = read_variable_integer_from_buffer(buf).context("error code")?;
+        let reason_phrase =
+            String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
 
-        tracing::trace!("Depacketized subscribe namespace ok message.");
+        tracing::trace!("Depacketized subscribe announces error message.");
 
-        Ok(SubscribeNamespaceOk {
+        Ok(SubscribeAnnouncesError {
             track_namespace_prefix: track_namespace_prefix_tuple,
+            error_code,
+            reason_phrase,
         })
     }
 
@@ -55,10 +76,16 @@ impl MOQTPayload for SubscribeNamespaceOk {
                 &track_namespace_prefix.as_bytes().to_vec(),
             ));
         }
+        // Error Code
+        buf.extend(write_variable_integer(self.error_code));
+        //　Reason Phrase
+        buf.extend(write_variable_bytes(
+            &self.reason_phrase.as_bytes().to_vec(),
+        ));
 
-        tracing::trace!("Packetized subscribe namespace ok message.");
+        tracing::trace!("Packetized subscribe announces error message.");
     }
-    /// Method to enable downcasting from MOQTPayload to SubscribeNamespaceOk
+    /// Method to enable downcasting from MOQTPayload to SubscribeAnnouncesError
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -67,15 +94,21 @@ impl MOQTPayload for SubscribeNamespaceOk {
 #[cfg(test)]
 mod success {
     use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::control_messages::subscribe_namespace_ok::SubscribeNamespaceOk;
+    use crate::modules::messages::control_messages::subscribe_announces_error::SubscribeAnnouncesError;
     use bytes::BytesMut;
 
     #[test]
     fn packetize() {
         let track_namespace_prefix = Vec::from(["test".to_string(), "test".to_string()]);
-        let subscribe_namespace_ok = SubscribeNamespaceOk::new(track_namespace_prefix.clone());
+        let error_code: u64 = 1;
+        let reason_phrase = "subscribe namespace overlap".to_string();
+        let subscribe_announces_error = SubscribeAnnouncesError::new(
+            track_namespace_prefix.clone(),
+            error_code,
+            reason_phrase.clone(),
+        );
         let mut buf = BytesMut::new();
-        subscribe_namespace_ok.packetize(&mut buf);
+        subscribe_announces_error.packetize(&mut buf);
 
         let expected_bytes_array = [
             2, // Track Namespace Prefix(tuple): Number of elements
@@ -83,6 +116,11 @@ mod success {
             116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
             4,   // Track Namespace Prefix(b): Length
             116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
+            1,   // Error Code (i)
+            27,  // Reason Phrase (b): length
+            115, 117, 98, 115, 99, 114, 105, 98, 101, 32, 110, 97, 109, 101, 115, 112, 97, 99, 101,
+            32, 111, 118, 101, 114, 108, 97,
+            112, // Reason Phrase (b): Value("subscribe namespace overlap")
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
@@ -95,14 +133,28 @@ mod success {
             116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
             4,   // Track Namespace Prefix(b): Length
             116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
+            1,   // Error Code (i)
+            27,  // Reason Phrase (b): length
+            115, 117, 98, 115, 99, 114, 105, 98, 101, 32, 110, 97, 109, 101, 115, 112, 97, 99, 101,
+            32, 111, 118, 101, 114, 108, 97,
+            112, // Reason Phrase (b): Value("subscribe namespace overlap")
         ];
         let mut buf = BytesMut::with_capacity(bytes_array.len());
         buf.extend_from_slice(&bytes_array);
-        let subscribe_namespace_ok = SubscribeNamespaceOk::depacketize(&mut buf).unwrap();
+        let subscribe_announces_error = SubscribeAnnouncesError::depacketize(&mut buf).unwrap();
 
         let track_namespace_prefix = Vec::from(["test".to_string(), "test".to_string()]);
-        let expected_subscribe_namespace_ok = SubscribeNamespaceOk::new(track_namespace_prefix);
+        let error_code: u64 = 1;
+        let reason_phrase = "subscribe namespace overlap".to_string();
+        let expected_subscribe_announces_error = SubscribeAnnouncesError::new(
+            track_namespace_prefix.clone(),
+            error_code,
+            reason_phrase.clone(),
+        );
 
-        assert_eq!(subscribe_namespace_ok, expected_subscribe_namespace_ok);
+        assert_eq!(
+            subscribe_announces_error,
+            expected_subscribe_announces_error
+        );
     }
 }

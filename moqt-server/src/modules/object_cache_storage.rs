@@ -982,14 +982,9 @@ mod success {
         let subgroup_id = 4;
         let publisher_priority = 5;
 
-        let stream_header_subgroup = StreamHeaderSubgroup::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let stream_header_subgroup =
+            StreamHeaderSubgroup::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
         let header = CacheHeader::Subgroup(stream_header_subgroup.clone());
 
         // start object cache storage thread
@@ -1029,7 +1024,6 @@ mod success {
         let duration = 1000;
         let cache_object = CacheObject::Datagram(
             ObjectDatagram::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -1082,7 +1076,6 @@ mod success {
             let object_id = i as u64;
 
             let datagram = ObjectDatagram::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -1102,7 +1095,6 @@ mod success {
         let object_id = 5;
         let expected_object_payload = vec![5, 6, 7, 8];
         let expected_datagram = ObjectDatagram::new(
-            subscribe_id,
             track_alias,
             group_id,
             object_id,
@@ -1193,14 +1185,8 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = CacheHeader::Subgroup(
-            StreamHeaderSubgroup::new(
-                subscribe_id,
-                track_alias,
-                group_id,
-                subgroup_id,
-                publisher_priority,
-            )
-            .unwrap(),
+            StreamHeaderSubgroup::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap(),
         );
 
         // start object cache storage thread
@@ -1270,7 +1256,6 @@ mod success {
             let object_id = i as u64;
 
             let datagram = ObjectDatagram::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -1290,7 +1275,6 @@ mod success {
         let expected_object_id = 0;
         let expected_object_payload = vec![0, 1, 2, 3];
         let expected_datagram = ObjectDatagram::new(
-            subscribe_id,
             track_alias,
             group_id,
             expected_object_id,
@@ -1339,7 +1323,6 @@ mod success {
             let object_id = i as u64;
 
             let datagram = ObjectDatagram::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -1360,7 +1343,6 @@ mod success {
         let expected_object_id = 3;
         let expected_object_payload = vec![3, 4, 5, 6];
         let expected_datagram = ObjectDatagram::new(
-            subscribe_id,
             track_alias,
             group_id,
             expected_object_id,
@@ -1456,14 +1438,8 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = CacheHeader::Subgroup(
-            StreamHeaderSubgroup::new(
-                subscribe_id,
-                track_alias,
-                group_id,
-                subgroup_id,
-                publisher_priority,
-            )
-            .unwrap(),
+            StreamHeaderSubgroup::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap(),
         );
 
         // start object cache storage thread
@@ -1535,7 +1511,6 @@ mod success {
             let object_id = i as u64;
 
             let datagram = ObjectDatagram::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -1555,7 +1530,6 @@ mod success {
         let expected_object_id = 5;
         let expected_object_payload = vec![5, 6, 7, 8];
         let expected_datagram = ObjectDatagram::new(
-            subscribe_id,
             track_alias,
             group_id,
             expected_object_id,
@@ -1650,14 +1624,8 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = CacheHeader::Subgroup(
-            StreamHeaderSubgroup::new(
-                subscribe_id,
-                track_alias,
-                group_id,
-                subgroup_id,
-                publisher_priority,
-            )
-            .unwrap(),
+            StreamHeaderSubgroup::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap(),
         );
 
         // start object cache storage thread
@@ -1736,7 +1704,6 @@ mod success {
                 let object_id = i as u64;
 
                 let datagram = ObjectDatagram::new(
-                    subscribe_id,
                     track_alias,
                     group_id,
                     object_id,
@@ -1758,7 +1725,6 @@ mod success {
         let expected_group_id = 3;
         let expected_object_payload = vec![21, 22, 23, 24];
         let expected_datagram = ObjectDatagram::new(
-            subscribe_id,
             track_alias,
             expected_group_id,
             expected_object_id,
@@ -1815,7 +1781,6 @@ mod success {
                 let object_id = i as u64;
 
                 let datagram = ObjectDatagram::new(
-                    subscribe_id,
                     track_alias,
                     group_id,
                     object_id,
@@ -1837,7 +1802,6 @@ mod success {
         let expected_group_id = 2;
         let expected_object_payload = vec![14, 15, 16, 17];
         let expected_datagram = ObjectDatagram::new(
-            subscribe_id,
             track_alias,
             expected_group_id,
             expected_object_id,
@@ -2015,7 +1979,6 @@ mod success {
         let duration = 1000;
         let header = CacheHeader::Subgroup(
             StreamHeaderSubgroup::new(
-                subscribe_id,
                 track_alias,
                 group_id, // Group ID is fixed
                 subgroup_id,
@@ -2109,7 +2072,6 @@ mod success {
                 let object_id = i as u64;
 
                 let datagram = ObjectDatagram::new(
-                    subscribe_id,
                     track_alias,
                     group_id,
                     object_id,
@@ -2229,7 +2191,6 @@ mod success {
         let duration = 1000;
         let header = CacheHeader::Subgroup(
             StreamHeaderSubgroup::new(
-                subscribe_id,
                 track_alias,
                 group_id, // Group ID is fixed
                 subgroup_id,
@@ -2301,14 +2262,8 @@ mod success {
         let subgroup_id = 5;
         let publisher_priority = 6;
         let header = CacheHeader::Subgroup(
-            StreamHeaderSubgroup::new(
-                subscribe_id,
-                track_alias,
-                group_id,
-                subgroup_id,
-                publisher_priority,
-            )
-            .unwrap(),
+            StreamHeaderSubgroup::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap(),
         );
 
         // start object cache storage thread

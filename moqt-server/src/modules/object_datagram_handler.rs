@@ -34,7 +34,7 @@ fn read_header_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataStreamT
 
     let header_type: DataStreamType = match DataStreamType::try_from(type_value) {
         Ok(v) => {
-            if v == DataStreamType::StreamHeaderTrack || v == DataStreamType::StreamHeaderSubgroup {
+            if v == DataStreamType::FetchHeader || v == DataStreamType::StreamHeaderSubgroup {
                 bail!("{:?} is not header type", v);
             }
             v
@@ -106,7 +106,21 @@ pub async fn object_datagram_handler(
                 Ok(object) => {
                     read_buf.advance(read_cur.position() as usize);
 
-                    let upstream_subscribe_id = object.subscribe_id();
+                    let upstream_track_alias = object.track_alias();
+                    let (upstream_track_namespace, upstream_track_name) =
+                        pubsub_relation_manager_repository
+                            .get_upstream_full_track_name(upstream_session_id, upstream_track_alias)
+                            .await
+                            .unwrap();
+                    let upstream_subscribe_id = pubsub_relation_manager_repository
+                        .get_upstream_subscribe_id(
+                            upstream_track_namespace,
+                            upstream_track_name,
+                            upstream_session_id,
+                        )
+                        .await
+                        .unwrap()
+                        .unwrap();
 
                     match object_cache_storage
                         .get_header(upstream_session_id, upstream_subscribe_id)

@@ -20,7 +20,18 @@ pub(crate) async fn stream_header_subgroup_handler(
     );
 
     let upstream_session_id = client.id;
-    let upstream_subscribe_id = stream_header_subgroup_message.subscribe_id();
+    let upstream_track_alias = stream_header_subgroup_message.track_alias();
+    let (upstream_track_namespace, upstream_track_name) = pubsub_relation_manager_repository
+        .get_upstream_full_track_name(upstream_session_id, upstream_track_alias)
+        .await?;
+    let upstream_subscribe_id = pubsub_relation_manager_repository
+        .get_upstream_subscribe_id(
+            upstream_track_namespace,
+            upstream_track_name,
+            upstream_session_id,
+        )
+        .await?
+        .unwrap();
 
     pubsub_relation_manager_repository
         .set_upstream_forwarding_preference(

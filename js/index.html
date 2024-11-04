@@ -11,7 +11,7 @@
         <div>
           <h2>Connection</h2>
           <label for="url">URL:</label>
-          <input type="url" name="url" id="url" value="https://34.147.225.127:4433" />
+          <input type="url" name="url" id="url" value="https://34.147.225.127:4434" />
           <button type="button" id="connectBtn">Connect</button>
           <button type="button" id="closeBtn">Close</button>
         </div>
@@ -19,8 +19,7 @@
         <div>
           <h2>Forwarding Preference</h2>
             <label><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram </label>
-            <label><input type="radio" name="forwarding-preference" id="selectTrack" value="track" checked/>Track </label>
-            <label><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" />Subgroup </label>
+            <label><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" checked/>Subgroup </label>
             <br />
             *You should select at first
             
@@ -28,7 +27,7 @@
           <label>AuthInfo: <input type="text" name="auth-info" id="" value="secret" /> </label>
           <br />
           <h3>CLIENT_SETUP</h3>
-          <label>Supported Version: <input type="text" name="versions" id="" value="0xff000006" /></label>
+          <label>Supported Version: <input type="text" name="versions" id="" value="0xff000007" /></label>
           <br />
           Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="1" />
           <br />
@@ -44,10 +43,10 @@
           <br />
           <button type="button" id="sendAnnounceBtn">Send</button>
           
-          <h3>SUBSCRIBE_NAMESPACE</h3>
+          <h3>SUBSCRIBE_ANNOUNCES</h3>
           <label>Track Namespace Prefix: <input type="text" name="track-namespace-prefix" id="" value="vc" /> </label>
           <br />
-          <button type="button" id="sendSubscribeNamespaceBtn">Send</button>
+          <button type="button" id="sendSubscribeAnnouncesBtn">Send</button>
 
           <h3>SUBSCRIBE</h3>
           <label>Subscribe ID: <input type="text" name="subscribe-subscribe-id" id="" value="0" /> </label>
@@ -83,10 +82,10 @@
           <div id="headerField" style="display: blocked;">
             <h4>Header</h4>
           </div>
-          <label>Subscribe ID: <input type="text" name="object-subscribe-id" id="" value="0" /> </label>
+          <!-- <label>Subscribe ID: <input type="text" name="object-subscribe-id" id="" value="0" /> </label>
           <br />
           <label>Track Alias: <input type="text" name="object-track-alias" id="" value="0" /> </label>
-          <br />
+          <br /> -->
           <div id="subgroupHeaderContents" style="display: none;">
             <label>Group ID: <input type="text" name="subgroup-group-id" id="" value="0" /> </label>
             <br />

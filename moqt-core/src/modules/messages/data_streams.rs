@@ -1,5 +1,7 @@
+pub mod fetch_header;
 pub mod object_datagram;
 pub mod object_status;
+pub mod object_stream_fetch;
 pub mod object_stream_subgroup;
 pub mod object_stream_track;
 pub mod stream_header_subgroup;

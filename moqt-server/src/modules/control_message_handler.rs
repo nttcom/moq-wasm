@@ -1,7 +1,7 @@
 use crate::constants::TerminationErrorCode;
 use crate::modules::server_processes::announce_error_message::process_announce_error_message;
 use crate::modules::server_processes::announce_ok_message::process_announce_ok_message;
-use crate::modules::server_processes::subscribe_namespace_message::process_subscribe_namespace_message;
+use crate::modules::server_processes::subscribe_announces_message::process_subscribe_announces_message;
 use crate::modules::{
     handlers::unannounce_handler::unannounce_handler,
     object_cache_storage::ObjectCacheStorageWrapper,
@@ -271,8 +271,8 @@ pub async fn control_message_handler(
                 }
             }
         }
-        ControlMessageType::SubscribeNamespace => {
-            match process_subscribe_namespace_message(
+        ControlMessageType::SubscribeAnnounces => {
+            match process_subscribe_announces_message(
                 &mut payload_buf,
                 client,
                 &mut write_buf,
@@ -282,7 +282,7 @@ pub async fn control_message_handler(
             .await
             {
                 Ok(result) => match result {
-                    Some(_) => ControlMessageType::SubscribeNamespaceError,
+                    Some(_) => ControlMessageType::SubscribeAnnouncesError,
                     None => {
                         return MessageProcessResult::SuccessWithoutResponse;
                     }
