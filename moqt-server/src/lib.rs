@@ -153,7 +153,7 @@ impl MOQT {
         let config = ServerConfig::builder()
             .with_bind_default(self.port)
             .with_identity(
-                &Identity::load_pemfiles(&self.cert_path, &self.key_path)
+                Identity::load_pemfiles(&self.cert_path, &self.key_path)
                     .await
                     .with_context(|| {
                         format!(

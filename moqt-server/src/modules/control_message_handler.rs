@@ -423,7 +423,7 @@ mod success {
         let bytes_array = [
             1,   // Number of Supported Versions (i)
             192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
+            0, 0, 0, 255, 0, 0, 7, // Supported Version(i): Value(0xff000007) in 62bit
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
@@ -450,7 +450,7 @@ mod success {
         let bytes_array = [
             1,   // Number of Supported Versions (i)
             192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
+            0, 0, 0, 255, 0, 0, 7, // Supported Version(i): Value(0xff000007) in 62bit
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
@@ -486,7 +486,7 @@ mod failure {
         let bytes_array = [
             1,   // Number of Supported Versions (i)
             192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
+            0, 0, 0, 255, 0, 0, 7, // Supported Version(i): Value(0xff000007) in 62bit
             1, // Number of Parameters (i)
             0, // SETUP Parameters (..): Type(Role)
             1, // SETUP Parameters (..): Length
