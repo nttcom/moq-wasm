@@ -10,7 +10,6 @@ use tokio::sync::{mpsc, oneshot};
 type SenderToSendStreamThread = mpsc::Sender<Arc<Box<dyn MOQTPayload>>>;
 
 use SendStreamDispatchCommand::*;
-// Called as a separate thread
 pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDispatchCommand>) {
     tracing::trace!("send_stream_dispatcher start");
     // {

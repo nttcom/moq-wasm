@@ -10,7 +10,6 @@ pub(crate) async fn announce_ok_handler(
     tracing::trace!("announce_ok_handler start.");
     tracing::debug!("announce_ok_message: {:#?}", announce_ok_message);
 
-    // Record the announced Track Namespace
     pubsub_relation_manager_repository
         .set_downstream_announced_namespace(
             announce_ok_message.track_namespace().clone(),

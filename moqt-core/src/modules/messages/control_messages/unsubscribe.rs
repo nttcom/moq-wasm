@@ -19,18 +19,6 @@ impl Unsubscribe {
             track_name,
         }
     }
-
-    // TODO: Not implemented yet
-    #[allow(dead_code)]
-    pub(crate) fn track_namespace(&self) -> &Vec<String> {
-        &self.track_namespace
-    }
-
-    // TODO: Not implemented yet
-    #[allow(dead_code)]
-    pub(crate) fn track_name(&self) -> &str {
-        &self.track_name
-    }
 }
 
 impl MOQTPayload for Unsubscribe {
@@ -49,8 +37,6 @@ impl MOQTPayload for Unsubscribe {
             track_namespace: track_namespace_tuple,
             track_name: String::from_utf8(track_name)?,
         };
-
-        tracing::trace!("Depacketized Unsubscribe message.");
 
         Ok(unsubscribe_message)
     }

@@ -33,24 +33,17 @@ impl MOQTPayload for AnnounceOk {
                 .context("track namespace")?;
             track_namespace_tuple.push(track_namespace);
         }
-
-        tracing::trace!("Depacketized Announce OK message.");
-
         Ok(AnnounceOk {
             track_namespace: track_namespace_tuple,
         })
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Number of elements
         let track_namespace_tuple_length = self.track_namespace.len();
         buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
         for track_namespace in &self.track_namespace {
-            // Track Namespace
             buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
         }
-
-        tracing::trace!("Packetized Announce OK message.");
     }
     /// Method to enable downcasting from MOQTPayload to AnnounceOk
     fn as_any(&self) -> &dyn Any {

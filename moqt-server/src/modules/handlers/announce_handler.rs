@@ -17,7 +17,6 @@ pub(crate) async fn announce_handler(
     tracing::trace!("announce_handler start.");
     tracing::debug!("announce_message: {:#?}", announce_message);
 
-    // Record the announced Track Namespace
     let set_result = pubsub_relation_manager_repository
         .set_upstream_announced_namespace(announce_message.track_namespace().clone(), client.id)
         .await;
@@ -28,7 +27,6 @@ pub(crate) async fn announce_handler(
 
             tracing::info!("announced track_namespace: {:#?}", track_namespace);
 
-            // Send AnnounceOk message to the publisher
             // TODO: Unify the method to send a message to the opposite client itself
             let announce_ok_message = Box::new(AnnounceOk::new(track_namespace.clone()));
             let _ = send_stream_dispatcher_repository
@@ -39,7 +37,7 @@ pub(crate) async fn announce_handler(
                 )
                 .await;
 
-            // Check if the namespace is subscribed by subscribers
+            // If subscribers already sent SUBSCRIBE_NAMESPACE, send ANNOUNCE message to them
             let downstream_session_ids = match pubsub_relation_manager_repository
                 .get_downstream_session_ids_by_upstream_namespace(track_namespace.clone())
                 .await
@@ -58,7 +56,6 @@ pub(crate) async fn announce_handler(
                 {
                     Ok(true) => {}
                     Ok(false) => {
-                        // Send Announce message to the subscriber
                         let announce_message =
                             Box::new(Announce::new(track_namespace.clone(), vec![]));
                         let _ = send_stream_dispatcher_repository

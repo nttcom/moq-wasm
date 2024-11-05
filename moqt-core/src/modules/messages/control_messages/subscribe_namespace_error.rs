@@ -55,8 +55,6 @@ impl MOQTPayload for SubscribeNamespaceError {
         let reason_phrase =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
 
-        tracing::trace!("Depacketized subscribe namespace error message.");
-
         Ok(SubscribeNamespaceError {
             track_namespace_prefix: track_namespace_prefix_tuple,
             error_code,
@@ -65,25 +63,19 @@ impl MOQTPayload for SubscribeNamespaceError {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Prefix Number of elements
         let track_namespace_prefix_tuple_length = self.track_namespace_prefix.len();
         buf.extend(write_variable_integer(
             track_namespace_prefix_tuple_length as u64,
         ));
         for track_namespace_prefix in &self.track_namespace_prefix {
-            // Track Namespace Prefix
             buf.extend(write_variable_bytes(
                 &track_namespace_prefix.as_bytes().to_vec(),
             ));
         }
-        // Error Code
         buf.extend(write_variable_integer(self.error_code));
-        //　Reason Phrase
         buf.extend(write_variable_bytes(
             &self.reason_phrase.as_bytes().to_vec(),
         ));
-
-        tracing::trace!("Packetized subscribe namespace error message.");
     }
     /// Method to enable downcasting from MOQTPayload to SubscribeNamespaceError
     fn as_any(&self) -> &dyn Any {

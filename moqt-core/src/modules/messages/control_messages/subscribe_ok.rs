@@ -123,8 +123,6 @@ impl MOQTPayload for SubscribeOk {
             }
         }
 
-        tracing::trace!("Depacketized Subscribe OK message.");
-
         Ok(SubscribeOk {
             subscribe_id,
             expires,
@@ -138,7 +136,6 @@ impl MOQTPayload for SubscribeOk {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Number of elements
         buf.extend(write_variable_integer(self.subscribe_id));
         buf.extend(write_variable_integer(self.expires));
         buf.extend(u8::from(self.group_order).to_be_bytes());
@@ -151,8 +148,6 @@ impl MOQTPayload for SubscribeOk {
         for version_specific_parameter in &self.subscribe_parameters {
             version_specific_parameter.packetize(buf);
         }
-
-        tracing::trace!("Packetized Subscribe OK message.");
     }
     /// Method to enable downcasting from MOQTPayload to SubscribeOk
     fn as_any(&self) -> &dyn Any {

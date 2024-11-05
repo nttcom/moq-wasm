@@ -28,10 +28,8 @@ impl MOQTPayload for ServerSetup {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let selected_version = u32::try_from(read_variable_integer_from_buffer(buf)?)
             .context("Depacketize selected version")?;
-
         let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("Depacketize number of parameters")?;
-
         let mut setup_parameters = vec![];
         for _ in 0..number_of_parameters {
             setup_parameters
@@ -43,9 +41,6 @@ impl MOQTPayload for ServerSetup {
             number_of_parameters,
             setup_parameters,
         };
-
-        tracing::trace!("Depacketized Server Setup message.");
-
         Ok(server_setup_message)
     }
 
@@ -59,8 +54,6 @@ impl MOQTPayload for ServerSetup {
         for setup_parameter in self.setup_parameters.iter() {
             setup_parameter.packetize(buf);
         }
-
-        tracing::trace!("Packetized Server Setup message.");
     }
     /// Method to enable downcasting from MOQTPayload to ServerSetup
     fn as_any(&self) -> &dyn Any {

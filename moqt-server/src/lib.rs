@@ -118,37 +118,25 @@ impl MOQT {
     pub async fn start(&self) -> Result<()> {
         init_logging(self.log_level.to_string());
 
-        // For buffer management for each stream
-        let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
-        // For track management
-        let (pubsub_relation_tx, mut pubsub_relation_rx) =
-            mpsc::channel::<PubSubRelationCommand>(1024);
-        // For relay handler management
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
-        // For object cache
-        let (object_cache_tx, mut object_cache_rx) =
-            mpsc::channel::<ObjectCacheStorageCommand>(1024);
-
         if self.underlay != UnderlayType::WebTransport {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
         }
 
-        // Start buffer management thread
+        // Spawn management thread
+        let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
         tokio::spawn(async move { buffer_manager(&mut buffer_rx).await });
-
-        // Start track management thread
+        let (pubsub_relation_tx, mut pubsub_relation_rx) =
+            mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut pubsub_relation_rx).await });
-
-        // Start stream management thread
+        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
         tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-
-        // Start object cache thread
+        let (object_cache_tx, mut object_cache_rx) =
+            mpsc::channel::<ObjectCacheStorageCommand>(1024);
         tokio::spawn(async move { object_cache_storage(&mut object_cache_rx).await });
 
         let open_subscription_txes: HashMap<usize, SenderToOpenSubscription> = HashMap::new();
         let shared_open_subscription_txes = Arc::new(Mutex::new(open_subscription_txes));
 
-        // Start wtransport server
         let config = ServerConfig::builder()
             .with_bind_default(self.port)
             .with_identity(
@@ -244,7 +232,6 @@ async fn handle_connection(
             // Waiting for a bi-directional stream and processing the received message
             stream = connection.accept_bi() => {
                 if is_control_stream_opened {
-                    // Only 1 control stream is allowed
                     tracing::error!("Control stream already opened");
                     close_connection_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
@@ -277,7 +264,7 @@ async fn handle_connection(
                     sender: message_tx,
                 }).await?;
 
-                // Thread that listens for WebTransport messages
+                // Spawn thread listenning for WebTransport messages
                 let send_stream = Arc::clone(&shared_send_stream);
                 let session_span_clone = session_span.clone();
                 tokio::spawn(async move {
@@ -288,18 +275,13 @@ async fn handle_connection(
                         shared_send_stream: send_stream,
                     };
                     handle_incoming_bi_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, close_connection_tx, send_stream_tx).instrument(session_span_clone).await
-
-                // Propagate the current span (Connection)
                 }.in_current_span());
 
-                let send_stream = Arc::clone(&shared_send_stream);
-
                 // Thread to relay messages (ANNOUNCE SUBSCRIBE) from the server
+                let send_stream = Arc::clone(&shared_send_stream);
                 tokio::spawn(async move {
                     let session_span = tracing::info_span!("Session", stable_id);
                     wait_and_relay_control_message(send_stream, message_rx).instrument(session_span).await;
-
-                // Propagate the current span (Connection)
                 }.in_current_span());
             },
             // Waiting for a uni-directional recv stream and processing the received message
@@ -330,8 +312,6 @@ async fn handle_connection(
                     shared_recv_stream,
                 };
                     handle_incoming_uni_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_subscription_txes, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
-
-                // Propagate the current span (Connection)
                 }.in_current_span());
 
             },
@@ -369,8 +349,6 @@ async fn handle_connection(
                             send_stream,
                         };
                         relaying_object_stream(&mut stream, data_stream_type, buffer_tx, pubsub_relation_tx, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
-
-                        // Propagate the current span (Connection)
                         }.in_current_span());
 
 
@@ -500,7 +478,6 @@ async fn handle_incoming_uni_stream(
         .in_current_span(),
     );
 
-    // Loop for the handling the message
     loop {
         if !header_read {
             // Read header

@@ -50,8 +50,6 @@ impl MOQTPayload for ClientSetup {
             setup_parameters,
         };
 
-        tracing::trace!("Depacketized Client Setup message.");
-
         Ok(client_setup_message)
     }
 
@@ -67,8 +65,6 @@ impl MOQTPayload for ClientSetup {
         for setup_parameter in &self.setup_parameters {
             setup_parameter.packetize(buf);
         }
-
-        tracing::trace!("Packetized Client Setup message.");
     }
     /// Method to enable downcasting from MOQTPayload to ClientSetup
     fn as_any(&self) -> &dyn Any {

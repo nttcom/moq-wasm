@@ -35,8 +35,6 @@ impl MOQTPayload for UnAnnounce {
             track_namespace: track_namespace_tuple,
         };
 
-        tracing::trace!("Depacketized Unannounce message.");
-
         Ok(unannounce_message)
     }
 
@@ -48,8 +46,6 @@ impl MOQTPayload for UnAnnounce {
             // Track Namespace
             buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
         }
-
-        tracing::trace!("Packetized Unannounce message.");
     }
     /// Method to enable downcasting from MOQTPayload to UnAnnounce
     fn as_any(&self) -> &dyn Any {

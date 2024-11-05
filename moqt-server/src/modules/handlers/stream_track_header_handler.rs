@@ -30,7 +30,6 @@ pub(crate) async fn stream_header_track_handler(
         )
         .await?;
 
-    // Prepare the cache for stream track
     let cache_header = CacheHeader::Track(stream_header_track_message);
     object_cache_storage
         .set_subscription(upstream_session_id, upstream_subscribe_id, cache_header)

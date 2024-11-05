@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
-use std::{any::Any, io::Cursor};
+use std::any::Any;
 
 use crate::{
     modules::{
@@ -36,8 +36,6 @@ impl Announce {
 
 impl MOQTPayload for Announce {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        let read_cur = Cursor::new(&buf[..]);
-        tracing::debug!("read_cur! {:?}", read_cur);
         let track_namespace_tuple_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("track namespace length")?;
         let mut track_namespace_tuple: Vec<String> = Vec::new();
@@ -64,20 +62,15 @@ impl MOQTPayload for Announce {
             parameters,
         };
 
-        tracing::trace!("Depacketized Announce message.");
-
         Ok(announce_message)
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Number of elements
         let track_namespace_tuple_length = self.track_namespace.len();
         buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
         for track_namespace in &self.track_namespace {
-            // Track Namespace
             buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
         }
-        // Number of Parameters
         buf.extend(write_variable_integer(self.number_of_parameters as u64));
         // Parameters
         for param in &self.parameters {

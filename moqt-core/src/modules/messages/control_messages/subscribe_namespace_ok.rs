@@ -36,27 +36,21 @@ impl MOQTPayload for SubscribeNamespaceOk {
             track_namespace_prefix_tuple.push(track_namespace_prefix);
         }
 
-        tracing::trace!("Depacketized subscribe namespace ok message.");
-
         Ok(SubscribeNamespaceOk {
             track_namespace_prefix: track_namespace_prefix_tuple,
         })
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Prefix Number of elements
         let track_namespace_prefix_tuple_length = self.track_namespace_prefix.len();
         buf.extend(write_variable_integer(
             track_namespace_prefix_tuple_length as u64,
         ));
         for track_namespace_prefix in &self.track_namespace_prefix {
-            // Track Namespace Prefix
             buf.extend(write_variable_bytes(
                 &track_namespace_prefix.as_bytes().to_vec(),
             ));
         }
-
-        tracing::trace!("Packetized subscribe namespace ok message.");
     }
     /// Method to enable downcasting from MOQTPayload to SubscribeNamespaceOk
     fn as_any(&self) -> &dyn Any {

@@ -77,8 +77,6 @@ impl MOQTPayload for SubscribeError {
 
         let track_alias = read_variable_integer_from_buffer(buf).context("track alias")?;
 
-        tracing::trace!("Depacketized Subscribe Error message.");
-
         Ok(SubscribeError {
             subscribe_id,
             error_code,
@@ -94,8 +92,6 @@ impl MOQTPayload for SubscribeError {
             &self.reason_phrase.as_bytes().to_vec(),
         ));
         buf.extend(write_variable_integer(self.track_alias));
-
-        tracing::trace!("Packetized Subscribe Error message.");
     }
     /// Method to enable downcasting from MOQTPayload to SubscribeError
     fn as_any(&self) -> &dyn Any {
