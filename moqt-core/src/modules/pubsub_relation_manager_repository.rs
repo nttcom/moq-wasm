@@ -121,7 +121,7 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         &self,
         track_namespace_prefix: Vec<String>,
     ) -> Result<Vec<Vec<String>>>;
-    async fn is_namespace_already_announced(
+    async fn is_namespace_announced(
         &self,
         track_namespace: Vec<String>,
         downstream_session_id: usize,

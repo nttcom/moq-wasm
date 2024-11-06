@@ -307,10 +307,10 @@ async fn handle_connection(
 
                 tokio::spawn(async move {
                     let mut stream = UniRecvStream {
-                    stable_id,
-                    stream_id,
-                    shared_recv_stream,
-                };
+                        stable_id,
+                        stream_id,
+                        shared_recv_stream,
+                    };
                     handle_incoming_uni_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_subscription_txes, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
                 }.in_current_span());
 
@@ -343,11 +343,11 @@ async fn handle_connection(
 
                         tokio::spawn(async move {
                             let mut stream = UniSendStream {
-                            stable_id,
-                            stream_id,
-                            subscribe_id,
-                            send_stream,
-                        };
+                                stable_id,
+                                stream_id,
+                                subscribe_id,
+                                send_stream,
+                            };
                         relaying_object_stream(&mut stream, data_stream_type, buffer_tx, pubsub_relation_tx, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
                         }.in_current_span());
 

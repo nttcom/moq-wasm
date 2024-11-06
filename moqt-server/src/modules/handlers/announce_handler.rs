@@ -8,6 +8,47 @@ use moqt_core::{
     MOQTClient, SendStreamDispatcherRepository,
 };
 
+async fn forward_announce_to_subscribing_namespace_subscribers(
+    pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    track_namespace: Vec<String>,
+) -> Result<()> {
+    let downstream_session_ids = match pubsub_relation_manager_repository
+        .get_downstream_session_ids_by_upstream_namespace(track_namespace.clone())
+        .await
+    {
+        Ok(downstream_session_ids) => downstream_session_ids,
+        Err(err) => {
+            tracing::warn!("announce_handler: err: {:?}", err.to_string());
+            return Err(err);
+        }
+    };
+
+    for downstream_session_id in downstream_session_ids {
+        match pubsub_relation_manager_repository
+            .is_namespace_announced(track_namespace.clone(), downstream_session_id)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                let announce_message = Box::new(Announce::new(track_namespace.clone(), vec![]));
+                let _ = send_stream_dispatcher_repository
+                    .send_message_to_send_stream_thread(
+                        downstream_session_id,
+                        announce_message,
+                        StreamDirection::Bi,
+                    )
+                    .await;
+            }
+            Err(err) => {
+                tracing::warn!("announce_handler: err: {:?}", err.to_string());
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn announce_handler(
     announce_message: Announce,
     client: &mut MOQTClient,
@@ -38,43 +79,16 @@ pub(crate) async fn announce_handler(
                 .await;
 
             // If subscribers already sent SUBSCRIBE_NAMESPACE, send ANNOUNCE message to them
-            let downstream_session_ids = match pubsub_relation_manager_repository
-                .get_downstream_session_ids_by_upstream_namespace(track_namespace.clone())
-                .await
+            match forward_announce_to_subscribing_namespace_subscribers(
+                pubsub_relation_manager_repository,
+                send_stream_dispatcher_repository,
+                track_namespace.clone(),
+            )
+            .await
             {
-                Ok(downstream_session_ids) => downstream_session_ids,
-                Err(err) => {
-                    tracing::warn!("announce_handler: err: {:?}", err.to_string());
-                    return Ok(None);
-                }
-            };
-
-            for downstream_session_id in downstream_session_ids {
-                match pubsub_relation_manager_repository
-                    .is_namespace_already_announced(track_namespace.clone(), downstream_session_id)
-                    .await
-                {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        let announce_message =
-                            Box::new(Announce::new(track_namespace.clone(), vec![]));
-                        let _ = send_stream_dispatcher_repository
-                            .send_message_to_send_stream_thread(
-                                downstream_session_id,
-                                announce_message,
-                                StreamDirection::Bi,
-                            )
-                            .await;
-                    }
-                    Err(err) => {
-                        tracing::warn!("announce_handler: err: {:?}", err.to_string());
-                    }
-                }
+                Ok(_) => Ok(None),
+                Err(err) => Err(err),
             }
-
-            tracing::trace!("announce_handler complete.");
-
-            Ok(None)
         }
         // TODO: Allow namespace overlap
         Err(err) => {
