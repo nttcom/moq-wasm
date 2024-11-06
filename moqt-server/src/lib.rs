@@ -157,13 +157,14 @@ impl MOQT {
         tracing::info!("Server ready!");
 
         for id in 0.. {
+            let incoming_session = server.accept().await;
+            let connection_span = tracing::info_span!("Connection", id);
+
             let buffer_tx = buffer_tx.clone();
             let pubsub_relation_tx = pubsub_relation_tx.clone();
             let send_stream_tx = send_stream_tx.clone();
             let object_cache_tx = object_cache_tx.clone();
             let open_subscription_txes = shared_open_subscription_txes.clone();
-            let incoming_session = server.accept().await;
-            let connection_span = tracing::info_span!("Connection", id);
 
             // Create a thread for each session
             tokio::spawn(async move {
@@ -193,10 +194,7 @@ async fn handle_connection(
     open_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     incoming_session: IncomingSession,
 ) -> Result<()> {
-    tracing::trace!("Waiting for session request...");
-
     let session_request = incoming_session.await?;
-
     tracing::info!(
         "New session: Authority: '{}', Path: '{}'",
         session_request.authority(),
