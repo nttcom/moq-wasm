@@ -121,6 +121,22 @@ impl MOQT {
         if self.underlay != UnderlayType::WebTransport {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
         }
+        let config = ServerConfig::builder()
+            .with_bind_default(self.port)
+            .with_identity(
+                &Identity::load_pemfiles(&self.cert_path, &self.key_path)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "cert load failed. '{}' or '{}' not found.",
+                            self.cert_path, self.key_path
+                        )
+                    })?,
+            )
+            .keep_alive_interval(Some(Duration::from_secs(self.keep_alive_interval_sec)))
+            .build();
+        let server = Endpoint::server(config)?;
+        tracing::info!("Server ready!");
 
         // Spawn management thread
         let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
@@ -136,25 +152,6 @@ impl MOQT {
 
         let open_subscription_txes: HashMap<usize, SenderToOpenSubscription> = HashMap::new();
         let shared_open_subscription_txes = Arc::new(Mutex::new(open_subscription_txes));
-
-        let config = ServerConfig::builder()
-            .with_bind_default(self.port)
-            .with_identity(
-                &Identity::load_pemfiles(&self.cert_path, &self.key_path)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "cert load failed. '{}' or '{}' not found.",
-                            self.cert_path, self.key_path
-                        )
-                    })?,
-            )
-            .keep_alive_interval(Some(Duration::from_secs(self.keep_alive_interval_sec)))
-            .build();
-
-        let server = Endpoint::server(config)?;
-
-        tracing::info!("Server ready!");
 
         for id in 0.. {
             let incoming_session = server.accept().await;
