@@ -13,6 +13,7 @@ use crate::modules::{
 };
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
+use modules::logging;
 pub use moqt_core::constants;
 use moqt_core::{
     constants::{StreamDirection, UnderlayType},
@@ -46,7 +47,6 @@ use tokio::sync::{
     Mutex,
 };
 use tracing::{self, Instrument};
-use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
 use wtransport::{
     endpoint::IncomingSession, Endpoint, Identity, RecvStream, SendStream, ServerConfig,
 };
@@ -116,7 +116,7 @@ impl MOQT {
         }
     }
     pub async fn start(&self) -> Result<()> {
-        init_logging(self.log_level.to_string());
+        logging::init_logging(self.log_level.to_string());
 
         if self.underlay != UnderlayType::WebTransport {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
@@ -1081,33 +1081,4 @@ async fn wait_and_relay_control_message(
         tracing::info!("Control message is relayed.");
         // tracing::debug!("relayed message: {:?}", message_buf.to_vec());
     }
-}
-
-fn init_logging(log_level: String) {
-    let level_filter: LevelFilter = match log_level.to_uppercase().as_str() {
-        "OFF" => LevelFilter::OFF,
-        "TRACE" => LevelFilter::TRACE,
-        "DEBUG" => LevelFilter::DEBUG,
-        "INFO" => LevelFilter::INFO,
-        "WARN" => LevelFilter::WARN,
-        "ERROR" => LevelFilter::ERROR,
-        _ => {
-            panic!(
-                "Invalid log level: '{}'.\n  Valid log levels: [OFF, TRACE, DEBUG, INFO, WARN, ERROR]",
-                log_level
-            );
-        }
-    };
-
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(level_filter.into())
-        .from_env_lossy();
-
-    tracing_subscriber::fmt()
-        .with_target(true)
-        .with_level(true)
-        .with_env_filter(env_filter)
-        .init();
-
-    tracing::info!("Logging initialized. (Level: {})", log_level);
 }
