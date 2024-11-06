@@ -49,7 +49,7 @@ pub(crate) async fn subscribe_ok_handler(
                     Box::new(message_payload.clone());
 
                 send_stream_dispatcher_repository
-                    .send_message_to_send_stream_thread(
+                    .forward_message_to_send_stream_thread(
                         *downstream_session_id,
                         relaying_subscribe_ok_message,
                         StreamDirection::Bi,

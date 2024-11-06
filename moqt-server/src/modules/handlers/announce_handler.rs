@@ -33,7 +33,7 @@ async fn forward_announce_to_subscribing_namespace_subscribers(
             Ok(false) => {
                 let announce_message = Box::new(Announce::new(track_namespace.clone(), vec![]));
                 let _ = send_stream_dispatcher_repository
-                    .send_message_to_send_stream_thread(
+                    .forward_message_to_send_stream_thread(
                         downstream_session_id,
                         announce_message,
                         StreamDirection::Bi,
@@ -71,7 +71,7 @@ pub(crate) async fn announce_handler(
             // TODO: Unify the method to send a message to the opposite client itself
             let announce_ok_message = Box::new(AnnounceOk::new(track_namespace.clone()));
             let _ = send_stream_dispatcher_repository
-                .send_message_to_send_stream_thread(
+                .forward_message_to_send_stream_thread(
                     client.id,
                     announce_ok_message,
                     StreamDirection::Bi,
