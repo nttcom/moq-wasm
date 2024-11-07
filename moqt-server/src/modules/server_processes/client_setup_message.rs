@@ -1,12 +1,12 @@
 use bytes::BytesMut;
 
 use crate::modules::handlers::server_setup_handler::setup_handler;
+use crate::modules::moqt_client::MOQTClient;
 use anyhow::{bail, Result};
 use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     constants::UnderlayType,
     messages::{control_messages::client_setup::ClientSetup, moqt_payload::MOQTPayload},
-    MOQTClient,
 };
 
 pub(crate) async fn process_client_setup_message(

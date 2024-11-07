@@ -1,10 +1,11 @@
 use crate::modules::handlers::subscribe_handler::{subscribe_handler, SubscribeResponse};
+use crate::modules::moqt_client::MOQTClient;
 use anyhow::{bail, Result};
 use bytes::BytesMut;
 use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     messages::{control_messages::subscribe::Subscribe, moqt_payload::MOQTPayload},
-    MOQTClient, SendStreamDispatcherRepository,
+    SendStreamDispatcherRepository,
 };
 
 pub(crate) async fn process_subscribe_message(

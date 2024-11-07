@@ -1,18 +1,17 @@
-use super::messages::control_messages::setup_parameters::RoleCase;
 use anyhow::{bail, Ok, Result};
+use moqt_core::messages::control_messages::setup_parameters::RoleCase;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum MOQTClientStatus {
     Connected,
     SetUp,
-    Closed,
 }
 
 #[derive(Debug)]
 pub struct MOQTClient {
-    pub id: usize,
-    pub status: MOQTClientStatus,
-    pub role: Option<RoleCase>,
+    id: usize,
+    status: MOQTClientStatus,
+    role: Option<RoleCase>,
 }
 
 impl MOQTClient {

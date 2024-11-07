@@ -3,8 +3,10 @@ use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerReposito
 use moqt_core::{
     constants::StreamDirection,
     messages::{control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload},
-    MOQTClient, SendStreamDispatcherRepository,
+    SendStreamDispatcherRepository,
 };
+
+use crate::modules::moqt_client::MOQTClient;
 
 pub(crate) async fn subscribe_ok_handler(
     subscribe_ok_message: SubscribeOk,
@@ -16,7 +18,7 @@ pub(crate) async fn subscribe_ok_handler(
 
     tracing::debug!("subscribe_ok_message: {:#?}", subscribe_ok_message);
 
-    let upstream_session_id = client.id;
+    let upstream_session_id = client.id();
     let upstream_subscribe_id = subscribe_ok_message.subscribe_id();
 
     // Determine the SUBSCRIBER who sent the SUBSCRIBE using the track_namespace and track_name

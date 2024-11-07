@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
+use crate::modules::moqt_client::MOQTClientStatus;
 use crate::modules::{
     handlers::{subscribe_handler::SubscribeResponse, unannounce_handler::unannounce_handler},
     server_processes::{
@@ -20,11 +21,12 @@ use moqt_core::{
     constants::UnderlayType,
     control_message_type::ControlMessageType,
     messages::{control_messages::unannounce::UnAnnounce, moqt_payload::MOQTPayload},
-    moqt_client::MOQTClientStatus,
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::{read_variable_integer, write_variable_integer},
-    MOQTClient, SendStreamDispatcherRepository,
+    SendStreamDispatcherRepository,
 };
+
+use super::moqt_client::MOQTClient;
 
 #[derive(Debug, PartialEq)]
 pub enum MessageProcessResult {
@@ -349,6 +351,8 @@ pub(crate) mod test_helper_fn {
 
     use crate::modules::control_message_handler::control_message_handler;
     use crate::modules::control_message_handler::MessageProcessResult;
+    use crate::modules::moqt_client::MOQTClient;
+    use crate::modules::moqt_client::MOQTClientStatus;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -359,7 +363,6 @@ pub(crate) mod test_helper_fn {
     use bytes::BytesMut;
     use moqt_core::constants::UnderlayType;
     use moqt_core::variable_integer::write_variable_integer;
-    use moqt_core::{moqt_client::MOQTClientStatus, MOQTClient};
     use tokio::sync::mpsc;
 
     pub async fn packetize_buf_and_execute_control_message_handler(
@@ -405,11 +408,10 @@ pub(crate) mod test_helper_fn {
 
 #[cfg(test)]
 mod success {
-    use crate::modules::control_message_handler::MessageProcessResult;
-    use moqt_core::control_message_type::ControlMessageType;
-    use moqt_core::moqt_client::MOQTClientStatus;
-
     use crate::modules::control_message_handler::test_helper_fn;
+    use crate::modules::control_message_handler::MessageProcessResult;
+    use crate::modules::moqt_client::MOQTClientStatus;
+    use moqt_core::control_message_type::ControlMessageType;
 
     #[tokio::test]
     async fn client_setup() {
@@ -470,8 +472,8 @@ mod success {
 mod failure {
     use crate::constants::TerminationErrorCode;
     use crate::modules::control_message_handler::MessageProcessResult;
+    use crate::modules::moqt_client::MOQTClientStatus;
     use moqt_core::control_message_type::ControlMessageType;
-    use moqt_core::moqt_client::MOQTClientStatus;
 
     use crate::modules::control_message_handler::test_helper_fn;
 

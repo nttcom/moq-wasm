@@ -5,8 +5,10 @@ use moqt_core::{
     messages::control_messages::{
         announce::Announce, announce_error::AnnounceError, announce_ok::AnnounceOk,
     },
-    MOQTClient, SendStreamDispatcherRepository,
+    SendStreamDispatcherRepository,
 };
+
+use crate::modules::moqt_client::MOQTClient;
 
 async fn forward_announce_to_subscribing_namespace_subscribers(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
@@ -59,7 +61,7 @@ pub(crate) async fn announce_handler(
     tracing::debug!("announce_message: {:#?}", announce_message);
 
     let set_result = pubsub_relation_manager_repository
-        .set_upstream_announced_namespace(announce_message.track_namespace().clone(), client.id)
+        .set_upstream_announced_namespace(announce_message.track_namespace().clone(), client.id())
         .await;
 
     match set_result {
@@ -72,7 +74,7 @@ pub(crate) async fn announce_handler(
             let announce_ok_message = Box::new(AnnounceOk::new(track_namespace.clone()));
             let _ = send_stream_dispatcher_repository
                 .forward_message_to_send_stream_thread(
-                    client.id,
+                    client.id(),
                     announce_ok_message,
                     StreamDirection::Bi,
                 )
@@ -109,6 +111,7 @@ mod success {
     use std::sync::Arc;
 
     use crate::modules::handlers::announce_handler::announce_handler;
+    use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -117,15 +120,12 @@ mod success {
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use moqt_core::constants::StreamDirection;
+    use moqt_core::messages::control_messages::{
+        announce::Announce,
+        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+    };
     use moqt_core::messages::moqt_payload::MOQTPayload;
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-    use moqt_core::{
-        messages::control_messages::{
-            announce::Announce,
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-        },
-        moqt_client::MOQTClient,
-    };
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -289,6 +289,7 @@ mod failure {
     use std::sync::Arc;
 
     use crate::modules::handlers::announce_handler::announce_handler;
+    use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -297,15 +298,12 @@ mod failure {
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use moqt_core::constants::StreamDirection;
+    use moqt_core::messages::control_messages::{
+        announce::Announce,
+        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+    };
     use moqt_core::messages::moqt_payload::MOQTPayload;
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-    use moqt_core::{
-        messages::control_messages::{
-            announce::Announce,
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-        },
-        moqt_client::MOQTClient,
-    };
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -340,7 +338,10 @@ mod failure {
 
         // Set the duplicated publisher in advance
         let _ = pubsub_relation_manager
-            .set_upstream_announced_namespace(announce_message.track_namespace().clone(), client.id)
+            .set_upstream_announced_namespace(
+                announce_message.track_namespace().clone(),
+                client.id(),
+            )
             .await;
 
         // Generate SendStreamDispacher

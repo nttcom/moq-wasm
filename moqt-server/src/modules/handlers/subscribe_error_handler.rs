@@ -3,8 +3,10 @@ use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerReposito
 use moqt_core::{
     constants::StreamDirection,
     messages::{control_messages::subscribe_error::SubscribeError, moqt_payload::MOQTPayload},
-    MOQTClient, SendStreamDispatcherRepository,
+    SendStreamDispatcherRepository,
 };
+
+use crate::modules::moqt_client::MOQTClient;
 
 pub(crate) async fn subscribe_error_handler(
     subscribe_error_message: SubscribeError,
@@ -16,7 +18,7 @@ pub(crate) async fn subscribe_error_handler(
 
     tracing::debug!("subscribe_error_message: {:#?}", subscribe_error_message);
 
-    let upstream_session_id = client.id;
+    let upstream_session_id = client.id();
     let upstream_subscribe_id = subscribe_error_message.subscribe_id();
 
     // TODO: Retry to send the SUBSCRIBE message if the error type is Retry Track Alias

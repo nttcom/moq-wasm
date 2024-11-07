@@ -1,6 +1,8 @@
 use anyhow::Result;
+use moqt_core::messages::control_messages::unsubscribe::Unsubscribe;
 use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-use moqt_core::{messages::control_messages::unsubscribe::Unsubscribe, MOQTClient};
+
+use crate::modules::moqt_client::MOQTClient;
 
 // TODO: Not implemented yet
 #[allow(dead_code)]

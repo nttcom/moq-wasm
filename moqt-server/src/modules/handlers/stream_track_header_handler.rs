@@ -1,9 +1,12 @@
-use crate::modules::object_cache_storage::{CacheHeader, ObjectCacheStorageWrapper};
+use crate::modules::{
+    moqt_client::MOQTClient,
+    object_cache_storage::{CacheHeader, ObjectCacheStorageWrapper},
+};
 use anyhow::Result;
 use moqt_core::{
     messages::data_streams::stream_header_track::StreamHeaderTrack,
     models::tracks::ForwardingPreference,
-    pubsub_relation_manager_repository::PubSubRelationManagerRepository, MOQTClient,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
 
 pub(crate) async fn stream_header_track_handler(
@@ -19,7 +22,7 @@ pub(crate) async fn stream_header_track_handler(
         stream_header_track_message
     );
 
-    let upstream_session_id = client.id;
+    let upstream_session_id = client.id();
     let upstream_subscribe_id = stream_header_track_message.subscribe_id();
 
     pubsub_relation_manager_repository

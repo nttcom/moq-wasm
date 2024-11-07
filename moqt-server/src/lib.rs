@@ -13,7 +13,7 @@ use crate::modules::{
 };
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
-use modules::logging;
+use modules::{logging, moqt_client::MOQTClient};
 pub use moqt_core::constants;
 use moqt_core::{
     constants::{StreamDirection, UnderlayType},
@@ -38,7 +38,6 @@ use moqt_core::{
     models::tracks::ForwardingPreference,
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::write_variable_integer,
-    MOQTClient,
 };
 use std::{collections::HashMap, sync::Arc, thread, time::Duration};
 use tokio::sync::{

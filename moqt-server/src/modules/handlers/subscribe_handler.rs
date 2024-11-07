@@ -10,8 +10,10 @@ use moqt_core::{
         },
         moqt_payload::MOQTPayload,
     },
-    MOQTClient, SendStreamDispatcherRepository,
+    SendStreamDispatcherRepository,
 };
+
+use crate::modules::moqt_client::MOQTClient;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum SubscribeResponse {
@@ -32,14 +34,14 @@ pub(crate) async fn subscribe_handler(
     // TODO: validate Unauthorized
 
     if !pubsub_relation_manager_repository
-        .is_valid_downstream_subscribe_id(subscribe_message.subscribe_id(), client.id)
+        .is_valid_downstream_subscribe_id(subscribe_message.subscribe_id(), client.id())
         .await?
     {
         // TODO: return TerminationErrorCode
         bail!("TooManySubscribers");
     }
     if !pubsub_relation_manager_repository
-        .is_valid_downstream_track_alias(subscribe_message.track_alias(), client.id)
+        .is_valid_downstream_track_alias(subscribe_message.track_alias(), client.id())
         .await?
     {
         // TODO: create accurate track alias
@@ -223,7 +225,7 @@ async fn set_downstream_subscription(
     subscribe_message: &Subscribe,
     client: &MOQTClient,
 ) -> Result<()> {
-    let downstream_client_id = client.id;
+    let downstream_client_id = client.id();
     let downstream_subscribe_id = subscribe_message.subscribe_id();
     let downstream_track_alias = subscribe_message.track_alias();
     let downstream_track_namespace = subscribe_message.track_namespace().to_vec();
@@ -302,7 +304,7 @@ async fn set_downstream_and_upstream_subscription(
     client: &MOQTClient,
     upstream_session_id: usize,
 ) -> Result<(u64, u64)> {
-    let downstream_client_id = client.id;
+    let downstream_client_id = client.id();
     let downstream_subscribe_id = subscribe_message.subscribe_id();
     let downstream_track_alias = subscribe_message.track_alias();
     let downstream_track_namespace = subscribe_message.track_namespace().to_vec();
@@ -362,6 +364,7 @@ async fn set_downstream_and_upstream_subscription(
 #[cfg(test)]
 mod success {
     use crate::modules::handlers::subscribe_handler::subscribe_handler;
+    use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand,
         manager::pubsub_relation_manager,
@@ -379,7 +382,6 @@ mod success {
         moqt_payload::MOQTPayload,
     };
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-    use moqt_core::MOQTClient;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
@@ -618,6 +620,7 @@ mod success {
 mod failure {
     use crate::modules::handlers::subscribe_handler::subscribe_handler;
     use crate::modules::handlers::subscribe_handler::SubscribeResponse;
+    use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -636,7 +639,6 @@ mod failure {
         moqt_payload::MOQTPayload,
     };
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-    use moqt_core::MOQTClient;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
