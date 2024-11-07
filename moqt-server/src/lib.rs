@@ -309,7 +309,7 @@ async fn handle_connection(
                 }.in_current_span());
 
             },
-            // Waiting for a uni-directional send stream open request and relaying the message
+            // Waiting for a uni-directional send stream open request and relay object
             Some((subscribe_id, data_stream_type)) = open_subscription_rx.recv() => {
 
                 if !is_control_stream_opened {
@@ -342,7 +342,7 @@ async fn handle_connection(
                                 subscribe_id,
                                 send_stream,
                             };
-                        relaying_object_stream(&mut stream, data_stream_type, buffer_tx, pubsub_relation_tx, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
+                            wait_and_relay_object_stream(&mut stream, data_stream_type, buffer_tx, pubsub_relation_tx, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
                         }.in_current_span());
 
 
@@ -582,7 +582,7 @@ struct UniSendStream {
     send_stream: SendStream,
 }
 
-async fn relaying_object_stream(
+async fn wait_and_relay_object_stream(
     stream: &mut UniSendStream,
     data_stream_type: DataStreamType,
     buffer_tx: Sender<BufferCommand>,
