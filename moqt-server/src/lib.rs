@@ -1,22 +1,28 @@
 mod modules;
-use crate::modules::{
-    buffer_manager,
-    buffer_manager::{buffer_manager, BufferCommand},
-    control_message_handler::*,
-    object_cache_storage::{
-        object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
-    },
-    object_stream_handler::{object_stream_handler, ObjectStreamProcessResult},
-    pubsub_relation_manager::{commands::PubSubRelationCommand, manager::pubsub_relation_manager},
-    send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
-    stream_header_handler::{stream_header_handler, StreamHeaderProcessResult},
-};
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
-use modules::{logging, moqt_client::MOQTClient};
+use modules::{
+    buffer_manager::{buffer_manager, request_buffer, BufferCommand},
+    control_message_handler::{control_message_handler, MessageProcessResult},
+    logging,
+    moqt_client::MOQTClient,
+    object_cache_storage::{
+        object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
+        ObjectCacheStorageWrapper,
+    },
+    object_stream_handler::{object_stream_handler, ObjectStreamProcessResult},
+    pubsub_relation_manager::{
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
+    },
+    send_stream_dispatcher::{
+        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
+    },
+    stream_header_handler::{stream_header_handler, StreamHeaderProcessResult},
+};
 pub use moqt_core::constants;
 use moqt_core::{
-    constants::{StreamDirection, UnderlayType},
+    constants::{StreamDirection, TerminationErrorCode, UnderlayType},
     control_message_type::ControlMessageType,
     data_stream_type::DataStreamType,
     messages::{
@@ -227,7 +233,7 @@ async fn handle_connection(
             stream = connection.accept_bi() => {
                 if is_control_stream_opened {
                     tracing::error!("Control stream already opened");
-                    close_connection_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    close_connection_tx.send((u8::from(TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
                 }
                 is_control_stream_opened = true;
@@ -315,7 +321,7 @@ async fn handle_connection(
                 if !is_control_stream_opened {
                     // Decline the request if the control stream is not opened
                     tracing::error!("Control stream is not opened yet");
-                    close_connection_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    close_connection_tx.send((u8::from(TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
                 }
 
@@ -367,17 +373,13 @@ async fn handle_connection(
     }
 
     // Delete pub/sub information related to the client
-    let pubsub_relation_manager =
-        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
-            pubsub_relation_tx.clone(),
-        );
+    let pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
     let _ = pubsub_relation_manager.delete_client(stable_id).await;
 
     // Delete object cache related to the client
     // FIXME: It should not be deleted if the cache should be stored
     //   (Now, it is deleted immediately because to clean up cpu and memory)
-    let mut object_cache_storage =
-        modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
+    let mut object_cache_storage = ObjectCacheStorageWrapper::new(object_cache_tx.clone());
     let _ = object_cache_storage.delete_client(stable_id).await;
 
     // Delete senders to the client
@@ -426,15 +428,11 @@ async fn handle_incoming_uni_stream(
     let shared_recv_stream = &mut stream.shared_recv_stream;
     let shared_recv_stream = Arc::clone(shared_recv_stream);
 
-    let mut pubsub_relation_manager =
-        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
-            pubsub_relation_tx.clone(),
-        );
+    let mut pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
 
-    let mut object_cache_storage =
-        modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
+    let mut object_cache_storage = ObjectCacheStorageWrapper::new(object_cache_tx.clone());
 
-    let buf = buffer_manager::request_buffer(buffer_tx_clone, stable_id, stream_id).await;
+    let buf = request_buffer(buffer_tx_clone, stable_id, stream_id).await;
     let buf_clone = Arc::clone(&buf);
 
     // Loop for reading the stream
@@ -450,7 +448,7 @@ async fn handle_incoming_uni_stream(
                         tracing::error!("Failed to read from stream");
                         let _ = close_connection_tx_clone
                             .send((
-                                u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                                u8::from(TerminationErrorCode::InternalError) as u64,
                                 err.to_string(),
                             ))
                             .await;
@@ -599,13 +597,9 @@ async fn wait_and_relay_object_stream(
     let downstream_subscribe_id = stream.subscribe_id;
     let send_stream = &mut stream.send_stream;
 
-    let pubsub_relation_manager =
-        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
-            pubsub_relation_tx.clone(),
-        );
+    let pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
 
-    let mut object_cache_storage =
-        modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
+    let mut object_cache_storage = ObjectCacheStorageWrapper::new(object_cache_tx.clone());
 
     // Get the information of the original publisher who has the track being requested
     let (upstream_session_id, upstream_subscribe_id) = pubsub_relation_manager
@@ -633,7 +627,7 @@ async fn wait_and_relay_object_stream(
                 );
                 close_connection_tx
                     .send((
-                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        u8::from(TerminationErrorCode::InternalError) as u64,
                         msg.clone(),
                     ))
                     .await?;
@@ -655,7 +649,7 @@ async fn wait_and_relay_object_stream(
                 );
                 close_connection_tx
                     .send((
-                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        u8::from(TerminationErrorCode::InternalError) as u64,
                         msg.clone(),
                     ))
                     .await?;
@@ -673,7 +667,7 @@ async fn wait_and_relay_object_stream(
             let msg = "Invalid forwarding preference";
             close_connection_tx
                 .send((
-                    u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64,
+                    u8::from(TerminationErrorCode::ProtocolViolation) as u64,
                     msg.to_string(),
                 ))
                 .await?;
@@ -738,7 +732,7 @@ async fn wait_and_relay_object_stream(
             let msg = "cache header not matched";
             close_connection_tx
                 .send((
-                    u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64,
+                    u8::from(TerminationErrorCode::ProtocolViolation) as u64,
                     msg.to_string(),
                 ))
                 .await?;
@@ -813,7 +807,7 @@ async fn wait_and_relay_object_stream(
                 let msg = "cache is not exist";
                 close_connection_tx
                     .send((
-                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        u8::from(TerminationErrorCode::InternalError) as u64,
                         msg.to_string(),
                     ))
                     .await?;
@@ -894,7 +888,7 @@ async fn wait_and_relay_object_stream(
                 let msg = "cache is not exist";
                 close_connection_tx
                     .send((
-                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        u8::from(TerminationErrorCode::InternalError) as u64,
                         msg.to_string(),
                     ))
                     .await?;
@@ -935,12 +929,8 @@ async fn handle_incoming_bi_stream(
     let recv_stream = &mut stream.recv_stream;
     let shared_send_stream = &mut stream.shared_send_stream;
 
-    let mut pubsub_relation_manager =
-        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
-            pubsub_relation_tx.clone(),
-        );
-    let mut send_stream_dispatcher =
-        modules::send_stream_dispatcher::SendStreamDispatcher::new(send_stream_tx.clone());
+    let mut pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
+    let mut send_stream_dispatcher = SendStreamDispatcher::new(send_stream_tx.clone());
 
     loop {
         let bytes_read = match recv_stream.read(&mut buffer).await? {
@@ -951,7 +941,7 @@ async fn handle_incoming_bi_stream(
         tracing::debug!("bytes_read: {}", bytes_read);
 
         let read_buf = BytesMut::from(&buffer[..bytes_read]);
-        let buf = buffer_manager::request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
+        let buf = request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
         let mut buf = buf.lock().await;
         buf.extend_from_slice(&read_buf);
 
