@@ -9,11 +9,10 @@ use crate::{
         control_messages::version_specific_parameters::VersionSpecificParameter,
         moqt_payload::MOQTPayload,
     },
-    modules::{
-        variable_bytes::{read_fixed_length_bytes_from_buffer, read_variable_bytes_from_buffer},
-        variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+    variable_bytes::{
+        read_fixed_length_bytes_from_buffer, read_variable_bytes_from_buffer, write_variable_bytes,
     },
-    variable_bytes::write_variable_bytes,
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
@@ -302,11 +301,15 @@ impl MOQTPayload for Subscribe {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::control_messages::subscribe::{FilterType, GroupOrder, Subscribe};
-    use crate::messages::control_messages::version_specific_parameters::AuthorizationInfo;
-    use crate::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
-    use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::{
+            subscribe::{FilterType, GroupOrder, Subscribe},
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize_subscribe_latest_group() {
@@ -671,11 +674,15 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::messages::control_messages::subscribe::{FilterType, GroupOrder, Subscribe};
-    use crate::messages::control_messages::version_specific_parameters::AuthorizationInfo;
-    use crate::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
-    use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::{
+            subscribe::{FilterType, GroupOrder, Subscribe},
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize_subscribe_latest_group_with_start_parameter() {

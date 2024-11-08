@@ -4,9 +4,8 @@ use std::any::Any;
 
 use crate::{
     messages::moqt_payload::MOQTPayload,
-    modules::{variable_bytes::write_variable_bytes, variable_integer::write_variable_integer},
-    variable_bytes::read_variable_bytes_from_buffer,
-    variable_integer::read_variable_integer_from_buffer,
+    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -74,11 +73,12 @@ impl MOQTPayload for AnnounceError {
 
 #[cfg(test)]
 mod success {
-    use crate::{
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::control_messages::announce_error::AnnounceError,
-    };
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::announce_error::AnnounceError, moqt_payload::MOQTPayload,
+    };
+
     #[test]
     fn packetize_announce_error() {
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);

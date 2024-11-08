@@ -95,12 +95,15 @@ impl MOQTPayload for SubscribeNamespace {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::control_messages::version_specific_parameters::{
-        AuthorizationInfo, VersionSpecificParameter,
-    };
-    use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::control_messages::subscribe_namespace::SubscribeNamespace;
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::{
+            subscribe_namespace::SubscribeNamespace,
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize() {

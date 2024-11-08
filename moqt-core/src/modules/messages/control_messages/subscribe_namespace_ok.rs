@@ -61,9 +61,11 @@ impl MOQTPayload for SubscribeNamespaceOk {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::control_messages::subscribe_namespace_ok::SubscribeNamespaceOk;
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::subscribe_namespace_ok::SubscribeNamespaceOk, moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize() {

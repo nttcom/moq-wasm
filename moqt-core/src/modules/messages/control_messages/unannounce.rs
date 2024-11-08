@@ -56,9 +56,9 @@ impl MOQTPayload for UnAnnounce {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::control_messages::unannounce::UnAnnounce;
-    use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
+
+    use crate::messages::{control_messages::unannounce::UnAnnounce, moqt_payload::MOQTPayload};
 
     #[test]
     fn packetize_unannounce() {

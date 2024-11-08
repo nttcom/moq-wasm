@@ -71,8 +71,8 @@ impl DataStreams for StreamHeaderTrack {
 
 #[cfg(test)]
 mod success {
-    use super::DataStreams;
-    use crate::messages::data_streams::stream_header_track::StreamHeaderTrack;
+    use crate::messages::data_streams::stream_header_track::{DataStreams, StreamHeaderTrack};
+
     use bytes::BytesMut;
     use std::io::Cursor;
 

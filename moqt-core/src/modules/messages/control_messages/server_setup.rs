@@ -4,7 +4,7 @@ use std::any::Any;
 
 use crate::{
     messages::{control_messages::setup_parameters::SetupParameter, moqt_payload::MOQTPayload},
-    modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -63,15 +63,19 @@ impl MOQTPayload for ServerSetup {
 
 #[cfg(test)]
 mod success {
+    use bytes::BytesMut;
+
     use crate::{
         constants::MOQ_TRANSPORT_VERSION,
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::control_messages::{
-            server_setup::ServerSetup,
-            setup_parameters::{Role, RoleCase, SetupParameter},
+        messages::{
+            control_messages::{
+                server_setup::ServerSetup,
+                setup_parameters::{Role, RoleCase, SetupParameter},
+            },
+            moqt_payload::MOQTPayload,
         },
     };
-    use bytes::BytesMut;
+
     #[test]
     fn packetize_server_setup() {
         let selected_version = MOQ_TRANSPORT_VERSION;

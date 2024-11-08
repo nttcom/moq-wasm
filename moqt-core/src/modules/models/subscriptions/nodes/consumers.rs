@@ -267,8 +267,9 @@ impl SubscriptionNodeRegistry for Consumer {
 
 #[cfg(test)]
 pub(crate) mod test_helper_fn {
-    use super::{Consumer, TrackNamespace};
-    use crate::models::subscriptions::nodes::consumers::{FilterType, GroupOrder};
+    use crate::models::subscriptions::nodes::consumers::{
+        Consumer, FilterType, GroupOrder, TrackNamespace,
+    };
 
     #[derive(Debug, Clone)]
     pub(crate) struct SubscriptionVariables {
@@ -318,9 +319,16 @@ pub(crate) mod test_helper_fn {
 
 #[cfg(test)]
 mod success {
-    use super::*;
-    use crate::models::subscriptions::nodes::consumers::test_helper_fn;
-    use crate::models::subscriptions::Subscription;
+    use crate::models::{
+        subscriptions::{
+            nodes::{
+                consumers::{test_helper_fn, Consumer},
+                registry::SubscriptionNodeRegistry,
+            },
+            Subscription,
+        },
+        tracks::ForwardingPreference,
+    };
 
     #[test]
     fn set_subscription() {

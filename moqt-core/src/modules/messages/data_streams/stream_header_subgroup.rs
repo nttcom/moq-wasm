@@ -95,10 +95,12 @@ impl DataStreams for StreamHeaderSubgroup {
 
 #[cfg(test)]
 mod success {
-    use super::DataStreams;
-    use crate::messages::data_streams::stream_header_subgroup::StreamHeaderSubgroup;
     use bytes::BytesMut;
     use std::io::Cursor;
+
+    use crate::messages::data_streams::stream_header_subgroup::{
+        DataStreams, StreamHeaderSubgroup,
+    };
 
     #[test]
     fn packetize_stream_header_subgroup() {

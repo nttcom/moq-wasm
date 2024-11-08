@@ -174,10 +174,12 @@ impl MaxCacheDuration {
 
 #[cfg(test)]
 mod success {
-    use crate::modules::messages::control_messages::version_specific_parameters::{
-        AuthorizationInfo, DeliveryTimeout, MaxCacheDuration, VersionSpecificParameter,
+    use crate::messages::{
+        control_messages::version_specific_parameters::{
+            AuthorizationInfo, DeliveryTimeout, MaxCacheDuration, VersionSpecificParameter,
+        },
+        moqt_payload::MOQTPayload,
     };
-    use crate::modules::messages::moqt_payload::MOQTPayload;
 
     #[test]
     fn packetize_authorization_info() {
@@ -297,8 +299,10 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::modules::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
-    use crate::modules::messages::moqt_payload::MOQTPayload;
+    use crate::messages::{
+        control_messages::version_specific_parameters::VersionSpecificParameter,
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     #[should_panic]

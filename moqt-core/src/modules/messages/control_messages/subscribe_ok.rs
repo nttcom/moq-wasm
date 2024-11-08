@@ -162,15 +162,15 @@ impl MOQTPayload for SubscribeOk {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::control_messages::{
-        subscribe_ok::GroupOrder,
-        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-    };
-    use crate::{
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::control_messages::subscribe_ok::SubscribeOk,
-    };
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::{
+            subscribe_ok::{GroupOrder, SubscribeOk},
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize_subscribe_ok_content_not_exists() {
@@ -331,11 +331,9 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::{
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::control_messages::subscribe_ok::SubscribeOk,
-    };
     use bytes::BytesMut;
+
+    use crate::messages::{control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload};
 
     #[test]
     fn depacketize_subscribe_ok_invalid_group_order() {

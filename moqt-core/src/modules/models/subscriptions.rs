@@ -156,8 +156,13 @@ pub(crate) mod test_helper_fn {
 
 #[cfg(test)]
 mod success {
-    use super::*;
-    use crate::models::tracks::ForwardingPreference;
+    use crate::{
+        messages::control_messages::subscribe::{FilterType, GroupOrder},
+        models::{
+            subscriptions::{test_helper_fn, Subscription},
+            tracks::ForwardingPreference,
+        },
+    };
 
     #[test]
     fn new() {

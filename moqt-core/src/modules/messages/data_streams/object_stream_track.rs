@@ -123,12 +123,12 @@ impl DataStreams for ObjectStreamTrack {
 
 #[cfg(test)]
 mod success {
-    use super::DataStreams;
-    use crate::messages::data_streams::{
-        object_status::ObjectStatus, object_stream_track::ObjectStreamTrack,
-    };
     use bytes::BytesMut;
     use std::io::Cursor;
+
+    use crate::messages::data_streams::{
+        object_status::ObjectStatus, object_stream_track::ObjectStreamTrack, DataStreams,
+    };
 
     #[test]
     fn packetize_object_stream_track_normal() {
@@ -286,10 +286,12 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use super::DataStreams;
-    use crate::messages::data_streams::object_stream_track::{ObjectStatus, ObjectStreamTrack};
     use bytes::BytesMut;
     use std::io::Cursor;
+
+    use crate::messages::data_streams::object_stream_track::{
+        DataStreams, ObjectStatus, ObjectStreamTrack,
+    };
 
     #[test]
     fn packetize_object_stream_track_not_normal_and_not_empty_payload() {

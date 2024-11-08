@@ -3,13 +3,10 @@ use serde::Serialize;
 use std::any::Any;
 
 use crate::{
+    messages::control_messages::version_specific_parameters::VersionSpecificParameter,
     messages::moqt_payload::MOQTPayload,
-    modules::{
-        messages::control_messages::version_specific_parameters::VersionSpecificParameter,
-        variable_integer::read_variable_integer_from_buffer,
-    },
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
-    variable_integer::write_variable_integer,
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -86,11 +83,15 @@ impl MOQTPayload for Announce {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::control_messages::version_specific_parameters::AuthorizationInfo;
-    use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::control_messages::announce::Announce;
-    use crate::modules::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::{
+            announce::Announce,
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize_announce_with_parameter() {

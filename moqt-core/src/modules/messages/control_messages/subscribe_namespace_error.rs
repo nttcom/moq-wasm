@@ -86,9 +86,12 @@ impl MOQTPayload for SubscribeNamespaceError {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::control_messages::subscribe_namespace_error::SubscribeNamespaceError;
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::subscribe_namespace_error::SubscribeNamespaceError,
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize() {

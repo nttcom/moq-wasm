@@ -147,13 +147,12 @@ impl DataStreams for ObjectDatagram {
 
 #[cfg(test)]
 mod success {
+    use bytes::BytesMut;
     use std::io::Cursor;
 
     use crate::messages::data_streams::{
-        object_datagram::ObjectDatagram, object_status::ObjectStatus,
+        object_datagram::ObjectDatagram, object_status::ObjectStatus, DataStreams,
     };
-    use crate::modules::messages::data_streams::DataStreams;
-    use bytes::BytesMut;
 
     #[test]
     fn packetize_object_datagram_normal() {
@@ -383,10 +382,12 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use super::DataStreams;
-    use crate::messages::data_streams::object_datagram::{ObjectDatagram, ObjectStatus};
     use bytes::BytesMut;
     use std::io::Cursor;
+
+    use crate::messages::data_streams::object_datagram::{
+        DataStreams, ObjectDatagram, ObjectStatus,
+    };
 
     #[test]
     fn packetize_object_datagram_not_normal_and_not_empty_payload() {

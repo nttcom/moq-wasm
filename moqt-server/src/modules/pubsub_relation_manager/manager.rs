@@ -13,7 +13,6 @@ use crate::modules::pubsub_relation_manager::{
 
 type DownstreamSessionId = usize;
 type UpstreamSessionId = usize;
-
 pub(crate) type Consumers = HashMap<UpstreamSessionId, Consumer>;
 pub(crate) type Producers = HashMap<DownstreamSessionId, Producer>;
 

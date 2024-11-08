@@ -3,7 +3,7 @@ use std::{any::Any, vec};
 
 use crate::{
     messages::{control_messages::setup_parameters::SetupParameter, moqt_payload::MOQTPayload},
-    modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -76,15 +76,19 @@ impl MOQTPayload for ClientSetup {
 
 #[cfg(test)]
 mod success {
+    use bytes::BytesMut;
+
     use crate::{
         constants::MOQ_TRANSPORT_VERSION,
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::control_messages::{
-            client_setup::ClientSetup,
-            setup_parameters::{Role, RoleCase, SetupParameter},
+        messages::{
+            control_messages::{
+                client_setup::ClientSetup,
+                setup_parameters::{Role, RoleCase, SetupParameter},
+            },
+            moqt_payload::MOQTPayload,
         },
     };
-    use bytes::BytesMut;
+
     #[test]
     fn packetize_client_setup() {
         let supported_versions = vec![MOQ_TRANSPORT_VERSION];

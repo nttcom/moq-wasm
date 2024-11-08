@@ -62,9 +62,10 @@ impl MOQTPayload for Unsubscribe {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::control_messages::unsubscribe::Unsubscribe;
-    use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
+
+    use crate::messages::{control_messages::unsubscribe::Unsubscribe, moqt_payload::MOQTPayload};
+
     #[test]
     fn packetize_unsubscribe() {
         let unsubscribe = Unsubscribe {

@@ -4,8 +4,7 @@ use std::any::Any;
 
 use crate::{
     messages::moqt_payload::MOQTPayload,
-    modules::variable_bytes::write_variable_bytes,
-    variable_bytes::read_variable_bytes_from_buffer,
+    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
@@ -54,9 +53,9 @@ impl MOQTPayload for AnnounceOk {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::control_messages::announce_ok::AnnounceOk;
     use bytes::BytesMut;
+
+    use crate::messages::{control_messages::announce_ok::AnnounceOk, moqt_payload::MOQTPayload};
 
     #[test]
     fn packetize() {

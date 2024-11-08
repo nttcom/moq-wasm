@@ -282,8 +282,10 @@ impl SubscriptionNodeRegistry for Producer {
 
 #[cfg(test)]
 pub(crate) mod test_helper_fn {
-    use super::{Producer, TrackNamespace};
-    use crate::models::subscriptions::nodes::producers::{FilterType, GroupOrder};
+
+    use crate::models::subscriptions::nodes::producers::{
+        FilterType, GroupOrder, Producer, TrackNamespace,
+    };
 
     #[derive(Debug, Clone)]
     pub(crate) struct SubscriptionVariables {
@@ -333,8 +335,16 @@ pub(crate) mod test_helper_fn {
 
 #[cfg(test)]
 mod success {
-    use super::*;
-    use crate::models::subscriptions::Subscription;
+    use crate::models::{
+        subscriptions::{
+            nodes::{
+                producers::{test_helper_fn, Producer},
+                registry::SubscriptionNodeRegistry,
+            },
+            Subscription,
+        },
+        tracks::ForwardingPreference,
+    };
 
     #[test]
     fn set_subscription() {
