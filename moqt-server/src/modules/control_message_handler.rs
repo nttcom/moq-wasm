@@ -1,9 +1,9 @@
 use std::io::Cursor;
 
 use crate::constants::TerminationErrorCode;
-use crate::modules::moqt_client::MOQTClientStatus;
 use crate::modules::{
     handlers::{subscribe_handler::SubscribeResponse, unannounce_handler::unannounce_handler},
+    moqt_client::{MOQTClient, MOQTClientStatus},
     server_processes::{
         announce_error_message::process_announce_error_message,
         announce_message::process_announce_message,
@@ -15,6 +15,7 @@ use crate::modules::{
         subscribe_ok_message::process_subscribe_ok_message,
     },
 };
+
 use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
 use moqt_core::{
@@ -25,8 +26,6 @@ use moqt_core::{
     variable_integer::{read_variable_integer, write_variable_integer},
     SendStreamDispatcherRepository,
 };
-
-use super::moqt_client::MOQTClient;
 
 #[derive(Debug, PartialEq)]
 pub enum MessageProcessResult {
