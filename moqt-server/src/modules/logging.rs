@@ -9,9 +9,9 @@ pub fn init_logging(log_level: String) {
         "ERROR" => LevelFilter::ERROR,
         _ => {
             panic!(
-              "Invalid log level: '{}'.\n  Valid log levels: [OFF, TRACE, DEBUG, INFO, WARN, ERROR]",
-              log_level
-          );
+                "Invalid log level: '{}'.\n  Valid log levels: [OFF, TRACE, DEBUG, INFO, WARN, ERROR]",
+                log_level
+            );
         }
     };
 
