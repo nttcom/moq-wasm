@@ -1,7 +1,6 @@
-use std::io::Cursor;
-
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, BytesMut};
+use std::io::Cursor;
 
 // See https://datatracker.ietf.org/doc/html/rfc9000#name-variable-length-integer-enc
 

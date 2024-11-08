@@ -1,7 +1,7 @@
-use crate::constants::StreamDirection;
-use crate::messages::moqt_payload::MOQTPayload;
 use anyhow::Result;
 use async_trait::async_trait;
+
+use crate::{constants::StreamDirection, messages::moqt_payload::MOQTPayload};
 
 #[async_trait]
 pub trait SendStreamDispatcherRepository: Send + Sync {

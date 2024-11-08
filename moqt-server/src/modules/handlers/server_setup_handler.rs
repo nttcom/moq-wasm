@@ -1,7 +1,5 @@
-use crate::constants;
-use crate::modules::moqt_client::{MOQTClient, MOQTClientStatus};
 use anyhow::{bail, Result};
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
+
 use moqt_core::{
     constants::UnderlayType,
     messages::control_messages::{
@@ -10,6 +8,12 @@ use moqt_core::{
         setup_parameters::SetupParameter,
         setup_parameters::{Role, RoleCase},
     },
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+};
+
+use crate::{
+    constants,
+    modules::moqt_client::{MOQTClient, MOQTClientStatus},
 };
 
 pub(crate) async fn setup_handler(

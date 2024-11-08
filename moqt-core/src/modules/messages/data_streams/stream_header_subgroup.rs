@@ -1,11 +1,12 @@
-use super::DataStreams;
-use crate::{
-    variable_bytes::read_fixed_length_bytes,
-    variable_integer::{read_variable_integer, write_variable_integer},
-};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::any::Any;
+
+use crate::{
+    messages::data_streams::DataStreams,
+    variable_bytes::read_fixed_length_bytes,
+    variable_integer::{read_variable_integer, write_variable_integer},
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct StreamHeaderSubgroup {

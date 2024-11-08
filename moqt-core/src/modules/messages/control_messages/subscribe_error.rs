@@ -1,15 +1,15 @@
-use std::any::Any;
-
 use anyhow::Context;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
+use std::any::Any;
 
-use crate::modules::{
-    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+use crate::{
+    messages::moqt_payload::MOQTPayload,
+    modules::{
+        variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
+        variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+    },
 };
-
-use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, IntoPrimitive, TryFromPrimitive, Serialize, Clone, Copy, PartialEq)]
 #[repr(u8)]

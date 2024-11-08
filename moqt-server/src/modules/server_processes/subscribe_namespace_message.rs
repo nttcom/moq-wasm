@@ -1,13 +1,21 @@
-use crate::modules::handlers::subscribe_namespace_handler::subscribe_namespace_handler;
-use crate::modules::moqt_client::MOQTClient;
 use anyhow::{bail, Result};
 use bytes::BytesMut;
-use moqt_core::messages::control_messages::subscribe_namespace_error::SubscribeNamespaceError;
-use moqt_core::messages::{
-    control_messages::subscribe_namespace::SubscribeNamespace, moqt_payload::MOQTPayload,
+
+use moqt_core::{
+    messages::{
+        control_messages::{
+            subscribe_namespace::SubscribeNamespace,
+            subscribe_namespace_error::SubscribeNamespaceError,
+        },
+        moqt_payload::MOQTPayload,
+    },
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+    SendStreamDispatcherRepository,
 };
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-use moqt_core::SendStreamDispatcherRepository;
+
+use crate::modules::{
+    handlers::subscribe_namespace_handler::subscribe_namespace_handler, moqt_client::MOQTClient,
+};
 
 pub(crate) async fn process_subscribe_namespace_message(
     payload_buf: &mut BytesMut,

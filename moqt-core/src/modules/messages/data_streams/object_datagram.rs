@@ -1,13 +1,12 @@
-use crate::messages::data_streams::object_status::ObjectStatus;
-use crate::{
-    variable_bytes::read_fixed_length_bytes,
-    variable_integer::{read_variable_integer, write_variable_integer},
-};
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::any::Any;
 
-use super::DataStreams;
+use crate::{
+    messages::data_streams::{object_status::ObjectStatus, DataStreams},
+    variable_bytes::read_fixed_length_bytes,
+    variable_integer::{read_variable_integer, write_variable_integer},
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ObjectDatagram {

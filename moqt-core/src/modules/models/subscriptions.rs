@@ -1,8 +1,9 @@
 pub mod nodes;
 
-use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use crate::models::tracks::ForwardingPreference;
-use crate::models::tracks::Track;
+use crate::{
+    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    models::tracks::{ForwardingPreference, Track},
+};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Status {

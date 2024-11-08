@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::any::Any;
 
 use crate::{
+    messages::moqt_payload::MOQTPayload,
     modules::{
         messages::control_messages::version_specific_parameters::VersionSpecificParameter,
         variable_integer::read_variable_integer_from_buffer,
@@ -10,8 +11,6 @@ use crate::{
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::write_variable_integer,
 };
-
-use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct Announce {

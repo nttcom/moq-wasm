@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use std::any::Any;
 
-use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
-
-use super::setup_parameters::SetupParameter;
-use crate::messages::moqt_payload::MOQTPayload;
+use crate::{
+    messages::{control_messages::setup_parameters::SetupParameter, moqt_payload::MOQTPayload},
+    modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+};
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ServerSetup {

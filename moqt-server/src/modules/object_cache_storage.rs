@@ -1,15 +1,16 @@
 use anyhow::{bail, Result};
-use moqt_core::messages::data_streams::{
-    object_datagram::ObjectDatagram, object_stream_subgroup::ObjectStreamSubgroup,
-    object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
-    stream_header_track::StreamHeaderTrack,
-};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use ttl_cache::TtlCache;
-use ObjectCacheStorageCommand::*;
+
+use moqt_core::messages::data_streams::{
+    object_datagram::ObjectDatagram, object_stream_subgroup::ObjectStreamSubgroup,
+    object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
+    stream_header_track::StreamHeaderTrack,
+};
+
 type CacheId = usize;
 
 #[allow(dead_code)]
@@ -26,6 +27,66 @@ pub(crate) enum CacheObject {
     Datagram(ObjectDatagram),
     Track(ObjectStreamTrack),
     Subgroup(ObjectStreamSubgroup),
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) enum ObjectCacheStorageCommand {
+    SetSubscription {
+        session_id: usize,
+        subscribe_id: u64,
+        cache_header: CacheHeader,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    GetHeader {
+        session_id: usize,
+        subscribe_id: u64,
+        resp: oneshot::Sender<Result<CacheHeader>>,
+    },
+    SetObject {
+        session_id: usize,
+        subscribe_id: u64,
+        cache_object: CacheObject,
+        duration: u64,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    GetAbsoluteObject {
+        session_id: usize,
+        subscribe_id: u64,
+        group_id: u64,
+        object_id: u64,
+        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
+    },
+    GetFirstObject {
+        session_id: usize,
+        subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
+    },
+    GetNextObject {
+        session_id: usize,
+        subscribe_id: u64,
+        cache_id: usize,
+        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
+    },
+    GetLatestObject {
+        session_id: usize,
+        subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
+    },
+    GetLatestGroup {
+        session_id: usize,
+        subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
+    },
+    DeleteSubscription {
+        session_id: usize,
+        subscribe_id: u64,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    DeleteClient {
+        session_id: usize,
+        resp: oneshot::Sender<Result<()>>,
+    },
 }
 
 #[derive(Clone)]
@@ -60,7 +121,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
     while let Some(cmd) = rx.recv().await {
         tracing::trace!("command received: {:#?}", cmd);
         match cmd {
-            SetSubscription {
+            ObjectCacheStorageCommand::SetSubscription {
                 session_id,
                 subscribe_id,
                 cache_header,
@@ -74,7 +135,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
 
                 resp.send(Ok(())).unwrap();
             }
-            GetHeader {
+            ObjectCacheStorageCommand::GetHeader {
                 session_id,
                 subscribe_id,
                 resp,
@@ -92,7 +153,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     }
                 }
             }
-            SetObject {
+            ObjectCacheStorageCommand::SetObject {
                 session_id,
                 subscribe_id,
                 cache_object,
@@ -116,7 +177,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         .unwrap();
                 }
             }
-            GetAbsoluteObject {
+            ObjectCacheStorageCommand::GetAbsoluteObject {
                 session_id,
                 subscribe_id,
                 group_id,
@@ -206,7 +267,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            GetFirstObject {
+            ObjectCacheStorageCommand::GetFirstObject {
                 session_id,
                 subscribe_id,
                 resp,
@@ -234,7 +295,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            GetNextObject {
+            ObjectCacheStorageCommand::GetNextObject {
                 session_id,
                 subscribe_id,
                 cache_id,
@@ -265,7 +326,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            GetLatestGroup {
+            ObjectCacheStorageCommand::GetLatestGroup {
                 session_id,
                 subscribe_id,
                 resp,
@@ -348,7 +409,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            GetLatestObject {
+            ObjectCacheStorageCommand::GetLatestObject {
                 session_id,
                 subscribe_id,
                 resp,
@@ -376,7 +437,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            DeleteSubscription {
+            ObjectCacheStorageCommand::DeleteSubscription {
                 session_id,
                 subscribe_id,
                 resp,
@@ -384,7 +445,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 let _ = storage.remove(&(session_id, subscribe_id));
                 resp.send(Ok(())).unwrap();
             }
-            DeleteClient { session_id, resp } => {
+            ObjectCacheStorageCommand::DeleteClient { session_id, resp } => {
                 let keys: Vec<(usize, u64)> = storage.keys().cloned().collect();
                 for key in keys {
                     if key.0 == session_id {
@@ -397,66 +458,6 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
     }
 
     tracing::trace!("object_cache_storage end");
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub(crate) enum ObjectCacheStorageCommand {
-    SetSubscription {
-        session_id: usize,
-        subscribe_id: u64,
-        cache_header: CacheHeader,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    GetHeader {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<CacheHeader>>,
-    },
-    SetObject {
-        session_id: usize,
-        subscribe_id: u64,
-        cache_object: CacheObject,
-        duration: u64,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    GetAbsoluteObject {
-        session_id: usize,
-        subscribe_id: u64,
-        group_id: u64,
-        object_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
-    },
-    GetFirstObject {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
-    },
-    GetNextObject {
-        session_id: usize,
-        subscribe_id: u64,
-        cache_id: usize,
-        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
-    },
-    GetLatestObject {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
-    },
-    GetLatestGroup {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
-    },
-    DeleteSubscription {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    DeleteClient {
-        session_id: usize,
-        resp: oneshot::Sender<Result<()>>,
-    },
 }
 
 pub(crate) struct ObjectCacheStorageWrapper {
@@ -477,7 +478,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = SetSubscription {
+        let cmd = ObjectCacheStorageCommand::SetSubscription {
             session_id,
             subscribe_id,
             cache_header,
@@ -501,7 +502,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<CacheHeader> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<CacheHeader>>();
 
-        let cmd = GetHeader {
+        let cmd = ObjectCacheStorageCommand::GetHeader {
             session_id,
             subscribe_id,
             resp: resp_tx,
@@ -526,7 +527,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = SetObject {
+        let cmd = ObjectCacheStorageCommand::SetObject {
             session_id,
             subscribe_id,
             cache_object,
@@ -553,7 +554,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<Option<(CacheId, CacheObject)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, CacheObject)>>>();
 
-        let cmd = GetAbsoluteObject {
+        let cmd = ObjectCacheStorageCommand::GetAbsoluteObject {
             session_id,
             subscribe_id,
             group_id,
@@ -578,7 +579,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<Option<(CacheId, CacheObject)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, CacheObject)>>>();
 
-        let cmd = GetFirstObject {
+        let cmd = ObjectCacheStorageCommand::GetFirstObject {
             session_id,
             subscribe_id,
             resp: resp_tx,
@@ -602,7 +603,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<Option<(CacheId, CacheObject)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, CacheObject)>>>();
 
-        let cmd = GetNextObject {
+        let cmd = ObjectCacheStorageCommand::GetNextObject {
             session_id,
             subscribe_id,
             cache_id,
@@ -626,7 +627,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<Option<(CacheId, CacheObject)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, CacheObject)>>>();
 
-        let cmd = GetLatestObject {
+        let cmd = ObjectCacheStorageCommand::GetLatestObject {
             session_id,
             subscribe_id,
             resp: resp_tx,
@@ -649,7 +650,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<Option<(CacheId, CacheObject)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, CacheObject)>>>();
 
-        let cmd = GetLatestGroup {
+        let cmd = ObjectCacheStorageCommand::GetLatestGroup {
             session_id,
             subscribe_id,
             resp: resp_tx,
@@ -668,7 +669,7 @@ impl ObjectCacheStorageWrapper {
     async fn delete_subscription(&mut self, session_id: usize, subscribe_id: u64) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = DeleteSubscription {
+        let cmd = ObjectCacheStorageCommand::DeleteSubscription {
             session_id,
             subscribe_id,
             resp: resp_tx,
@@ -687,7 +688,7 @@ impl ObjectCacheStorageWrapper {
     pub async fn delete_client(&mut self, session_id: usize) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = DeleteClient {
+        let cmd = ObjectCacheStorageCommand::DeleteClient {
             session_id,
             resp: resp_tx,
         };
