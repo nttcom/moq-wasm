@@ -10,7 +10,7 @@ pub(crate) async fn process_stream_header_track(
     read_cur: &mut std::io::Cursor<&[u8]>,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
 ) -> Result<u64> {
     let stream_header_track = match StreamHeaderTrack::depacketize(read_cur) {
         Ok(stream_header_track) => stream_header_track,
