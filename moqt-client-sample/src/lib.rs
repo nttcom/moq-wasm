@@ -379,12 +379,17 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendSubscribeMessage)]
     pub async fn send_subscribe_message(
         &self,
+        subscribe_id: u64,
+        track_alias: u64,
         track_namespace: js_sys::Array,
         track_name: String,
-        // start_group: Option<String>,
-        // start_object: Option<String>,
-        // end_group: Option<String>,
-        // end_object: Option<String>,
+        priority: u8,
+        group_order: u8,
+        filter_type: u8,
+        start_group: u64,
+        start_object: u64,
+        end_group: u64,
+        end_object: u64,
         auth_info: String,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
@@ -401,19 +406,21 @@ impl MOQTClient {
                 track_namespace_vec.push(string_element);
             }
 
-            // Find unused subscribe_id and track_alias automatically
-            let (subscribe_id, track_alias) = self
-                .subscription_node
-                .borrow_mut()
-                .create_latest_subscribe_id_and_track_alias()
-                .unwrap();
-            let priority = 0;
-            let group_order = GroupOrder::Ascending;
-            let filter_type = FilterType::LatestGroup;
-            let start_group = None;
-            let start_object = None;
-            let end_group = None;
-            let end_object = None;
+            let group_order = GroupOrder::try_from(group_order).unwrap();
+            let filter_type = FilterType::try_from(filter_type).unwrap();
+            let (start_group, start_object) = match filter_type {
+                FilterType::LatestObject | FilterType::LatestGroup => (None, None),
+                FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
+                    (Some(start_group), Some(start_object))
+                }
+            };
+            let (end_group, end_object) = match filter_type {
+                FilterType::LatestObject | FilterType::LatestGroup | FilterType::AbsoluteStart => {
+                    (None, None)
+                }
+                FilterType::AbsoluteRange => (Some(end_group), Some(end_object)),
+            };
+
             let version_specific_parameters = vec![auth_info];
             let subscribe_message = Subscribe::new(
                 subscribe_id,
@@ -1404,14 +1411,6 @@ impl SubscriptionNode {
     fn set_namespace_prefix(&mut self, track_namespace_prefix: Vec<String>) {
         if let Some(consumer) = &mut self.consumer {
             let _ = consumer.set_namespace_prefix(track_namespace_prefix);
-        }
-    }
-
-    fn create_latest_subscribe_id_and_track_alias(&self) -> Result<(u64, u64)> {
-        if let Some(consumer) = &self.consumer {
-            consumer.create_latest_subscribe_id_and_track_alias()
-        } else {
-            Err(anyhow::anyhow!("consumer is None"))
         }
     }
 
