@@ -11,7 +11,7 @@ pub(crate) async fn process_subscribe_ok_message(
     payload_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
 ) -> Result<()> {
     let subscribe_ok_message = match SubscribeOk::depacketize(payload_buf) {
         Ok(subscribe_ok_message) => subscribe_ok_message,

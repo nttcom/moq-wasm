@@ -10,7 +10,7 @@ pub(crate) async fn stream_header_subgroup_handler(
     stream_header_subgroup_message: StreamHeaderSubgroup,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
 ) -> Result<u64> {
     tracing::trace!("stream_header_subgroup_handler start.");
 

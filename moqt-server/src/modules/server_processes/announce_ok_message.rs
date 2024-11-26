@@ -9,7 +9,7 @@ use moqt_core::{
 
 pub(crate) async fn process_announce_ok_message(
     payload_buf: &mut BytesMut,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
 ) -> Result<()> {
     let announce_ok_message = match AnnounceOk::depacketize(payload_buf) {

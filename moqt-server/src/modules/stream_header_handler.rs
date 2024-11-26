@@ -42,7 +42,7 @@ fn read_header_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataStreamT
 
 pub async fn stream_header_handler(
     read_buf: &mut BytesMut,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
 ) -> StreamHeaderProcessResult {

@@ -268,7 +268,7 @@ async fn handle_connection(
                 let pubsub_relation_tx = pubsub_relation_tx.clone();
                 let send_stream_tx = send_stream_tx.clone();
                 let close_connection_tx = close_connection_tx.clone();
-                let client= client.clone();
+                let client = Arc::clone(&client);
 
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
                 send_stream_tx.send(SendStreamDispatchCommand::Set {
@@ -320,7 +320,8 @@ async fn handle_connection(
                 let object_cache_tx = object_cache_tx.clone();
                 let open_subscription_txes = open_subscription_txes.clone();
                 let close_connection_tx = close_connection_tx.clone();
-                let client = client.clone();
+                let client = Arc::clone(&client);
+
                 let session_span_clone = session_span.clone();
 
                 tokio::spawn(async move {
@@ -448,7 +449,6 @@ async fn handle_incoming_uni_stream(
     let mut upstream_subscribe_id: u64 = 0;
     let mut stream_header_type: DataStreamType = DataStreamType::ObjectDatagram;
     let stream_id = stream.stream_id;
-    let mut client = client.lock().await;
     let close_connection_tx_clone = close_connection_tx.clone();
     let buffer_tx_clone = buffer_tx.clone();
     let shared_recv_stream = &mut stream.shared_recv_stream;
@@ -508,9 +508,11 @@ async fn handle_incoming_uni_stream(
             let result: StreamHeaderProcessResult;
             {
                 let mut process_buf = buf.lock().await;
+                let client = client.lock().await;
+
                 result = stream_header_handler(
                     &mut process_buf,
-                    &mut client,
+                    &client,
                     &mut pubsub_relation_manager,
                     &mut object_cache_storage,
                 )
@@ -563,12 +565,13 @@ async fn handle_incoming_uni_stream(
         // Read Object Stream
         {
             let mut process_buf = buf.lock().await;
+            let client = client.lock().await;
 
             result = object_stream_handler(
                 stream_header_type.clone(),
                 upstream_subscribe_id,
                 &mut process_buf,
-                &mut client,
+                &client,
                 &mut object_cache_storage,
             )
             .await;
@@ -984,16 +987,19 @@ async fn handle_incoming_bi_stream(
         let mut buf = buf.lock().await;
         buf.extend_from_slice(&read_buf);
 
-        let mut client = client.lock().await;
-        // TODO: Move the implementation of control_message_handler to the server side since it is only used by the server
-        let message_result = control_message_handler(
-            &mut buf,
-            UnderlayType::WebTransport,
-            &mut client,
-            &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
-        )
-        .await;
+        let message_result: MessageProcessResult;
+        {
+            let mut client = client.lock().await;
+            // TODO: Move the implementation of control_message_handler to the server side since it is only used by the server
+            message_result = control_message_handler(
+                &mut buf,
+                UnderlayType::WebTransport,
+                &mut client,
+                &mut pubsub_relation_manager,
+                &mut send_stream_dispatcher,
+            )
+            .await;
+        }
 
         tracing::debug!("message_result: {:?}", message_result);
 

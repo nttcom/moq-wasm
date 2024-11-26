@@ -20,7 +20,7 @@ pub async fn object_stream_handler(
     header_type: DataStreamType,
     subscribe_id: u64,
     read_buf: &mut BytesMut,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
 ) -> ObjectStreamProcessResult {
     let payload_length = read_buf.len();

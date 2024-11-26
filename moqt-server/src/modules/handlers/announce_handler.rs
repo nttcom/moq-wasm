@@ -10,7 +10,7 @@ use moqt_core::{
 
 pub(crate) async fn announce_handler(
     announce_message: Announce,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<Option<AnnounceError>> {
@@ -134,7 +134,7 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let mut client = MOQTClient::new(upstream_session_id);
+        let client = MOQTClient::new(upstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -186,7 +186,7 @@ mod success {
         // Execute announce_handler and get result
         let result = announce_handler(
             announce_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -213,7 +213,7 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let mut client = MOQTClient::new(upstream_session_id);
+        let client = MOQTClient::new(upstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -262,7 +262,7 @@ mod success {
         // Execute announce_handler and get result
         let result = announce_handler(
             announce_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -312,7 +312,7 @@ mod failure {
 
         // Generate client
         let upstream_session_id = 0;
-        let mut client = MOQTClient::new(upstream_session_id);
+        let client = MOQTClient::new(upstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -351,7 +351,7 @@ mod failure {
         // Execute announce_handler and get result
         let result = announce_handler(
             announce_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
