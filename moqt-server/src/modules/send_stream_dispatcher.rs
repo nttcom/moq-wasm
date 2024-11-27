@@ -126,7 +126,7 @@ impl SendStreamDispatcherRepository for SendStreamDispatcher {
         }
         Ok(())
     }
-    async fn forward_message_to_send_stream_thread(
+    async fn transfer_message_to_send_stream_thread(
         &self,
         session_id: usize,
         message: Box<dyn MOQTPayload>,

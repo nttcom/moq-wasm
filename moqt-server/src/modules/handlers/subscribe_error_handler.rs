@@ -62,7 +62,7 @@ pub(crate) async fn subscribe_error_handler(
                     Box::new(message_payload.clone());
 
                 send_stream_dispatcher_repository
-                    .forward_message_to_send_stream_thread(
+                    .transfer_message_to_send_stream_thread(
                         *downstream_session_id,
                         relaying_subscribe_error_message,
                         StreamDirection::Bi,

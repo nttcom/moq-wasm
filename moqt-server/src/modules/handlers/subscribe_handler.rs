@@ -169,7 +169,7 @@ pub(crate) async fn subscribe_handler(
             // TODO: Wait for the SUBSCRIBE_OK message to be returned on a transaction
             // TODO: validate Timeout
             match send_stream_dispatcher_repository
-                .forward_message_to_send_stream_thread(
+                .transfer_message_to_send_stream_thread(
                     session_id,
                     relaying_subscribe_message,
                     StreamDirection::Bi,

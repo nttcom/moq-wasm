@@ -51,7 +51,7 @@ pub(crate) async fn subscribe_namespace_handler(
 
             // TODO: Unify the method to send a message to the opposite client itself
             let _ = send_stream_dispatcher_repository
-                .forward_message_to_send_stream_thread(
+                .transfer_message_to_send_stream_thread(
                     client.id(),
                     subscribe_namespace_ok_message,
                     StreamDirection::Bi,
@@ -73,7 +73,7 @@ pub(crate) async fn subscribe_namespace_handler(
                 ));
 
                 let _ = send_stream_dispatcher_repository
-                    .forward_message_to_send_stream_thread(
+                    .transfer_message_to_send_stream_thread(
                         client.id(),
                         announce_message,
                         StreamDirection::Bi,
