@@ -1,17 +1,19 @@
-use super::version_specific_parameters::VersionSpecificParameter;
-use crate::messages::moqt_payload::MOQTPayload;
-use crate::{
-    modules::{
-        variable_bytes::{read_fixed_length_bytes_from_buffer, read_variable_bytes_from_buffer},
-        variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
-    },
-    variable_bytes::write_variable_bytes,
-};
 use anyhow::{bail, Context};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
 use std::any::Any;
 use tracing;
+
+use crate::{
+    messages::{
+        control_messages::version_specific_parameters::VersionSpecificParameter,
+        moqt_payload::MOQTPayload,
+    },
+    variable_bytes::{
+        read_fixed_length_bytes_from_buffer, read_variable_bytes_from_buffer, write_variable_bytes,
+    },
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+};
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
 #[repr(u8)]
@@ -63,34 +65,44 @@ impl Subscribe {
         end_object: Option<u64>,
         subscribe_parameters: Vec<VersionSpecificParameter>,
     ) -> anyhow::Result<Subscribe> {
-        // StartGroup and StartObject: Only present for "AbsoluteStart" and "AbsoluteRange"
-        if !matches!(
-            filter_type,
-            FilterType::AbsoluteStart | FilterType::AbsoluteRange
-        ) {
-            if start_group.is_some() {
-                // TODO: return Termination Error Code
-                bail!(
-                    "start_group must be None unless filter_type is AbsoluteStart or AbsoluteRange"
-                );
-            } else if start_object.is_some() {
-                // TODO: return Termination Error Code
-                bail!("start_object must be None unless filter_type is AbsoluteStart or AbsoluteRange");
+        // If FilterType is LatestGroup or LatestObject, start_group/start_object/end_group/end_object must be None
+        // If FilterType is AbsoluteStart, start_group/start_object must be needed and end_group/end_object must be None
+        // If FilterType is AbsoluteRange, start_group/start_object/end_group/end_object must be needed
+        match filter_type {
+            FilterType::LatestGroup | FilterType::LatestObject => {
+                if start_group.is_some() {
+                    bail!("start_group must be None for LatestGroup or LatestObject");
+                } else if start_object.is_some() {
+                    bail!("start_object must be None for LatestGroup or LatestObject");
+                } else if end_group.is_some() {
+                    bail!("end_group must be None for LatestGroup or LatestObject");
+                } else if end_object.is_some() {
+                    bail!("end_object must be None for LatestGroup or LatestObject");
+                }
+            }
+            FilterType::AbsoluteStart => {
+                if start_group.is_none() {
+                    bail!("start_group must be Some for AbsoluteStart");
+                } else if start_object.is_none() {
+                    bail!("start_object must be Some for AbsoluteStart");
+                } else if end_group.is_some() {
+                    bail!("end_group must be None for AbsoluteStart");
+                } else if end_object.is_some() {
+                    bail!("end_object must be None for AbsoluteStart");
+                }
+            }
+            FilterType::AbsoluteRange => {
+                if start_group.is_none() {
+                    bail!("start_group must be Some for AbsoluteRange");
+                } else if start_object.is_none() {
+                    bail!("start_object must be Some for AbsoluteRange");
+                } else if end_group.is_none() {
+                    bail!("end_group must be Some for AbsoluteRange");
+                } else if end_object.is_none() {
+                    bail!("end_object must be Some for AbsoluteRange");
+                }
             }
         }
-
-        // EndGroup and EndObject: Only present for "AbsoluteRange"
-        if !matches!(filter_type, FilterType::AbsoluteRange) {
-            if end_group.is_some() {
-                // TODO: return Termination Error Code
-                bail!("end_group must be None unless filter_type is AbsoluteRange");
-            } else if end_object.is_some() {
-                // TODO: return Termination Error Code
-                bail!("end_object must be None unless filter_type is AbsoluteRange");
-            }
-        }
-
-        // TODO: Check the way if Start/End Group/Object is not present for AbsoluteStart/AbsoluteRange
 
         let number_of_parameters = subscribe_parameters.len() as u64;
         Ok(Subscribe {
@@ -289,11 +301,15 @@ impl MOQTPayload for Subscribe {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::control_messages::subscribe::{FilterType, GroupOrder, Subscribe};
-    use crate::messages::control_messages::version_specific_parameters::AuthorizationInfo;
-    use crate::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
-    use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::{
+            subscribe::{FilterType, GroupOrder, Subscribe},
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize_subscribe_latest_group() {
@@ -658,11 +674,15 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::messages::control_messages::subscribe::{FilterType, GroupOrder, Subscribe};
-    use crate::messages::control_messages::version_specific_parameters::AuthorizationInfo;
-    use crate::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
-    use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::{
+            subscribe::{FilterType, GroupOrder, Subscribe},
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize_subscribe_latest_group_with_start_parameter() {

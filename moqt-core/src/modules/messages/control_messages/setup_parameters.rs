@@ -1,10 +1,12 @@
-use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
-use std::any::Any;
-
-use crate::messages::moqt_payload::MOQTPayload;
 use anyhow::{bail, ensure, Context, Result};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
+use std::any::Any;
+
+use crate::{
+    messages::moqt_payload::MOQTPayload,
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+};
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub enum SetupParameter {
@@ -168,11 +170,12 @@ impl MaxSubscribeID {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::control_messages::setup_parameters::{
-        MaxSubscribeID, Role, RoleCase, SetupParameter,
-    };
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::setup_parameters::{MaxSubscribeID, Role, RoleCase, SetupParameter},
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize_role() {
@@ -256,9 +259,12 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::control_messages::setup_parameters::{Path, SetupParameter};
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::setup_parameters::{Path, SetupParameter},
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn depacketize_role_invalid_length() {

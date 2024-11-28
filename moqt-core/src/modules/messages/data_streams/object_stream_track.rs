@@ -1,13 +1,12 @@
-use crate::messages::data_streams::object_status::ObjectStatus;
-use crate::{
-    variable_bytes::read_fixed_length_bytes,
-    variable_integer::{read_variable_integer, write_variable_integer},
-};
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::any::Any;
 
-use super::DataStreams;
+use crate::{
+    messages::data_streams::{object_status::ObjectStatus, DataStreams},
+    variable_bytes::read_fixed_length_bytes,
+    variable_integer::{read_variable_integer, write_variable_integer},
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ObjectStreamTrack {
@@ -124,12 +123,12 @@ impl DataStreams for ObjectStreamTrack {
 
 #[cfg(test)]
 mod success {
-    use super::DataStreams;
-    use crate::messages::data_streams::{
-        object_status::ObjectStatus, object_stream_track::ObjectStreamTrack,
-    };
     use bytes::BytesMut;
     use std::io::Cursor;
+
+    use crate::messages::data_streams::{
+        object_status::ObjectStatus, object_stream_track::ObjectStreamTrack, DataStreams,
+    };
 
     #[test]
     fn packetize_object_stream_track_normal() {
@@ -287,10 +286,12 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use super::DataStreams;
-    use crate::messages::data_streams::object_stream_track::{ObjectStatus, ObjectStreamTrack};
     use bytes::BytesMut;
     use std::io::Cursor;
+
+    use crate::messages::data_streams::object_stream_track::{
+        DataStreams, ObjectStatus, ObjectStreamTrack,
+    };
 
     #[test]
     fn packetize_object_stream_track_not_normal_and_not_empty_payload() {

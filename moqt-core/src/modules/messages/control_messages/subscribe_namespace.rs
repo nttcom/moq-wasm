@@ -1,12 +1,15 @@
-use super::version_specific_parameters::VersionSpecificParameter;
-use crate::messages::moqt_payload::MOQTPayload;
-use crate::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
-use crate::{
-    modules::variable_bytes::write_variable_bytes, variable_bytes::read_variable_bytes_from_buffer,
-};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::any::Any;
+
+use crate::{
+    messages::{
+        control_messages::version_specific_parameters::VersionSpecificParameter,
+        moqt_payload::MOQTPayload,
+    },
+    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+};
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeNamespace {
@@ -62,8 +65,6 @@ impl MOQTPayload for SubscribeNamespace {
             }
         }
 
-        tracing::trace!("Depacketized subscribe namespace message.");
-
         Ok(SubscribeNamespace {
             track_namespace_prefix: track_namespace_prefix_tuple,
             number_of_parameters,
@@ -72,24 +73,19 @@ impl MOQTPayload for SubscribeNamespace {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Prefix Number of elements
         let track_namespace_prefix_tuple_length = self.track_namespace_prefix.len();
         buf.extend(write_variable_integer(
             track_namespace_prefix_tuple_length as u64,
         ));
         for track_namespace_prefix in &self.track_namespace_prefix {
-            // Track Namespace Prefix
             buf.extend(write_variable_bytes(
                 &track_namespace_prefix.as_bytes().to_vec(),
             ));
         }
-
         buf.extend(write_variable_integer(self.parameters.len() as u64));
         for parameter in &self.parameters {
             parameter.packetize(buf);
         }
-
-        tracing::trace!("Packetized subscribe namespace message.");
     }
     /// Method to enable downcasting from MOQTPayload to SubscribeNamespace
     fn as_any(&self) -> &dyn Any {
@@ -99,12 +95,15 @@ impl MOQTPayload for SubscribeNamespace {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::control_messages::version_specific_parameters::{
-        AuthorizationInfo, VersionSpecificParameter,
-    };
-    use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::control_messages::subscribe_namespace::SubscribeNamespace;
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::{
+            subscribe_namespace::SubscribeNamespace,
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize() {

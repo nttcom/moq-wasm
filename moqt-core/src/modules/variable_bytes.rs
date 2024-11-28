@@ -1,7 +1,6 @@
-use std::io::Cursor;
-
 use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
+use std::io::Cursor;
 
 use crate::variable_integer::{read_variable_integer, write_variable_integer};
 

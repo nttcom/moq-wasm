@@ -1,78 +1,12 @@
-use std::{collections::HashMap, sync::Arc};
-
 use anyhow::Result;
 use async_trait::async_trait;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::{mpsc, oneshot};
+
 use moqt_core::{
     constants::StreamDirection, messages::moqt_payload::MOQTPayload, SendStreamDispatcherRepository,
 };
-use tokio::sync::{mpsc, oneshot};
-
 type SenderToSendStreamThread = mpsc::Sender<Arc<Box<dyn MOQTPayload>>>;
-
-use SendStreamDispatchCommand::*;
-// Called as a separate thread
-pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDispatchCommand>) {
-    tracing::trace!("send_stream_dispatcher start");
-    // {
-    //   "${session_id}" : {
-    //     "StreamDirection::Uni" : tx,
-    //     "StreamDirection::Bi" : tx,
-    //   }
-    // }
-    let mut dispatcher =
-        HashMap::<usize, HashMap<StreamDirection, SenderToSendStreamThread>>::new();
-
-    while let Some(cmd) = rx.recv().await {
-        tracing::debug!("command received: {:#?}", cmd);
-        match cmd {
-            Set {
-                session_id,
-                stream_direction,
-                sender,
-            } => {
-                let inner_map = dispatcher.entry(session_id).or_default();
-                inner_map.insert(stream_direction, sender);
-                tracing::debug!("set: {:?} of {:?}", stream_direction, session_id);
-            }
-            List {
-                stream_direction,
-                exclude_session_id,
-                resp,
-            } => {
-                let mut senders = Vec::new();
-                for (session_id, inner_map) in &dispatcher {
-                    if let Some(exclude_session_id) = exclude_session_id {
-                        if *session_id == exclude_session_id {
-                            continue;
-                        }
-                    }
-                    if let Some(sender) = inner_map.get(&stream_direction) {
-                        senders.push(sender.clone());
-                    }
-                }
-                let _ = resp.send(senders);
-            }
-            Get {
-                session_id,
-                stream_direction,
-                resp,
-            } => {
-                let sender = dispatcher
-                    .get(&session_id)
-                    .and_then(|inner_map| inner_map.get(&stream_direction))
-                    .cloned();
-                tracing::debug!("get: {:?}", sender);
-                let _ = resp.send(sender);
-            }
-            Delete { session_id } => {
-                dispatcher.remove(&session_id);
-                tracing::debug!("delete: {:?}", session_id);
-            }
-        }
-    }
-
-    tracing::trace!("send_stream_dispatcher end");
-}
 
 #[derive(Debug)]
 pub(crate) enum SendStreamDispatchCommand {
@@ -94,6 +28,69 @@ pub(crate) enum SendStreamDispatchCommand {
     Delete {
         session_id: usize,
     },
+}
+
+pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDispatchCommand>) {
+    tracing::trace!("send_stream_dispatcher start");
+    // {
+    //   "${session_id}" : {
+    //     "StreamDirection::Uni" : tx,
+    //     "StreamDirection::Bi" : tx,
+    //   }
+    // }
+    let mut dispatcher =
+        HashMap::<usize, HashMap<StreamDirection, SenderToSendStreamThread>>::new();
+
+    while let Some(cmd) = rx.recv().await {
+        tracing::debug!("command received: {:#?}", cmd);
+        match cmd {
+            SendStreamDispatchCommand::Set {
+                session_id,
+                stream_direction,
+                sender,
+            } => {
+                let inner_map = dispatcher.entry(session_id).or_default();
+                inner_map.insert(stream_direction, sender);
+                tracing::debug!("set: {:?} of {:?}", stream_direction, session_id);
+            }
+            SendStreamDispatchCommand::List {
+                stream_direction,
+                exclude_session_id,
+                resp,
+            } => {
+                let mut senders = Vec::new();
+                for (session_id, inner_map) in &dispatcher {
+                    if let Some(exclude_session_id) = exclude_session_id {
+                        if *session_id == exclude_session_id {
+                            continue;
+                        }
+                    }
+                    if let Some(sender) = inner_map.get(&stream_direction) {
+                        senders.push(sender.clone());
+                    }
+                }
+                let _ = resp.send(senders);
+            }
+            SendStreamDispatchCommand::Get {
+                session_id,
+                stream_direction,
+                resp,
+            } => {
+                let sender = dispatcher
+                    .get(&session_id)
+                    .and_then(|inner_map| inner_map.get(&stream_direction))
+                    .cloned();
+                tracing::debug!("get: {:?}", sender);
+                let _ = resp.send(sender);
+            }
+            SendStreamDispatchCommand::Delete { session_id } => {
+                dispatcher.remove(&session_id);
+                tracing::debug!("delete: {:?}", session_id);
+            }
+        }
+    }
+
+    tracing::trace!("send_stream_dispatcher end");
 }
 
 pub(crate) struct SendStreamDispatcher {
@@ -129,7 +126,7 @@ impl SendStreamDispatcherRepository for SendStreamDispatcher {
         }
         Ok(())
     }
-    async fn send_message_to_send_stream_thread(
+    async fn transfer_message_to_send_stream_thread(
         &self,
         session_id: usize,
         message: Box<dyn MOQTPayload>,
