@@ -1,17 +1,13 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
-use std::{any::Any, io::Cursor};
+use std::any::Any;
 
 use crate::{
-    modules::{
-        messages::control_messages::version_specific_parameters::VersionSpecificParameter,
-        variable_integer::read_variable_integer_from_buffer,
-    },
+    messages::control_messages::version_specific_parameters::VersionSpecificParameter,
+    messages::moqt_payload::MOQTPayload,
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
-    variable_integer::write_variable_integer,
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-
-use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct Announce {
@@ -36,8 +32,6 @@ impl Announce {
 
 impl MOQTPayload for Announce {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        let read_cur = Cursor::new(&buf[..]);
-        tracing::debug!("read_cur! {:?}", read_cur);
         let track_namespace_tuple_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("track namespace length")?;
         let mut track_namespace_tuple: Vec<String> = Vec::new();
@@ -64,20 +58,15 @@ impl MOQTPayload for Announce {
             parameters,
         };
 
-        tracing::trace!("Depacketized Announce message.");
-
         Ok(announce_message)
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Number of elements
         let track_namespace_tuple_length = self.track_namespace.len();
         buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
         for track_namespace in &self.track_namespace {
-            // Track Namespace
             buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
         }
-        // Number of Parameters
         buf.extend(write_variable_integer(self.number_of_parameters as u64));
         // Parameters
         for param in &self.parameters {
@@ -94,11 +83,15 @@ impl MOQTPayload for Announce {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::control_messages::version_specific_parameters::AuthorizationInfo;
-    use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::control_messages::announce::Announce;
-    use crate::modules::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::{
+            announce::Announce,
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize_announce_with_parameter() {

@@ -1,4 +1,5 @@
 use anyhow::Result;
+
 use moqt_core::{
     constants::StreamDirection,
     messages::{
@@ -10,12 +11,14 @@ use moqt_core::{
         moqt_payload::MOQTPayload,
     },
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    MOQTClient, SendStreamDispatcherRepository,
+    SendStreamDispatcherRepository,
 };
+
+use crate::modules::moqt_client::MOQTClient;
 
 pub(crate) async fn subscribe_namespace_handler(
     subscribe_namespace_message: SubscribeNamespace,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<Option<SubscribeNamespaceError>> {
@@ -31,7 +34,7 @@ pub(crate) async fn subscribe_namespace_handler(
 
     // Record the subscribed Track Namespace Prefix
     let set_result = pubsub_relation_manager_repository
-        .set_downstream_subscribed_namespace_prefix(track_namespace_prefix.clone(), client.id)
+        .set_downstream_subscribed_namespace_prefix(track_namespace_prefix.clone(), client.id())
         .await;
 
     match set_result {
@@ -48,8 +51,8 @@ pub(crate) async fn subscribe_namespace_handler(
 
             // TODO: Unify the method to send a message to the opposite client itself
             let _ = send_stream_dispatcher_repository
-                .send_message_to_send_stream_thread(
-                    client.id,
+                .transfer_message_to_send_stream_thread(
+                    client.id(),
                     subscribe_namespace_ok_message,
                     StreamDirection::Bi,
                 )
@@ -70,8 +73,8 @@ pub(crate) async fn subscribe_namespace_handler(
                 ));
 
                 let _ = send_stream_dispatcher_repository
-                    .send_message_to_send_stream_thread(
-                        client.id,
+                    .transfer_message_to_send_stream_thread(
+                        client.id(),
                         announce_message,
                         StreamDirection::Bi,
                     )
@@ -102,6 +105,7 @@ pub(crate) async fn subscribe_namespace_handler(
 mod success {
     use crate::modules::{
         handlers::subscribe_namespace_handler::subscribe_namespace_handler,
+        moqt_client::MOQTClient,
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
             wrapper::PubSubRelationManagerWrapper,
@@ -119,7 +123,6 @@ mod success {
             },
             moqt_payload::MOQTPayload,
         },
-        moqt_client::MOQTClient,
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     };
     use std::sync::Arc;
@@ -143,7 +146,7 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -183,7 +186,7 @@ mod success {
         // Execute subscribe_namespace_handler and get result
         let result = subscribe_namespace_handler(
             subscribe_namespace_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -198,6 +201,7 @@ mod success {
 mod failure {
     use crate::modules::{
         handlers::subscribe_namespace_handler::subscribe_namespace_handler,
+        moqt_client::MOQTClient,
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
             wrapper::PubSubRelationManagerWrapper,
@@ -215,7 +219,6 @@ mod failure {
             },
             moqt_payload::MOQTPayload,
         },
-        moqt_client::MOQTClient,
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     };
     use std::sync::Arc;
@@ -239,7 +242,7 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper (register track_namespace_prefix in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -261,7 +264,7 @@ mod failure {
             .await;
 
         let _ = pubsub_relation_manager
-            .set_downstream_subscribed_namespace_prefix(track_namespace_prefix.clone(), client.id)
+            .set_downstream_subscribed_namespace_prefix(track_namespace_prefix.clone(), client.id())
             .await;
 
         // Generate SendStreamDispacher
@@ -283,7 +286,7 @@ mod failure {
         // Execute subscribe_namespace_handler and get result
         let result = subscribe_namespace_handler(
             subscribe_namespace_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -320,7 +323,7 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper (register track_namespace_prefix that has same prefix in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -344,7 +347,7 @@ mod failure {
         let _ = pubsub_relation_manager
             .set_downstream_subscribed_namespace_prefix(
                 exists_track_namespace_prefix.clone(),
-                client.id,
+                client.id(),
             )
             .await;
 
@@ -367,7 +370,7 @@ mod failure {
         // Execute subscribe_namespace_handler and get result
         let result = subscribe_namespace_handler(
             subscribe_namespace_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -405,7 +408,7 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper (register track_namespace_prefix that has same prefix in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -429,7 +432,7 @@ mod failure {
         let _ = pubsub_relation_manager
             .set_downstream_subscribed_namespace_prefix(
                 exists_track_namespace_prefix.clone(),
-                client.id,
+                client.id(),
             )
             .await;
 
@@ -452,7 +455,7 @@ mod failure {
         // Execute subscribe_namespace_handler and get result
         let result = subscribe_namespace_handler(
             subscribe_namespace_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -488,7 +491,7 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -519,7 +522,7 @@ mod failure {
         // Execute subscribe_namespace_handler and get result
         let result = subscribe_namespace_handler(
             subscribe_namespace_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -547,7 +550,7 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -587,7 +590,7 @@ mod failure {
         // Execute subscribe_namespace_handler and get result
         let result = subscribe_namespace_handler(
             subscribe_namespace_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )

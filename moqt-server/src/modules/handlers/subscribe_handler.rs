@@ -1,4 +1,4 @@
-use crate::SenderToOpenSubscription;
+use crate::{modules::moqt_client::MOQTClient, SenderToOpenSubscription};
 use anyhow::{bail, Result};
 use moqt_core::{
     constants::StreamDirection,
@@ -12,7 +12,7 @@ use moqt_core::{
         moqt_payload::MOQTPayload,
     },
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    MOQTClient, SendStreamDispatcherRepository,
+    SendStreamDispatcherRepository,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
@@ -21,7 +21,7 @@ use crate::modules::object_cache_storage::{CacheHeader, ObjectCacheStorageWrappe
 
 pub(crate) async fn subscribe_handler(
     subscribe_message: Subscribe,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
@@ -34,14 +34,14 @@ pub(crate) async fn subscribe_handler(
     // TODO: validate Unauthorized
 
     if !pubsub_relation_manager_repository
-        .is_valid_downstream_subscribe_id(subscribe_message.subscribe_id(), client.id)
+        .is_valid_downstream_subscribe_id(subscribe_message.subscribe_id(), client.id())
         .await?
     {
         // TODO: return TerminationErrorCode
         bail!("TooManySubscribers");
     }
     if !pubsub_relation_manager_repository
-        .is_valid_downstream_track_alias(subscribe_message.track_alias(), client.id)
+        .is_valid_downstream_track_alias(subscribe_message.track_alias(), client.id())
         .await?
     {
         // TODO: create accurate track alias
@@ -125,8 +125,8 @@ pub(crate) async fn subscribe_handler(
 
         // TODO: Unify the method to send a message to the opposite client itself
         send_stream_dispatcher_repository
-            .send_message_to_send_stream_thread(
-                client.id,
+            .transfer_message_to_send_stream_thread(
+                client.id(),
                 subscribe_ok_payload,
                 StreamDirection::Bi,
             )
@@ -203,7 +203,7 @@ pub(crate) async fn subscribe_handler(
             // TODO: Wait for the SUBSCRIBE_OK message to be returned on a transaction
             // TODO: validate Timeout
             match send_stream_dispatcher_repository
-                .send_message_to_send_stream_thread(
+                .transfer_message_to_send_stream_thread(
                     session_id,
                     relaying_subscribe_message,
                     StreamDirection::Bi,
@@ -261,7 +261,7 @@ async fn open_new_subscription(
     client: &MOQTClient,
     subscribe_message: Subscribe,
 ) -> Result<()> {
-    let downstream_session_id = client.id;
+    let downstream_session_id = client.id();
     let downstream_subscribe_id = subscribe_message.subscribe_id();
 
     let upstream_session_id = pubsub_relation_manager_repository
@@ -369,7 +369,7 @@ async fn set_downstream_subscription(
     subscribe_message: &Subscribe,
     client: &MOQTClient,
 ) -> Result<()> {
-    let downstream_client_id = client.id;
+    let downstream_client_id = client.id();
     let downstream_subscribe_id = subscribe_message.subscribe_id();
     let downstream_track_alias = subscribe_message.track_alias();
     let downstream_track_namespace = subscribe_message.track_namespace().to_vec();
@@ -448,7 +448,7 @@ async fn set_downstream_and_upstream_subscription(
     client: &MOQTClient,
     upstream_session_id: usize,
 ) -> Result<(u64, u64)> {
-    let downstream_client_id = client.id;
+    let downstream_client_id = client.id();
     let downstream_subscribe_id = subscribe_message.subscribe_id();
     let downstream_track_alias = subscribe_message.track_alias();
     let downstream_track_namespace = subscribe_message.track_namespace().to_vec();
@@ -509,6 +509,7 @@ async fn set_downstream_and_upstream_subscription(
 mod success {
     use crate::modules::{
         handlers::subscribe_handler::subscribe_handler,
+        moqt_client::MOQTClient,
         object_cache_storage::{
             object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
             ObjectCacheStorageWrapper,
@@ -536,7 +537,6 @@ mod success {
             moqt_payload::MOQTPayload,
         },
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-        MOQTClient,
     };
     use std::{collections::HashMap, sync::Arc};
     use tokio::sync::{mpsc, Mutex};
@@ -578,7 +578,7 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -625,13 +625,14 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let open_downstream_subscription_txes: Arc<
+            Mutex<HashMap<usize, SenderToOpenSubscription>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
             subscribe,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
@@ -698,7 +699,7 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -767,13 +768,14 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let open_downstream_subscription_txes: Arc<
+            Mutex<HashMap<usize, SenderToOpenSubscription>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
             subscribe,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
@@ -838,7 +840,7 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -934,8 +936,9 @@ mod success {
         }
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let open_downstream_subscription_txes: Arc<
+            Mutex<HashMap<usize, SenderToOpenSubscription>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
         let (open_downstream_subscription_tx, mut open_downstream_subscription_rx) =
             mpsc::channel::<(u64, DataStreamType)>(32);
         open_downstream_subscription_txes
@@ -950,7 +953,7 @@ mod success {
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
             subscribe,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
@@ -984,6 +987,7 @@ mod success {
 mod failure {
     use crate::modules::{
         handlers::subscribe_handler::subscribe_handler,
+        moqt_client::MOQTClient,
         object_cache_storage::{
             object_cache_storage, ObjectCacheStorageCommand, ObjectCacheStorageWrapper,
         },
@@ -1007,7 +1011,6 @@ mod failure {
             moqt_payload::MOQTPayload,
         },
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-        MOQTClient,
     };
     use std::{collections::HashMap, sync::Arc};
     use tokio::sync::{mpsc, Mutex};
@@ -1048,7 +1051,7 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper (register subscriber in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1110,13 +1113,14 @@ mod failure {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let open_downstream_subscription_txes: Arc<
+            Mutex<HashMap<usize, SenderToOpenSubscription>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
             subscribe,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
@@ -1164,7 +1168,7 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1201,13 +1205,14 @@ mod failure {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let open_downstream_subscription_txes: Arc<
+            Mutex<HashMap<usize, SenderToOpenSubscription>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
             subscribe,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
@@ -1261,7 +1266,7 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper (without set publisher)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1300,13 +1305,14 @@ mod failure {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let open_downstream_subscription_txes: Arc<
+            Mutex<HashMap<usize, SenderToOpenSubscription>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
             subscribe,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
@@ -1366,7 +1372,7 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1413,13 +1419,14 @@ mod failure {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let open_downstream_subscription_txes: Arc<
+            Mutex<HashMap<usize, SenderToOpenSubscription>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let _ = subscribe_handler(
             subscribes[0].clone(),
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
@@ -1429,7 +1436,7 @@ mod failure {
 
         let result = subscribe_handler(
             subscribes[1].clone(),
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
@@ -1482,7 +1489,7 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let mut client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1529,13 +1536,14 @@ mod failure {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let open_downstream_subscription_txes: Arc<
+            Mutex<HashMap<usize, SenderToOpenSubscription>>,
+        > = Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let _ = subscribe_handler(
             subscribes[0].clone(),
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
@@ -1545,7 +1553,7 @@ mod failure {
 
         let result = subscribe_handler(
             subscribes[1].clone(),
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,

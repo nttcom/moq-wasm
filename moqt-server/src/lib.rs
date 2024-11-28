@@ -1,21 +1,38 @@
-mod modules;
-use crate::modules::{
-    buffer_manager,
-    buffer_manager::{buffer_manager, BufferCommand},
-    control_message_handler::*,
-    object_cache_storage::{
-        object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
-    },
-    object_stream_handler::{object_stream_handler, ObjectStreamProcessResult},
-    pubsub_relation_manager::{commands::PubSubRelationCommand, manager::pubsub_relation_manager},
-    send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
-    stream_header_handler::{stream_header_handler, StreamHeaderProcessResult},
-};
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
+use std::{collections::HashMap, sync::Arc, thread, time::Duration};
+use tokio::sync::{
+    mpsc,
+    mpsc::{Receiver, Sender},
+    Mutex,
+};
+use tracing::{self, Instrument};
+use wtransport::{
+    endpoint::IncomingSession, Endpoint, Identity, RecvStream, SendStream, ServerConfig,
+};
+mod modules;
+use modules::{
+    buffer_manager::{buffer_manager, request_buffer, BufferCommand},
+    control_message_handler::{control_message_handler, MessageProcessResult},
+    logging,
+    moqt_client::MOQTClient,
+    object_cache_storage::{
+        object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
+        ObjectCacheStorageWrapper,
+    },
+    object_stream_handler::{object_stream_handler, ObjectStreamProcessResult},
+    pubsub_relation_manager::{
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
+    },
+    send_stream_dispatcher::{
+        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
+    },
+    stream_header_handler::{stream_header_handler, StreamHeaderProcessResult},
+};
 pub use moqt_core::constants;
 use moqt_core::{
-    constants::{StreamDirection, UnderlayType},
+    constants::{StreamDirection, TerminationErrorCode, UnderlayType},
     control_message_type::ControlMessageType,
     data_stream_type::DataStreamType,
     messages::{
@@ -37,19 +54,8 @@ use moqt_core::{
     models::tracks::ForwardingPreference,
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::write_variable_integer,
-    MOQTClient,
 };
-use std::{collections::HashMap, sync::Arc, thread, time::Duration};
-use tokio::sync::{
-    mpsc,
-    mpsc::{Receiver, Sender},
-    Mutex,
-};
-use tracing::{self, Instrument};
-use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
-use wtransport::{
-    endpoint::IncomingSession, Endpoint, Identity, RecvStream, SendStream, ServerConfig,
-};
+
 type SubscribeId = u64;
 pub(crate) type SenderToOpenSubscription = Sender<(SubscribeId, DataStreamType)>;
 
@@ -116,41 +122,11 @@ impl MOQT {
         }
     }
     pub async fn start(&self) -> Result<()> {
-        init_logging(self.log_level.to_string());
-
-        // For buffer management for each stream
-        let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
-        // For track management
-        let (pubsub_relation_tx, mut pubsub_relation_rx) =
-            mpsc::channel::<PubSubRelationCommand>(1024);
-        // For relay handler management
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
-        // For object cache
-        let (object_cache_tx, mut object_cache_rx) =
-            mpsc::channel::<ObjectCacheStorageCommand>(1024);
+        logging::init_logging(self.log_level.to_string());
 
         if self.underlay != UnderlayType::WebTransport {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
         }
-
-        // Start buffer management thread
-        tokio::spawn(async move { buffer_manager(&mut buffer_rx).await });
-
-        // Start track management thread
-        tokio::spawn(async move { pubsub_relation_manager(&mut pubsub_relation_rx).await });
-
-        // Start stream management thread
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-
-        // Start object cache thread
-        tokio::spawn(async move { object_cache_storage(&mut object_cache_rx).await });
-
-        let open_downstream_subscription_txes: HashMap<usize, SenderToOpenSubscription> =
-            HashMap::new();
-        let shared_open_downstream_subscription_txes =
-            Arc::new(Mutex::new(open_downstream_subscription_txes));
-
-        // Start wtransport server
         let config = ServerConfig::builder()
             .with_bind_default(self.port)
             .with_identity(
@@ -165,10 +141,25 @@ impl MOQT {
             )
             .keep_alive_interval(Some(Duration::from_secs(self.keep_alive_interval_sec)))
             .build();
-
         let server = Endpoint::server(config)?;
-
         tracing::info!("Server ready!");
+
+        // Spawn management thread
+        let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
+        tokio::spawn(async move { buffer_manager(&mut buffer_rx).await });
+        let (pubsub_relation_tx, mut pubsub_relation_rx) =
+            mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut pubsub_relation_rx).await });
+        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
+        let (object_cache_tx, mut object_cache_rx) =
+            mpsc::channel::<ObjectCacheStorageCommand>(1024);
+        tokio::spawn(async move { object_cache_storage(&mut object_cache_rx).await });
+
+        let open_downstream_subscription_txes: HashMap<usize, SenderToOpenSubscription> =
+            HashMap::new();
+        let shared_open_downstream_subscription_txes =
+            Arc::new(Mutex::new(open_downstream_subscription_txes));
 
         for id in 0.. {
             let buffer_tx = buffer_tx.clone();
@@ -208,10 +199,7 @@ async fn handle_connection(
     open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     incoming_session: IncomingSession,
 ) -> Result<()> {
-    tracing::trace!("Waiting for session request...");
-
     let session_request = incoming_session.await?;
-
     tracing::info!(
         "New session: Authority: '{}', Path: '{}'",
         session_request.authority(),
@@ -247,9 +235,8 @@ async fn handle_connection(
             // Waiting for a bi-directional stream and processing the received message
             stream = connection.accept_bi() => {
                 if is_control_stream_opened {
-                    // Only 1 control stream is allowed
                     tracing::error!("Control stream already opened");
-                    close_connection_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    close_connection_tx.send((u8::from(TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
                 }
                 is_control_stream_opened = true;
@@ -271,6 +258,7 @@ async fn handle_connection(
                 let pubsub_relation_tx = pubsub_relation_tx.clone();
                 let send_stream_tx = send_stream_tx.clone();
                 let close_connection_tx = close_connection_tx.clone();
+
                 let object_cache_tx = object_cache_tx.clone();
                 let client= client.clone();
                 let open_downstream_subscription_txes = open_downstream_subscription_txes.clone();
@@ -282,7 +270,7 @@ async fn handle_connection(
                     sender: message_tx,
                 }).await?;
 
-                // Thread that listens for WebTransport messages
+                // Spawn thread listenning for WebTransport messages
                 let send_stream = Arc::clone(&shared_send_stream);
                 let session_span_clone = session_span.clone();
                 tokio::spawn(async move {
@@ -294,17 +282,14 @@ async fn handle_connection(
                     };
                     handle_incoming_bi_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_downstream_subscription_txes, close_connection_tx, send_stream_tx, object_cache_tx).instrument(session_span_clone).await
 
-                // Propagate the current span (Connection)
                 }.in_current_span());
 
-                let send_stream = Arc::clone(&shared_send_stream);
-
                 // Thread to relay messages (ANNOUNCE SUBSCRIBE) from the server
+                let send_stream = Arc::clone(&shared_send_stream);
                 tokio::spawn(async move {
                     let session_span = tracing::info_span!("Session", stable_id);
                     wait_and_relay_control_message(send_stream, message_rx).instrument(session_span).await;
 
-                // Propagate the current span (Connection)
                 }.in_current_span());
             },
             // Waiting for a uni-directional recv stream and processing the received message
@@ -325,7 +310,8 @@ async fn handle_connection(
                 let object_cache_tx = object_cache_tx.clone();
                 let open_downstream_subscription_txes = open_downstream_subscription_txes.clone();
                 let close_connection_tx = close_connection_tx.clone();
-                let client = client.clone();
+                let client= client.clone();
+
                 let session_span_clone = session_span.clone();
 
                 tokio::spawn(async move {
@@ -336,7 +322,6 @@ async fn handle_connection(
                 };
                     handle_incoming_uni_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_downstream_subscription_txes, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
 
-                // Propagate the current span (Connection)
                 }.in_current_span());
 
             },
@@ -346,7 +331,7 @@ async fn handle_connection(
                 if !is_control_stream_opened {
                     // Decline the request if the control stream is not opened
                     tracing::error!("Control stream is not opened yet");
-                    close_connection_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    close_connection_tx.send((u8::from(TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
                 }
 
@@ -368,14 +353,12 @@ async fn handle_connection(
 
                         tokio::spawn(async move {
                             let mut stream = UniSendStream {
-                            stable_id,
-                            stream_id,
-                            subscribe_id,
-                            send_stream,
-                        };
-                        relaying_object_stream(&mut stream, data_stream_type, buffer_tx, pubsub_relation_tx, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
-
-                        // Propagate the current span (Connection)
+                                stable_id,
+                                stream_id,
+                                subscribe_id,
+                                send_stream,
+                            };
+                            wait_and_relay_object_stream(&mut stream, data_stream_type, buffer_tx, pubsub_relation_tx, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
                         }.in_current_span());
 
 
@@ -400,17 +383,13 @@ async fn handle_connection(
     }
 
     // Delete pub/sub information related to the client
-    let pubsub_relation_manager =
-        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
-            pubsub_relation_tx.clone(),
-        );
+    let pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
     let _ = pubsub_relation_manager.delete_client(stable_id).await;
 
     // Delete object cache related to the client
     // FIXME: It should not be deleted if the cache should be stored
     //   (Now, it is deleted immediately because to clean up cpu and memory)
-    let mut object_cache_storage =
-        modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
+    let mut object_cache_storage = ObjectCacheStorageWrapper::new(object_cache_tx.clone());
     let _ = object_cache_storage.delete_client(stable_id).await;
 
     // Delete senders to the client
@@ -453,21 +432,16 @@ async fn handle_incoming_uni_stream(
     let mut upstream_subscribe_id: u64 = 0;
     let mut stream_header_type: DataStreamType = DataStreamType::ObjectDatagram;
     let stream_id = stream.stream_id;
-    let mut client = client.lock().await;
     let close_connection_tx_clone = close_connection_tx.clone();
     let buffer_tx_clone = buffer_tx.clone();
     let shared_recv_stream = &mut stream.shared_recv_stream;
     let shared_recv_stream = Arc::clone(shared_recv_stream);
 
-    let mut pubsub_relation_manager =
-        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
-            pubsub_relation_tx.clone(),
-        );
+    let mut pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
 
-    let mut object_cache_storage =
-        modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
+    let mut object_cache_storage = ObjectCacheStorageWrapper::new(object_cache_tx.clone());
 
-    let buf = buffer_manager::request_buffer(buffer_tx_clone, stable_id, stream_id).await;
+    let buf = request_buffer(buffer_tx_clone, stable_id, stream_id).await;
     let buf_clone = Arc::clone(&buf);
 
     // Loop for reading the stream
@@ -483,7 +457,7 @@ async fn handle_incoming_uni_stream(
                         tracing::error!("Failed to read from stream");
                         let _ = close_connection_tx_clone
                             .send((
-                                u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                                u8::from(TerminationErrorCode::InternalError) as u64,
                                 err.to_string(),
                             ))
                             .await;
@@ -505,7 +479,6 @@ async fn handle_incoming_uni_stream(
         .in_current_span(),
     );
 
-    // Loop for the handling the message
     loop {
         if !header_read {
             // Read header
@@ -513,9 +486,11 @@ async fn handle_incoming_uni_stream(
             let result: StreamHeaderProcessResult;
             {
                 let mut process_buf = buf.lock().await;
+                let client = client.lock().await;
+
                 result = stream_header_handler(
                     &mut process_buf,
-                    &mut client,
+                    &client,
                     &mut pubsub_relation_manager,
                     &mut object_cache_storage,
                 )
@@ -568,12 +543,13 @@ async fn handle_incoming_uni_stream(
         // Read Object Stream
         {
             let mut process_buf = buf.lock().await;
+            let client = client.lock().await;
 
             result = object_stream_handler(
                 stream_header_type.clone(),
                 upstream_subscribe_id,
                 &mut process_buf,
-                &mut client,
+                &client,
                 &mut object_cache_storage,
             )
             .await;
@@ -619,7 +595,7 @@ struct UniSendStream {
     send_stream: SendStream,
 }
 
-async fn relaying_object_stream(
+async fn wait_and_relay_object_stream(
     stream: &mut UniSendStream,
     data_stream_type: DataStreamType,
     buffer_tx: Sender<BufferCommand>,
@@ -636,13 +612,9 @@ async fn relaying_object_stream(
     let downstream_subscribe_id = stream.subscribe_id;
     let send_stream = &mut stream.send_stream;
 
-    let pubsub_relation_manager =
-        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
-            pubsub_relation_tx.clone(),
-        );
+    let pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
 
-    let mut object_cache_storage =
-        modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
+    let mut object_cache_storage = ObjectCacheStorageWrapper::new(object_cache_tx.clone());
 
     // Get the information of the original publisher who has the track being requested
     let (upstream_session_id, upstream_subscribe_id) = pubsub_relation_manager
@@ -670,7 +642,7 @@ async fn relaying_object_stream(
                 );
                 close_connection_tx
                     .send((
-                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        u8::from(TerminationErrorCode::InternalError) as u64,
                         msg.clone(),
                     ))
                     .await?;
@@ -692,7 +664,7 @@ async fn relaying_object_stream(
                 );
                 close_connection_tx
                     .send((
-                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        u8::from(TerminationErrorCode::InternalError) as u64,
                         msg.clone(),
                     ))
                     .await?;
@@ -710,7 +682,7 @@ async fn relaying_object_stream(
             let msg = "Invalid forwarding preference";
             close_connection_tx
                 .send((
-                    u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64,
+                    u8::from(TerminationErrorCode::ProtocolViolation) as u64,
                     msg.to_string(),
                 ))
                 .await?;
@@ -775,7 +747,7 @@ async fn relaying_object_stream(
             let msg = "cache header not matched";
             close_connection_tx
                 .send((
-                    u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64,
+                    u8::from(TerminationErrorCode::ProtocolViolation) as u64,
                     msg.to_string(),
                 ))
                 .await?;
@@ -850,7 +822,7 @@ async fn relaying_object_stream(
                 let msg = "cache is not exist";
                 close_connection_tx
                     .send((
-                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        u8::from(TerminationErrorCode::InternalError) as u64,
                         msg.to_string(),
                     ))
                     .await?;
@@ -931,7 +903,7 @@ async fn relaying_object_stream(
                 let msg = "cache is not exist";
                 close_connection_tx
                     .send((
-                        u8::from(constants::TerminationErrorCode::InternalError) as u64,
+                        u8::from(TerminationErrorCode::InternalError) as u64,
                         msg.to_string(),
                     ))
                     .await?;
@@ -975,12 +947,8 @@ async fn handle_incoming_bi_stream(
     let recv_stream = &mut stream.recv_stream;
     let shared_send_stream = &mut stream.shared_send_stream;
 
-    let mut pubsub_relation_manager =
-        modules::pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper::new(
-            pubsub_relation_tx.clone(),
-        );
-    let mut send_stream_dispatcher =
-        modules::send_stream_dispatcher::SendStreamDispatcher::new(send_stream_tx.clone());
+    let mut pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
+    let mut send_stream_dispatcher = SendStreamDispatcher::new(send_stream_tx.clone());
 
     let mut object_cache_storage =
         modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
@@ -994,22 +962,25 @@ async fn handle_incoming_bi_stream(
         tracing::debug!("bytes_read: {}", bytes_read);
 
         let read_buf = BytesMut::from(&buffer[..bytes_read]);
-        let buf = buffer_manager::request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
+        let buf = request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
         let mut buf = buf.lock().await;
         buf.extend_from_slice(&read_buf);
 
-        let mut client = client.lock().await;
-        // TODO: Move the implementation of control_message_handler to the server side since it is only used by the server
-        let message_result = control_message_handler(
-            &mut buf,
-            UnderlayType::WebTransport,
-            &mut client,
-            open_downstream_subscription_txes.clone(),
-            &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
-            &mut object_cache_storage,
-        )
-        .await;
+        let message_result: MessageProcessResult;
+        {
+            let mut client = client.lock().await;
+            // TODO: Move the implementation of control_message_handler to the server side since it is only used by the server
+            message_result = control_message_handler(
+                &mut buf,
+                UnderlayType::WebTransport,
+                &mut client,
+                open_downstream_subscription_txes.clone(),
+                &mut pubsub_relation_manager,
+                &mut send_stream_dispatcher,
+                &mut object_cache_storage,
+            )
+            .await;
+        }
 
         tracing::debug!("message_result: {:?}", message_result);
 
@@ -1122,33 +1093,4 @@ async fn wait_and_relay_control_message(
         tracing::info!("Control message is relayed.");
         // tracing::debug!("relayed message: {:?}", message_buf.to_vec());
     }
-}
-
-fn init_logging(log_level: String) {
-    let level_filter: LevelFilter = match log_level.to_uppercase().as_str() {
-        "OFF" => LevelFilter::OFF,
-        "TRACE" => LevelFilter::TRACE,
-        "DEBUG" => LevelFilter::DEBUG,
-        "INFO" => LevelFilter::INFO,
-        "WARN" => LevelFilter::WARN,
-        "ERROR" => LevelFilter::ERROR,
-        _ => {
-            panic!(
-                "Invalid log level: '{}'.\n  Valid log levels: [OFF, TRACE, DEBUG, INFO, WARN, ERROR]",
-                log_level
-            );
-        }
-    };
-
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(level_filter.into())
-        .from_env_lossy();
-
-    tracing_subscriber::fmt()
-        .with_target(true)
-        .with_level(true)
-        .with_env_filter(env_filter)
-        .init();
-
-    tracing::info!("Logging initialized. (Level: {})", log_level);
 }

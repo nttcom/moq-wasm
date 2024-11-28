@@ -1,3 +1,4 @@
+use crate::modules::moqt_client::MOQTClient;
 use crate::modules::{
     handlers::subscribe_handler::subscribe_handler, object_cache_storage::ObjectCacheStorageWrapper,
 };
@@ -8,14 +9,14 @@ use moqt_core::{
     messages::control_messages::subscribe_error::SubscribeError,
     messages::{control_messages::subscribe::Subscribe, moqt_payload::MOQTPayload},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    MOQTClient, SendStreamDispatcherRepository,
+    SendStreamDispatcherRepository,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 pub(crate) async fn process_subscribe_message(
     payload_buf: &mut BytesMut,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     write_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,

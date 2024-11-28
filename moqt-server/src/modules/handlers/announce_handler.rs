@@ -1,25 +1,68 @@
 use anyhow::Result;
-use moqt_core::constants::StreamDirection;
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
+
 use moqt_core::{
+    constants::StreamDirection,
     messages::control_messages::{
         announce::Announce, announce_error::AnnounceError, announce_ok::AnnounceOk,
     },
-    MOQTClient, SendStreamDispatcherRepository,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+    SendStreamDispatcherRepository,
 };
+
+use crate::modules::moqt_client::MOQTClient;
+
+async fn forward_announce_to_subscribers(
+    pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
+    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    track_namespace: Vec<String>,
+) -> Result<()> {
+    let downstream_session_ids = match pubsub_relation_manager_repository
+        .get_downstream_session_ids_by_upstream_namespace(track_namespace.clone())
+        .await
+    {
+        Ok(downstream_session_ids) => downstream_session_ids,
+        Err(err) => {
+            tracing::warn!("announce_handler: err: {:?}", err.to_string());
+            return Err(err);
+        }
+    };
+
+    for downstream_session_id in downstream_session_ids {
+        match pubsub_relation_manager_repository
+            .is_namespace_announced(track_namespace.clone(), downstream_session_id)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                let announce_message = Box::new(Announce::new(track_namespace.clone(), vec![]));
+                let _ = send_stream_dispatcher_repository
+                    .transfer_message_to_send_stream_thread(
+                        downstream_session_id,
+                        announce_message,
+                        StreamDirection::Bi,
+                    )
+                    .await;
+            }
+            Err(err) => {
+                tracing::warn!("announce_handler: err: {:?}", err.to_string());
+            }
+        }
+    }
+
+    Ok(())
+}
 
 pub(crate) async fn announce_handler(
     announce_message: Announce,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
 ) -> Result<Option<AnnounceError>> {
     tracing::trace!("announce_handler start.");
     tracing::debug!("announce_message: {:#?}", announce_message);
 
-    // Record the announced Track Namespace
     let set_result = pubsub_relation_manager_repository
-        .set_upstream_announced_namespace(announce_message.track_namespace().clone(), client.id)
+        .set_upstream_announced_namespace(announce_message.track_namespace().clone(), client.id())
         .await;
 
     match set_result {
@@ -28,56 +71,27 @@ pub(crate) async fn announce_handler(
 
             tracing::info!("announced track_namespace: {:#?}", track_namespace);
 
-            // Send AnnounceOk message to the publisher
             // TODO: Unify the method to send a message to the opposite client itself
             let announce_ok_message = Box::new(AnnounceOk::new(track_namespace.clone()));
             let _ = send_stream_dispatcher_repository
-                .send_message_to_send_stream_thread(
-                    client.id,
+                .transfer_message_to_send_stream_thread(
+                    client.id(),
                     announce_ok_message,
                     StreamDirection::Bi,
                 )
                 .await;
 
-            // Check if the namespace is subscribed by subscribers
-            let downstream_session_ids = match pubsub_relation_manager_repository
-                .get_downstream_session_ids_by_upstream_namespace(track_namespace.clone())
-                .await
+            // If subscribers already sent SUBSCRIBE_NAMESPACE, send ANNOUNCE message to them
+            match forward_announce_to_subscribers(
+                pubsub_relation_manager_repository,
+                send_stream_dispatcher_repository,
+                track_namespace.clone(),
+            )
+            .await
             {
-                Ok(downstream_session_ids) => downstream_session_ids,
-                Err(err) => {
-                    tracing::warn!("announce_handler: err: {:?}", err.to_string());
-                    return Ok(None);
-                }
-            };
-
-            for downstream_session_id in downstream_session_ids {
-                match pubsub_relation_manager_repository
-                    .is_namespace_already_announced(track_namespace.clone(), downstream_session_id)
-                    .await
-                {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        // Send Announce message to the subscriber
-                        let announce_message =
-                            Box::new(Announce::new(track_namespace.clone(), vec![]));
-                        let _ = send_stream_dispatcher_repository
-                            .send_message_to_send_stream_thread(
-                                downstream_session_id,
-                                announce_message,
-                                StreamDirection::Bi,
-                            )
-                            .await;
-                    }
-                    Err(err) => {
-                        tracing::warn!("announce_handler: err: {:?}", err.to_string());
-                    }
-                }
+                Ok(_) => Ok(None),
+                Err(err) => Err(err),
             }
-
-            tracing::trace!("announce_handler complete.");
-
-            Ok(None)
         }
         // TODO: Allow namespace overlap
         Err(err) => {
@@ -98,6 +112,7 @@ mod success {
     use std::sync::Arc;
 
     use crate::modules::handlers::announce_handler::announce_handler;
+    use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -106,15 +121,12 @@ mod success {
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use moqt_core::constants::StreamDirection;
+    use moqt_core::messages::control_messages::{
+        announce::Announce,
+        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+    };
     use moqt_core::messages::moqt_payload::MOQTPayload;
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-    use moqt_core::{
-        messages::control_messages::{
-            announce::Announce,
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-        },
-        moqt_client::MOQTClient,
-    };
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -134,7 +146,7 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let mut client = MOQTClient::new(upstream_session_id);
+        let client = MOQTClient::new(upstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -186,7 +198,7 @@ mod success {
         // Execute announce_handler and get result
         let result = announce_handler(
             announce_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -213,7 +225,7 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let mut client = MOQTClient::new(upstream_session_id);
+        let client = MOQTClient::new(upstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -262,7 +274,7 @@ mod success {
         // Execute announce_handler and get result
         let result = announce_handler(
             announce_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )
@@ -278,6 +290,7 @@ mod failure {
     use std::sync::Arc;
 
     use crate::modules::handlers::announce_handler::announce_handler;
+    use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -286,15 +299,12 @@ mod failure {
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use moqt_core::constants::StreamDirection;
+    use moqt_core::messages::control_messages::{
+        announce::Announce,
+        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+    };
     use moqt_core::messages::moqt_payload::MOQTPayload;
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-    use moqt_core::{
-        messages::control_messages::{
-            announce::Announce,
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-        },
-        moqt_client::MOQTClient,
-    };
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -312,7 +322,7 @@ mod failure {
 
         // Generate client
         let upstream_session_id = 0;
-        let mut client = MOQTClient::new(upstream_session_id);
+        let client = MOQTClient::new(upstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -329,7 +339,10 @@ mod failure {
 
         // Set the duplicated publisher in advance
         let _ = pubsub_relation_manager
-            .set_upstream_announced_namespace(announce_message.track_namespace().clone(), client.id)
+            .set_upstream_announced_namespace(
+                announce_message.track_namespace().clone(),
+                client.id(),
+            )
             .await;
 
         // Generate SendStreamDispacher
@@ -351,7 +364,7 @@ mod failure {
         // Execute announce_handler and get result
         let result = announce_handler(
             announce_message,
-            &mut client,
+            &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
         )

@@ -1,16 +1,21 @@
-use crate::modules::object_cache_storage::{CacheHeader, ObjectCacheStorageWrapper};
 use anyhow::Result;
+
 use moqt_core::{
     messages::data_streams::stream_header_subgroup::StreamHeaderSubgroup,
     models::tracks::ForwardingPreference,
-    pubsub_relation_manager_repository::PubSubRelationManagerRepository, MOQTClient,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+};
+
+use crate::modules::{
+    moqt_client::MOQTClient,
+    object_cache_storage::{CacheHeader, ObjectCacheStorageWrapper},
 };
 
 pub(crate) async fn stream_header_subgroup_handler(
     stream_header_subgroup_message: StreamHeaderSubgroup,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
 ) -> Result<u64> {
     tracing::trace!("stream_header_subgroup_handler start.");
 
@@ -19,7 +24,7 @@ pub(crate) async fn stream_header_subgroup_handler(
         stream_header_subgroup_message
     );
 
-    let upstream_session_id = client.id;
+    let upstream_session_id = client.id();
     let upstream_subscribe_id = stream_header_subgroup_message.subscribe_id();
 
     pubsub_relation_manager_repository

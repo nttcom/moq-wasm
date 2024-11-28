@@ -1,13 +1,20 @@
-use crate::constants::TerminationErrorCode;
-use crate::modules::object_cache_storage::ObjectCacheStorageWrapper;
-use crate::modules::server_processes::stream_track_header::process_stream_header_track;
-use crate::modules::server_processes::stream_track_subgroup::process_stream_header_subgroup;
+use crate::{
+    constants::TerminationErrorCode,
+    modules::{
+        moqt_client::{MOQTClient, MOQTClientStatus},
+        object_cache_storage::ObjectCacheStorageWrapper,
+        server_processes::{
+            stream_track_header::process_stream_header_track,
+            stream_track_subgroup::process_stream_header_subgroup,
+        },
+    },
+};
 use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
-use moqt_core::moqt_client::MOQTClientStatus;
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
-    data_stream_type::DataStreamType, variable_integer::read_variable_integer, MOQTClient,
+    data_stream_type::DataStreamType,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+    variable_integer::read_variable_integer,
 };
 use std::io::Cursor;
 
@@ -42,7 +49,7 @@ fn read_header_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataStreamT
 
 pub async fn stream_header_handler(
     read_buf: &mut BytesMut,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
 ) -> StreamHeaderProcessResult {

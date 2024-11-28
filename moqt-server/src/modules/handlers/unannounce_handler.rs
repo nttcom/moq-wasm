@@ -1,10 +1,15 @@
 use anyhow::Result;
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-use moqt_core::{messages::control_messages::unannounce::UnAnnounce, MOQTClient};
+
+use moqt_core::{
+    messages::control_messages::unannounce::UnAnnounce,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+};
+
+use crate::modules::moqt_client::MOQTClient;
 
 pub(crate) async fn unannounce_handler(
     unannounce_message: UnAnnounce,
-    _client: &mut MOQTClient, // TODO: Not implemented yet
+    _client: &MOQTClient, // TODO: Not implemented yet
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
 ) -> Result<()> {
     tracing::trace!("unannounce_handler start.");
@@ -15,7 +20,7 @@ pub(crate) async fn unannounce_handler(
     let delete_result = pubsub_relation_manager_repository
         .delete_upstream_announced_namespace(
             unannounce_message.track_namespace().clone(),
-            _client.id,
+            _client.id(),
         )
         .await;
 

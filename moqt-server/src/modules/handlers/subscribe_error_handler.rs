@@ -1,22 +1,25 @@
 use anyhow::{bail, Result};
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
+
 use moqt_core::{
     constants::StreamDirection,
     messages::{control_messages::subscribe_error::SubscribeError, moqt_payload::MOQTPayload},
-    MOQTClient, SendStreamDispatcherRepository,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+    SendStreamDispatcherRepository,
 };
+
+use crate::modules::moqt_client::MOQTClient;
 
 pub(crate) async fn subscribe_error_handler(
     subscribe_error_message: SubscribeError,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
-    client: &mut MOQTClient,
+    client: &MOQTClient,
 ) -> Result<()> {
     tracing::trace!("subscribe_error_handler start.");
 
     tracing::debug!("subscribe_error_message: {:#?}", subscribe_error_message);
 
-    let upstream_session_id = client.id;
+    let upstream_session_id = client.id();
     let upstream_subscribe_id = subscribe_error_message.subscribe_id();
 
     // TODO: Retry to send the SUBSCRIBE message if the error type is Retry Track Alias
@@ -59,7 +62,7 @@ pub(crate) async fn subscribe_error_handler(
                     Box::new(message_payload.clone());
 
                 send_stream_dispatcher_repository
-                    .send_message_to_send_stream_thread(
+                    .transfer_message_to_send_stream_thread(
                         *downstream_session_id,
                         relaying_subscribe_error_message,
                         StreamDirection::Bi,
@@ -148,7 +151,7 @@ mod success {
 
         // Generate client
         let upstream_session_id = 1;
-        let mut client = MOQTClient::new(upstream_session_id);
+        let client = MOQTClient::new(upstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -242,7 +245,7 @@ mod success {
             subscribe_error,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
-            &mut client,
+            &client,
         )
         .await;
 
@@ -285,7 +288,7 @@ mod failure {
 
         // Generate client
         let upstream_session_id = 1;
-        let mut client = MOQTClient::new(upstream_session_id);
+        let client = MOQTClient::new(upstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -370,7 +373,7 @@ mod failure {
             subscribe_error,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
-            &mut client,
+            &client,
         )
         .await;
 
