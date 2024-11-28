@@ -1,10 +1,10 @@
-use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use crate::models::subscriptions::Subscription;
-
 use anyhow::Result;
 use async_trait::async_trait;
 
-use super::models::tracks::ForwardingPreference;
+use crate::{
+    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    models::{subscriptions::Subscription, tracks::ForwardingPreference},
+};
 
 #[async_trait]
 pub trait PubSubRelationManagerRepository: Send + Sync {
@@ -121,7 +121,7 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         &self,
         track_namespace_prefix: Vec<String>,
     ) -> Result<Vec<Vec<String>>>;
-    async fn is_namespace_already_announced(
+    async fn is_namespace_announced(
         &self,
         track_namespace: Vec<String>,
         downstream_session_id: usize,

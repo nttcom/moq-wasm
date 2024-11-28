@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use std::any::Any;
 
-use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
-
-use super::setup_parameters::SetupParameter;
-use crate::messages::moqt_payload::MOQTPayload;
+use crate::{
+    messages::{control_messages::setup_parameters::SetupParameter, moqt_payload::MOQTPayload},
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+};
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ServerSetup {
@@ -28,10 +28,8 @@ impl MOQTPayload for ServerSetup {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
         let selected_version = u32::try_from(read_variable_integer_from_buffer(buf)?)
             .context("Depacketize selected version")?;
-
         let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("Depacketize number of parameters")?;
-
         let mut setup_parameters = vec![];
         for _ in 0..number_of_parameters {
             setup_parameters
@@ -43,9 +41,6 @@ impl MOQTPayload for ServerSetup {
             number_of_parameters,
             setup_parameters,
         };
-
-        tracing::trace!("Depacketized Server Setup message.");
-
         Ok(server_setup_message)
     }
 
@@ -59,8 +54,6 @@ impl MOQTPayload for ServerSetup {
         for setup_parameter in self.setup_parameters.iter() {
             setup_parameter.packetize(buf);
         }
-
-        tracing::trace!("Packetized Server Setup message.");
     }
     /// Method to enable downcasting from MOQTPayload to ServerSetup
     fn as_any(&self) -> &dyn Any {
@@ -70,15 +63,19 @@ impl MOQTPayload for ServerSetup {
 
 #[cfg(test)]
 mod success {
+    use bytes::BytesMut;
+
     use crate::{
         constants::MOQ_TRANSPORT_VERSION,
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::control_messages::{
-            server_setup::ServerSetup,
-            setup_parameters::{Role, RoleCase, SetupParameter},
+        messages::{
+            control_messages::{
+                server_setup::ServerSetup,
+                setup_parameters::{Role, RoleCase, SetupParameter},
+            },
+            moqt_payload::MOQTPayload,
         },
     };
-    use bytes::BytesMut;
+
     #[test]
     fn packetize_server_setup() {
         let selected_version = MOQ_TRANSPORT_VERSION;

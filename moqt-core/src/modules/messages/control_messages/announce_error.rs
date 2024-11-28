@@ -3,12 +3,10 @@ use serde::Serialize;
 use std::any::Any;
 
 use crate::{
-    modules::{variable_bytes::write_variable_bytes, variable_integer::write_variable_integer},
-    variable_bytes::read_variable_bytes_from_buffer,
-    variable_integer::read_variable_integer_from_buffer,
+    messages::moqt_payload::MOQTPayload,
+    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-
-use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct AnnounceError {
@@ -49,8 +47,6 @@ impl MOQTPayload for AnnounceError {
         let reason_phrase =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
 
-        tracing::trace!("Depacketized Announce Error message.");
-
         Ok(AnnounceError {
             track_namespace: track_namespace_tuple,
             error_code,
@@ -59,21 +55,15 @@ impl MOQTPayload for AnnounceError {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Number of elements
-        let track_namespace_tuple_length = self.track_namespace.len();
-        buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
+        let track_namespace_tuple_length = self.track_namespace.len() as u64;
+        buf.extend(write_variable_integer(track_namespace_tuple_length));
         for track_namespace in &self.track_namespace {
-            // Track Namespace
             buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
         }
-        // Error Code
         buf.extend(write_variable_integer(self.error_code));
-        //　Reason Phrase
         buf.extend(write_variable_bytes(
             &self.reason_phrase.as_bytes().to_vec(),
         ));
-
-        tracing::trace!("Packetized Announce Error message.");
     }
     /// Method to enable downcasting from MOQTPayload to AnnounceError
     fn as_any(&self) -> &dyn Any {
@@ -83,15 +73,16 @@ impl MOQTPayload for AnnounceError {
 
 #[cfg(test)]
 mod success {
-    use crate::{
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::control_messages::announce_error::AnnounceError,
-    };
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::announce_error::AnnounceError, moqt_payload::MOQTPayload,
+    };
+
     #[test]
     fn packetize_announce_error() {
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let error_code: u64 = 1;
+        let error_code = 1;
         let reason_phrase = "already exist".to_string();
 
         let announce_error =

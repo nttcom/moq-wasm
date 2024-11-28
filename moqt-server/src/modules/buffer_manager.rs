@@ -1,8 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
-
 use bytes::BytesMut;
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, oneshot, Mutex};
-use BufferCommand::*;
 
 // Called as a separate thread
 pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
@@ -18,7 +16,7 @@ pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
     while let Some(cmd) = rx.recv().await {
         tracing::debug!("command received: {:#?}", cmd);
         match cmd {
-            Get {
+            BufferCommand::Get {
                 session_id,
                 stream_id,
                 resp,
@@ -44,7 +42,7 @@ pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
                 // response the buffer
                 let _ = resp.send(buf);
             }
-            ReleaseStream {
+            BufferCommand::ReleaseStream {
                 session_id,
                 stream_id,
             } => {
@@ -52,7 +50,7 @@ pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
                     buffers.get_mut(&session_id).unwrap().remove(&stream_id);
                 }
             }
-            ReleaseSession { session_id } => {
+            BufferCommand::ReleaseSession { session_id } => {
                 buffers.remove(&session_id);
             }
         }

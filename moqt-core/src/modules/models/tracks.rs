@@ -47,7 +47,7 @@ impl Track {
 
 #[cfg(test)]
 mod succsess {
-    use super::*;
+    use crate::models::tracks::{ForwardingPreference, Track};
 
     #[test]
     fn new() {

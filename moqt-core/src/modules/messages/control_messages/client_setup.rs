@@ -1,8 +1,10 @@
-use super::setup_parameters::SetupParameter;
-use crate::messages::moqt_payload::MOQTPayload;
-use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 use anyhow::{Context, Result};
 use std::{any::Any, vec};
+
+use crate::{
+    messages::{control_messages::setup_parameters::SetupParameter, moqt_payload::MOQTPayload},
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientSetup {
@@ -50,8 +52,6 @@ impl MOQTPayload for ClientSetup {
             setup_parameters,
         };
 
-        tracing::trace!("Depacketized Client Setup message.");
-
         Ok(client_setup_message)
     }
 
@@ -67,8 +67,6 @@ impl MOQTPayload for ClientSetup {
         for setup_parameter in &self.setup_parameters {
             setup_parameter.packetize(buf);
         }
-
-        tracing::trace!("Packetized Client Setup message.");
     }
     /// Method to enable downcasting from MOQTPayload to ClientSetup
     fn as_any(&self) -> &dyn Any {
@@ -78,15 +76,19 @@ impl MOQTPayload for ClientSetup {
 
 #[cfg(test)]
 mod success {
+    use bytes::BytesMut;
+
     use crate::{
         constants::MOQ_TRANSPORT_VERSION,
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::control_messages::{
-            client_setup::ClientSetup,
-            setup_parameters::{Role, RoleCase, SetupParameter},
+        messages::{
+            control_messages::{
+                client_setup::ClientSetup,
+                setup_parameters::{Role, RoleCase, SetupParameter},
+            },
+            moqt_payload::MOQTPayload,
         },
     };
-    use bytes::BytesMut;
+
     #[test]
     fn packetize_client_setup() {
         let supported_versions = vec![MOQ_TRANSPORT_VERSION];

@@ -1,10 +1,11 @@
-use crate::messages::moqt_payload::MOQTPayload;
-use crate::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
-use crate::{
-    modules::variable_bytes::read_variable_bytes_from_buffer, variable_bytes::write_variable_bytes,
-};
 use anyhow::{Context, Result};
 use std::any::Any;
+
+use crate::{
+    messages::moqt_payload::MOQTPayload,
+    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unsubscribe {
@@ -18,18 +19,6 @@ impl Unsubscribe {
             track_namespace,
             track_name,
         }
-    }
-
-    // TODO: Not implemented yet
-    #[allow(dead_code)]
-    pub(crate) fn track_namespace(&self) -> &Vec<String> {
-        &self.track_namespace
-    }
-
-    // TODO: Not implemented yet
-    #[allow(dead_code)]
-    pub(crate) fn track_name(&self) -> &str {
-        &self.track_name
     }
 }
 
@@ -49,8 +38,6 @@ impl MOQTPayload for Unsubscribe {
             track_namespace: track_namespace_tuple,
             track_name: String::from_utf8(track_name)?,
         };
-
-        tracing::trace!("Depacketized Unsubscribe message.");
 
         Ok(unsubscribe_message)
     }
@@ -75,9 +62,10 @@ impl MOQTPayload for Unsubscribe {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::control_messages::unsubscribe::Unsubscribe;
-    use crate::messages::moqt_payload::MOQTPayload;
     use bytes::BytesMut;
+
+    use crate::messages::{control_messages::unsubscribe::Unsubscribe, moqt_payload::MOQTPayload};
+
     #[test]
     fn packetize_unsubscribe() {
         let unsubscribe = Unsubscribe {

@@ -1,7 +1,9 @@
-use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use crate::models::subscriptions::Subscription;
-use crate::models::tracks::ForwardingPreference;
 use anyhow::Result;
+
+use crate::{
+    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    models::{subscriptions::Subscription, tracks::ForwardingPreference},
+};
 
 type SubscribeId = u64;
 type TrackNamespace = Vec<String>;

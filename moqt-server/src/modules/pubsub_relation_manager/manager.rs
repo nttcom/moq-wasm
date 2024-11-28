@@ -1,17 +1,18 @@
+use anyhow::anyhow;
+use std::{collections::HashMap, vec};
+use tokio::sync::mpsc;
+
+use moqt_core::models::subscriptions::nodes::{
+    consumers::Consumer, producers::Producer, registry::SubscriptionNodeRegistry,
+};
+
 use crate::modules::pubsub_relation_manager::{
     commands::{PubSubRelationCommand, PubSubRelationCommand::*},
     relation::PubSubRelation,
 };
-use anyhow::anyhow;
-use moqt_core::models::subscriptions::nodes::{
-    consumers::Consumer, producers::Producer, registry::SubscriptionNodeRegistry,
-};
-use std::{collections::HashMap, vec};
-use tokio::sync::mpsc;
 
 type DownstreamSessionId = usize;
 type UpstreamSessionId = usize;
-
 pub(crate) type Consumers = HashMap<UpstreamSessionId, Consumer>;
 pub(crate) type Producers = HashMap<DownstreamSessionId, Producer>;
 

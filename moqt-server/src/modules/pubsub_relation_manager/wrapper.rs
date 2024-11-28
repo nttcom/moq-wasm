@@ -1,13 +1,16 @@
+use anyhow::{bail, Result};
+use async_trait::async_trait;
+use tokio::sync::{mpsc, oneshot};
+
+use moqt_core::{
+    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    models::{subscriptions::Subscription, tracks::ForwardingPreference},
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+};
+
 use crate::modules::pubsub_relation_manager::commands::{
     PubSubRelationCommand, PubSubRelationCommand::*,
 };
-use anyhow::{bail, Result};
-use async_trait::async_trait;
-use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use moqt_core::models::subscriptions::Subscription;
-use moqt_core::models::tracks::ForwardingPreference;
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-use tokio::sync::{mpsc, oneshot};
 
 // Wrapper to encapsulate channel-related operations
 pub(crate) struct PubSubRelationManagerWrapper {
@@ -440,7 +443,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             Err(err) => bail!(err),
         }
     }
-    async fn is_namespace_already_announced(
+    async fn is_namespace_announced(
         &self,
         track_namespace: Vec<String>,
         downstream_session_id: usize,
@@ -1789,7 +1792,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn is_namespace_already_announced_exist() {
+    async fn is_namespace_announced_exist() {
         let max_subscribe_id = 10;
         let downstream_session_id = 1;
         let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string()]);
@@ -1807,7 +1810,7 @@ mod success {
             .await;
 
         let result = pubsub_relation_manager
-            .is_namespace_already_announced(track_namespace.clone(), downstream_session_id)
+            .is_namespace_announced(track_namespace.clone(), downstream_session_id)
             .await;
 
         let is_announced = result.unwrap();
@@ -1815,7 +1818,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn is_namespace_already_announced_not_exist() {
+    async fn is_namespace_announced_not_exist() {
         let max_subscribe_id = 10;
         let downstream_session_id = 1;
         let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string()]);
@@ -1830,7 +1833,7 @@ mod success {
             .await;
 
         let result = pubsub_relation_manager
-            .is_namespace_already_announced(track_namespace.clone(), downstream_session_id)
+            .is_namespace_announced(track_namespace.clone(), downstream_session_id)
             .await;
 
         let is_announced = result.unwrap();

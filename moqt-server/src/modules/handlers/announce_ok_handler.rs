@@ -1,6 +1,11 @@
 use anyhow::Result;
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-use moqt_core::{messages::control_messages::announce_ok::AnnounceOk, MOQTClient};
+
+use moqt_core::{
+    messages::control_messages::announce_ok::AnnounceOk,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+};
+
+use crate::modules::moqt_client::MOQTClient;
 
 pub(crate) async fn announce_ok_handler(
     announce_ok_message: AnnounceOk,
@@ -10,11 +15,10 @@ pub(crate) async fn announce_ok_handler(
     tracing::trace!("announce_ok_handler start.");
     tracing::debug!("announce_ok_message: {:#?}", announce_ok_message);
 
-    // Record the announced Track Namespace
     pubsub_relation_manager_repository
         .set_downstream_announced_namespace(
             announce_ok_message.track_namespace().clone(),
-            client.id,
+            client.id(),
         )
         .await?;
 
@@ -24,13 +28,14 @@ pub(crate) async fn announce_ok_handler(
 #[cfg(test)]
 mod success {
     use crate::modules::handlers::announce_ok_handler::announce_ok_handler;
+    use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
     };
+    use moqt_core::messages::control_messages::announce_ok::AnnounceOk;
     use moqt_core::messages::moqt_payload::MOQTPayload;
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
-    use moqt_core::{messages::control_messages::announce_ok::AnnounceOk, moqt_client::MOQTClient};
     use tokio::sync::mpsc;
 
     #[tokio::test]

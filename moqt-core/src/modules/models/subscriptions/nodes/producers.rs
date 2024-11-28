@@ -1,8 +1,13 @@
-use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use crate::models::subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription};
-use crate::models::tracks::ForwardingPreference;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
+
+use crate::{
+    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    models::{
+        subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription},
+        tracks::ForwardingPreference,
+    },
+};
 
 type SubscribeId = u64;
 type TrackNamespace = Vec<String>;
@@ -277,8 +282,10 @@ impl SubscriptionNodeRegistry for Producer {
 
 #[cfg(test)]
 pub(crate) mod test_helper_fn {
-    use super::{Producer, TrackNamespace};
-    use crate::models::subscriptions::nodes::producers::{FilterType, GroupOrder};
+
+    use crate::models::subscriptions::nodes::producers::{
+        FilterType, GroupOrder, Producer, TrackNamespace,
+    };
 
     #[derive(Debug, Clone)]
     pub(crate) struct SubscriptionVariables {
@@ -328,8 +335,16 @@ pub(crate) mod test_helper_fn {
 
 #[cfg(test)]
 mod success {
-    use super::*;
-    use crate::models::subscriptions::Subscription;
+    use crate::models::{
+        subscriptions::{
+            nodes::{
+                producers::{test_helper_fn, Producer},
+                registry::SubscriptionNodeRegistry,
+            },
+            Subscription,
+        },
+        tracks::ForwardingPreference,
+    };
 
     #[test]
     fn set_subscription() {

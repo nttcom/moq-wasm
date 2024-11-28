@@ -1,15 +1,13 @@
-use std::any::Any;
-
 use anyhow::Context;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
+use std::any::Any;
 
-use crate::modules::{
+use crate::{
+    messages::moqt_payload::MOQTPayload,
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-
-use crate::messages::moqt_payload::MOQTPayload;
 
 #[derive(Debug, IntoPrimitive, TryFromPrimitive, Serialize, Clone, Copy, PartialEq)]
 #[repr(u8)]
@@ -77,8 +75,6 @@ impl MOQTPayload for SubscribeError {
 
         let track_alias = read_variable_integer_from_buffer(buf).context("track alias")?;
 
-        tracing::trace!("Depacketized Subscribe Error message.");
-
         Ok(SubscribeError {
             subscribe_id,
             error_code,
@@ -94,8 +90,6 @@ impl MOQTPayload for SubscribeError {
             &self.reason_phrase.as_bytes().to_vec(),
         ));
         buf.extend(write_variable_integer(self.track_alias));
-
-        tracing::trace!("Packetized Subscribe Error message.");
     }
     /// Method to enable downcasting from MOQTPayload to SubscribeError
     fn as_any(&self) -> &dyn Any {
@@ -105,13 +99,12 @@ impl MOQTPayload for SubscribeError {
 
 #[cfg(test)]
 mod success {
-    use crate::{
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::control_messages::subscribe_error::{
-            SubscribeError, SubscribeErrorCode,
-        },
-    };
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::subscribe_error::{SubscribeError, SubscribeErrorCode},
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize() {

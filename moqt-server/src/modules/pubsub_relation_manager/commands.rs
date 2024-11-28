@@ -1,8 +1,10 @@
 use anyhow::Result;
-use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use moqt_core::models::subscriptions::Subscription;
-use moqt_core::models::tracks::ForwardingPreference;
 use tokio::sync::oneshot;
+
+use moqt_core::{
+    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    models::{subscriptions::Subscription, tracks::ForwardingPreference},
+};
 
 #[cfg(test)]
 use crate::modules::pubsub_relation_manager::{

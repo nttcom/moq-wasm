@@ -1,11 +1,12 @@
-use super::DataStreams;
-use crate::{
-    variable_bytes::read_fixed_length_bytes,
-    variable_integer::{read_variable_integer, write_variable_integer},
-};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::any::Any;
+
+use crate::{
+    messages::data_streams::DataStreams,
+    variable_bytes::read_fixed_length_bytes,
+    variable_integer::{read_variable_integer, write_variable_integer},
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct StreamHeaderTrack {
@@ -70,8 +71,8 @@ impl DataStreams for StreamHeaderTrack {
 
 #[cfg(test)]
 mod success {
-    use super::DataStreams;
-    use crate::messages::data_streams::stream_header_track::StreamHeaderTrack;
+    use crate::messages::data_streams::stream_header_track::{DataStreams, StreamHeaderTrack};
+
     use bytes::BytesMut;
     use std::io::Cursor;
 

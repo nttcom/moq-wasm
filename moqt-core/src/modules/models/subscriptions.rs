@@ -1,8 +1,9 @@
 pub mod nodes;
 
-use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
-use crate::models::tracks::ForwardingPreference;
-use crate::models::tracks::Track;
+use crate::{
+    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    models::tracks::{ForwardingPreference, Track},
+};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Status {
@@ -155,8 +156,13 @@ pub(crate) mod test_helper_fn {
 
 #[cfg(test)]
 mod success {
-    use super::*;
-    use crate::models::tracks::ForwardingPreference;
+    use crate::{
+        messages::control_messages::subscribe::{FilterType, GroupOrder},
+        models::{
+            subscriptions::{test_helper_fn, Subscription},
+            tracks::ForwardingPreference,
+        },
+    };
 
     #[test]
     fn new() {
