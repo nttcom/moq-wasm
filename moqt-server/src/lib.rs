@@ -145,8 +145,10 @@ impl MOQT {
         // Start object cache thread
         tokio::spawn(async move { object_cache_storage(&mut object_cache_rx).await });
 
-        let open_subscription_txes: HashMap<usize, SenderToOpenSubscription> = HashMap::new();
-        let shared_open_subscription_txes = Arc::new(Mutex::new(open_subscription_txes));
+        let open_downstream_subscription_txes: HashMap<usize, SenderToOpenSubscription> =
+            HashMap::new();
+        let shared_open_downstream_subscription_txes =
+            Arc::new(Mutex::new(open_downstream_subscription_txes));
 
         // Start wtransport server
         let config = ServerConfig::builder()
@@ -173,7 +175,8 @@ impl MOQT {
             let pubsub_relation_tx = pubsub_relation_tx.clone();
             let send_stream_tx = send_stream_tx.clone();
             let object_cache_tx = object_cache_tx.clone();
-            let open_subscription_txes = shared_open_subscription_txes.clone();
+            let open_downstream_subscription_txes =
+                shared_open_downstream_subscription_txes.clone();
             let incoming_session = server.accept().await;
             let connection_span = tracing::info_span!("Connection", id);
 
@@ -184,7 +187,7 @@ impl MOQT {
                     pubsub_relation_tx,
                     send_stream_tx,
                     object_cache_tx,
-                    open_subscription_txes,
+                    open_downstream_subscription_txes,
                     incoming_session,
                 )
                 .instrument(connection_span)
@@ -202,7 +205,7 @@ async fn handle_connection(
     pubsub_relation_tx: mpsc::Sender<PubSubRelationCommand>,
     send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
     object_cache_tx: mpsc::Sender<ObjectCacheStorageCommand>,
-    open_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     incoming_session: IncomingSession,
 ) -> Result<()> {
     tracing::trace!("Waiting for session request...");
@@ -226,12 +229,12 @@ async fn handle_connection(
     });
 
     // For opening a new data stream
-    let (open_subscription_tx, mut open_subscription_rx) =
+    let (open_downstream_subscription_tx, mut open_downstream_subscription_rx) =
         mpsc::channel::<(SubscribeId, DataStreamType)>(32);
-    open_subscription_txes
+    open_downstream_subscription_txes
         .lock()
         .await
-        .insert(stable_id, open_subscription_tx);
+        .insert(stable_id, open_downstream_subscription_tx);
 
     let (close_connection_tx, mut close_connection_rx) = mpsc::channel::<(u64, String)>(32);
 
@@ -270,7 +273,7 @@ async fn handle_connection(
                 let close_connection_tx = close_connection_tx.clone();
                 let object_cache_tx = object_cache_tx.clone();
                 let client= client.clone();
-                let open_subscription_txes = open_subscription_txes.clone();
+                let open_downstream_subscription_txes = open_downstream_subscription_txes.clone();
 
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
                 send_stream_tx.send(SendStreamDispatchCommand::Set {
@@ -289,7 +292,7 @@ async fn handle_connection(
                         recv_stream,
                         shared_send_stream: send_stream,
                     };
-                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_subscription_txes, close_connection_tx, send_stream_tx, object_cache_tx).instrument(session_span_clone).await
+                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_downstream_subscription_txes, close_connection_tx, send_stream_tx, object_cache_tx).instrument(session_span_clone).await
 
                 // Propagate the current span (Connection)
                 }.in_current_span());
@@ -320,7 +323,7 @@ async fn handle_connection(
                 let buffer_tx = buffer_tx.clone();
                 let pubsub_relation_tx = pubsub_relation_tx.clone();
                 let object_cache_tx = object_cache_tx.clone();
-                let open_subscription_txes = open_subscription_txes.clone();
+                let open_downstream_subscription_txes = open_downstream_subscription_txes.clone();
                 let close_connection_tx = close_connection_tx.clone();
                 let client = client.clone();
                 let session_span_clone = session_span.clone();
@@ -331,14 +334,14 @@ async fn handle_connection(
                     stream_id,
                     shared_recv_stream,
                 };
-                    handle_incoming_uni_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_subscription_txes, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
+                    handle_incoming_uni_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_downstream_subscription_txes, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
 
                 // Propagate the current span (Connection)
                 }.in_current_span());
 
             },
             // Waiting for a uni-directional send stream open request and relaying the message
-            Some((subscribe_id, data_stream_type)) = open_subscription_rx.recv() => {
+            Some((subscribe_id, data_stream_type)) = open_downstream_subscription_rx.recv() => {
 
                 if !is_control_stream_opened {
                     // Decline the request if the control stream is not opened
@@ -440,7 +443,7 @@ async fn handle_incoming_uni_stream(
     client: Arc<Mutex<MOQTClient>>,
     buffer_tx: Sender<BufferCommand>,
     pubsub_relation_tx: Sender<PubSubRelationCommand>,
-    open_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     close_connection_tx: Sender<(u64, String)>,
     object_cache_tx: Sender<ObjectCacheStorageCommand>,
 ) -> Result<()> {
@@ -532,14 +535,14 @@ async fn handle_incoming_uni_stream(
                         .unwrap();
 
                     for (downstream_session_id, downstream_subscribe_id) in subscribers {
-                        let open_subscription_tx = open_subscription_txes
+                        let open_downstream_subscription_tx = open_downstream_subscription_txes
                             .lock()
                             .await
                             .get(&downstream_session_id)
                             .unwrap()
                             .clone();
 
-                        open_subscription_tx
+                        open_downstream_subscription_tx
                             .send((downstream_subscribe_id, stream_header_type.clone()))
                             .await?;
                     }
@@ -601,7 +604,10 @@ async fn handle_incoming_uni_stream(
         })
         .await?;
 
-    open_subscription_txes.lock().await.remove(&stable_id);
+    open_downstream_subscription_txes
+        .lock()
+        .await
+        .remove(&stable_id);
 
     Ok(())
 }
@@ -957,7 +963,7 @@ async fn handle_incoming_bi_stream(
     client: Arc<Mutex<MOQTClient>>,
     buffer_tx: Sender<BufferCommand>,
     pubsub_relation_tx: Sender<PubSubRelationCommand>,
-    open_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     close_connection_tx: Sender<(u64, String)>,
     send_stream_tx: Sender<SendStreamDispatchCommand>,
     object_cache_tx: Sender<ObjectCacheStorageCommand>,
@@ -998,7 +1004,7 @@ async fn handle_incoming_bi_stream(
             &mut buf,
             UnderlayType::WebTransport,
             &mut client,
-            open_subscription_txes.clone(),
+            open_downstream_subscription_txes.clone(),
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,

@@ -20,7 +20,7 @@ pub(crate) async fn process_subscribe_message(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    open_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
 ) -> Result<Option<SubscribeError>> {
     let subscribe_request_message = match Subscribe::depacketize(payload_buf) {
         Ok(subscribe_request_message) => subscribe_request_message,
@@ -36,7 +36,7 @@ pub(crate) async fn process_subscribe_message(
         pubsub_relation_manager_repository,
         send_stream_dispatcher_repository,
         object_cache_storage,
-        open_subscription_txes,
+        open_downstream_subscription_txes,
     )
     .await;
 
