@@ -1,7 +1,3 @@
-use anyhow::{bail, Result};
-use bytes::{Buf, BytesMut};
-use std::io::Cursor;
-
 use crate::{
     constants::TerminationErrorCode,
     modules::{
@@ -13,11 +9,14 @@ use crate::{
         },
     },
 };
+use anyhow::{bail, Result};
+use bytes::{Buf, BytesMut};
 use moqt_core::{
     data_stream_type::DataStreamType,
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::read_variable_integer,
 };
+use std::io::Cursor;
 
 #[derive(Debug, PartialEq)]
 pub enum StreamHeaderProcessResult {
