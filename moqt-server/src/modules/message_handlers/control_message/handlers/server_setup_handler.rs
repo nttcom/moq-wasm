@@ -160,7 +160,7 @@ mod success {
     };
     use crate::{
         constants,
-        modules::message_handlers::control_message_handler::handlers::server_setup_handler::setup_handler,
+        modules::message_handlers::control_message::handlers::server_setup_handler::setup_handler,
     };
     use moqt_core::messages::control_messages::{
         client_setup::ClientSetup,

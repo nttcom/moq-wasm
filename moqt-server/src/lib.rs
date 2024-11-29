@@ -15,9 +15,9 @@ use modules::{
     buffer_manager::{buffer_manager, request_buffer, BufferCommand},
     logging,
     message_handlers::{
-        control_message_handler::{control_message_handler, MessageProcessResult},
-        object_stream_handler::{object_stream_handler, ObjectStreamProcessResult},
-        stream_header_handler::{stream_header_handler, StreamHeaderProcessResult},
+        control_message::{control_message_handler, MessageProcessResult},
+        object_stream::{object_stream_handler, ObjectStreamProcessResult},
+        stream_header::{stream_header_handler, StreamHeaderProcessResult},
     },
     moqt_client::MOQTClient,
     object_cache_storage::{

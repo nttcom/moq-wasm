@@ -3,35 +3,38 @@ use bytes::BytesMut;
 
 use moqt_core::{
     messages::{
-        control_messages::{announce::Announce, announce_error::AnnounceError},
+        control_messages::{
+            subscribe_namespace::SubscribeNamespace,
+            subscribe_namespace_error::SubscribeNamespaceError,
+        },
         moqt_payload::MOQTPayload,
     },
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository::SendStreamDispatcherRepository,
+    SendStreamDispatcherRepository,
 };
 
 use crate::modules::{
-    message_handlers::control_message_handler::handlers::announce_handler::announce_handler,
+    message_handlers::control_message::handlers::subscribe_namespace_handler::subscribe_namespace_handler,
     moqt_client::MOQTClient,
 };
 
-pub(crate) async fn process_announce_message(
+pub(crate) async fn process_subscribe_namespace_message(
     payload_buf: &mut BytesMut,
     client: &MOQTClient,
     write_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
-) -> Result<Option<AnnounceError>> {
-    let announce_message = match Announce::depacketize(payload_buf) {
-        Ok(announce_message) => announce_message,
+) -> Result<Option<SubscribeNamespaceError>> {
+    let subscribe_namespace_message = match SubscribeNamespace::depacketize(payload_buf) {
+        Ok(subscribe_namespace_message) => subscribe_namespace_message,
         Err(err) => {
             tracing::error!("{:#?}", err);
             bail!(err.to_string());
         }
     };
 
-    let result = announce_handler(
-        announce_message,
+    let result = subscribe_namespace_handler(
+        subscribe_namespace_message,
         client,
         pubsub_relation_manager_repository,
         send_stream_dispatcher_repository,
@@ -39,14 +42,14 @@ pub(crate) async fn process_announce_message(
     .await;
 
     match result.as_ref() {
-        Ok(Some(announce_error)) => {
-            announce_error.packetize(write_buf);
+        Ok(Some(subscribe_namespace_error)) => {
+            subscribe_namespace_error.packetize(write_buf);
 
             result
         }
         Ok(None) => result,
         Err(err) => {
-            tracing::error!("announce_handler: err: {:?}", err.to_string());
+            tracing::error!("subscribe_namespace_handler: err: {:?}", err.to_string());
             bail!(err.to_string());
         }
     }
