@@ -4,7 +4,7 @@ pub(crate) mod server_processes;
 use crate::{
     constants::TerminationErrorCode,
     modules::{
-        message_handlers::stream_header_handler::server_processes::{
+        message_handlers::stream_header::server_processes::{
             stream_track_header::process_stream_header_track,
             stream_track_subgroup::process_stream_header_subgroup,
         },
