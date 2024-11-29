@@ -1,13 +1,18 @@
-use crate::messages::control_messages::version_specific_parameters::VersionSpecificParameter;
-use crate::messages::moqt_payload::MOQTPayload;
-use crate::modules::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
-use crate::variable_bytes::read_fixed_length_bytes_from_buffer;
 use anyhow::bail;
 use anyhow::Context;
 use serde::Serialize;
 use std::any::Any;
 
-use super::subscribe::GroupOrder;
+use crate::{
+    messages::{
+        control_messages::{
+            subscribe::GroupOrder, version_specific_parameters::VersionSpecificParameter,
+        },
+        moqt_payload::MOQTPayload,
+    },
+    variable_bytes::read_fixed_length_bytes_from_buffer,
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+};
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeOk {
@@ -123,8 +128,6 @@ impl MOQTPayload for SubscribeOk {
             }
         }
 
-        tracing::trace!("Depacketized Subscribe OK message.");
-
         Ok(SubscribeOk {
             subscribe_id,
             expires,
@@ -138,7 +141,6 @@ impl MOQTPayload for SubscribeOk {
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Number of elements
         buf.extend(write_variable_integer(self.subscribe_id));
         buf.extend(write_variable_integer(self.expires));
         buf.extend(u8::from(self.group_order).to_be_bytes());
@@ -151,8 +153,6 @@ impl MOQTPayload for SubscribeOk {
         for version_specific_parameter in &self.subscribe_parameters {
             version_specific_parameter.packetize(buf);
         }
-
-        tracing::trace!("Packetized Subscribe OK message.");
     }
     /// Method to enable downcasting from MOQTPayload to SubscribeOk
     fn as_any(&self) -> &dyn Any {
@@ -162,15 +162,15 @@ impl MOQTPayload for SubscribeOk {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::control_messages::{
-        subscribe_ok::GroupOrder,
-        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-    };
-    use crate::{
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::control_messages::subscribe_ok::SubscribeOk,
-    };
     use bytes::BytesMut;
+
+    use crate::messages::{
+        control_messages::{
+            subscribe_ok::{GroupOrder, SubscribeOk},
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        },
+        moqt_payload::MOQTPayload,
+    };
 
     #[test]
     fn packetize_subscribe_ok_content_not_exists() {
@@ -331,11 +331,9 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::{
-        messages::moqt_payload::MOQTPayload,
-        modules::messages::control_messages::subscribe_ok::SubscribeOk,
-    };
     use bytes::BytesMut;
+
+    use crate::messages::{control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload};
 
     #[test]
     fn depacketize_subscribe_ok_invalid_group_order() {

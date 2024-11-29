@@ -4,12 +4,13 @@ use moqt_core::messages::data_streams::{
     object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
     stream_header_track::StreamHeaderTrack,
 };
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::sync::{mpsc, oneshot};
 use ttl_cache::TtlCache;
-use ObjectCacheStorageCommand::*;
 type CacheId = usize;
 
 #[allow(dead_code)]
@@ -26,6 +27,77 @@ pub(crate) enum CacheObject {
     Datagram(ObjectDatagram),
     Track(ObjectStreamTrack),
     Subgroup(ObjectStreamSubgroup),
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) enum ObjectCacheStorageCommand {
+    SetSubscription {
+        session_id: usize,
+        subscribe_id: u64,
+        cache_header: CacheHeader,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    GetHeader {
+        session_id: usize,
+        subscribe_id: u64,
+        resp: oneshot::Sender<Result<CacheHeader>>,
+    },
+    SetObject {
+        session_id: usize,
+        subscribe_id: u64,
+        cache_object: CacheObject,
+        duration: u64,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    GetAbsoluteObject {
+        session_id: usize,
+        subscribe_id: u64,
+        group_id: u64,
+        object_id: u64,
+        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
+    },
+    GetFirstObject {
+        session_id: usize,
+        subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
+    },
+    GetNextObject {
+        session_id: usize,
+        subscribe_id: u64,
+        cache_id: usize,
+        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
+    },
+    GetLatestObject {
+        session_id: usize,
+        subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
+    },
+    GetLatestGroup {
+        session_id: usize,
+        subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
+    },
+    GetLargestGroupId {
+        session_id: usize,
+        subscribe_id: u64,
+        resp: oneshot::Sender<Result<u64>>,
+    },
+    GetLargestObjectId {
+        session_id: usize,
+        subscribe_id: u64,
+        group_id: u64,
+        resp: oneshot::Sender<Result<u64>>,
+    },
+    DeleteSubscription {
+        session_id: usize,
+        subscribe_id: u64,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    DeleteClient {
+        session_id: usize,
+        resp: oneshot::Sender<Result<()>>,
+    },
 }
 
 #[derive(Clone)]
@@ -60,7 +132,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
     while let Some(cmd) = rx.recv().await {
         tracing::trace!("command received: {:#?}", cmd);
         match cmd {
-            SetSubscription {
+            ObjectCacheStorageCommand::SetSubscription {
                 session_id,
                 subscribe_id,
                 cache_header,
@@ -74,7 +146,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
 
                 resp.send(Ok(())).unwrap();
             }
-            GetHeader {
+            ObjectCacheStorageCommand::GetHeader {
                 session_id,
                 subscribe_id,
                 resp,
@@ -92,7 +164,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     }
                 }
             }
-            SetObject {
+            ObjectCacheStorageCommand::SetObject {
                 session_id,
                 subscribe_id,
                 cache_object,
@@ -116,7 +188,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         .unwrap();
                 }
             }
-            GetAbsoluteObject {
+            ObjectCacheStorageCommand::GetAbsoluteObject {
                 session_id,
                 subscribe_id,
                 group_id,
@@ -206,7 +278,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            GetFirstObject {
+            ObjectCacheStorageCommand::GetFirstObject {
                 session_id,
                 subscribe_id,
                 resp,
@@ -234,7 +306,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            GetNextObject {
+            ObjectCacheStorageCommand::GetNextObject {
                 session_id,
                 subscribe_id,
                 cache_id,
@@ -265,7 +337,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            GetLatestGroup {
+            ObjectCacheStorageCommand::GetLatestGroup {
                 session_id,
                 subscribe_id,
                 resp,
@@ -348,7 +420,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            GetLatestObject {
+            ObjectCacheStorageCommand::GetLatestObject {
                 session_id,
                 subscribe_id,
                 resp,
@@ -376,7 +448,125 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            DeleteSubscription {
+            ObjectCacheStorageCommand::GetLargestGroupId {
+                session_id,
+                subscribe_id,
+                resp,
+            } => {
+                let cache = storage.get_mut(&(session_id, subscribe_id));
+                if let Some(cache) = cache {
+                    // Minimize the time to be locked
+                    let mut cache_clone: TtlCache<usize, CacheObject>;
+                    {
+                        cache_clone = cache.cache_objects.lock().unwrap().clone();
+                    }
+
+                    // It is not decided whether the group ID is ascending or descending,
+                    // so it is necessary to get the maximum value
+                    let largest_group_id: Option<u64> = match &cache.cache_header {
+                        CacheHeader::Datagram => {
+                            let max_group_id = cache_clone
+                                .iter()
+                                .map(|(_, v)| match v {
+                                    CacheObject::Datagram(object) => object.group_id(),
+                                    _ => 0,
+                                })
+                                .max();
+
+                            max_group_id
+                        }
+                        CacheHeader::Track(_header) => {
+                            let max_group_id = cache_clone
+                                .iter()
+                                .map(|(_, v)| match v {
+                                    CacheObject::Track(object) => object.group_id(),
+                                    _ => 0,
+                                })
+                                .max();
+
+                            max_group_id
+                        }
+                        CacheHeader::Subgroup(header) => Some(header.group_id()),
+                    };
+
+                    match largest_group_id {
+                        Some(largest_group_id) => {
+                            resp.send(Ok(largest_group_id)).unwrap();
+                        }
+                        None => {
+                            resp.send(Err(anyhow::anyhow!("group_id not found")))
+                                .unwrap();
+                        }
+                    }
+                } else {
+                    resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
+                }
+            }
+            ObjectCacheStorageCommand::GetLargestObjectId {
+                session_id,
+                subscribe_id,
+                group_id,
+                resp,
+            } => {
+                let cache = storage.get_mut(&(session_id, subscribe_id));
+                if let Some(cache) = cache {
+                    // Minimize the time to be locked
+                    let mut cache_clone: TtlCache<usize, CacheObject>;
+                    {
+                        cache_clone = cache.cache_objects.lock().unwrap().clone();
+                    }
+
+                    // Get the maximum object ID in the group
+                    let largest_object_id: Option<u64> = match &cache.cache_header {
+                        CacheHeader::Datagram => cache_clone
+                            .iter()
+                            .filter_map(|(_, v)| match v {
+                                CacheObject::Datagram(object) => {
+                                    if object.group_id() == group_id {
+                                        Some(object.object_id())
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            })
+                            .max(),
+                        CacheHeader::Track(_header) => cache_clone
+                            .iter()
+                            .filter_map(|(_, v)| match v {
+                                CacheObject::Track(object) => {
+                                    if object.group_id() == group_id {
+                                        Some(object.object_id())
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            })
+                            .max(),
+                        CacheHeader::Subgroup(_header) => cache_clone
+                            .iter()
+                            .map(|(_, v)| match v {
+                                CacheObject::Subgroup(object) => object.object_id(),
+                                _ => 0,
+                            })
+                            .max(),
+                    };
+
+                    match largest_object_id {
+                        Some(largest_object_id) => {
+                            resp.send(Ok(largest_object_id)).unwrap();
+                        }
+                        None => {
+                            resp.send(Err(anyhow::anyhow!("object_id not found")))
+                                .unwrap();
+                        }
+                    }
+                } else {
+                    resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
+                }
+            }
+            ObjectCacheStorageCommand::DeleteSubscription {
                 session_id,
                 subscribe_id,
                 resp,
@@ -384,7 +574,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 let _ = storage.remove(&(session_id, subscribe_id));
                 resp.send(Ok(())).unwrap();
             }
-            DeleteClient { session_id, resp } => {
+            ObjectCacheStorageCommand::DeleteClient { session_id, resp } => {
                 let keys: Vec<(usize, u64)> = storage.keys().cloned().collect();
                 for key in keys {
                     if key.0 == session_id {
@@ -397,66 +587,6 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
     }
 
     tracing::trace!("object_cache_storage end");
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub(crate) enum ObjectCacheStorageCommand {
-    SetSubscription {
-        session_id: usize,
-        subscribe_id: u64,
-        cache_header: CacheHeader,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    GetHeader {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<CacheHeader>>,
-    },
-    SetObject {
-        session_id: usize,
-        subscribe_id: u64,
-        cache_object: CacheObject,
-        duration: u64,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    GetAbsoluteObject {
-        session_id: usize,
-        subscribe_id: u64,
-        group_id: u64,
-        object_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
-    },
-    GetFirstObject {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
-    },
-    GetNextObject {
-        session_id: usize,
-        subscribe_id: u64,
-        cache_id: usize,
-        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
-    },
-    GetLatestObject {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
-    },
-    GetLatestGroup {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, CacheObject)>>>,
-    },
-    DeleteSubscription {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    DeleteClient {
-        session_id: usize,
-        resp: oneshot::Sender<Result<()>>,
-    },
 }
 
 pub(crate) struct ObjectCacheStorageWrapper {
@@ -477,7 +607,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = SetSubscription {
+        let cmd = ObjectCacheStorageCommand::SetSubscription {
             session_id,
             subscribe_id,
             cache_header,
@@ -501,7 +631,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<CacheHeader> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<CacheHeader>>();
 
-        let cmd = GetHeader {
+        let cmd = ObjectCacheStorageCommand::GetHeader {
             session_id,
             subscribe_id,
             resp: resp_tx,
@@ -526,7 +656,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = SetObject {
+        let cmd = ObjectCacheStorageCommand::SetObject {
             session_id,
             subscribe_id,
             cache_object,
@@ -553,7 +683,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<Option<(CacheId, CacheObject)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, CacheObject)>>>();
 
-        let cmd = GetAbsoluteObject {
+        let cmd = ObjectCacheStorageCommand::GetAbsoluteObject {
             session_id,
             subscribe_id,
             group_id,
@@ -578,7 +708,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<Option<(CacheId, CacheObject)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, CacheObject)>>>();
 
-        let cmd = GetFirstObject {
+        let cmd = ObjectCacheStorageCommand::GetFirstObject {
             session_id,
             subscribe_id,
             resp: resp_tx,
@@ -602,7 +732,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<Option<(CacheId, CacheObject)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, CacheObject)>>>();
 
-        let cmd = GetNextObject {
+        let cmd = ObjectCacheStorageCommand::GetNextObject {
             session_id,
             subscribe_id,
             cache_id,
@@ -626,7 +756,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<Option<(CacheId, CacheObject)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, CacheObject)>>>();
 
-        let cmd = GetLatestObject {
+        let cmd = ObjectCacheStorageCommand::GetLatestObject {
             session_id,
             subscribe_id,
             resp: resp_tx,
@@ -649,7 +779,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<Option<(CacheId, CacheObject)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, CacheObject)>>>();
 
-        let cmd = GetLatestGroup {
+        let cmd = ObjectCacheStorageCommand::GetLatestGroup {
             session_id,
             subscribe_id,
             resp: resp_tx,
@@ -665,10 +795,58 @@ impl ObjectCacheStorageWrapper {
         }
     }
 
+    pub(crate) async fn get_largest_group_id(
+        &mut self,
+        session_id: usize,
+        subscribe_id: u64,
+    ) -> Result<u64> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<u64>>();
+
+        let cmd = ObjectCacheStorageCommand::GetLargestGroupId {
+            session_id,
+            subscribe_id,
+            resp: resp_tx,
+        };
+
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(group_id) => Ok(group_id),
+            Err(err) => bail!(err),
+        }
+    }
+
+    pub(crate) async fn get_largest_object_id(
+        &mut self,
+        session_id: usize,
+        subscribe_id: u64,
+        group_id: u64,
+    ) -> Result<u64> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<u64>>();
+
+        let cmd = ObjectCacheStorageCommand::GetLargestObjectId {
+            session_id,
+            subscribe_id,
+            group_id,
+            resp: resp_tx,
+        };
+
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(group_id) => Ok(group_id),
+            Err(err) => bail!(err),
+        }
+    }
+
     async fn delete_subscription(&mut self, session_id: usize, subscribe_id: u64) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = DeleteSubscription {
+        let cmd = ObjectCacheStorageCommand::DeleteSubscription {
             session_id,
             subscribe_id,
             resp: resp_tx,
@@ -687,7 +865,7 @@ impl ObjectCacheStorageWrapper {
     pub async fn delete_client(&mut self, session_id: usize) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
-        let cmd = DeleteClient {
+        let cmd = ObjectCacheStorageCommand::DeleteClient {
             session_id,
             resp: resp_tx,
         };
@@ -705,7 +883,18 @@ impl ObjectCacheStorageWrapper {
 
 #[cfg(test)]
 mod success {
-    use super::*;
+    use tokio::sync::mpsc;
+
+    use moqt_core::messages::data_streams::{
+        object_datagram::ObjectDatagram, object_stream_subgroup::ObjectStreamSubgroup,
+        object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
+        stream_header_track::StreamHeaderTrack,
+    };
+
+    use crate::modules::object_cache_storage::{
+        object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
+        ObjectCacheStorageWrapper,
+    };
 
     #[tokio::test]
     async fn set_subscription() {
@@ -1891,6 +2080,222 @@ mod success {
         };
 
         assert_eq!(result_object, expected_subgroup);
+    }
+
+    #[tokio::test]
+    async fn get_largest_group_id_and_object_id_datagram() {
+        let session_id = 0;
+        let subscribe_id = 1;
+        let track_alias = 3;
+        let publisher_priority = 5;
+        let object_status = None;
+        let duration = 1000;
+        let header = CacheHeader::Datagram;
+
+        // start object cache storage thread
+        let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
+        tokio::spawn(async move { object_cache_storage(&mut cache_rx).await });
+        let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
+
+        let _ = object_cache_storage
+            .set_subscription(session_id, subscribe_id, header.clone())
+            .await;
+
+        for j in 0..4 {
+            let group_id = j as u64;
+            let group_size = 7;
+
+            for i in 0..group_size {
+                let object_payload: Vec<u8> = vec![
+                    j * group_size + i,
+                    j * group_size + i + 1,
+                    j * group_size + i + 2,
+                    j * group_size + i + 3,
+                ];
+                let object_id = i as u64;
+
+                let datagram = ObjectDatagram::new(
+                    subscribe_id,
+                    track_alias,
+                    group_id,
+                    object_id,
+                    publisher_priority,
+                    object_status,
+                    object_payload,
+                )
+                .unwrap();
+
+                let cache_object = CacheObject::Datagram(datagram.clone());
+
+                let _ = object_cache_storage
+                    .set_object(session_id, subscribe_id, cache_object, duration)
+                    .await;
+            }
+        }
+
+        let expected_object_id = 6;
+        let expected_group_id = 3;
+
+        let group_result = object_cache_storage
+            .get_largest_group_id(session_id, subscribe_id)
+            .await;
+
+        assert!(group_result.is_ok());
+
+        let largest_group_id = group_result.unwrap();
+        assert_eq!(largest_group_id, expected_group_id);
+
+        let object_result = object_cache_storage
+            .get_largest_object_id(session_id, subscribe_id, largest_group_id)
+            .await;
+
+        assert!(object_result.is_ok());
+
+        let largest_object = object_result.unwrap();
+        assert_eq!(largest_object, expected_object_id);
+    }
+
+    #[tokio::test]
+    async fn get_largest_group_id_and_object_id_track() {
+        let session_id = 0;
+        let subscribe_id = 1;
+        let track_alias = 3;
+        let publisher_priority = 5;
+        let object_status = None;
+        let duration = 1000;
+        let header = CacheHeader::Track(
+            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+        );
+
+        // start object cache storage thread
+        let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
+        tokio::spawn(async move { object_cache_storage(&mut cache_rx).await });
+        let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
+
+        let _ = object_cache_storage
+            .set_subscription(session_id, subscribe_id, header.clone())
+            .await;
+
+        for j in 0..8 {
+            let group_id = j as u64;
+            let group_size = 12;
+
+            for i in 0..group_size {
+                let object_payload: Vec<u8> = vec![
+                    j * group_size + i,
+                    j * group_size + i + 1,
+                    j * group_size + i + 2,
+                    j * group_size + i + 3,
+                ];
+                let object_id = i as u64;
+
+                let track =
+                    ObjectStreamTrack::new(group_id, object_id, object_status, object_payload)
+                        .unwrap();
+
+                let cache_object = CacheObject::Track(track.clone());
+
+                let _ = object_cache_storage
+                    .set_object(session_id, subscribe_id, cache_object, duration)
+                    .await;
+            }
+        }
+
+        let expected_object_id = 11;
+        let expected_group_id = 7;
+
+        let group_result = object_cache_storage
+            .get_largest_group_id(session_id, subscribe_id)
+            .await;
+
+        assert!(group_result.is_ok());
+
+        let largest_group_id = group_result.unwrap();
+        assert_eq!(largest_group_id, expected_group_id);
+
+        let object_result = object_cache_storage
+            .get_largest_object_id(session_id, subscribe_id, largest_group_id)
+            .await;
+
+        assert!(object_result.is_ok());
+
+        let largest_object = object_result.unwrap();
+        assert_eq!(largest_object, expected_object_id);
+    }
+
+    #[tokio::test]
+    async fn get_largest_group_id_and_object_id_subgroup() {
+        let session_id = 0;
+        let subscribe_id = 1;
+        let track_alias = 3;
+        let group_id = 4;
+        let subgroup_id = 5;
+        let publisher_priority = 6;
+        let object_status = None;
+        let duration = 1000;
+        let header = CacheHeader::Subgroup(
+            StreamHeaderSubgroup::new(
+                subscribe_id,
+                track_alias,
+                group_id, // Group ID is fixed
+                subgroup_id,
+                publisher_priority,
+            )
+            .unwrap(),
+        );
+
+        // start object cache storage thread
+        let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
+        tokio::spawn(async move { object_cache_storage(&mut cache_rx).await });
+        let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
+
+        let _ = object_cache_storage
+            .set_subscription(session_id, subscribe_id, header.clone())
+            .await;
+
+        for j in 0..10 {
+            let group_size = 15;
+
+            for i in 0..group_size {
+                let object_payload: Vec<u8> = vec![
+                    j * group_size + i,
+                    j * group_size + i + 1,
+                    j * group_size + i + 2,
+                    j * group_size + i + 3,
+                ];
+                let object_id = i as u64;
+
+                let subgroup =
+                    ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
+
+                let cache_object = CacheObject::Subgroup(subgroup.clone());
+
+                let _ = object_cache_storage
+                    .set_object(session_id, subscribe_id, cache_object, duration)
+                    .await;
+            }
+        }
+
+        let expected_object_id = 14;
+        let expected_group_id = 4;
+
+        let group_result = object_cache_storage
+            .get_largest_group_id(session_id, subscribe_id)
+            .await;
+
+        assert!(group_result.is_ok());
+
+        let largest_group_id = group_result.unwrap();
+        assert_eq!(largest_group_id, expected_group_id);
+
+        let object_result = object_cache_storage
+            .get_largest_object_id(session_id, subscribe_id, largest_group_id)
+            .await;
+
+        assert!(object_result.is_ok());
+
+        let largest_object = object_result.unwrap();
+        assert_eq!(largest_object, expected_object_id);
     }
 
     #[tokio::test]

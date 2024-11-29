@@ -1,13 +1,12 @@
-use crate::messages::data_streams::object_status::ObjectStatus;
-use crate::{
-    variable_bytes::read_fixed_length_bytes,
-    variable_integer::{read_variable_integer, write_variable_integer},
-};
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::any::Any;
 
-use super::DataStreams;
+use crate::{
+    messages::data_streams::{object_status::ObjectStatus, DataStreams},
+    variable_bytes::read_fixed_length_bytes,
+    variable_integer::{read_variable_integer, write_variable_integer},
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ObjectDatagram {
@@ -148,13 +147,12 @@ impl DataStreams for ObjectDatagram {
 
 #[cfg(test)]
 mod success {
+    use bytes::BytesMut;
     use std::io::Cursor;
 
     use crate::messages::data_streams::{
-        object_datagram::ObjectDatagram, object_status::ObjectStatus,
+        object_datagram::ObjectDatagram, object_status::ObjectStatus, DataStreams,
     };
-    use crate::modules::messages::data_streams::DataStreams;
-    use bytes::BytesMut;
 
     #[test]
     fn packetize_object_datagram_normal() {
@@ -384,10 +382,12 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use super::DataStreams;
-    use crate::messages::data_streams::object_datagram::{ObjectDatagram, ObjectStatus};
     use bytes::BytesMut;
     use std::io::Cursor;
+
+    use crate::messages::data_streams::object_datagram::{
+        DataStreams, ObjectDatagram, ObjectStatus,
+    };
 
     #[test]
     fn packetize_object_datagram_not_normal_and_not_empty_payload() {

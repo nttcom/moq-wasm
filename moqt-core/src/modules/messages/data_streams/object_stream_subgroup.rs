@@ -1,12 +1,12 @@
-use super::DataStreams;
-use crate::messages::data_streams::object_status::ObjectStatus;
-use crate::{
-    variable_bytes::read_fixed_length_bytes,
-    variable_integer::{read_variable_integer, write_variable_integer},
-};
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::any::Any;
+
+use crate::{
+    messages::data_streams::{object_status::ObjectStatus, DataStreams},
+    variable_bytes::read_fixed_length_bytes,
+    variable_integer::{read_variable_integer, write_variable_integer},
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ObjectStreamSubgroup {
@@ -113,12 +113,12 @@ impl DataStreams for ObjectStreamSubgroup {
 
 #[cfg(test)]
 mod success {
-    use super::DataStreams;
-    use crate::messages::data_streams::{
-        object_status::ObjectStatus, object_stream_subgroup::ObjectStreamSubgroup,
-    };
     use bytes::BytesMut;
     use std::io::Cursor;
+
+    use crate::messages::data_streams::{
+        object_status::ObjectStatus, object_stream_subgroup::ObjectStreamSubgroup, DataStreams,
+    };
 
     #[test]
     fn packetize_object_stream_subgroup_normal() {
@@ -264,12 +264,12 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use super::DataStreams;
-    use crate::messages::data_streams::object_stream_subgroup::{
-        ObjectStatus, ObjectStreamSubgroup,
-    };
     use bytes::BytesMut;
     use std::io::Cursor;
+
+    use crate::messages::data_streams::object_stream_subgroup::{
+        DataStreams, ObjectStatus, ObjectStreamSubgroup,
+    };
 
     #[test]
     fn packetize_object_stream_subgroup_not_normal_and_not_empty_payload() {

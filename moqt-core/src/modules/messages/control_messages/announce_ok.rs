@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use std::any::Any;
 
-use crate::messages::moqt_payload::MOQTPayload;
-use crate::variable_integer::{read_variable_integer_from_buffer, write_variable_integer};
 use crate::{
-    modules::variable_bytes::write_variable_bytes, variable_bytes::read_variable_bytes_from_buffer,
+    messages::moqt_payload::MOQTPayload,
+    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -33,24 +33,17 @@ impl MOQTPayload for AnnounceOk {
                 .context("track namespace")?;
             track_namespace_tuple.push(track_namespace);
         }
-
-        tracing::trace!("Depacketized Announce OK message.");
-
         Ok(AnnounceOk {
             track_namespace: track_namespace_tuple,
         })
     }
 
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Number of elements
         let track_namespace_tuple_length = self.track_namespace.len();
         buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
         for track_namespace in &self.track_namespace {
-            // Track Namespace
             buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
         }
-
-        tracing::trace!("Packetized Announce OK message.");
     }
     /// Method to enable downcasting from MOQTPayload to AnnounceOk
     fn as_any(&self) -> &dyn Any {
@@ -60,9 +53,9 @@ impl MOQTPayload for AnnounceOk {
 
 #[cfg(test)]
 mod success {
-    use crate::messages::moqt_payload::MOQTPayload;
-    use crate::modules::messages::control_messages::announce_ok::AnnounceOk;
     use bytes::BytesMut;
+
+    use crate::messages::{control_messages::announce_ok::AnnounceOk, moqt_payload::MOQTPayload};
 
     #[test]
     fn packetize() {

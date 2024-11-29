@@ -1,17 +1,19 @@
-use crate::constants;
 use anyhow::{bail, Result};
-use moqt_core::messages::control_messages::setup_parameters::MaxSubscribeID;
-use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
 use moqt_core::{
     constants::UnderlayType,
     messages::control_messages::{
         client_setup::ClientSetup,
         server_setup::ServerSetup,
+        setup_parameters::MaxSubscribeID,
         setup_parameters::SetupParameter,
         setup_parameters::{Role, RoleCase},
     },
-    moqt_client::MOQTClientStatus,
-    MOQTClient,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+};
+
+use crate::{
+    constants,
+    modules::moqt_client::{MOQTClient, MOQTClientStatus},
 };
 
 fn is_requested_version_supported(supported_versions: Vec<u32>) -> bool {
@@ -57,22 +59,22 @@ async fn setup_subscription_node(
         Some(RoleCase::Publisher) => {
             // Generate consumer that manages namespaces and subscriptions with producers.
             pubsub_relation_manager_repository
-                .setup_publisher(upstream_max_subscribe_id, client.id)
+                .setup_publisher(upstream_max_subscribe_id, client.id())
                 .await?;
         }
         Some(RoleCase::Subscriber) => {
             // Generate producer that manages namespaces and subscriptions with subscribers.
             pubsub_relation_manager_repository
-                .setup_subscriber(downstream_max_subscribe_id, client.id)
+                .setup_subscriber(downstream_max_subscribe_id, client.id())
                 .await?;
         }
         Some(RoleCase::PubSub) => {
             // Generate producer and consumer that manages namespaces and subscriptions with publishers and subscribers.
             pubsub_relation_manager_repository
-                .setup_publisher(upstream_max_subscribe_id, client.id)
+                .setup_publisher(upstream_max_subscribe_id, client.id())
                 .await?;
             pubsub_relation_manager_repository
-                .setup_subscriber(downstream_max_subscribe_id, client.id)
+                .setup_subscriber(downstream_max_subscribe_id, client.id())
                 .await?;
         }
         None => {
@@ -151,6 +153,7 @@ pub(crate) async fn setup_handler(
 
 #[cfg(test)]
 mod success {
+    use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -160,7 +163,6 @@ mod success {
         client_setup::ClientSetup,
         setup_parameters::{Path, Role, RoleCase, SetupParameter},
     };
-    use moqt_core::moqt_client::MOQTClient;
     use std::vec;
     use tokio::sync::mpsc;
 
@@ -224,6 +226,7 @@ mod success {
 
 #[cfg(test)]
 mod failure {
+    use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -233,7 +236,6 @@ mod failure {
         client_setup::ClientSetup,
         setup_parameters::{Path, Role, RoleCase, SetupParameter},
     };
-    use moqt_core::moqt_client::MOQTClient;
     use std::vec;
     use tokio::sync::mpsc;
 

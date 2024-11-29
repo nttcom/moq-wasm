@@ -1,12 +1,18 @@
-use crate::constants::TerminationErrorCode;
-use crate::modules::object_cache_storage::CacheObject;
-use crate::modules::object_cache_storage::ObjectCacheStorageWrapper;
+use crate::{
+    constants::TerminationErrorCode,
+    modules::{
+        moqt_client::{MOQTClient, MOQTClientStatus},
+        object_cache_storage::{CacheObject, ObjectCacheStorageWrapper},
+    },
+};
 use bytes::{Buf, BytesMut};
-use moqt_core::messages::data_streams::object_stream_subgroup::ObjectStreamSubgroup;
-use moqt_core::messages::data_streams::object_stream_track::ObjectStreamTrack;
-use moqt_core::messages::data_streams::DataStreams;
-use moqt_core::moqt_client::MOQTClientStatus;
-use moqt_core::{data_stream_type::DataStreamType, MOQTClient};
+use moqt_core::{
+    data_stream_type::DataStreamType,
+    messages::data_streams::{
+        object_stream_subgroup::ObjectStreamSubgroup, object_stream_track::ObjectStreamTrack,
+        DataStreams,
+    },
+};
 use std::io::Cursor;
 
 #[derive(Debug, PartialEq)]
@@ -57,7 +63,7 @@ pub async fn object_stream_handler(
 
                     let cache_object = CacheObject::Track(object);
                     object_cache_storage
-                        .set_object(client.id, subscribe_id, cache_object, duration)
+                        .set_object(client.id(), subscribe_id, cache_object, duration)
                         .await
                         .unwrap();
                 }
@@ -76,7 +82,7 @@ pub async fn object_stream_handler(
 
                     let cache_object = CacheObject::Subgroup(object);
                     object_cache_storage
-                        .set_object(client.id, subscribe_id, cache_object, duration)
+                        .set_object(client.id(), subscribe_id, cache_object, duration)
                         .await
                         .unwrap();
                 }
