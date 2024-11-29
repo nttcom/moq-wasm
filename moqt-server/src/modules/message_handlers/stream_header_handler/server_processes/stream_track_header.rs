@@ -6,8 +6,8 @@ use moqt_core::{
 };
 
 use crate::modules::{
-    handlers::stream_track_header_handler::stream_header_track_handler, moqt_client::MOQTClient,
-    object_cache_storage::ObjectCacheStorageWrapper,
+    message_handlers::stream_header_handler::handlers::stream_track_header_handler::stream_header_track_handler,
+    moqt_client::MOQTClient, object_cache_storage::ObjectCacheStorageWrapper,
 };
 
 pub(crate) async fn process_stream_header_track(

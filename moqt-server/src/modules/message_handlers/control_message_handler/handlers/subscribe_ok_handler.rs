@@ -90,7 +90,7 @@ pub(crate) async fn subscribe_ok_handler(
 
 #[cfg(test)]
 mod success {
-    use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
+    use super::subscribe_ok_handler;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -240,7 +240,7 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::modules::handlers::subscribe_ok_handler::subscribe_ok_handler;
+    use crate::modules::message_handlers::control_message_handler::handlers::subscribe_ok_handler::subscribe_ok_handler;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,

@@ -6,7 +6,7 @@ use moqt_core::{
 };
 
 use crate::modules::{
-    handlers::stream_subgroup_header_handler::stream_header_subgroup_handler,
+    message_handlers::stream_header_handler::handlers::stream_subgroup_header_handler::stream_header_subgroup_handler,
     moqt_client::MOQTClient, object_cache_storage::ObjectCacheStorageWrapper,
 };
 

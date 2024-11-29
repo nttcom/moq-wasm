@@ -8,7 +8,8 @@ use moqt_core::{
 };
 
 use crate::modules::{
-    handlers::subscribe_error_handler::subscribe_error_handler, moqt_client::MOQTClient,
+    message_handlers::control_message_handler::handlers::subscribe_error_handler::subscribe_error_handler,
+    moqt_client::MOQTClient,
 };
 
 pub(crate) async fn process_subscribe_error_message(
