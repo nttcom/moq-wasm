@@ -27,7 +27,7 @@ pub(crate) async fn announce_ok_handler(
 
 #[cfg(test)]
 mod success {
-    use crate::modules::handlers::announce_ok_handler::announce_ok_handler;
+    use super::announce_ok_handler;
     use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,

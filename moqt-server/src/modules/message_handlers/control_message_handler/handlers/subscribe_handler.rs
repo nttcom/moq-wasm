@@ -507,8 +507,8 @@ async fn set_downstream_and_upstream_subscription(
 
 #[cfg(test)]
 mod success {
+    use super::subscribe_handler;
     use crate::modules::{
-        handlers::subscribe_handler::subscribe_handler,
         moqt_client::MOQTClient,
         object_cache_storage::{
             object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
@@ -985,8 +985,8 @@ mod success {
 
 #[cfg(test)]
 mod failure {
+    use super::subscribe_handler;
     use crate::modules::{
-        handlers::subscribe_handler::subscribe_handler,
         moqt_client::MOQTClient,
         object_cache_storage::{
             object_cache_storage, ObjectCacheStorageCommand, ObjectCacheStorageWrapper,

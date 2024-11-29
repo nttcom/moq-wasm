@@ -13,14 +13,17 @@ use wtransport::{
 mod modules;
 use modules::{
     buffer_manager::{buffer_manager, request_buffer, BufferCommand},
-    control_message_handler::{control_message_handler, MessageProcessResult},
     logging,
+    message_handlers::{
+        control_message_handler::{control_message_handler, MessageProcessResult},
+        object_stream_handler::{object_stream_handler, ObjectStreamProcessResult},
+        stream_header_handler::{stream_header_handler, StreamHeaderProcessResult},
+    },
     moqt_client::MOQTClient,
     object_cache_storage::{
         object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
         ObjectCacheStorageWrapper,
     },
-    object_stream_handler::{object_stream_handler, ObjectStreamProcessResult},
     pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -28,7 +31,6 @@ use modules::{
     send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     },
-    stream_header_handler::{stream_header_handler, StreamHeaderProcessResult},
 };
 pub use moqt_core::constants;
 use moqt_core::{
