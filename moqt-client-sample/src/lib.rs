@@ -497,7 +497,14 @@ impl MOQTClient {
                 .get_publishing_subscription(subscribe_id)
                 .unwrap();
 
-            let group_order = subscription.get_group_order();
+            let requested_group_order = subscription.get_group_order();
+            let group_order = if requested_group_order == GroupOrder::Original {
+                // If requested_group_order is Original, use Ascending as its response
+                GroupOrder::Ascending
+            } else {
+                // Otherwise, return the requested_group_order as is
+                requested_group_order
+            };
 
             let version_specific_parameters = vec![auth_info];
             let subscribe_ok_message = SubscribeOk::new(
