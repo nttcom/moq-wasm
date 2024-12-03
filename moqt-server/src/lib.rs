@@ -13,7 +13,7 @@ use modules::{
     send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
     server_processes::{
         senders::{SenderToOtherConnectionThread, SendersToManagementThread},
-        session_handler::handle_session,
+        session_handler::SessionHandler,
     },
 };
 pub use moqt_core::constants;
@@ -96,13 +96,14 @@ impl MOQTServer {
 
             // Create a thread for each session
             tokio::spawn(async move {
-                let result = handle_session(
+                let result = SessionHandler::start(
                     sender_to_other_connection_thread,
                     senders_to_management_thread,
                     incoming_session,
                 )
                 .instrument(session_span)
                 .await;
+
                 tracing::error!("{:?}", result);
             });
         }
