@@ -48,7 +48,7 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new(downstream_session_id);
+        let client = MOQTClient::new_without_senders(downstream_session_id);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =

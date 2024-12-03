@@ -171,7 +171,7 @@ mod success {
 
     #[tokio::test]
     async fn only_role() {
-        let mut client = MOQTClient::new(33);
+        let mut client = MOQTClient::new_without_senders(33);
         let setup_parameters = vec![SetupParameter::Role(Role::new(RoleCase::Publisher))];
         let client_setup_message =
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
@@ -198,7 +198,7 @@ mod success {
 
     #[tokio::test]
     async fn role_and_path_on_quic() {
-        let mut client = MOQTClient::new(33);
+        let mut client = MOQTClient::new_without_senders(33);
         let setup_parameters = vec![
             SetupParameter::Role(Role::new(RoleCase::Publisher)),
             SetupParameter::Path(Path::new(String::from("test"))),
@@ -245,7 +245,7 @@ mod failure {
 
     #[tokio::test]
     async fn no_role_parameter() {
-        let mut client = MOQTClient::new(33);
+        let mut client = MOQTClient::new_without_senders(33);
         let setup_parameters = vec![];
         let client_setup_message =
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
@@ -271,7 +271,7 @@ mod failure {
 
     #[tokio::test]
     async fn include_path_on_wt() {
-        let mut client = MOQTClient::new(33);
+        let mut client = MOQTClient::new_without_senders(33);
         let setup_parameters = vec![SetupParameter::Path(Path::new(String::from("test")))];
         let client_setup_message =
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
@@ -297,7 +297,7 @@ mod failure {
 
     #[tokio::test]
     async fn include_only_path_on_quic() {
-        let mut client = MOQTClient::new(33);
+        let mut client = MOQTClient::new_without_senders(33);
         let setup_parameters = vec![SetupParameter::Path(Path::new(String::from("test")))];
         let client_setup_message =
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_parameters);
@@ -323,7 +323,7 @@ mod failure {
 
     #[tokio::test]
     async fn include_unsupported_version() {
-        let mut client = MOQTClient::new(33);
+        let mut client = MOQTClient::new_without_senders(33);
         let setup_parameters = vec![SetupParameter::Role(Role::new(RoleCase::Subscriber))];
 
         let unsupported_version = 8888;
@@ -351,7 +351,7 @@ mod failure {
 
     #[tokio::test]
     async fn include_unknown_parameter() {
-        let mut client = MOQTClient::new(33);
+        let mut client = MOQTClient::new_without_senders(33);
         let setup_parameters = vec![
             SetupParameter::Role(Role::new(RoleCase::Publisher)),
             SetupParameter::Unknown(0),
