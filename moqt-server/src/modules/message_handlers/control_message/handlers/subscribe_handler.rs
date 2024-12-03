@@ -239,7 +239,7 @@ pub(crate) async fn subscribe_handler(
             Ok(None)
         }
 
-        // TODO: Check if “publisher not found” should turn into closing connection
+        // TODO: Check if “publisher not found” should turn into closing session
         None => {
             let reason_phrase = "publisher not found".to_string();
             let subscribe_error = SubscribeError::new(

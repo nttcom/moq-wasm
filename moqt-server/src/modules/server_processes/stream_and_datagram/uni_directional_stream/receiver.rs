@@ -1,8 +1,9 @@
+use super::streams::UniRecvStream;
 use crate::modules::{
     buffer_manager::{request_buffer, BufferCommand},
     message_handlers::{
-        object_stream_handler::{object_stream_handler, ObjectStreamProcessResult},
-        stream_header_handler::{stream_header_handler, StreamHeaderProcessResult},
+        object_stream::{object_stream_handler, ObjectStreamProcessResult},
+        stream_header::{stream_header_handler, StreamHeaderProcessResult},
     },
     moqt_client::MOQTClient,
     object_cache_storage::ObjectCacheStorageWrapper,
@@ -17,8 +18,6 @@ use moqt_core::{
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{self, Instrument};
-
-use super::streams::UniRecvStream;
 
 pub(crate) async fn handle_uni_recv_stream(
     stream: &mut UniRecvStream,

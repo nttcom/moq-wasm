@@ -7,7 +7,7 @@ use moqt_core::{
 };
 
 use crate::modules::{
-    message_handlers::control_message_handler::handlers::announce_ok_handler::announce_ok_handler,
+    message_handlers::control_message::handlers::announce_ok_handler::announce_ok_handler,
     moqt_client::MOQTClient,
 };
 

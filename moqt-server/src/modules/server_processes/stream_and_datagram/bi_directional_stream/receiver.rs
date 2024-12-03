@@ -1,6 +1,6 @@
 use crate::modules::{
     buffer_manager::{request_buffer, BufferCommand},
-    message_handlers::control_message_handler::{control_message_handler, MessageProcessResult},
+    message_handlers::control_message::{control_message_handler, MessageProcessResult},
     moqt_client::MOQTClient,
     pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
     send_stream_dispatcher::SendStreamDispatcher,

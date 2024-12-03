@@ -1,6 +1,6 @@
 use crate::modules::moqt_client::MOQTClient;
 use crate::modules::{
-    message_handlers::control_message_handler::handlers::subscribe_handler::subscribe_handler,
+    message_handlers::control_message::handlers::subscribe_handler::subscribe_handler,
     object_cache_storage::ObjectCacheStorageWrapper,
 };
 use crate::SenderToOpenSubscription;
