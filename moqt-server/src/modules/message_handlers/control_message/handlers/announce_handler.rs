@@ -111,7 +111,7 @@ pub(crate) async fn announce_handler(
 mod success {
     use std::sync::Arc;
 
-    use crate::modules::handlers::announce_handler::announce_handler;
+    use super::announce_handler;
     use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
@@ -289,7 +289,7 @@ mod success {
 mod failure {
     use std::sync::Arc;
 
-    use crate::modules::handlers::announce_handler::announce_handler;
+    use super::announce_handler;
     use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,

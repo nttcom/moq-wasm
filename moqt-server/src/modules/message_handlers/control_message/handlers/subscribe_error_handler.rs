@@ -115,7 +115,7 @@ async fn delete_downstream_and_upstream_subscription(
 
 #[cfg(test)]
 mod success {
-    use crate::modules::handlers::subscribe_error_handler::subscribe_error_handler;
+    use super::subscribe_error_handler;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -124,13 +124,15 @@ mod success {
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use crate::MOQTClient;
-    use moqt_core::constants::StreamDirection;
-    use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
-    use moqt_core::messages::{
-        control_messages::subscribe_error::{SubscribeError, SubscribeErrorCode},
-        moqt_payload::MOQTPayload,
-    };
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
+    use moqt_core::{
+        constants::StreamDirection,
+        messages::{
+            control_messages::subscribe::{FilterType, GroupOrder},
+            control_messages::subscribe_error::{SubscribeError, SubscribeErrorCode},
+            moqt_payload::MOQTPayload,
+        },
+    };
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
@@ -255,7 +257,7 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::modules::handlers::subscribe_error_handler::subscribe_error_handler;
+    use super::subscribe_error_handler;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
@@ -264,11 +266,13 @@ mod failure {
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use crate::MOQTClient;
-    use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
-    use moqt_core::messages::control_messages::subscribe_error::{
-        SubscribeError, SubscribeErrorCode,
+    use moqt_core::{
+        messages::control_messages::{
+            subscribe::{FilterType, GroupOrder},
+            subscribe_error::{SubscribeError, SubscribeErrorCode},
+        },
+        pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     };
-    use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
     use tokio::sync::mpsc;
 
     #[tokio::test]

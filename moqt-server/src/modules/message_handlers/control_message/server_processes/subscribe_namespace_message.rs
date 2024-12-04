@@ -14,7 +14,8 @@ use moqt_core::{
 };
 
 use crate::modules::{
-    handlers::subscribe_namespace_handler::subscribe_namespace_handler, moqt_client::MOQTClient,
+    message_handlers::control_message::handlers::subscribe_namespace_handler::subscribe_namespace_handler,
+    moqt_client::MOQTClient,
 };
 
 pub(crate) async fn process_subscribe_namespace_message(

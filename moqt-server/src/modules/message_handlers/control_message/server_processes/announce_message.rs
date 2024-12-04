@@ -10,7 +10,10 @@ use moqt_core::{
     send_stream_dispatcher_repository::SendStreamDispatcherRepository,
 };
 
-use crate::modules::{handlers::announce_handler::announce_handler, moqt_client::MOQTClient};
+use crate::modules::{
+    message_handlers::control_message::handlers::announce_handler::announce_handler,
+    moqt_client::MOQTClient,
+};
 
 pub(crate) async fn process_announce_message(
     payload_buf: &mut BytesMut,

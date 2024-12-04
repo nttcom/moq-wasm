@@ -1,12 +1,15 @@
+pub(crate) mod handlers;
+pub(crate) mod server_processes;
+
 use crate::{
     constants::TerminationErrorCode,
     modules::{
-        moqt_client::{MOQTClient, MOQTClientStatus},
-        object_cache_storage::ObjectCacheStorageWrapper,
-        server_processes::{
+        message_handlers::stream_header::server_processes::{
             stream_track_header::process_stream_header_track,
             stream_track_subgroup::process_stream_header_subgroup,
         },
+        moqt_client::{MOQTClient, MOQTClientStatus},
+        object_cache_storage::ObjectCacheStorageWrapper,
     },
 };
 use anyhow::{bail, Result};
