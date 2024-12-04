@@ -1,18 +1,24 @@
+pub(crate) mod handlers;
+pub(crate) mod server_processes;
+
 use crate::constants::TerminationErrorCode;
+use crate::modules::moqt_client::MOQTClient;
 use crate::modules::{
-    handlers::unannounce_handler::unannounce_handler,
+    message_handlers::control_message::{
+        handlers::unannounce_handler::unannounce_handler,
+        server_processes::{
+            announce_error_message::process_announce_error_message,
+            announce_message::process_announce_message,
+            announce_ok_message::process_announce_ok_message,
+            client_setup_message::process_client_setup_message,
+            subscribe_error_message::process_subscribe_error_message,
+            subscribe_message::process_subscribe_message,
+            subscribe_namespace_message::process_subscribe_namespace_message,
+            subscribe_ok_message::process_subscribe_ok_message,
+        },
+    },
     moqt_client::MOQTClientStatus,
     object_cache_storage::ObjectCacheStorageWrapper,
-    server_processes::{
-        announce_error_message::process_announce_error_message,
-        announce_message::process_announce_message,
-        announce_ok_message::process_announce_ok_message,
-        client_setup_message::process_client_setup_message,
-        subscribe_error_message::process_subscribe_error_message,
-        subscribe_message::process_subscribe_message,
-        subscribe_namespace_message::process_subscribe_namespace_message,
-        subscribe_ok_message::process_subscribe_ok_message,
-    },
 };
 use crate::SenderToOpenSubscription;
 use anyhow::{bail, Result};
@@ -27,8 +33,6 @@ use moqt_core::{
 };
 use std::{collections::HashMap, io::Cursor, sync::Arc};
 use tokio::sync::Mutex;
-
-use super::moqt_client::MOQTClient;
 
 #[derive(Debug, PartialEq)]
 pub enum MessageProcessResult {
@@ -345,7 +349,7 @@ pub async fn control_message_handler(
 #[cfg(test)]
 pub(crate) mod test_helper_fn {
     use crate::modules::{
-        control_message_handler::{control_message_handler, MessageProcessResult},
+        message_handlers::control_message::{control_message_handler, MessageProcessResult},
         moqt_client::{MOQTClient, MOQTClientStatus},
         object_cache_storage::{
             object_cache_storage, ObjectCacheStorageCommand, ObjectCacheStorageWrapper,
@@ -421,7 +425,7 @@ pub(crate) mod test_helper_fn {
 #[cfg(test)]
 mod success {
     use crate::modules::{
-        control_message_handler::{test_helper_fn, MessageProcessResult},
+        message_handlers::control_message::{test_helper_fn, MessageProcessResult},
         moqt_client::MOQTClientStatus,
     };
     use moqt_core::control_message_type::ControlMessageType;
@@ -484,7 +488,7 @@ mod success {
 #[cfg(test)]
 mod failure {
     use crate::modules::{
-        control_message_handler::{test_helper_fn, MessageProcessResult},
+        message_handlers::control_message::{test_helper_fn, MessageProcessResult},
         moqt_client::MOQTClientStatus,
     };
     use moqt_core::{constants::TerminationErrorCode, control_message_type::ControlMessageType};

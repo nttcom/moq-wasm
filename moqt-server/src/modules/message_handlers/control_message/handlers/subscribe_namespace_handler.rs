@@ -103,8 +103,8 @@ pub(crate) async fn subscribe_namespace_handler(
 
 #[cfg(test)]
 mod success {
+    use super::subscribe_namespace_handler;
     use crate::modules::{
-        handlers::subscribe_namespace_handler::subscribe_namespace_handler,
         moqt_client::MOQTClient,
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
@@ -199,8 +199,8 @@ mod success {
 
 #[cfg(test)]
 mod failure {
+    use super::subscribe_namespace_handler;
     use crate::modules::{
-        handlers::subscribe_namespace_handler::subscribe_namespace_handler,
         moqt_client::MOQTClient,
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,

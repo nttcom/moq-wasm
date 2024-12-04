@@ -7,7 +7,10 @@ use moqt_core::{
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
 
-use crate::modules::{handlers::server_setup_handler::setup_handler, moqt_client::MOQTClient};
+use crate::modules::{
+    message_handlers::control_message::handlers::server_setup_handler::setup_handler,
+    moqt_client::MOQTClient,
+};
 
 pub(crate) async fn process_client_setup_message(
     payload_buf: &mut BytesMut,

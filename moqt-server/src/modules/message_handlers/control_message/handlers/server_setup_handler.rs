@@ -158,7 +158,10 @@ mod success {
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
     };
-    use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
+    use crate::{
+        constants,
+        modules::message_handlers::control_message::handlers::server_setup_handler::setup_handler,
+    };
     use moqt_core::messages::control_messages::{
         client_setup::ClientSetup,
         setup_parameters::{Path, Role, RoleCase, SetupParameter},
@@ -226,12 +229,13 @@ mod success {
 
 #[cfg(test)]
 mod failure {
+    use super::setup_handler;
+    use crate::constants;
     use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
     };
-    use crate::{constants, modules::handlers::server_setup_handler::setup_handler};
     use moqt_core::messages::control_messages::{
         client_setup::ClientSetup,
         setup_parameters::{Path, Role, RoleCase, SetupParameter},
