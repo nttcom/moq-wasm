@@ -1,23 +1,23 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use wtransport::{RecvStream, SendStream};
+use wtransport::{error::StreamReadError, RecvStream, SendStream};
 
 pub(crate) struct UniRecvStream {
     stable_id: usize,
     stream_id: u64,
-    shared_recv_stream: Arc<Mutex<RecvStream>>,
+    recv_stream: Arc<Mutex<RecvStream>>,
 }
 
 impl UniRecvStream {
     pub fn new(
         stable_id: usize,
         stream_id: u64,
-        shared_recv_stream: Arc<Mutex<RecvStream>>,
+        recv_stream: Arc<Mutex<RecvStream>>,
     ) -> UniRecvStream {
         UniRecvStream {
             stable_id,
             stream_id,
-            shared_recv_stream,
+            recv_stream,
         }
     }
 
@@ -29,8 +29,9 @@ impl UniRecvStream {
         self.stream_id
     }
 
-    pub fn shared_recv_stream(&self) -> Arc<Mutex<RecvStream>> {
-        Arc::clone(&self.shared_recv_stream)
+    pub async fn read(&mut self, buffer: &mut [u8]) -> Result<Option<usize>, StreamReadError> {
+        let mut recv_stream = self.recv_stream.lock().await;
+        recv_stream.read(buffer).await
     }
 }
 

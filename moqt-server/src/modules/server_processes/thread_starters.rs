@@ -4,7 +4,7 @@ use super::stream_and_datagram::{
     },
     uni_directional_stream::{
         forwarder::forward_object_stream,
-        receiver::handle_uni_recv_stream,
+        receiver::UniStreamReceiver,
         streams::{UniRecvStream, UniSendStream},
     },
 };
@@ -100,12 +100,13 @@ async fn spawn_uni_recv_stream_thread(
     });
     let stream_id = recv_stream.id().into_u64();
 
-    let shared_recv_stream = Arc::new(Mutex::new(recv_stream));
+    let mut recv_stream = Arc::new(Mutex::new(recv_stream));
+    recv_stream = Arc::clone(&recv_stream);
 
     tokio::spawn(
         async move {
-            let mut stream = UniRecvStream::new(stable_id, stream_id, shared_recv_stream);
-            handle_uni_recv_stream(&mut stream, client)
+            let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
+            UniStreamReceiver::start(stream, client)
                 .instrument(session_span)
                 .await
         }
