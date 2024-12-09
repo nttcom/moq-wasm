@@ -522,6 +522,7 @@ mod success {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
     use crate::SenderToOpenSubscription;
     use moqt_core::{
@@ -578,7 +579,8 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -699,7 +701,8 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -840,7 +843,8 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -998,6 +1002,7 @@ mod failure {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
     use crate::SenderToOpenSubscription;
     use moqt_core::{
@@ -1051,7 +1056,8 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper (register subscriber in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1168,7 +1174,8 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1266,7 +1273,8 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper (without set publisher)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1372,7 +1380,8 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1489,7 +1498,8 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =

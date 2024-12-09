@@ -109,3 +109,36 @@ impl Senders {
         &self.senders_to_management_thread.object_cache_tx
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_helper_fn {
+    use super::{SenderToSelf, Senders};
+    use std::{collections::HashMap, sync::Arc};
+    use tokio::sync::Mutex;
+
+    pub(crate) fn create_senders_mock() -> Senders {
+        let (close_session_tx, _) = tokio::sync::mpsc::channel(1);
+        let sender_to_self = SenderToSelf::new(close_session_tx);
+
+        let open_downstream_stream_or_datagram_txes = Arc::new(Mutex::new(HashMap::new()));
+        let sender_to_other_connection_thread =
+            super::SenderToOtherConnectionThread::new(open_downstream_stream_or_datagram_txes);
+
+        let (buffer_tx, _) = tokio::sync::mpsc::channel(1);
+        let (pubsub_relation_tx, _) = tokio::sync::mpsc::channel(1);
+        let (send_stream_tx, _) = tokio::sync::mpsc::channel(1);
+        let (object_cache_tx, _) = tokio::sync::mpsc::channel(1);
+        let senders_to_management_thread = super::SendersToManagementThread::new(
+            buffer_tx,
+            pubsub_relation_tx,
+            send_stream_tx,
+            object_cache_tx,
+        );
+
+        Senders::new(
+            sender_to_self,
+            sender_to_other_connection_thread,
+            senders_to_management_thread,
+        )
+    }
+}

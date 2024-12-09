@@ -113,6 +113,7 @@ mod success {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
     use moqt_core::{
         constants::StreamDirection,
@@ -146,7 +147,8 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -209,6 +211,7 @@ mod failure {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
     use moqt_core::{
         constants::StreamDirection,
@@ -242,7 +245,8 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper (register track_namespace_prefix in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -323,7 +327,8 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper (register track_namespace_prefix that has same prefix in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -408,7 +413,8 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper (register track_namespace_prefix that has same prefix in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -491,7 +497,8 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -550,7 +557,8 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =

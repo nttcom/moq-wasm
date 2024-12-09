@@ -120,6 +120,7 @@ mod success {
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
+    use crate::modules::server_processes::senders;
     use moqt_core::constants::StreamDirection;
     use moqt_core::messages::control_messages::{
         announce::Announce,
@@ -146,7 +147,8 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -225,7 +227,8 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -298,6 +301,7 @@ mod failure {
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
+    use crate::modules::server_processes::senders;
     use moqt_core::constants::StreamDirection;
     use moqt_core::messages::control_messages::{
         announce::Announce,
@@ -322,7 +326,8 @@ mod failure {
 
         // Generate client
         let upstream_session_id = 0;
-        let client = MOQTClient::new_without_senders(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
