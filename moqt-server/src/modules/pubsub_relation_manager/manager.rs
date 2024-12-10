@@ -35,8 +35,32 @@ fn is_namespace_prefix_match(
     true
 }
 
-// Called as a separate thread
 pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelationCommand>) {
+    // Producers: HashMap<DownstreamSessionId, Producer>
+    // {
+    //   "${downstream_session_id}" : {
+    //      max_subscriber_id: u64,
+    //      announcing_namespaces: Vec<TrackNamespace>,
+    //      subscribed_namespace_prefixes: Vec<TrackNamespace>,
+    //      subscriptions: HashMap<SubscribeId, Subscription>,
+    //   }
+    // }
+    // Consumers: HashMap<UpstreamSessionId, Consumer>
+    // {
+    //   "${upstream_session_id}" : {
+    //      max_subscriber_id: u64,
+    //      announced_namespaces: Vec<TrackNamespace>,
+    //      subscribing_namespace_prefixes: Vec<TrackNamespace>,
+    //      subscriptions: HashMap<SubscribeId, Subscription>,
+    //      latest_subscribe_id: u64,
+    //   }
+    // }
+    // PubSubRelation: HashMap<(UpstreamSessionId, UpstreamSubscribeId), Vec<(DownstreamSessionId, DownstreamSubscribeId)>>
+    // {
+    //     "records": {
+    //       (PublisherSessionId, PublisherSubscribeId): Vec<(SubscriberSessionId, SubscriberSubscribeId)>,
+    //     }
+    //  }
     tracing::trace!("pubsub_relation_manager start");
 
     let mut consumers: Consumers = HashMap::new();
