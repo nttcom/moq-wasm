@@ -1,5 +1,4 @@
 use anyhow::Result;
-
 use moqt_core::{
     constants::StreamDirection,
     messages::{control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload},
@@ -99,6 +98,7 @@ mod success {
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use crate::MOQTClient;
+    use bytes::BytesMut;
     use moqt_core::constants::StreamDirection;
     use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
     use moqt_core::messages::control_messages::version_specific_parameters::{
@@ -142,7 +142,7 @@ mod success {
             largest_object_id,
             subscribe_parameters,
         );
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
@@ -249,6 +249,7 @@ mod failure {
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
     use crate::MOQTClient;
+    use bytes::BytesMut;
     use moqt_core::constants::StreamDirection;
     use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
     use moqt_core::messages::control_messages::version_specific_parameters::{
@@ -292,7 +293,7 @@ mod failure {
             largest_object_id,
             subscribe_parameters,
         );
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
@@ -408,7 +409,7 @@ mod failure {
             largest_object_id,
             subscribe_parameters,
         );
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
@@ -506,7 +507,7 @@ mod failure {
             largest_object_id,
             subscribe_parameters,
         );
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
@@ -636,7 +637,7 @@ mod failure {
             largest_object_id,
             subscribe_parameters,
         );
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_ok.packetize(&mut buf);
 
         // Generate client

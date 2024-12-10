@@ -114,6 +114,7 @@ mod success {
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
     };
+    use bytes::BytesMut;
     use moqt_core::{
         constants::StreamDirection,
         messages::{
@@ -140,7 +141,7 @@ mod success {
         let parameters = vec![parameter];
         let subscribe_namespace_message =
             SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_namespace_message.packetize(&mut buf);
 
         // Generate client
@@ -210,6 +211,7 @@ mod failure {
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
     };
+    use bytes::BytesMut;
     use moqt_core::{
         constants::StreamDirection,
         messages::{
@@ -236,7 +238,7 @@ mod failure {
         let parameters = vec![parameter];
         let subscribe_namespace_message =
             SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_namespace_message.packetize(&mut buf);
 
         // Generate client
@@ -317,7 +319,7 @@ mod failure {
         let parameters = vec![parameter];
         let subscribe_namespace_message =
             SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_namespace_message.packetize(&mut buf);
 
         // Generate client
@@ -402,7 +404,7 @@ mod failure {
         let parameters = vec![parameter];
         let subscribe_namespace_message =
             SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_namespace_message.packetize(&mut buf);
 
         // Generate client
@@ -485,7 +487,7 @@ mod failure {
         let parameters = vec![parameter];
         let subscribe_namespace_message =
             SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_namespace_message.packetize(&mut buf);
 
         // Generate client
@@ -544,7 +546,7 @@ mod failure {
         let parameters = vec![parameter];
         let subscribe_namespace_message =
             SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_namespace_message.packetize(&mut buf);
 
         // Generate client
