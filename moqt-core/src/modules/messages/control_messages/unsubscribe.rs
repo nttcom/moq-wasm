@@ -15,6 +15,9 @@ impl Unsubscribe {
     pub fn new(subscribe_id: u64) -> Unsubscribe {
         Unsubscribe { subscribe_id }
     }
+    pub fn subscribe_id(&self) -> u64 {
+        self.subscribe_id
+    }
 }
 
 impl MOQTPayload for Unsubscribe {
