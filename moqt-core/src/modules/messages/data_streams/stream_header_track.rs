@@ -1,12 +1,12 @@
-use anyhow::{Context, Result};
-use serde::Serialize;
-use std::any::Any;
-
 use crate::{
     messages::data_streams::DataStreams,
     variable_bytes::read_fixed_length_bytes,
     variable_integer::{read_variable_integer, write_variable_integer},
 };
+use anyhow::{Context, Result};
+use bytes::BytesMut;
+use serde::Serialize;
+use std::any::Any;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct StreamHeaderTrack {
@@ -56,7 +56,7 @@ impl DataStreams for StreamHeaderTrack {
         })
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    fn packetize(&self, buf: &mut BytesMut) {
         buf.extend(write_variable_integer(self.subscribe_id));
         buf.extend(write_variable_integer(self.track_alias));
         buf.extend(self.publisher_priority.to_be_bytes());
@@ -70,56 +70,57 @@ impl DataStreams for StreamHeaderTrack {
 }
 
 #[cfg(test)]
-mod success {
-    use crate::messages::data_streams::stream_header_track::{DataStreams, StreamHeaderTrack};
+mod tests {
+    mod success {
+        use crate::messages::data_streams::stream_header_track::{DataStreams, StreamHeaderTrack};
+        use bytes::BytesMut;
+        use std::io::Cursor;
 
-    use bytes::BytesMut;
-    use std::io::Cursor;
+        #[test]
+        fn packetize_stream_header_track() {
+            let subscribe_id = 0;
+            let track_alias = 1;
+            let publisher_priority = 2;
 
-    #[test]
-    fn packetize_stream_header_track() {
-        let subscribe_id = 0;
-        let track_alias = 1;
-        let publisher_priority = 2;
+            let stream_header_track =
+                StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap();
 
-        let stream_header_track =
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap();
+            let mut buf = BytesMut::new();
+            stream_header_track.packetize(&mut buf);
 
-        let mut buf = bytes::BytesMut::new();
-        stream_header_track.packetize(&mut buf);
+            let expected_bytes_array = [
+                0, // Subscribe ID (i)
+                1, // Track Alias (i)
+                2, // Subscriber Priority (8)
+            ];
 
-        let expected_bytes_array = [
-            0, // Subscribe ID (i)
-            1, // Track Alias (i)
-            2, // Subscriber Priority (8)
-        ];
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
 
-        assert_eq!(buf.as_ref(), expected_bytes_array);
-    }
+        #[test]
+        fn depacketize_stream_header_track() {
+            let bytes_array = [
+                0, // Subscribe ID (i)
+                1, // Track Alias (i)
+                2, // Subscriber Priority (8)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let mut read_cur = Cursor::new(&buf[..]);
+            let depacketized_stream_header_track =
+                StreamHeaderTrack::depacketize(&mut read_cur).unwrap();
 
-    #[test]
-    fn depacketize_stream_header_track() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            1, // Track Alias (i)
-            2, // Subscriber Priority (8)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let mut read_cur = Cursor::new(&buf[..]);
-        let depacketized_stream_header_track =
-            StreamHeaderTrack::depacketize(&mut read_cur).unwrap();
+            let subscribe_id = 0;
+            let track_alias = 1;
+            let publisher_priority = 2;
 
-        let subscribe_id = 0;
-        let track_alias = 1;
-        let publisher_priority = 2;
+            let expected_stream_header_track =
+                StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap();
 
-        let expected_stream_header_track =
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap();
-
-        assert_eq!(
-            depacketized_stream_header_track,
-            expected_stream_header_track
-        );
+            assert_eq!(
+                depacketized_stream_header_track,
+                expected_stream_header_track
+            );
+        }
     }
 }

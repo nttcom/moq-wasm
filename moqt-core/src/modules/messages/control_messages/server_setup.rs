@@ -1,11 +1,11 @@
-use anyhow::{Context, Result};
-use serde::Serialize;
-use std::any::Any;
-
 use crate::{
     messages::{control_messages::setup_parameters::SetupParameter, moqt_payload::MOQTPayload},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
+use anyhow::{Context, Result};
+use bytes::BytesMut;
+use serde::Serialize;
+use std::any::Any;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ServerSetup {
@@ -25,7 +25,7 @@ impl ServerSetup {
 }
 
 impl MOQTPayload for ServerSetup {
-    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
+    fn depacketize(buf: &mut BytesMut) -> Result<Self> {
         let selected_version = u32::try_from(read_variable_integer_from_buffer(buf)?)
             .context("Depacketize selected version")?;
         let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
@@ -44,7 +44,7 @@ impl MOQTPayload for ServerSetup {
         Ok(server_setup_message)
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    fn packetize(&self, buf: &mut BytesMut) {
         let version_buf = write_variable_integer(self.selected_version as u64);
         buf.extend(version_buf);
 
@@ -62,60 +62,62 @@ impl MOQTPayload for ServerSetup {
 }
 
 #[cfg(test)]
-mod success {
-    use bytes::BytesMut;
-
-    use crate::{
-        constants::MOQ_TRANSPORT_VERSION,
-        messages::{
-            control_messages::{
-                server_setup::ServerSetup,
-                setup_parameters::{Role, RoleCase, SetupParameter},
+mod tests {
+    mod success {
+        use crate::{
+            constants::MOQ_TRANSPORT_VERSION,
+            messages::{
+                control_messages::{
+                    server_setup::ServerSetup,
+                    setup_parameters::{Role, RoleCase, SetupParameter},
+                },
+                moqt_payload::MOQTPayload,
             },
-            moqt_payload::MOQTPayload,
-        },
-    };
+        };
+        use bytes::BytesMut;
 
-    #[test]
-    fn packetize_server_setup() {
-        let selected_version = MOQ_TRANSPORT_VERSION;
-        let role_parameter = Role::new(RoleCase::PubSub);
-        let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
-        let server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
-        let mut buf = bytes::BytesMut::new();
-        server_setup.packetize(&mut buf);
+        #[test]
+        fn packetize() {
+            let selected_version = MOQ_TRANSPORT_VERSION;
+            let role_parameter = Role::new(RoleCase::PubSub);
+            let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
+            let server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
+            let mut buf = BytesMut::new();
+            server_setup.packetize(&mut buf);
 
-        let expected_bytes_array = [
-            192, // Selected Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            3, // SETUP Parameters (..): Value(PubSub)
-        ];
+            let expected_bytes_array = [
+                192, // Selected Version (i): Length(11 of 2MSB)
+                0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
+                1, // Number of Parameters (i)
+                0, // SETUP Parameters (..): Type(Role)
+                1, // SETUP Parameters (..): Length
+                3, // SETUP Parameters (..): Value(PubSub)
+            ];
 
-        assert_eq!(buf.as_ref(), expected_bytes_array);
-    }
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
 
-    #[test]
-    fn depacketize_server_setup() {
-        let bytes_array = [
-            192, // Selected Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            3, // SETUP Parameters (..): Value(PubSub)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_server_setup = ServerSetup::depacketize(&mut buf).unwrap();
+        #[test]
+        fn depacketize() {
+            let bytes_array = [
+                192, // Selected Version (i): Length(11 of 2MSB)
+                0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
+                1, // Number of Parameters (i)
+                0, // SETUP Parameters (..): Type(Role)
+                1, // SETUP Parameters (..): Length
+                3, // SETUP Parameters (..): Value(PubSub)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_server_setup = ServerSetup::depacketize(&mut buf).unwrap();
 
-        let selected_version = MOQ_TRANSPORT_VERSION;
-        let role_parameter = Role::new(RoleCase::PubSub);
-        let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
-        let expected_server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
+            let selected_version = MOQ_TRANSPORT_VERSION;
+            let role_parameter = Role::new(RoleCase::PubSub);
+            let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
+            let expected_server_setup =
+                ServerSetup::new(selected_version, setup_parameters.clone());
 
-        assert_eq!(depacketized_server_setup, expected_server_setup);
+            assert_eq!(depacketized_server_setup, expected_server_setup);
+        }
     }
 }

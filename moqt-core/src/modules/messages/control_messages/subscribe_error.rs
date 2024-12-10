@@ -1,13 +1,13 @@
-use anyhow::Context;
-use num_enum::{IntoPrimitive, TryFromPrimitive};
-use serde::Serialize;
-use std::any::Any;
-
 use crate::{
     messages::moqt_payload::MOQTPayload,
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
+use anyhow::Context;
+use bytes::BytesMut;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use serde::Serialize;
+use std::any::Any;
 
 #[derive(Debug, IntoPrimitive, TryFromPrimitive, Serialize, Clone, Copy, PartialEq)]
 #[repr(u8)]
@@ -61,7 +61,7 @@ impl SubscribeError {
 }
 
 impl MOQTPayload for SubscribeError {
-    fn depacketize(buf: &mut bytes::BytesMut) -> anyhow::Result<Self>
+    fn depacketize(buf: &mut BytesMut) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -83,7 +83,7 @@ impl MOQTPayload for SubscribeError {
         })
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    fn packetize(&self, buf: &mut BytesMut) {
         buf.extend(write_variable_integer(self.subscribe_id));
         buf.extend(write_variable_integer(u8::from(self.error_code) as u64));
         buf.extend(write_variable_bytes(
@@ -98,55 +98,56 @@ impl MOQTPayload for SubscribeError {
 }
 
 #[cfg(test)]
-mod success {
-    use bytes::BytesMut;
+mod tests {
+    mod success {
+        use crate::messages::{
+            control_messages::subscribe_error::{SubscribeError, SubscribeErrorCode},
+            moqt_payload::MOQTPayload,
+        };
+        use bytes::BytesMut;
 
-    use crate::messages::{
-        control_messages::subscribe_error::{SubscribeError, SubscribeErrorCode},
-        moqt_payload::MOQTPayload,
-    };
+        #[test]
+        fn packetize() {
+            let subscribe_id = 0;
+            let error_code = SubscribeErrorCode::InvalidRange;
+            let reason_phrase = "error".to_string();
+            let track_alias = 1;
+            let subscribe_error =
+                SubscribeError::new(subscribe_id, error_code, reason_phrase.clone(), track_alias);
+            let mut buf = BytesMut::new();
+            subscribe_error.packetize(&mut buf);
 
-    #[test]
-    fn packetize() {
-        let subscribe_id = 0;
-        let error_code = SubscribeErrorCode::InvalidRange;
-        let reason_phrase = "error".to_string();
-        let track_alias = 1;
-        let subscribe_error =
-            SubscribeError::new(subscribe_id, error_code, reason_phrase.clone(), track_alias);
-        let mut buf = BytesMut::new();
-        subscribe_error.packetize(&mut buf);
+            let expected_bytes_array = [
+                0, // Subscribe ID (i)
+                1, // Error Code (i)
+                5, // Reason Phrase Length (i)
+                101, 114, 114, 111, 114, // Reason Phrase (...): Value("error")
+                1,   // Track Alias (i)
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+        }
 
-        let expected_bytes_array = [
-            0, // Subscribe ID (i)
-            1, // Error Code (i)
-            5, // Reason Phrase Length (i)
-            101, 114, 114, 111, 114, // Reason Phrase (...): Value("error")
-            1,   // Track Alias (i)
-        ];
-        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
-    }
+        #[test]
+        fn depacketize() {
+            let bytes_array = [
+                0, // Subscribe ID (i)
+                2, // Error Code (i)
+                5, // Reason Phrase Length (i)
+                101, 114, 114, 111, 114, // Reason Phrase (...): Value("error")
+                1,   // Track Alias (i)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let subscribe_error = SubscribeError::depacketize(&mut buf).unwrap();
 
-    #[test]
-    fn depacketize() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            2, // Error Code (i)
-            5, // Reason Phrase Length (i)
-            101, 114, 114, 111, 114, // Reason Phrase (...): Value("error")
-            1,   // Track Alias (i)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let subscribe_error = SubscribeError::depacketize(&mut buf).unwrap();
+            let subscribe_id = 0;
+            let error_code = SubscribeErrorCode::RetryTrackAlias;
+            let reason_phrase = "error".to_string();
+            let track_alias = 1;
+            let expected_subscribe_error =
+                SubscribeError::new(subscribe_id, error_code, reason_phrase.clone(), track_alias);
 
-        let subscribe_id = 0;
-        let error_code = SubscribeErrorCode::RetryTrackAlias;
-        let reason_phrase = "error".to_string();
-        let track_alias = 1;
-        let expected_subscribe_error =
-            SubscribeError::new(subscribe_id, error_code, reason_phrase.clone(), track_alias);
-
-        assert_eq!(subscribe_error, expected_subscribe_error);
+            assert_eq!(subscribe_error, expected_subscribe_error);
+        }
     }
 }
