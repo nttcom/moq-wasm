@@ -38,6 +38,14 @@ mod success {
     use bytes::BytesMut;
 
     #[test]
+    fn new_unsubscribe() {
+        let unsubscribe = Unsubscribe::new(0);
+        let expected_unsubscribe = Unsubscribe { subscribe_id: 0 };
+
+        assert_eq!(unsubscribe, expected_unsubscribe);
+    }
+
+    #[test]
     fn packetize_unsubscribe() {
         let unsubscribe = Unsubscribe { subscribe_id: 0 };
         let mut buf = BytesMut::new();
@@ -60,5 +68,13 @@ mod success {
         let expected_unsubscribe = Unsubscribe { subscribe_id: 0 };
 
         assert_eq!(depacketized_unsubscribe, expected_unsubscribe);
+    }
+
+    #[test]
+    fn as_any_unsubscribe() {
+        let unsubscribe = Unsubscribe { subscribe_id: 0 };
+        let any_unsubscribe = unsubscribe.as_any();
+
+        assert!(any_unsubscribe.is::<Unsubscribe>());
     }
 }
