@@ -1,11 +1,11 @@
-use anyhow::{Context, Result};
-use std::any::Any;
-
 use crate::{
     messages::moqt_payload::MOQTPayload,
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
+use anyhow::{Context, Result};
+use bytes::BytesMut;
+use std::any::Any;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnAnnounce {
@@ -22,7 +22,7 @@ impl UnAnnounce {
 }
 
 impl MOQTPayload for UnAnnounce {
-    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
+    fn depacketize(buf: &mut BytesMut) -> Result<Self> {
         let track_namespace_tuple_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("track namespace length")?;
         let mut track_namespace_tuple: Vec<String> = Vec::new();
@@ -39,7 +39,7 @@ impl MOQTPayload for UnAnnounce {
         Ok(unannounce_message)
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    fn packetize(&self, buf: &mut BytesMut) {
         // Track Namespace Number of elements
         let track_namespace_tuple_length = self.track_namespace.len();
         buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
@@ -55,47 +55,50 @@ impl MOQTPayload for UnAnnounce {
 }
 
 #[cfg(test)]
-mod success {
-    use bytes::BytesMut;
-
-    use crate::messages::{control_messages::unannounce::UnAnnounce, moqt_payload::MOQTPayload};
-
-    #[test]
-    fn packetize_unannounce() {
-        let unannounce = UnAnnounce {
-            track_namespace: Vec::from(["test".to_string(), "test".to_string()]),
+mod tests {
+    mod success {
+        use crate::messages::{
+            control_messages::unannounce::UnAnnounce, moqt_payload::MOQTPayload,
         };
+        use bytes::BytesMut;
 
-        let mut buf = BytesMut::new();
-        unannounce.packetize(&mut buf);
+        #[test]
+        fn packetize() {
+            let unannounce = UnAnnounce {
+                track_namespace: Vec::from(["test".to_string(), "test".to_string()]),
+            };
 
-        let expected_bytes_array = [
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-        ];
-        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
-    }
+            let mut buf = BytesMut::new();
+            unannounce.packetize(&mut buf);
 
-    #[test]
-    fn depacketize_unannounce() {
-        let bytes_array = [
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_unannounce = UnAnnounce::depacketize(&mut buf).unwrap();
+            let expected_bytes_array = [
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                4,   // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+        }
 
-        let expected_unannounce = UnAnnounce {
-            track_namespace: Vec::from(["test".to_string(), "test".to_string()]),
-        };
+        #[test]
+        fn depacketize() {
+            let bytes_array = [
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                4,   // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_unannounce = UnAnnounce::depacketize(&mut buf).unwrap();
 
-        assert_eq!(depacketized_unannounce, expected_unannounce);
+            let expected_unannounce = UnAnnounce {
+                track_namespace: Vec::from(["test".to_string(), "test".to_string()]),
+            };
+
+            assert_eq!(depacketized_unannounce, expected_unannounce);
+        }
     }
 }

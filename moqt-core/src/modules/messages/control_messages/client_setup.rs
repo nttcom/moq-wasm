@@ -1,10 +1,10 @@
-use anyhow::{Context, Result};
-use std::{any::Any, vec};
-
 use crate::{
     messages::{control_messages::setup_parameters::SetupParameter, moqt_payload::MOQTPayload},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
+use anyhow::{Context, Result};
+use bytes::BytesMut;
+use std::{any::Any, vec};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientSetup {
@@ -26,7 +26,7 @@ impl ClientSetup {
 }
 
 impl MOQTPayload for ClientSetup {
-    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
+    fn depacketize(buf: &mut BytesMut) -> Result<Self> {
         let number_of_supported_versions = u8::try_from(read_variable_integer_from_buffer(buf)?)
             .context("number of supported versions")?;
 
@@ -55,7 +55,7 @@ impl MOQTPayload for ClientSetup {
         Ok(client_setup_message)
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    fn packetize(&self, buf: &mut BytesMut) {
         buf.extend(write_variable_integer(
             self.number_of_supported_versions as u64,
         ));
@@ -75,62 +75,64 @@ impl MOQTPayload for ClientSetup {
 }
 
 #[cfg(test)]
-mod success {
-    use bytes::BytesMut;
-
-    use crate::{
-        constants::MOQ_TRANSPORT_VERSION,
-        messages::{
-            control_messages::{
-                client_setup::ClientSetup,
-                setup_parameters::{Role, RoleCase, SetupParameter},
+mod test {
+    mod success {
+        use crate::{
+            constants::MOQ_TRANSPORT_VERSION,
+            messages::{
+                control_messages::{
+                    client_setup::ClientSetup,
+                    setup_parameters::{Role, RoleCase, SetupParameter},
+                },
+                moqt_payload::MOQTPayload,
             },
-            moqt_payload::MOQTPayload,
-        },
-    };
+        };
+        use bytes::BytesMut;
 
-    #[test]
-    fn packetize_client_setup() {
-        let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-        let role_parameter = Role::new(RoleCase::Subscriber);
-        let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
-        let client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
-        let mut buf = bytes::BytesMut::new();
-        client_setup.packetize(&mut buf);
+        #[test]
+        fn packetize() {
+            let supported_versions = vec![MOQ_TRANSPORT_VERSION];
+            let role_parameter = Role::new(RoleCase::Subscriber);
+            let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
+            let client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
+            let mut buf = BytesMut::new();
+            client_setup.packetize(&mut buf);
 
-        let expected_bytes_array = [
-            1,   // Number of Supported Versions (i)
-            192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Subscriber)
-        ];
+            let expected_bytes_array = [
+                1,   // Number of Supported Versions (i)
+                192, // Supported Version (i): Length(11 of 2MSB)
+                0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
+                1, // Number of Parameters (i)
+                0, // SETUP Parameters (..): Type(Role)
+                1, // SETUP Parameters (..): Length
+                2, // SETUP Parameters (..): Role(Subscriber)
+            ];
 
-        assert_eq!(buf.as_ref(), expected_bytes_array);
-    }
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
 
-    #[test]
-    fn depacketize_client_setup() {
-        let bytes_array = [
-            1,   // Number of Supported Versions (i)
-            192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Subscriber)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_client_setup = ClientSetup::depacketize(&mut buf).unwrap();
+        #[test]
+        fn depacketize() {
+            let bytes_array = [
+                1,   // Number of Supported Versions (i)
+                192, // Supported Version (i): Length(11 of 2MSB)
+                0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
+                1, // Number of Parameters (i)
+                0, // SETUP Parameters (..): Type(Role)
+                1, // SETUP Parameters (..): Length
+                2, // SETUP Parameters (..): Role(Subscriber)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_client_setup = ClientSetup::depacketize(&mut buf).unwrap();
 
-        let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-        let role_parameter = Role::new(RoleCase::Subscriber);
-        let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
-        let expected_client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
+            let supported_versions = vec![MOQ_TRANSPORT_VERSION];
+            let role_parameter = Role::new(RoleCase::Subscriber);
+            let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
+            let expected_client_setup =
+                ClientSetup::new(supported_versions, setup_parameters.clone());
 
-        assert_eq!(depacketized_client_setup, expected_client_setup);
+            assert_eq!(depacketized_client_setup, expected_client_setup);
+        }
     }
 }

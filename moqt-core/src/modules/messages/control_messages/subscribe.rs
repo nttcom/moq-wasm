@@ -1,9 +1,3 @@
-use anyhow::{bail, Context};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
-use serde::Serialize;
-use std::any::Any;
-use tracing;
-
 use crate::{
     messages::{
         control_messages::version_specific_parameters::VersionSpecificParameter,
@@ -14,6 +8,12 @@ use crate::{
     },
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
+use anyhow::{bail, Context};
+use bytes::BytesMut;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use serde::Serialize;
+use std::any::Any;
+use tracing;
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
 #[repr(u8)]
@@ -172,7 +172,7 @@ impl Subscribe {
 }
 
 impl MOQTPayload for Subscribe {
-    fn depacketize(buf: &mut bytes::BytesMut) -> anyhow::Result<Self>
+    fn depacketize(buf: &mut BytesMut) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -257,7 +257,7 @@ impl MOQTPayload for Subscribe {
         })
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    fn packetize(&self, buf: &mut BytesMut) {
         buf.extend(write_variable_integer(self.subscribe_id));
         buf.extend(write_variable_integer(self.track_alias));
         // Track Namespace Number of elements
@@ -300,552 +300,561 @@ impl MOQTPayload for Subscribe {
 }
 
 #[cfg(test)]
-mod success {
-    use bytes::BytesMut;
+mod tests {
+    mod success {
+        use bytes::BytesMut;
 
-    use crate::messages::{
-        control_messages::{
-            subscribe::{FilterType, GroupOrder, Subscribe},
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-        },
-        moqt_payload::MOQTPayload,
-    };
+        use crate::messages::{
+            control_messages::{
+                subscribe::{FilterType, GroupOrder, Subscribe},
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            },
+            moqt_payload::MOQTPayload,
+        };
 
-    #[test]
-    fn packetize_subscribe_latest_group() {
-        let subscribe_id = 0;
-        let track_alias = 0;
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name".to_string();
-        let subscriber_priority = 0;
-        let group_order = GroupOrder::Ascending;
-        let filter_type = FilterType::LatestGroup;
-        let start_group = None;
-        let start_object = None;
-        let end_group = None;
-        let end_object = None;
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
+        #[test]
+        fn packetize_latest_group() {
+            let subscribe_id = 0;
+            let track_alias = 0;
+            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+            let track_name = "track_name".to_string();
+            let subscriber_priority = 0;
+            let group_order = GroupOrder::Ascending;
+            let filter_type = FilterType::LatestGroup;
+            let start_group = None;
+            let start_object = None;
+            let end_group = None;
+            let end_object = None;
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
 
-        let subscribe = Subscribe::new(
-            subscribe_id,
-            track_alias,
-            track_namespace,
-            track_name,
-            subscriber_priority,
-            group_order,
-            filter_type,
-            start_group,
-            start_object,
-            end_group,
-            end_object,
-            subscribe_parameters,
-        )
-        .unwrap();
+            let subscribe = Subscribe::new(
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+                subscribe_parameters,
+            )
+            .unwrap();
 
-        let mut buf = BytesMut::new();
-        subscribe.packetize(&mut buf);
+            let mut buf = BytesMut::new();
+            subscribe.packetize(&mut buf);
 
-        let expected_bytes_array = [
-            0, // Subscribe ID (i)
-            0, // Track Alias (i)
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            10,  // Track Name (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109,
-            101, // Track Name (b): Value("track_name")
-            0,   // Subscriber Priority (8)
-            1,   // Group Order (8): Assending
-            1,   // Filter Type (i): LatestGroup
-            1,   // Track Request Parameters (..): Number of Parameters
-            2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length (i)
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+            let expected_bytes_array = [
+                0, // Subscribe ID (i)
+                0, // Track Alias (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                4,   // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                10,  // Track Name (b): Length
+                116, 114, 97, 99, 107, 95, 110, 97, 109,
+                101, // Track Name (b): Value("track_name")
+                0,   // Subscriber Priority (8)
+                1,   // Group Order (8): Assending
+                1,   // Filter Type (i): LatestGroup
+                1,   // Track Request Parameters (..): Number of Parameters
+                2,   // Parameter Type (i): AuthorizationInfo
+                4,   // Parameter Length (i)
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+        }
+
+        #[test]
+        fn packetize_absolute_start() {
+            let subscribe_id = 0;
+            let track_alias = 0;
+            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+            let track_name = "track_name".to_string();
+            let subscriber_priority = 0;
+            let group_order = GroupOrder::Descending;
+            let filter_type = FilterType::AbsoluteStart;
+            let start_group = Some(0);
+            let start_object = Some(0);
+            let end_group = None;
+            let end_object = None;
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
+
+            let subscribe = Subscribe::new(
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+                subscribe_parameters,
+            )
+            .unwrap();
+
+            let mut buf = BytesMut::new();
+            subscribe.packetize(&mut buf);
+
+            let expected_bytes_array = [
+                0, // Subscribe ID (i)
+                0, // Track Alias (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                4,   // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                10,  // Track Name (b): Length
+                116, 114, 97, 99, 107, 95, 110, 97, 109,
+                101, // Track Name (b): Value("track_name")
+                0,   // Subscriber Priority (8)
+                2,   // Group Order (8): Descending
+                3,   // Filter Type (i): AbsoluteStart
+                0,   // Start Group (i)
+                0,   // Start Object (i)
+                1,   // Track Request Parameters (..): Number of Parameters
+                2,   // Parameter Type (i): AuthorizationInfo
+                4,   // Parameter Length
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+        }
+
+        #[test]
+        fn packetize_absolute_range() {
+            let subscribe_id = 0;
+            let track_alias = 0;
+            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+            let track_name = "track_name".to_string();
+            let subscriber_priority = 0;
+            let group_order = GroupOrder::Ascending;
+            let filter_type = FilterType::AbsoluteRange;
+            let start_group = Some(0);
+            let start_object = Some(0);
+            let end_group = Some(10);
+            let end_object = Some(100);
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
+
+            let subscribe = Subscribe::new(
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+                subscribe_parameters,
+            )
+            .unwrap();
+
+            let mut buf = BytesMut::new();
+            subscribe.packetize(&mut buf);
+
+            let expected_bytes_array = [
+                0, // Subscribe ID (i)
+                0, // Track Alias (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                4,   // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                10,  // Track Name (b): Length
+                116, 114, 97, 99, 107, 95, 110, 97, 109,
+                101, // Track Name (b): Value("track_name")
+                0,   // Subscriber Priority (8)
+                1,   // Group Order (8): Assending
+                4,   // Filter Type (i): AbsoluteRange
+                0,   // Start Group (i)
+                0,   // Start Object (i)
+                10,  // End Group (i)
+                64, 100, // End Object (i)
+                1,   // Track Request Parameters (..): Number of Parameters
+                2,   // Parameter Type (i): AuthorizationInfo
+                4,   // Parameter Length
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+        }
+
+        #[test]
+        fn depacketize_latest_group() {
+            let bytes_array = [
+                0, // Subscribe ID (i)
+                0, // Track Alias (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                4,   // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                10,  // Track Name (b): Length
+                116, 114, 97, 99, 107, 95, 110, 97, 109,
+                101, // Track Name (b): Value("track_name")
+                0,   // Subscriber Priority (8)
+                1,   // Group Order (8): Assending
+                1,   // Filter Type (i): LatestGroup
+                1,   // Track Request Parameters (..): Number of Parameters
+                2,   // Parameter Type (i): AuthorizationInfo
+                4,   // Parameter Length (i)
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_subscribe = Subscribe::depacketize(&mut buf).unwrap();
+
+            let subscribe_id = 0;
+            let track_alias = 0;
+            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+            let track_name = "track_name".to_string();
+            let subscriber_priority = 0;
+            let group_order = GroupOrder::Ascending;
+            let filter_type = FilterType::LatestGroup;
+            let start_group = None;
+            let start_object = None;
+            let end_group = None;
+            let end_object = None;
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
+            let expected_subscribe = Subscribe::new(
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+                subscribe_parameters,
+            )
+            .unwrap();
+
+            assert_eq!(depacketized_subscribe, expected_subscribe);
+        }
+
+        #[test]
+        fn depacketize_absolute_start() {
+            let bytes_array = [
+                0, // Subscribe ID (i)
+                0, // Track Alias (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                4,   // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                10,  // Track Name (b): Length
+                116, 114, 97, 99, 107, 95, 110, 97, 109,
+                101, // Track Name (b): Value("track_name")
+                0,   // Subscriber Priority (8)
+                1,   // Group Order (8): Assending
+                3,   // Filter Type (i): AbsoluteStart
+                0,   // Start Group (i)
+                0,   // Start Object (i)
+                1,   // Track Request Parameters (..): Number of Parameters
+                2,   // Parameter Type (i): AuthorizationInfo
+                4,   // Parameter Length
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_subscribe = Subscribe::depacketize(&mut buf).unwrap();
+
+            let subscribe_id = 0;
+            let track_alias = 0;
+            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+            let track_name = "track_name".to_string();
+            let subscriber_priority = 0;
+            let group_order = GroupOrder::Ascending;
+            let filter_type = FilterType::AbsoluteStart;
+            let start_group = Some(0);
+            let start_object = Some(0);
+            let end_group = None;
+            let end_object = None;
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
+            let expected_subscribe = Subscribe::new(
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+                subscribe_parameters,
+            )
+            .unwrap();
+
+            assert_eq!(depacketized_subscribe, expected_subscribe);
+        }
+
+        #[test]
+        fn depacketize_absolute_range() {
+            let bytes_array = [
+                0, // Subscribe ID (i)
+                0, // Track Alias (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                4,   // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                10,  // Track Name (b): Length
+                116, 114, 97, 99, 107, 95, 110, 97, 109,
+                101, // Track Name (b): Value("track_name")
+                0,   // Subscriber Priority (8)
+                1,   // Group Order (8): Assending
+                4,   // Filter Type (i): AbsoluteRange
+                0,   // Start Group (i)
+                0,   // Start Object (i)
+                10,  // End Group (i)
+                64, 100, // End Object (i)
+                1,   // Track Request Parameters (..): Number of Parameters
+                2,   // Parameter Type (i): AuthorizationInfo
+                4,   // Parameter Length
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_subscribe = Subscribe::depacketize(&mut buf).unwrap();
+
+            let subscribe_id = 0;
+            let track_alias = 0;
+            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+            let track_name = "track_name".to_string();
+            let subscriber_priority = 0;
+            let group_order = GroupOrder::Ascending;
+            let filter_type = FilterType::AbsoluteRange;
+            let start_group = Some(0);
+            let start_object = Some(0);
+            let end_group = Some(10);
+            let end_object = Some(100);
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
+            let expected_subscribe = Subscribe::new(
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+                subscribe_parameters,
+            )
+            .unwrap();
+
+            assert_eq!(depacketized_subscribe, expected_subscribe);
+        }
     }
 
-    #[test]
-    fn packetize_subscribe_absolute_start() {
-        let subscribe_id = 0;
-        let track_alias = 0;
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name".to_string();
-        let subscriber_priority = 0;
-        let group_order = GroupOrder::Descending;
-        let filter_type = FilterType::AbsoluteStart;
-        let start_group = Some(0);
-        let start_object = Some(0);
-        let end_group = None;
-        let end_object = None;
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
+    mod failure {
+        use crate::messages::{
+            control_messages::{
+                subscribe::{FilterType, GroupOrder, Subscribe},
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            },
+            moqt_payload::MOQTPayload,
+        };
+        use bytes::BytesMut;
 
-        let subscribe = Subscribe::new(
-            subscribe_id,
-            track_alias,
-            track_namespace,
-            track_name,
-            subscriber_priority,
-            group_order,
-            filter_type,
-            start_group,
-            start_object,
-            end_group,
-            end_object,
-            subscribe_parameters,
-        )
-        .unwrap();
+        #[test]
+        fn packetize_latest_group_with_start_parameter() {
+            let subscribe_id = 0;
+            let track_alias = 0;
+            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+            let track_name = "track_name".to_string();
+            let subscriber_priority = 0;
+            let group_order = GroupOrder::Ascending;
+            let filter_type = FilterType::LatestGroup;
+            let start_group = Some(0);
+            let start_object = Some(0);
+            let end_group = None;
+            let end_object = None;
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
 
-        let mut buf = BytesMut::new();
-        subscribe.packetize(&mut buf);
+            let subscribe = Subscribe::new(
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+                subscribe_parameters,
+            );
 
-        let expected_bytes_array = [
-            0, // Subscribe ID (i)
-            0, // Track Alias (i)
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            10,  // Track Name (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109,
-            101, // Track Name (b): Value("track_name")
-            0,   // Subscriber Priority (8)
-            2,   // Group Order (8): Descending
-            3,   // Filter Type (i): AbsoluteStart
-            0,   // Start Group (i)
-            0,   // Start Object (i)
-            1,   // Track Request Parameters (..): Number of Parameters
-            2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
-    }
+            assert!(subscribe.is_err());
+        }
 
-    #[test]
-    fn packetize_subscribe_absolute_range() {
-        let subscribe_id = 0;
-        let track_alias = 0;
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name".to_string();
-        let subscriber_priority = 0;
-        let group_order = GroupOrder::Ascending;
-        let filter_type = FilterType::AbsoluteRange;
-        let start_group = Some(0);
-        let start_object = Some(0);
-        let end_group = Some(10);
-        let end_object = Some(100);
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
+        #[test]
+        fn packetize_latest_group_with_end_parameter() {
+            let subscribe_id = 0;
+            let track_alias = 0;
+            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+            let track_name = "track_name".to_string();
+            let subscriber_priority = 0;
+            let group_order = GroupOrder::Ascending;
+            let filter_type = FilterType::LatestGroup;
+            let start_group = None;
+            let start_object = None;
+            let end_group = Some(1);
+            let end_object = Some(1);
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
 
-        let subscribe = Subscribe::new(
-            subscribe_id,
-            track_alias,
-            track_namespace,
-            track_name,
-            subscriber_priority,
-            group_order,
-            filter_type,
-            start_group,
-            start_object,
-            end_group,
-            end_object,
-            subscribe_parameters,
-        )
-        .unwrap();
+            let subscribe = Subscribe::new(
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+                subscribe_parameters,
+            );
 
-        let mut buf = BytesMut::new();
-        subscribe.packetize(&mut buf);
+            assert!(subscribe.is_err());
+        }
 
-        let expected_bytes_array = [
-            0, // Subscribe ID (i)
-            0, // Track Alias (i)
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            10,  // Track Name (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109,
-            101, // Track Name (b): Value("track_name")
-            0,   // Subscriber Priority (8)
-            1,   // Group Order (8): Assending
-            4,   // Filter Type (i): AbsoluteRange
-            0,   // Start Group (i)
-            0,   // Start Object (i)
-            10,  // End Group (i)
-            64, 100, // End Object (i)
-            1,   // Track Request Parameters (..): Number of Parameters
-            2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
-    }
+        #[test]
+        fn packetize_absolute_start_with_end_parameter() {
+            let subscribe_id = 0;
+            let track_alias = 0;
+            let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+            let track_name = "track_name".to_string();
+            let subscriber_priority = 0;
+            let group_order = GroupOrder::Ascending;
+            let filter_type = FilterType::AbsoluteStart;
+            let start_group = Some(0);
+            let start_object = Some(0);
+            let end_group = Some(1);
+            let end_object = Some(1);
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
 
-    #[test]
-    fn depacketize_subscribe_latest_group() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            0, // Track Alias (i)
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            10,  // Track Name (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109,
-            101, // Track Name (b): Value("track_name")
-            0,   // Subscriber Priority (8)
-            1,   // Group Order (8): Assending
-            1,   // Filter Type (i): LatestGroup
-            1,   // Track Request Parameters (..): Number of Parameters
-            2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length (i)
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_subscribe = Subscribe::depacketize(&mut buf).unwrap();
+            let subscribe = Subscribe::new(
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+                subscribe_parameters,
+            );
 
-        let subscribe_id = 0;
-        let track_alias = 0;
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name".to_string();
-        let subscriber_priority = 0;
-        let group_order = GroupOrder::Ascending;
-        let filter_type = FilterType::LatestGroup;
-        let start_group = None;
-        let start_object = None;
-        let end_group = None;
-        let end_object = None;
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
-        let expected_subscribe = Subscribe::new(
-            subscribe_id,
-            track_alias,
-            track_namespace,
-            track_name,
-            subscriber_priority,
-            group_order,
-            filter_type,
-            start_group,
-            start_object,
-            end_group,
-            end_object,
-            subscribe_parameters,
-        )
-        .unwrap();
+            assert!(subscribe.is_err());
+        }
 
-        assert_eq!(depacketized_subscribe, expected_subscribe);
-    }
+        #[test]
+        fn depacketize_unknown_filter_type() {
+            let bytes_array = [
+                0, // Subscribe ID (i)
+                0, // Track Alias (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                4,   // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                10,  // Track Name (b): Length
+                116, 114, 97, 99, 107, 95, 110, 97, 109,
+                101, // Track Name (b): Value("track_name")
+                0,   // Subscriber Priority (8)
+                1,   // Group Order (8): Assending
+                5,   // Filter Type (i): Unknown
+                1,   // Track Request Parameters (..): Number of Parameters
+                2,   // Parameter Type (i): AuthorizationInfo
+                4,   // Parameter Length
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_subscribe = Subscribe::depacketize(&mut buf);
 
-    #[test]
-    fn depacketize_subscribe_absolute_start() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            0, // Track Alias (i)
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            10,  // Track Name (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109,
-            101, // Track Name (b): Value("track_name")
-            0,   // Subscriber Priority (8)
-            1,   // Group Order (8): Assending
-            3,   // Filter Type (i): AbsoluteStart
-            0,   // Start Group (i)
-            0,   // Start Object (i)
-            1,   // Track Request Parameters (..): Number of Parameters
-            2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_subscribe = Subscribe::depacketize(&mut buf).unwrap();
+            println!("{:?}", depacketized_subscribe);
 
-        let subscribe_id = 0;
-        let track_alias = 0;
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name".to_string();
-        let subscriber_priority = 0;
-        let group_order = GroupOrder::Ascending;
-        let filter_type = FilterType::AbsoluteStart;
-        let start_group = Some(0);
-        let start_object = Some(0);
-        let end_group = None;
-        let end_object = None;
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
-        let expected_subscribe = Subscribe::new(
-            subscribe_id,
-            track_alias,
-            track_namespace,
-            track_name,
-            subscriber_priority,
-            group_order,
-            filter_type,
-            start_group,
-            start_object,
-            end_group,
-            end_object,
-            subscribe_parameters,
-        )
-        .unwrap();
+            assert!(depacketized_subscribe.is_err());
+        }
 
-        assert_eq!(depacketized_subscribe, expected_subscribe);
-    }
+        #[test]
+        fn depacketize_unknown_group_order() {
+            let bytes_array = [
+                0, // Subscribe ID (i)
+                0, // Track Alias (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                4,   // Track Namespace(b): Length
+                116, 101, 115, 116, // Track Namespace(b): Value("test")
+                10,  // Track Name (b): Length
+                116, 114, 97, 99, 107, 95, 110, 97, 109,
+                101, // Track Name (b): Value("track_name")
+                0,   // Subscriber Priority (8)
+                3,   // Group Order (8): Unknown
+                1,   // Filter Type (i): LatestGroup
+                1,   // Track Request Parameters (..): Number of Parameters
+                2,   // Parameter Type (i): AuthorizationInfo
+                4,   // Parameter Length
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_subscribe = Subscribe::depacketize(&mut buf);
 
-    #[test]
-    fn depacketize_subscribe_absolute_range() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            0, // Track Alias (i)
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            10,  // Track Name (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109,
-            101, // Track Name (b): Value("track_name")
-            0,   // Subscriber Priority (8)
-            1,   // Group Order (8): Assending
-            4,   // Filter Type (i): AbsoluteRange
-            0,   // Start Group (i)
-            0,   // Start Object (i)
-            10,  // End Group (i)
-            64, 100, // End Object (i)
-            1,   // Track Request Parameters (..): Number of Parameters
-            2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_subscribe = Subscribe::depacketize(&mut buf).unwrap();
+            println!("{:?}", depacketized_subscribe);
 
-        let subscribe_id = 0;
-        let track_alias = 0;
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name".to_string();
-        let subscriber_priority = 0;
-        let group_order = GroupOrder::Ascending;
-        let filter_type = FilterType::AbsoluteRange;
-        let start_group = Some(0);
-        let start_object = Some(0);
-        let end_group = Some(10);
-        let end_object = Some(100);
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
-        let expected_subscribe = Subscribe::new(
-            subscribe_id,
-            track_alias,
-            track_namespace,
-            track_name,
-            subscriber_priority,
-            group_order,
-            filter_type,
-            start_group,
-            start_object,
-            end_group,
-            end_object,
-            subscribe_parameters,
-        )
-        .unwrap();
-
-        assert_eq!(depacketized_subscribe, expected_subscribe);
-    }
-}
-
-#[cfg(test)]
-mod failure {
-    use bytes::BytesMut;
-
-    use crate::messages::{
-        control_messages::{
-            subscribe::{FilterType, GroupOrder, Subscribe},
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-        },
-        moqt_payload::MOQTPayload,
-    };
-
-    #[test]
-    fn packetize_subscribe_latest_group_with_start_parameter() {
-        let subscribe_id = 0;
-        let track_alias = 0;
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name".to_string();
-        let subscriber_priority = 0;
-        let group_order = GroupOrder::Ascending;
-        let filter_type = FilterType::LatestGroup;
-        let start_group = Some(0);
-        let start_object = Some(0);
-        let end_group = None;
-        let end_object = None;
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
-
-        let subscribe = Subscribe::new(
-            subscribe_id,
-            track_alias,
-            track_namespace,
-            track_name,
-            subscriber_priority,
-            group_order,
-            filter_type,
-            start_group,
-            start_object,
-            end_group,
-            end_object,
-            subscribe_parameters,
-        );
-
-        assert!(subscribe.is_err());
-    }
-
-    #[test]
-    fn packetize_subscribe_latest_group_with_end_parameter() {
-        let subscribe_id = 0;
-        let track_alias = 0;
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name".to_string();
-        let subscriber_priority = 0;
-        let group_order = GroupOrder::Ascending;
-        let filter_type = FilterType::LatestGroup;
-        let start_group = None;
-        let start_object = None;
-        let end_group = Some(1);
-        let end_object = Some(1);
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
-
-        let subscribe = Subscribe::new(
-            subscribe_id,
-            track_alias,
-            track_namespace,
-            track_name,
-            subscriber_priority,
-            group_order,
-            filter_type,
-            start_group,
-            start_object,
-            end_group,
-            end_object,
-            subscribe_parameters,
-        );
-
-        assert!(subscribe.is_err());
-    }
-
-    #[test]
-    fn packetize_subscribe_absolute_start_with_end_parameter() {
-        let subscribe_id = 0;
-        let track_alias = 0;
-        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
-        let track_name = "track_name".to_string();
-        let subscriber_priority = 0;
-        let group_order = GroupOrder::Ascending;
-        let filter_type = FilterType::AbsoluteStart;
-        let start_group = Some(0);
-        let start_object = Some(0);
-        let end_group = Some(1);
-        let end_object = Some(1);
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
-
-        let subscribe = Subscribe::new(
-            subscribe_id,
-            track_alias,
-            track_namespace,
-            track_name,
-            subscriber_priority,
-            group_order,
-            filter_type,
-            start_group,
-            start_object,
-            end_group,
-            end_object,
-            subscribe_parameters,
-        );
-
-        assert!(subscribe.is_err());
-    }
-
-    #[test]
-    fn depacketize_unknown_filter_type() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            0, // Track Alias (i)
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            10,  // Track Name (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109,
-            101, // Track Name (b): Value("track_name")
-            0,   // Subscriber Priority (8)
-            1,   // Group Order (8): Assending
-            5,   // Filter Type (i): Unknown
-            1,   // Track Request Parameters (..): Number of Parameters
-            2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_subscribe = Subscribe::depacketize(&mut buf);
-
-        println!("{:?}", depacketized_subscribe);
-
-        assert!(depacketized_subscribe.is_err());
-    }
-
-    #[test]
-    fn depacketize_unknown_group_order() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            0, // Track Alias (i)
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            10,  // Track Name (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109,
-            101, // Track Name (b): Value("track_name")
-            0,   // Subscriber Priority (8)
-            3,   // Group Order (8): Unknown
-            1,   // Filter Type (i): LatestGroup
-            1,   // Track Request Parameters (..): Number of Parameters
-            2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_subscribe = Subscribe::depacketize(&mut buf);
-
-        println!("{:?}", depacketized_subscribe);
-
-        assert!(depacketized_subscribe.is_err());
+            assert!(depacketized_subscribe.is_err());
+        }
     }
 }
