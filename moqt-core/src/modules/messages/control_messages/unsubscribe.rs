@@ -38,7 +38,7 @@ mod success {
     use bytes::BytesMut;
 
     #[test]
-    fn new_unsubscribe() {
+    fn new() {
         let unsubscribe = Unsubscribe::new(0);
         let expected_unsubscribe = Unsubscribe { subscribe_id: 0 };
 
@@ -46,7 +46,7 @@ mod success {
     }
 
     #[test]
-    fn packetize_unsubscribe() {
+    fn packetize() {
         let unsubscribe = Unsubscribe { subscribe_id: 0 };
         let mut buf = BytesMut::new();
         unsubscribe.packetize(&mut buf);
@@ -57,7 +57,7 @@ mod success {
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
     #[test]
-    fn depacketize_unsubscribe() {
+    fn depacketize() {
         let bytes_array = [
             0, // Subscribe ID (i)
         ];
@@ -71,7 +71,7 @@ mod success {
     }
 
     #[test]
-    fn as_any_unsubscribe() {
+    fn as_any() {
         let unsubscribe = Unsubscribe { subscribe_id: 0 };
         let any_unsubscribe = unsubscribe.as_any();
 
