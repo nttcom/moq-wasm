@@ -3,56 +3,28 @@ use std::any::Any;
 
 use crate::{
     messages::moqt_payload::MOQTPayload,
-    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unsubscribe {
-    track_namespace: Vec<String>,
-    track_name: String,
+    subscribe_id: u64,
 }
 
 impl Unsubscribe {
-    pub fn new(track_namespace: Vec<String>, track_name: String) -> Unsubscribe {
-        Unsubscribe {
-            track_namespace,
-            track_name,
-        }
+    pub fn new(subscribe_id: u64) -> Unsubscribe {
+        Unsubscribe { subscribe_id }
     }
 }
 
 impl MOQTPayload for Unsubscribe {
     fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
-        let track_namespace_tuple_length = u8::try_from(read_variable_integer_from_buffer(buf)?)
-            .context("track namespace length")?;
-        let mut track_namespace_tuple: Vec<String> = Vec::new();
-        for _ in 0..track_namespace_tuple_length {
-            let track_namespace = String::from_utf8(read_variable_bytes_from_buffer(buf)?)
-                .context("track namespace")?;
-            track_namespace_tuple.push(track_namespace);
-        }
-        let track_name = read_variable_bytes_from_buffer(buf).context("track name")?;
-
-        let unsubscribe_message = Unsubscribe {
-            track_namespace: track_namespace_tuple,
-            track_name: String::from_utf8(track_name)?,
-        };
-
+        let subscribe_id = read_variable_integer_from_buffer(buf).context("subscribe id")?;
+        let unsubscribe_message = Unsubscribe { subscribe_id };
         Ok(unsubscribe_message)
     }
-
     fn packetize(&self, buf: &mut bytes::BytesMut) {
-        // Track Namespace Number of elements
-        let track_namespace_tuple_length = self.track_namespace.len();
-        buf.extend(write_variable_integer(track_namespace_tuple_length as u64));
-        for track_namespace in &self.track_namespace {
-            // Track Namespace
-            buf.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
-        }
-        buf.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
-
-        tracing::trace!("Packetized Unsubscribe message.");
+        buf.extend(write_variable_integer(self.subscribe_id));
     }
     /// Method to enable downcasting from MOQTPayload to Unsubscribe
     fn as_any(&self) -> &dyn Any {
@@ -62,53 +34,47 @@ impl MOQTPayload for Unsubscribe {
 
 #[cfg(test)]
 mod success {
+    use crate::messages::{control_messages::unsubscribe::Unsubscribe, moqt_payload::MOQTPayload};
     use bytes::BytesMut;
 
-    use crate::messages::{control_messages::unsubscribe::Unsubscribe, moqt_payload::MOQTPayload};
+    #[test]
+    fn new() {
+        let unsubscribe = Unsubscribe::new(0);
+        let expected_unsubscribe = Unsubscribe { subscribe_id: 0 };
+
+        assert_eq!(unsubscribe, expected_unsubscribe);
+    }
 
     #[test]
-    fn packetize_unsubscribe() {
-        let unsubscribe = Unsubscribe {
-            track_namespace: Vec::from(["test".to_string(), "test".to_string()]),
-            track_name: "track_name".to_string(),
-        };
-
+    fn packetize() {
+        let unsubscribe = Unsubscribe { subscribe_id: 0 };
         let mut buf = BytesMut::new();
         unsubscribe.packetize(&mut buf);
 
         let expected_bytes_array = [
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            10,  // Track Name (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109,
-            101, // Track Name (b): Value("track_name")
+            0, // Subscribe ID (i)
         ];
         assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
     }
     #[test]
-    fn depacketize_unsubscribe() {
+    fn depacketize() {
         let bytes_array = [
-            2, // Track Namespace(tuple): Number of elements
-            4, // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            4,   // Track Namespace(b): Length
-            116, 101, 115, 116, // Track Namespace(b): Value("test")
-            10,  // Track Name (b): Length
-            116, 114, 97, 99, 107, 95, 110, 97, 109,
-            101, // Track Name (b): Value("track_name")
+            0, // Subscribe ID (i)
         ];
         let mut buf = BytesMut::new();
         buf.extend_from_slice(&bytes_array);
         let depacketized_unsubscribe = Unsubscribe::depacketize(&mut buf).unwrap();
 
-        let expected_unsubscribe = Unsubscribe {
-            track_namespace: Vec::from(["test".to_string(), "test".to_string()]),
-            track_name: "track_name".to_string(),
-        };
+        let expected_unsubscribe = Unsubscribe { subscribe_id: 0 };
 
         assert_eq!(depacketized_unsubscribe, expected_unsubscribe);
+    }
+
+    #[test]
+    fn as_any() {
+        let unsubscribe = Unsubscribe { subscribe_id: 0 };
+        let any_unsubscribe = unsubscribe.as_any();
+
+        assert!(any_unsubscribe.is::<Unsubscribe>());
     }
 }
