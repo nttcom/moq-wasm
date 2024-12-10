@@ -1,7 +1,3 @@
-use anyhow::{Context, Result};
-use serde::Serialize;
-use std::any::Any;
-
 use crate::{
     messages::{
         control_messages::version_specific_parameters::VersionSpecificParameter,
@@ -10,6 +6,10 @@ use crate::{
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
+use anyhow::{Context, Result};
+use bytes::BytesMut;
+use serde::Serialize;
+use std::any::Any;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeNamespace {
@@ -41,7 +41,7 @@ impl SubscribeNamespace {
 }
 
 impl MOQTPayload for SubscribeNamespace {
-    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
+    fn depacketize(buf: &mut BytesMut) -> Result<Self> {
         let track_namespace_prefix_tuple_length =
             u8::try_from(read_variable_integer_from_buffer(buf)?)
                 .context("track namespace prefix length")?;
@@ -72,7 +72,7 @@ impl MOQTPayload for SubscribeNamespace {
         })
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    fn packetize(&self, buf: &mut BytesMut) {
         let track_namespace_prefix_tuple_length = self.track_namespace_prefix.len();
         buf.extend(write_variable_integer(
             track_namespace_prefix_tuple_length as u64,
@@ -94,66 +94,69 @@ impl MOQTPayload for SubscribeNamespace {
 }
 
 #[cfg(test)]
-mod success {
-    use bytes::BytesMut;
+mod tests {
+    mod success {
+        use crate::messages::{
+            control_messages::{
+                subscribe_namespace::SubscribeNamespace,
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            },
+            moqt_payload::MOQTPayload,
+        };
+        use bytes::BytesMut;
 
-    use crate::messages::{
-        control_messages::{
-            subscribe_namespace::SubscribeNamespace,
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-        },
-        moqt_payload::MOQTPayload,
-    };
+        #[test]
+        fn packetize() {
+            let track_namespace_prefix = Vec::from(["test".to_string(), "test".to_string()]);
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let parameters = vec![version_specific_parameter];
+            let subscribe_namespace =
+                SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
+            let mut buf = BytesMut::new();
+            subscribe_namespace.packetize(&mut buf);
 
-    #[test]
-    fn packetize() {
-        let track_namespace_prefix = Vec::from(["test".to_string(), "test".to_string()]);
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let parameters = vec![version_specific_parameter];
-        let subscribe_namespace =
-            SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
-        let mut buf = BytesMut::new();
-        subscribe_namespace.packetize(&mut buf);
+            let expected_bytes_array = [
+                2, // Track Namespace Prefix(tuple): Number of elements
+                4, // Track Namespace Prefix(b): Length
+                116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
+                4,   // Track Namespace Prefix(b): Length
+                116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
+                1,   // Parameters (..): Number of Parameters
+                2,   // Parameter Type (i): AuthorizationInfo
+                4,   // Parameter Length
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+        }
 
-        let expected_bytes_array = [
-            2, // Track Namespace Prefix(tuple): Number of elements
-            4, // Track Namespace Prefix(b): Length
-            116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
-            4,   // Track Namespace Prefix(b): Length
-            116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
-            1,   // Parameters (..): Number of Parameters
-            2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
-    }
+        #[test]
+        fn depacketize() {
+            let bytes_array = [
+                2, // Track Namespace Prefix(tuple): Number of elements
+                4, // Track Namespace Prefix(b): Length
+                116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
+                4,   // Track Namespace Prefix(b): Length
+                116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
+                1,   // Parameters (..): Number of Parameters
+                2,   // Parameter Type (i): AuthorizationInfo
+                4,   // Parameter Length
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let subscribe_namespace = SubscribeNamespace::depacketize(&mut buf).unwrap();
 
-    #[test]
-    fn depacketize() {
-        let bytes_array = [
-            2, // Track Namespace Prefix(tuple): Number of elements
-            4, // Track Namespace Prefix(b): Length
-            116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
-            4,   // Track Namespace Prefix(b): Length
-            116, 101, 115, 116, // Track Namespace Prefix(b): Value("test")
-            1,   // Parameters (..): Number of Parameters
-            2,   // Parameter Type (i): AuthorizationInfo
-            4,   // Parameter Length
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let subscribe_namespace = SubscribeNamespace::depacketize(&mut buf).unwrap();
+            let track_namespace_prefix = Vec::from(["test".to_string(), "test".to_string()]);
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let parameters = vec![version_specific_parameter];
+            let expected_subscribe_namespace =
+                SubscribeNamespace::new(track_namespace_prefix, parameters);
 
-        let track_namespace_prefix = Vec::from(["test".to_string(), "test".to_string()]);
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let parameters = vec![version_specific_parameter];
-        let expected_subscribe_namespace =
-            SubscribeNamespace::new(track_namespace_prefix, parameters);
-
-        assert_eq!(subscribe_namespace, expected_subscribe_namespace);
+            assert_eq!(subscribe_namespace, expected_subscribe_namespace);
+        }
     }
 }

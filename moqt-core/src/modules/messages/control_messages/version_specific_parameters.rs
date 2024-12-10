@@ -1,8 +1,3 @@
-use anyhow::Ok;
-use num_enum::TryFromPrimitive;
-use serde::Serialize;
-use std::any::Any;
-
 use crate::{
     messages::moqt_payload::MOQTPayload,
     variable_bytes::{
@@ -13,6 +8,11 @@ use crate::{
         write_variable_integer,
     },
 };
+use anyhow::Ok;
+use bytes::BytesMut;
+use num_enum::TryFromPrimitive;
+use serde::Serialize;
+use std::any::Any;
 
 /// This structure is a parameter that uses a version-specific namespace, unlike Setup parameters,
 /// which uses a namespace that is constant across all MoQ Transport versions.
@@ -27,7 +27,7 @@ pub enum VersionSpecificParameter {
 }
 
 impl MOQTPayload for VersionSpecificParameter {
-    fn depacketize(buf: &mut bytes::BytesMut) -> anyhow::Result<Self> {
+    fn depacketize(buf: &mut BytesMut) -> anyhow::Result<Self> {
         let parameter_type = VersionSpecificParameterType::try_from(u8::try_from(
             read_variable_integer_from_buffer(buf)?,
         )?);
@@ -70,7 +70,7 @@ impl MOQTPayload for VersionSpecificParameter {
         }
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    fn packetize(&self, buf: &mut BytesMut) {
         match self {
             VersionSpecificParameter::AuthorizationInfo(param) => {
                 buf.extend(write_variable_integer(u64::from(param.parameter_type)));
@@ -173,143 +173,148 @@ impl MaxCacheDuration {
 }
 
 #[cfg(test)]
-mod success {
-    use crate::messages::{
-        control_messages::version_specific_parameters::{
-            AuthorizationInfo, DeliveryTimeout, MaxCacheDuration, VersionSpecificParameter,
-        },
-        moqt_payload::MOQTPayload,
-    };
+mod tests {
+    mod success {
+        use crate::messages::{
+            control_messages::version_specific_parameters::{
+                AuthorizationInfo, DeliveryTimeout, MaxCacheDuration, VersionSpecificParameter,
+            },
+            moqt_payload::MOQTPayload,
+        };
+        use bytes::BytesMut;
 
-    #[test]
-    fn packetize_authorization_info() {
-        let parameter_value = "test".to_string();
-        let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
-            parameter_value.clone(),
-        ));
-        let mut buf = bytes::BytesMut::new();
-        parameter.packetize(&mut buf);
+        #[test]
+        fn packetize_authorization_info() {
+            let parameter_value = "test".to_string();
+            let parameter = VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(
+                parameter_value.clone(),
+            ));
+            let mut buf = BytesMut::new();
+            parameter.packetize(&mut buf);
 
-        let expected_bytes_array = [
-            2, // Parameter Type (i): AuthorizationInfo
-            4, // Parameter Length (i)
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
+            let expected_bytes_array = [
+                2, // Parameter Type (i): AuthorizationInfo
+                4, // Parameter Length (i)
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
 
-        assert_eq!(buf.as_ref(), expected_bytes_array);
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
+
+        #[test]
+        fn packetize_delivery_timeout() {
+            let parameter_value = 0x00;
+            let parameter =
+                VersionSpecificParameter::DeliveryTimeout(DeliveryTimeout::new(parameter_value));
+            let mut buf = BytesMut::new();
+            parameter.packetize(&mut buf);
+
+            let expected_bytes_array = [
+                3, // Parameter Type (i): DeliveryTimeout
+                1, // Parameter Length (i)
+                0, // Parameter Value (..)
+            ];
+
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
+
+        #[test]
+        fn packetize_max_cache_duration() {
+            let parameter_value = 0x00;
+            let parameter =
+                VersionSpecificParameter::MaxCacheDuration(MaxCacheDuration::new(parameter_value));
+            let mut buf = BytesMut::new();
+            parameter.packetize(&mut buf);
+
+            let expected_bytes_array = [
+                4, // Parameter Type (i): MaxCacheDuration
+                1, // Parameter Length (i)
+                0, // Parameter Value (..)
+            ];
+
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
+
+        #[test]
+        fn depacketize_authorization_info() {
+            let bytes_array = [
+                2, // Parameter Type (i): AuthorizationInfo
+                4, // Parameter Length
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_parameter = VersionSpecificParameter::depacketize(&mut buf).unwrap();
+
+            let expected_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            assert_eq!(depacketized_parameter, expected_parameter);
+        }
+
+        #[test]
+        fn depacketize_delivery_timeout() {
+            let bytes_array = [
+                3, // Parameter Type (i): DeliveryTimeout
+                1, // Parameter Length
+                0, // Parameter Value (..)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_parameter = VersionSpecificParameter::depacketize(&mut buf).unwrap();
+
+            let expected_parameter =
+                VersionSpecificParameter::DeliveryTimeout(DeliveryTimeout::new(0));
+            assert_eq!(depacketized_parameter, expected_parameter);
+        }
+
+        #[test]
+        fn depacketize_max_cache_duration() {
+            let bytes_array = [
+                4, // Parameter Type (i): MaxCacheDuration
+                1, // Parameter Length
+                0, // Parameter Value (..)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_parameter = VersionSpecificParameter::depacketize(&mut buf).unwrap();
+
+            let expected_parameter =
+                VersionSpecificParameter::MaxCacheDuration(MaxCacheDuration::new(0));
+            assert_eq!(depacketized_parameter, expected_parameter);
+        }
+
+        #[test]
+        fn depacketize_unknown() {
+            let bytes_array = [
+                64, // Parameter Type (i): Length. 64(0b01000000) equals to Length=2 and Usable Bits is 14bit in 2MSB.
+                99, // Parameter Type (i): Unknown. this value is represented in 14bit.
+                4,  // Parameter Length (i)
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_version_specific_parameter =
+                VersionSpecificParameter::depacketize(&mut buf);
+
+            assert!(depacketized_version_specific_parameter.is_ok());
+        }
     }
 
-    #[test]
-    fn packetize_delivery_timeout() {
-        let parameter_value = 0x00;
-        let parameter =
-            VersionSpecificParameter::DeliveryTimeout(DeliveryTimeout::new(parameter_value));
-        let mut buf = bytes::BytesMut::new();
-        parameter.packetize(&mut buf);
+    mod failure {
+        use crate::messages::{
+            control_messages::version_specific_parameters::VersionSpecificParameter,
+            moqt_payload::MOQTPayload,
+        };
+        use bytes::BytesMut;
 
-        let expected_bytes_array = [
-            3, // Parameter Type (i): DeliveryTimeout
-            1, // Parameter Length (i)
-            0, // Parameter Value (..)
-        ];
+        #[test]
+        #[should_panic]
+        fn packetize_unknown() {
+            let version_specific_parameter = VersionSpecificParameter::Unknown(99);
 
-        assert_eq!(buf.as_ref(), expected_bytes_array);
-    }
-
-    #[test]
-    fn packetize_max_cache_duration() {
-        let parameter_value = 0x00;
-        let parameter =
-            VersionSpecificParameter::MaxCacheDuration(MaxCacheDuration::new(parameter_value));
-        let mut buf = bytes::BytesMut::new();
-        parameter.packetize(&mut buf);
-
-        let expected_bytes_array = [
-            4, // Parameter Type (i): MaxCacheDuration
-            1, // Parameter Length (i)
-            0, // Parameter Value (..)
-        ];
-
-        assert_eq!(buf.as_ref(), expected_bytes_array);
-    }
-
-    #[test]
-    fn depacketize_authorization_info() {
-        let bytes_array = [
-            2, // Parameter Type (i): AuthorizationInfo
-            4, // Parameter Length
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_parameter = VersionSpecificParameter::depacketize(&mut buf).unwrap();
-
-        let expected_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        assert_eq!(depacketized_parameter, expected_parameter);
-    }
-
-    #[test]
-    fn depacketize_delivery_timeout() {
-        let bytes_array = [
-            3, // Parameter Type (i): DeliveryTimeout
-            1, // Parameter Length
-            0, // Parameter Value (..)
-        ];
-        let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_parameter = VersionSpecificParameter::depacketize(&mut buf).unwrap();
-
-        let expected_parameter = VersionSpecificParameter::DeliveryTimeout(DeliveryTimeout::new(0));
-        assert_eq!(depacketized_parameter, expected_parameter);
-    }
-
-    #[test]
-    fn depacketize_max_cache_duration() {
-        let bytes_array = [
-            4, // Parameter Type (i): MaxCacheDuration
-            1, // Parameter Length
-            0, // Parameter Value (..)
-        ];
-        let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_parameter = VersionSpecificParameter::depacketize(&mut buf).unwrap();
-
-        let expected_parameter =
-            VersionSpecificParameter::MaxCacheDuration(MaxCacheDuration::new(0));
-        assert_eq!(depacketized_parameter, expected_parameter);
-    }
-
-    #[test]
-    fn depacketize_unknown() {
-        let bytes_array = [
-            64, // Parameter Type (i): Length. 64(0b01000000) equals to Length=2 and Usable Bits is 14bit in 2MSB.
-            99, // Parameter Type (i): Unknown. this value is represented in 14bit.
-            4,  // Parameter Length (i)
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = bytes::BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_version_specific_parameter =
-            VersionSpecificParameter::depacketize(&mut buf);
-
-        assert!(depacketized_version_specific_parameter.is_ok());
-    }
-}
-
-#[cfg(test)]
-mod failure {
-    use crate::messages::{
-        control_messages::version_specific_parameters::VersionSpecificParameter,
-        moqt_payload::MOQTPayload,
-    };
-
-    #[test]
-    #[should_panic]
-    fn packetize_unknown() {
-        let version_specific_parameter = VersionSpecificParameter::Unknown(99);
-
-        let mut buf = bytes::BytesMut::new();
-        version_specific_parameter.packetize(&mut buf);
+            let mut buf = BytesMut::new();
+            version_specific_parameter.packetize(&mut buf);
+        }
     }
 }
