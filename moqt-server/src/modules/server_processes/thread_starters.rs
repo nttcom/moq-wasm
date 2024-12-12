@@ -3,7 +3,7 @@ use super::stream_and_datagram::{
         forwarder::forward_control_message, receiver::handle_bi_recv_stream, stream::BiStream,
     },
     uni_directional_stream::{
-        forwarder::forward_object_stream,
+        forwarder::ObjectStreamForwarder,
         receiver::UniStreamReceiver,
         streams::{UniRecvStream, UniSendStream},
     },
@@ -133,10 +133,31 @@ async fn spawn_uni_send_stream_thread(
 
     tokio::spawn(
         async move {
-            let mut stream = UniSendStream::new(stable_id, stream_id, subscribe_id, send_stream);
-            forward_object_stream(&mut stream, client, data_stream_type)
-                .instrument(session_span)
-                .await
+            let stream = UniSendStream::new(stable_id, stream_id, subscribe_id, send_stream);
+
+            let mut object_stream_forwarder =
+                ObjectStreamForwarder::init(stream, client, data_stream_type)
+                    .await
+                    .unwrap();
+
+            let (code, reason) = match object_stream_forwarder.start().await {
+                Ok(_) => {
+                    let code = TerminationErrorCode::NoError;
+                    let reason = "ObjectStreamForwarder: Finished".to_string();
+                    tracing::info!(reason);
+
+                    (code, reason)
+                }
+                Err(e) => {
+                    let code = TerminationErrorCode::InternalError;
+                    let reason = format!("ObjectStreamForwarder: {:?}", e);
+                    tracing::error!(reason);
+
+                    (code, reason)
+                }
+            };
+
+            let _ = object_stream_forwarder.terminate(code, reason).await;
         }
         .in_current_span(),
     );
