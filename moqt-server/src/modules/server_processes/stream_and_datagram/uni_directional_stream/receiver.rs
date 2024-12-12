@@ -1,16 +1,19 @@
 use super::streams::UniRecvStream;
-use crate::modules::{
-    buffer_manager::{request_buffer, BufferCommand},
-    message_handlers::{
-        object_stream::{object_stream_handler, ObjectStreamProcessResult},
-        stream_header::{stream_header_handler, StreamHeaderProcessResult},
+use crate::{
+    modules::{
+        buffer_manager::{request_buffer, BufferCommand},
+        message_handlers::{
+            object_stream::{object_stream_handler, ObjectStreamProcessResult},
+            stream_header::{stream_header_handler, StreamHeaderProcessResult},
+        },
+        moqt_client::MOQTClient,
+        object_cache_storage::ObjectCacheStorageWrapper,
+        pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
+        server_processes::senders::Senders,
     },
-    moqt_client::MOQTClient,
-    object_cache_storage::ObjectCacheStorageWrapper,
-    pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
-    server_processes::senders::Senders,
+    TerminationError,
 };
-use anyhow::{bail, Result};
+use anyhow::Result;
 use bytes::BytesMut;
 use moqt_core::{
     constants::TerminationErrorCode, data_stream_type::DataStreamType,
@@ -30,17 +33,7 @@ pub(crate) struct UniStreamReceiver {
 }
 
 impl UniStreamReceiver {
-    pub(crate) async fn start(stream: UniRecvStream, client: Arc<Mutex<MOQTClient>>) -> Result<()> {
-        let mut uni_stream_receiver = Self::init(stream, client).await;
-
-        uni_stream_receiver.receive_loop().await?;
-
-        uni_stream_receiver.terminate().await?;
-
-        Ok(())
-    }
-
-    async fn init(stream: UniRecvStream, client: Arc<Mutex<MOQTClient>>) -> Self {
+    pub(crate) async fn init(stream: UniRecvStream, client: Arc<Mutex<MOQTClient>>) -> Self {
         let senders = client.lock().await.senders();
         let stable_id = stream.stable_id();
         let stream_id = stream.stream_id();
@@ -56,7 +49,30 @@ impl UniStreamReceiver {
         }
     }
 
-    async fn receive_loop(&mut self) -> Result<()> {
+    pub(crate) async fn start(&mut self) -> Result<(), TerminationError> {
+        self.receive_loop().await?;
+
+        Ok(())
+    }
+
+    pub(crate) async fn terminate(&self, code: TerminationErrorCode, reason: String) -> Result<()> {
+        self.senders
+            .close_session_tx()
+            .send((u8::from(code) as u64, reason.to_string()))
+            .await?;
+
+        self.senders
+            .buffer_tx()
+            .send(BufferCommand::ReleaseStream {
+                session_id: self.stream.stable_id(),
+                stream_id: self.stream.stream_id(),
+            })
+            .await?;
+
+        Ok(())
+    }
+
+    async fn receive_loop(&mut self) -> Result<(), TerminationError> {
         let mut object_cache_storage =
             ObjectCacheStorageWrapper::new(self.senders.object_cache_tx().clone());
 
@@ -73,23 +89,16 @@ impl UniStreamReceiver {
         }
     }
 
-    async fn read_stream_and_add_to_buf(&mut self) -> Result<()> {
+    async fn read_stream_and_add_to_buf(&mut self) -> Result<(), TerminationError> {
         let mut buffer = vec![0; 65536].into_boxed_slice();
 
         let bytes_read: usize = match self.stream.read(&mut buffer).await {
             Ok(byte_read) => byte_read.unwrap(),
             Err(err) => {
                 let msg = format!("Failed to read from stream: {:?}", err);
-                tracing::error!(msg);
-                let _ = self
-                    .senders
-                    .close_session_tx()
-                    .send((
-                        u8::from(TerminationErrorCode::InternalError) as u64,
-                        msg.clone(),
-                    ))
-                    .await;
-                bail!(msg);
+                let code = TerminationErrorCode::InternalError;
+
+                return Err((code, msg));
             }
         };
 
@@ -105,7 +114,7 @@ impl UniStreamReceiver {
         &mut self,
         header_read: &mut bool,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<()> {
+    ) -> Result<(), TerminationError> {
         loop {
             if !*header_read {
                 match self
@@ -126,8 +135,9 @@ impl UniStreamReceiver {
                     }
                     Err(err) => {
                         let msg = format!("Fail to read header from buf: {:?}", err);
-                        tracing::error!(msg);
-                        bail!(msg);
+                        let code = TerminationErrorCode::InternalError;
+
+                        return Err((code, msg));
                     }
                 }
             }
@@ -143,8 +153,9 @@ impl UniStreamReceiver {
                 }
                 Err(err) => {
                     let msg = format!("Fail to read object stream from buf: {:?}", err);
-                    tracing::error!(msg);
-                    bail!(msg);
+                    let code = TerminationErrorCode::InternalError;
+
+                    return Err((code, msg));
                 }
             }
         }
@@ -155,24 +166,29 @@ impl UniStreamReceiver {
     async fn read_header_from_buf_and_store_to_object_cache(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<(bool, Option<(u64, DataStreamType)>)> {
+    ) -> Result<(bool, Option<(u64, DataStreamType)>), TerminationError> {
         let result = self.try_to_read_buf_as_header(object_cache_storage).await;
 
         match result {
             StreamHeaderProcessResult::Success((subscribe_id, header_type)) => {
-                self.open_downstream_uni_stream(subscribe_id, &header_type)
-                    .await?;
+                match self
+                    .open_downstream_uni_stream(subscribe_id, &header_type)
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(err) => {
+                        let msg = format!("Fail to open downstream uni stream: {:?}", err);
+                        let code = TerminationErrorCode::InternalError;
+
+                        return Err((code, msg));
+                    }
+                };
                 Ok((true, Some((subscribe_id, header_type))))
             }
             StreamHeaderProcessResult::IncompleteMessage => Ok((false, None)),
             StreamHeaderProcessResult::Failure(code, reason) => {
                 let msg = std::format!("stream_header_read failure: {:?}", reason);
-                tracing::error!(msg);
-                self.senders
-                    .close_session_tx()
-                    .send((u8::from(code) as u64, reason))
-                    .await?;
-                bail!(msg);
+                Err((code, msg))
             }
         }
     }
@@ -206,8 +222,7 @@ impl UniStreamReceiver {
 
         let subscribers = pubsub_relation_manager
             .get_related_subscribers(self.stream.stable_id(), subscribe_id)
-            .await
-            .unwrap();
+            .await?;
 
         for (downstream_session_id, downstream_subscribe_id) in subscribers {
             let open_downstream_stream_or_datagram_tx = self
@@ -230,7 +245,7 @@ impl UniStreamReceiver {
     async fn read_object_stream_and_store_to_object_cache(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<bool> {
+    ) -> Result<bool, TerminationError> {
         let result = self
             .try_to_read_buf_as_object_stream_and_store_to_object_cache(object_cache_storage)
             .await;
@@ -240,12 +255,7 @@ impl UniStreamReceiver {
             ObjectStreamProcessResult::IncompleteMessage => Ok(false),
             ObjectStreamProcessResult::Failure(code, reason) => {
                 let msg = std::format!("object_stream_read failure: {:?}", reason);
-                tracing::error!(msg);
-                self.senders
-                    .close_session_tx()
-                    .send((u8::from(code) as u64, reason))
-                    .await?;
-                bail!(msg)
+                Err((code, msg))
             }
         }
     }
@@ -267,23 +277,5 @@ impl UniStreamReceiver {
             object_cache_storage,
         )
         .await
-    }
-
-    async fn terminate(&self) -> Result<()> {
-        self.senders
-            .buffer_tx()
-            .send(BufferCommand::ReleaseStream {
-                session_id: self.stream.stable_id(),
-                stream_id: self.stream.stream_id(),
-            })
-            .await?;
-
-        self.senders
-            .open_downstream_stream_or_datagram_txes()
-            .lock()
-            .await
-            .remove(&self.stream.stable_id());
-
-        Ok(())
     }
 }
