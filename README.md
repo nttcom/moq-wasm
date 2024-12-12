@@ -7,18 +7,40 @@ Both server and browser client are written in Rust.
 
 ## Implementation
 
-Supported version: draft-ietf-moq-transport-01
+Supported version: draft-ietf-moq-transport-06
 
-- [x] Send/Recv SETUP message
-- [x] Send/Recv ANNOUNCE message
-- [x] Send/Recv SUBSCRIBE message
-- [x] Echo back OBJECT message
-- [ ] Send/Recv GOAWAY message
-- [ ] Send/Recv SUBSCRIBE_FIN/SUBSCRIBE_RST message
-- [x] Transfer SUBSCRIBE message
-  - [x] Manage stream of publishers
-- [x] Transfer OBJECT message
-  - [x] Manage subscriptions
+- [ ] Control Messages
+  - [x] CLIENT_SETUP / SERVER_SETUP
+  - [ ] GOAWAY
+  - [x] ANNOUNCE
+  - [x] SUBSCRIBE
+  - [ ] SUBSCRIBE_UPDATE
+  - [ ] UNSUBSCRIBE
+  - [x] ANNOUNCE_OK
+  - [x] ANNOUNCE_ERROR
+  - [ ] ANNOUNCE_CANCEL
+  - [ ] TRACK_STATUS_REQUEST
+  - [x] SUBSCRIBE_NAMESPACE
+  - [ ] UNSUBSCRIBE_NAMESPACE
+  - [x] SUBSCRIBE_OK
+  - [x] SUBSCRIBE_ERROR
+  - [ ] SUBSCRIBE_DONE
+  - [ ] MAX_SUBSCRIBE_ID
+  - [x] ANNOUNCE
+  - [ ] UNANNOUNCE
+  - [ ] TRACK_STATUS
+  - [x] SUBSCRIBE_NAMESPACE_OK
+  - [x] SUBSCRIBE_NAMESPACE_ERROR
+- [ ] Data Streams
+  - [ ] Object Datagram Message
+  - [x] Track Stream
+  - [x] Subgroup Stream
+- [ ] Features
+  - [x] Manage Publisher / Subscriber
+  - [x] Forword Messages
+  - [ ] Priorities
+  - [ ] Object Cache
+
 
 ## Modules
 
@@ -36,10 +58,12 @@ Supported version: draft-ietf-moq-transport-01
 ### moqt-server-sample
 
 - Sample server application
+  - Supported Roles: PubSub
 
 ### moqt-client-sample
 
 - Module for browser client and sample browser client application
+  - Supported Roles: Publisher, Subscriber, PubSub
 
 ## How to run
 
