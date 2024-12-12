@@ -1,40 +1,65 @@
-mod modules;
-use crate::modules::{
-    buffer_manager,
-    buffer_manager::{buffer_manager, BufferCommand},
-    message_handler::*,
-    send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
-    track_namespace_manager::{track_namespace_manager, TrackCommand},
-};
-use anyhow::{bail, Context, Ok, Result};
+use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
-pub use moqt_core::constants;
-use moqt_core::{
-    constants::{TerminationErrorCode, UnderlayType},
-    message_type::MessageType,
-    messages::{
-        moqt_payload::MOQTPayload,
-        object::{ObjectWithPayloadLength, ObjectWithoutPayloadLength},
-        subscribe::Subscribe,
-        subscribe_error::SubscribeError,
-        subscribe_ok::SubscribeOk,
-    },
-    stream_type::StreamType,
-    variable_integer::write_variable_integer,
-    MOQTClient, TrackNamespaceManagerRepository,
-};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{collections::HashMap, sync::Arc, thread, time::Duration};
 use tokio::sync::{
     mpsc,
     mpsc::{Receiver, Sender},
     Mutex,
 };
 use tracing::{self, Instrument};
-use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
 use wtransport::{
     endpoint::IncomingSession, Endpoint, Identity, RecvStream, SendStream, ServerConfig,
 };
+mod modules;
+use modules::{
+    buffer_manager::{buffer_manager, request_buffer, BufferCommand},
+    logging,
+    message_handlers::{
+        control_message::{control_message_handler, MessageProcessResult},
+        object_stream::{object_stream_handler, ObjectStreamProcessResult},
+        stream_header::{stream_header_handler, StreamHeaderProcessResult},
+    },
+    moqt_client::MOQTClient,
+    object_cache_storage::{
+        object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
+        ObjectCacheStorageWrapper,
+    },
+    pubsub_relation_manager::{
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper,
+    },
+    send_stream_dispatcher::{
+        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
+    },
+};
+pub use moqt_core::constants;
+use moqt_core::{
+    constants::{StreamDirection, TerminationErrorCode, UnderlayType},
+    control_message_type::ControlMessageType,
+    data_stream_type::DataStreamType,
+    messages::{
+        control_messages::{
+            announce::Announce,
+            announce_ok::AnnounceOk,
+            subscribe::{FilterType, Subscribe},
+            subscribe_error::SubscribeError,
+            subscribe_namespace::SubscribeNamespace,
+            subscribe_namespace_ok::SubscribeNamespaceOk,
+            subscribe_ok::SubscribeOk,
+        },
+        data_streams::{
+            stream_header_subgroup::StreamHeaderSubgroup, stream_header_track::StreamHeaderTrack,
+            DataStreams,
+        },
+        moqt_payload::MOQTPayload,
+    },
+    models::tracks::ForwardingPreference,
+    pubsub_relation_manager_repository::PubSubRelationManagerRepository,
+    variable_integer::write_variable_integer,
+};
+
+type SubscribeId = u64;
+pub(crate) type SenderToOpenSubscription = Sender<(SubscribeId, DataStreamType)>;
 
 // Callback to validate the Auth parameter
 pub enum AuthCallbackType {
@@ -99,29 +124,11 @@ impl MOQT {
         }
     }
     pub async fn start(&self) -> Result<()> {
-        init_logging(self.log_level.to_string());
-
-        // For buffer management for each stream
-        let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
-        // For track management
-        let (track_namespace_tx, mut track_namespace_rx) = mpsc::channel::<TrackCommand>(1024);
-        // For relay handler management
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        logging::init_logging(self.log_level.to_string());
 
         if self.underlay != UnderlayType::WebTransport {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
         }
-
-        // Start buffer management thread
-        tokio::spawn(async move { buffer_manager(&mut buffer_rx).await });
-
-        // Start track management thread
-        tokio::spawn(async move { track_namespace_manager(&mut track_namespace_rx).await });
-
-        // Start stream management thread
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-
-        // Start wtransport server
         let config = ServerConfig::builder()
             .with_bind_default(self.port)
             .with_identity(
@@ -136,15 +143,33 @@ impl MOQT {
             )
             .keep_alive_interval(Some(Duration::from_secs(self.keep_alive_interval_sec)))
             .build();
-
         let server = Endpoint::server(config)?;
-
         tracing::info!("Server ready!");
+
+        // Spawn management thread
+        let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
+        tokio::spawn(async move { buffer_manager(&mut buffer_rx).await });
+        let (pubsub_relation_tx, mut pubsub_relation_rx) =
+            mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut pubsub_relation_rx).await });
+        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
+        let (object_cache_tx, mut object_cache_rx) =
+            mpsc::channel::<ObjectCacheStorageCommand>(1024);
+        tokio::spawn(async move { object_cache_storage(&mut object_cache_rx).await });
+
+        let open_downstream_subscription_txes: HashMap<usize, SenderToOpenSubscription> =
+            HashMap::new();
+        let shared_open_downstream_subscription_txes =
+            Arc::new(Mutex::new(open_downstream_subscription_txes));
 
         for id in 0.. {
             let buffer_tx = buffer_tx.clone();
-            let track_namespace_tx = track_namespace_tx.clone();
+            let pubsub_relation_tx = pubsub_relation_tx.clone();
             let send_stream_tx = send_stream_tx.clone();
+            let object_cache_tx = object_cache_tx.clone();
+            let open_downstream_subscription_txes =
+                shared_open_downstream_subscription_txes.clone();
             let incoming_session = server.accept().await;
             let connection_span = tracing::info_span!("Connection", id);
 
@@ -152,8 +177,10 @@ impl MOQT {
             tokio::spawn(async move {
                 let result = handle_connection(
                     buffer_tx,
-                    track_namespace_tx,
+                    pubsub_relation_tx,
                     send_stream_tx,
+                    object_cache_tx,
+                    open_downstream_subscription_txes,
                     incoming_session,
                 )
                 .instrument(connection_span)
@@ -168,14 +195,13 @@ impl MOQT {
 
 async fn handle_connection(
     buffer_tx: mpsc::Sender<BufferCommand>,
-    track_namespace_tx: mpsc::Sender<TrackCommand>,
+    pubsub_relation_tx: mpsc::Sender<PubSubRelationCommand>,
     send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
+    object_cache_tx: mpsc::Sender<ObjectCacheStorageCommand>,
+    open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     incoming_session: IncomingSession,
 ) -> Result<()> {
-    tracing::trace!("Waiting for session request...");
-
     let session_request = incoming_session.await?;
-
     tracing::info!(
         "New session: Authority: '{}', Path: '{}'",
         session_request.authority(),
@@ -192,28 +218,27 @@ async fn handle_connection(
         tracing::info!("Waiting for data from client...");
     });
 
-    let (close_tx, mut close_rx) = mpsc::channel::<(u64, String)>(32);
+    // For opening a new data stream
+    let (open_downstream_subscription_tx, mut open_downstream_subscription_rx) =
+        mpsc::channel::<(SubscribeId, DataStreamType)>(32);
+    open_downstream_subscription_txes
+        .lock()
+        .await
+        .insert(stable_id, open_downstream_subscription_tx);
 
-    let (uni_relay_tx, mut uni_relay_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-    send_stream_tx
-        .send(SendStreamDispatchCommand::Set {
-            session_id: stable_id,
-            stream_type: "unidirectional_stream".to_string(),
-            sender: uni_relay_tx,
-        })
-        .await?;
+    let (close_connection_tx, mut close_connection_rx) = mpsc::channel::<(u64, String)>(32);
 
     // TODO: FIXME: Need to store information between threads for QUIC-level reconnection support
     let mut is_control_stream_opened = false;
 
+    #[allow(unused_variables)]
     loop {
         tokio::select! {
             // Waiting for a bi-directional stream and processing the received message
             stream = connection.accept_bi() => {
                 if is_control_stream_opened {
-                    // Only 1 control stream is allowed
                     tracing::error!("Control stream already opened");
-                    close_tx.send((u8::from(constants::TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    close_connection_tx.send((u8::from(TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
                     break;
                 }
                 is_control_stream_opened = true;
@@ -227,94 +252,130 @@ async fn handle_connection(
 
                 // The send_stream is wrapped with a Mutex to make it thread-safe since it can be called from multiple threads for returning and relaying messages.
                 let (send_stream, recv_stream) = stream;
-                let shread_send_stream = Arc::new(Mutex::new(send_stream));
+                let shared_send_stream = Arc::new(Mutex::new(send_stream));
 
                 let stream_id = recv_stream.id().into_u64();
 
                 let buffer_tx = buffer_tx.clone();
-                let track_namespace_tx = track_namespace_tx.clone();
+                let pubsub_relation_tx = pubsub_relation_tx.clone();
                 let send_stream_tx = send_stream_tx.clone();
-                let close_tx = close_tx.clone();
+                let close_connection_tx = close_connection_tx.clone();
+
+                let object_cache_tx = object_cache_tx.clone();
                 let client= client.clone();
+                let open_downstream_subscription_txes = open_downstream_subscription_txes.clone();
 
                 let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
                 send_stream_tx.send(SendStreamDispatchCommand::Set {
                     session_id: stable_id,
-                    stream_type: "bidirectional_stream".to_string(),
+                    stream_direction: StreamDirection::Bi,
                     sender: message_tx,
                 }).await?;
 
-                // Thread that listens for WebTransport messages
-                let send_stream = Arc::clone(&shread_send_stream);
+                // Spawn thread listenning for WebTransport messages
+                let send_stream = Arc::clone(&shared_send_stream);
                 let session_span_clone = session_span.clone();
                 tokio::spawn(async move {
                     let mut stream = BiStream {
                         stable_id,
                         stream_id,
                         recv_stream,
-                        shread_send_stream: send_stream,
+                        shared_send_stream: send_stream,
                     };
-                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_tx, send_stream_tx).instrument(session_span_clone).await
+                    handle_incoming_bi_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_downstream_subscription_txes, close_connection_tx, send_stream_tx, object_cache_tx).instrument(session_span_clone).await
 
-                // Propagate the current span (Connection)
                 }.in_current_span());
 
-                let send_stream = Arc::clone(&shread_send_stream);
-
                 // Thread to relay messages (ANNOUNCE SUBSCRIBE) from the server
+                let send_stream = Arc::clone(&shared_send_stream);
                 tokio::spawn(async move {
                     let session_span = tracing::info_span!("Session", stable_id);
                     wait_and_relay_control_message(send_stream, message_rx).instrument(session_span).await;
 
-                // Propagate the current span (Connection)
                 }.in_current_span());
             },
             // Waiting for a uni-directional recv stream and processing the received message
             stream = connection.accept_uni() => {
-                let recv_stream = stream.unwrap();
+                let recv_stream = stream?;
 
-                let session_span = tracing::info_span!("Session", stable_id); // TODO: Not implemented yet
+                let session_span = tracing::info_span!("Session", stable_id);
                 session_span.in_scope(|| {
                     tracing::info!("Accepted UNI Recv stream");
                 });
                 let stream_id = recv_stream.id().into_u64();
 
-                let buffer_tx = buffer_tx.clone();
-                let track_namespace_tx = track_namespace_tx.clone();
-                let send_stream_tx = send_stream_tx.clone();
-                let close_tx = close_tx.clone();
-                let client = client.clone();
+                let shared_recv_stream = Arc::new(Mutex::new(recv_stream));
+                let shared_recv_stream = Arc::clone(&shared_recv_stream);
 
-                let mut stream = UniRecvStream {
+                let buffer_tx = buffer_tx.clone();
+                let pubsub_relation_tx = pubsub_relation_tx.clone();
+                let object_cache_tx = object_cache_tx.clone();
+                let open_downstream_subscription_txes = open_downstream_subscription_txes.clone();
+                let close_connection_tx = close_connection_tx.clone();
+                let client= client.clone();
+
+                let session_span_clone = session_span.clone();
+
+                tokio::spawn(async move {
+                    let mut stream = UniRecvStream {
                     stable_id,
                     stream_id,
-                    recv_stream,
+                    shared_recv_stream,
                 };
-                let _ = handle_incoming_uni_stream(&mut stream, client, buffer_tx, track_namespace_tx, close_tx, send_stream_tx)
-                        .instrument(session_span)
-                        .await;
+                    handle_incoming_uni_stream(&mut stream, client, buffer_tx, pubsub_relation_tx, open_downstream_subscription_txes, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
+
+                }.in_current_span());
 
             },
-            // Waiting for a uni-directional relay request and relaying the message
-            Some(message) = uni_relay_rx.recv() => {
+            // Waiting for a uni-directional send stream open request and relaying the message
+            Some((subscribe_id, data_stream_type)) = open_downstream_subscription_rx.recv() => {
 
-                let session_span = tracing::info_span!("Session", stable_id);
-                session_span.in_scope(|| {
-                    tracing::info!("Open UNI Send stream");
-                });
-                // A sender MUST send each object over a dedicated stream.
-                let send_stream = connection.open_uni().await?.await?;
+                if !is_control_stream_opened {
+                    // Decline the request if the control stream is not opened
+                    tracing::error!("Control stream is not opened yet");
+                    close_connection_tx.send((u8::from(TerminationErrorCode::ProtocolViolation) as u64, "Control stream already opened".to_string())).await?;
+                    break;
+                }
 
-                // Send relayed messages (OBJECT) from the server
-                relay_object_message(send_stream, message).instrument(session_span).await;
-            },
-            _ = connection.closed() => {
-                tracing::info!("Connection closed, rtt={:?}", connection.rtt());
-                break;
+                match data_stream_type {
+                    DataStreamType::StreamHeaderTrack | DataStreamType::StreamHeaderSubgroup => {
+                        let session_span = tracing::info_span!("Session", stable_id);
+                        session_span.in_scope(|| {
+                            tracing::info!("Open UNI Send stream for stream type: {:?}", data_stream_type);
+                        });
+
+                        let buffer_tx = buffer_tx.clone();
+                        let pubsub_relation_tx = pubsub_relation_tx.clone();
+                        let object_cache_tx = object_cache_tx.clone();
+
+                        let close_connection_tx = close_connection_tx.clone();
+                        let session_span_clone = session_span.clone();
+                        let send_stream = connection.open_uni().await?.await?;
+                        let stream_id = send_stream.id().into_u64();
+
+                        tokio::spawn(async move {
+                            let mut stream = UniSendStream {
+                                stable_id,
+                                stream_id,
+                                subscribe_id,
+                                send_stream,
+                            };
+                            wait_and_relay_object_stream(&mut stream, data_stream_type, buffer_tx, pubsub_relation_tx, close_connection_tx, object_cache_tx).instrument(session_span_clone).await
+                        }.in_current_span());
+
+
+                    }
+                    DataStreamType::ObjectDatagram => {
+                        // TODO: Open datagram thread
+                        unimplemented!();
+                    }
+                }
+
+
             },
             // TODO: Not implemented yet
-            Some((_code, _reason)) = close_rx.recv() => {
-                tracing::error!("Close channel received");
+            Some((_code, _reason)) = close_connection_rx.recv() => {
+                tracing::error!("Close connection received");
                 // FIXME: I want to close the connection, but VarInt is not exported, so I'll leave it as is
                 // Maybe it's in wtransport-proto?
                 // connection.close(VarInt)
@@ -324,9 +385,14 @@ async fn handle_connection(
     }
 
     // Delete pub/sub information related to the client
-    let track_namespace_manager =
-        modules::track_namespace_manager::TrackNamespaceManager::new(track_namespace_tx.clone());
-    let _ = track_namespace_manager.delete_client(stable_id).await;
+    let pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
+    let _ = pubsub_relation_manager.delete_client(stable_id).await;
+
+    // Delete object cache related to the client
+    // FIXME: It should not be deleted if the cache should be stored
+    //   (Now, it is deleted immediately because to clean up cpu and memory)
+    let mut object_cache_storage = ObjectCacheStorageWrapper::new(object_cache_tx.clone());
+    let _ = object_cache_storage.delete_client(stable_id).await;
 
     // Delete senders to the client
     send_stream_tx
@@ -350,75 +416,508 @@ async fn handle_connection(
 struct UniRecvStream {
     stable_id: usize,
     stream_id: u64,
-    recv_stream: RecvStream,
+    shared_recv_stream: Arc<Mutex<RecvStream>>,
 }
 
 async fn handle_incoming_uni_stream(
     stream: &mut UniRecvStream,
     client: Arc<Mutex<MOQTClient>>,
     buffer_tx: Sender<BufferCommand>,
-    track_namespace_tx: Sender<TrackCommand>,
-    close_tx: Sender<(u64, String)>,
-    send_stream_tx: Sender<SendStreamDispatchCommand>,
+    pubsub_relation_tx: Sender<PubSubRelationCommand>,
+    open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    close_connection_tx: Sender<(u64, String)>,
+    object_cache_tx: Sender<ObjectCacheStorageCommand>,
 ) -> Result<()> {
-    let mut buffer = vec![0; 65536].into_boxed_slice();
+    let mut header_read = false;
 
     let stable_id = stream.stable_id;
+    let mut upstream_subscribe_id: u64 = 0;
+    let mut stream_header_type: DataStreamType = DataStreamType::ObjectDatagram;
     let stream_id = stream.stream_id;
-    let recv_stream = &mut stream.recv_stream;
+    let close_connection_tx_clone = close_connection_tx.clone();
+    let buffer_tx_clone = buffer_tx.clone();
+    let shared_recv_stream = &mut stream.shared_recv_stream;
+    let shared_recv_stream = Arc::clone(shared_recv_stream);
 
-    let mut track_namespace_manager =
-        modules::track_namespace_manager::TrackNamespaceManager::new(track_namespace_tx.clone());
-    let mut send_stream_dispatcher =
-        modules::send_stream_dispatcher::SendStreamDispatcher::new(send_stream_tx.clone());
+    let mut pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
 
-    let bytes_read = match recv_stream.read(&mut buffer).await? {
-        Some(bytes_read) => bytes_read,
-        None => bail!("Failed to read from stream"),
-    };
+    let mut object_cache_storage = ObjectCacheStorageWrapper::new(object_cache_tx.clone());
 
-    tracing::debug!("bytes_read: {}", bytes_read);
+    let buf = request_buffer(buffer_tx_clone, stable_id, stream_id).await;
+    let buf_clone = Arc::clone(&buf);
 
-    let read_buf = BytesMut::from(&buffer[..bytes_read]);
-    let buf = buffer_manager::request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
-    let mut buf = buf.lock().await;
-    buf.extend_from_slice(&read_buf);
+    // Loop for reading the stream
+    tokio::spawn(
+        async move {
+            loop {
+                let mut buffer = vec![0; 65536].into_boxed_slice();
+                let mut recv_stream = shared_recv_stream.lock().await;
 
-    let mut client = client.lock().await;
-    // TODO: Move the implementation of message_handler to the server side since it is only used by the server
-    let message_result = message_handler(
-        &mut buf,
-        StreamType::Uni,
-        UnderlayType::WebTransport,
-        &mut client,
-        &mut track_namespace_manager,
-        &mut send_stream_dispatcher,
-    )
-    .await;
+                let bytes_read: usize = match recv_stream.read(&mut buffer).await {
+                    Ok(byte_read) => byte_read.unwrap(),
+                    Err(err) => {
+                        tracing::error!("Failed to read from stream");
+                        let _ = close_connection_tx_clone
+                            .send((
+                                u8::from(TerminationErrorCode::InternalError) as u64,
+                                err.to_string(),
+                            ))
+                            .await;
+                        break;
+                    }
+                };
 
-    tracing::debug!("message_result: {:?}", message_result);
+                tracing::debug!("bytes_read: {}", bytes_read);
 
-    match message_result {
-        MessageProcessResult::SuccessWithoutResponse => {}
-        MessageProcessResult::Failure(code, message) => {
-            tracing::warn!("Uni-stream handling failed: {:?} ({:?})", message, code);
-            if code == TerminationErrorCode::ProtocolViolation {
-                close_tx.send((code as u64, message.clone())).await?;
+                let read_buf = BytesMut::from(&buffer[..bytes_read]);
+
+                {
+                    buf_clone.lock().await.extend_from_slice(&read_buf);
+                }
+
+                tracing::debug!("buf size: {}", buf_clone.lock().await.len());
             }
-            bail!(message);
         }
-        MessageProcessResult::Fragment => (),
-        MessageProcessResult::Success(_) => {
-            let message = "Unsuported message type for uni-directional stream".to_string();
-            tracing::warn!("Uni-stream handling failed: {:?}", message);
-            bail!(message);
+        .in_current_span(),
+    );
+
+    loop {
+        if !header_read {
+            // Read header
+
+            let result: StreamHeaderProcessResult;
+            {
+                let mut process_buf = buf.lock().await;
+                let client = client.lock().await;
+
+                result = stream_header_handler(
+                    &mut process_buf,
+                    &client,
+                    &mut pubsub_relation_manager,
+                    &mut object_cache_storage,
+                )
+                .await;
+            }
+
+            match result {
+                StreamHeaderProcessResult::Success((subscribe_id, header_type)) => {
+                    tracing::trace!("stream_header_read success");
+                    upstream_subscribe_id = subscribe_id;
+                    stream_header_type = header_type.clone();
+
+                    // Open send uni-directional stream for subscribers
+                    let subscribers = pubsub_relation_manager
+                        .get_related_subscribers(stable_id, upstream_subscribe_id)
+                        .await
+                        .unwrap();
+
+                    for (downstream_session_id, downstream_subscribe_id) in subscribers {
+                        let open_downstream_subscription_tx = open_downstream_subscription_txes
+                            .lock()
+                            .await
+                            .get(&downstream_session_id)
+                            .unwrap()
+                            .clone();
+
+                        open_downstream_subscription_tx
+                            .send((downstream_subscribe_id, stream_header_type.clone()))
+                            .await?;
+                    }
+
+                    header_read = true;
+                }
+                StreamHeaderProcessResult::Continue => {
+                    tracing::trace!("retry stream_header_read");
+                    continue;
+                }
+                StreamHeaderProcessResult::Failure(code, message) => {
+                    tracing::error!("stream_header_read failure: {:?}", message);
+                    close_connection_tx
+                        .send((u8::from(code) as u64, message))
+                        .await?;
+                    break;
+                }
+            }
         }
-    };
+
+        let result: ObjectStreamProcessResult;
+
+        // Read Object Stream
+        {
+            let mut process_buf = buf.lock().await;
+            let client = client.lock().await;
+
+            result = object_stream_handler(
+                stream_header_type.clone(),
+                upstream_subscribe_id,
+                &mut process_buf,
+                &client,
+                &mut object_cache_storage,
+            )
+            .await;
+        }
+
+        match result {
+            ObjectStreamProcessResult::Success => {
+                tracing::trace!("object_stream_read success");
+            }
+            ObjectStreamProcessResult::Continue => {
+                tracing::trace!("retry object_stream_read");
+                continue;
+            }
+            ObjectStreamProcessResult::Failure(code, message) => {
+                tracing::error!("object_stream_read failure: {:?}", message);
+                close_connection_tx
+                    .send((u8::from(code) as u64, message))
+                    .await?;
+                break;
+            }
+        }
+    }
 
     buffer_tx
         .send(BufferCommand::ReleaseStream {
             session_id: stable_id,
             stream_id,
+        })
+        .await?;
+
+    open_downstream_subscription_txes
+        .lock()
+        .await
+        .remove(&stable_id);
+
+    Ok(())
+}
+
+struct UniSendStream {
+    stable_id: usize,
+    stream_id: u64,
+    subscribe_id: u64,
+    send_stream: SendStream,
+}
+
+async fn wait_and_relay_object_stream(
+    stream: &mut UniSendStream,
+    data_stream_type: DataStreamType,
+    buffer_tx: Sender<BufferCommand>,
+    pubsub_relation_tx: Sender<PubSubRelationCommand>,
+    close_connection_tx: Sender<(u64, String)>,
+    object_cache_tx: Sender<ObjectCacheStorageCommand>,
+) -> Result<()> {
+    let sleep_time = Duration::from_millis(10);
+
+    let mut subgroup_header: Option<StreamHeaderSubgroup> = None; // For end group of AbsoluteRange
+
+    let downstream_session_id = stream.stable_id;
+    let downstream_stream_id = stream.stream_id;
+    let downstream_subscribe_id = stream.subscribe_id;
+    let send_stream = &mut stream.send_stream;
+
+    let pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
+
+    let mut object_cache_storage = ObjectCacheStorageWrapper::new(object_cache_tx.clone());
+
+    // Get the information of the original publisher who has the track being requested
+    let (upstream_session_id, upstream_subscribe_id) = pubsub_relation_manager
+        .get_related_publisher(downstream_session_id, downstream_subscribe_id)
+        .await?;
+    let downstream_subscription = pubsub_relation_manager
+        .get_downstream_subscription_by_ids(downstream_session_id, downstream_subscribe_id)
+        .await?
+        .unwrap();
+    let downstream_track_alias = downstream_subscription.get_track_alias();
+    let filter_type = downstream_subscription.get_filter_type();
+    let (start_group, start_object) = downstream_subscription.get_absolute_start();
+    let (end_group, end_object) = downstream_subscription.get_absolute_end();
+
+    // Validate the forwarding preference as Track
+    match pubsub_relation_manager
+        .get_upstream_forwarding_preference(upstream_session_id, upstream_subscribe_id)
+        .await?
+    {
+        Some(ForwardingPreference::Track) => {
+            if data_stream_type != DataStreamType::StreamHeaderTrack {
+                let msg = std::format!(
+                    "uni send stream's data stream type is wrong (expected Track, but got {:?})",
+                    data_stream_type
+                );
+                close_connection_tx
+                    .send((
+                        u8::from(TerminationErrorCode::InternalError) as u64,
+                        msg.clone(),
+                    ))
+                    .await?;
+                bail!(msg)
+            }
+            pubsub_relation_manager
+                .set_downstream_forwarding_preference(
+                    downstream_session_id,
+                    downstream_subscribe_id,
+                    ForwardingPreference::Track,
+                )
+                .await?;
+        }
+        Some(ForwardingPreference::Subgroup) => {
+            if data_stream_type != DataStreamType::StreamHeaderSubgroup {
+                let msg = std::format!(
+                    "uni send stream's data stream type is wrong (expected Subgroup, but got {:?})",
+                    data_stream_type
+                );
+                close_connection_tx
+                    .send((
+                        u8::from(TerminationErrorCode::InternalError) as u64,
+                        msg.clone(),
+                    ))
+                    .await?;
+                bail!(msg)
+            }
+            pubsub_relation_manager
+                .set_downstream_forwarding_preference(
+                    downstream_session_id,
+                    downstream_subscribe_id,
+                    ForwardingPreference::Subgroup,
+                )
+                .await?;
+        }
+        _ => {
+            let msg = "Invalid forwarding preference";
+            close_connection_tx
+                .send((
+                    u8::from(TerminationErrorCode::ProtocolViolation) as u64,
+                    msg.to_string(),
+                ))
+                .await?;
+            bail!(msg)
+        }
+    };
+
+    // Get the header from the cache storage and send it to the client
+    match object_cache_storage
+        .get_header(upstream_session_id, upstream_subscribe_id)
+        .await?
+    {
+        CacheHeader::Track(header) => {
+            let mut buf = BytesMut::new();
+            let header = StreamHeaderTrack::new(
+                downstream_subscribe_id,
+                downstream_track_alias,
+                header.publisher_priority(),
+            )
+            .unwrap();
+
+            header.packetize(&mut buf);
+
+            let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
+            message_buf.extend(write_variable_integer(
+                u8::from(DataStreamType::StreamHeaderTrack) as u64,
+            ));
+            message_buf.extend(buf);
+
+            if let Err(e) = send_stream.write_all(&message_buf).await {
+                tracing::warn!("Failed to write to stream: {:?}", e);
+                bail!(e);
+            }
+        }
+        CacheHeader::Subgroup(header) => {
+            let mut buf = BytesMut::new();
+            let header = StreamHeaderSubgroup::new(
+                downstream_subscribe_id,
+                downstream_track_alias,
+                header.group_id(),
+                header.subgroup_id(),
+                header.publisher_priority(),
+            )
+            .unwrap();
+
+            subgroup_header = Some(header.clone());
+
+            header.packetize(&mut buf);
+
+            let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
+            message_buf.extend(write_variable_integer(
+                u8::from(DataStreamType::StreamHeaderSubgroup) as u64,
+            ));
+            message_buf.extend(buf);
+
+            if let Err(e) = send_stream.write_all(&message_buf).await {
+                tracing::warn!("Failed to write to stream: {:?}", e);
+                bail!(e);
+            }
+        }
+        _ => {
+            let msg = "cache header not matched";
+            close_connection_tx
+                .send((
+                    u8::from(TerminationErrorCode::ProtocolViolation) as u64,
+                    msg.to_string(),
+                ))
+                .await?;
+            bail!(msg)
+        }
+    }
+
+    let mut object_cache_id: Option<usize> = None;
+
+    while object_cache_id.is_none() {
+        // Get the first object from the cache storage
+        let result = match filter_type {
+            FilterType::LatestGroup => {
+                object_cache_storage
+                    .get_latest_group(upstream_session_id, upstream_subscribe_id)
+                    .await
+            }
+            FilterType::LatestObject => {
+                object_cache_storage
+                    .get_latest_object(upstream_session_id, upstream_subscribe_id)
+                    .await
+            }
+            FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
+                object_cache_storage
+                    .get_absolute_object(
+                        upstream_session_id,
+                        upstream_subscribe_id,
+                        start_group.unwrap(),
+                        start_object.unwrap(),
+                    )
+                    .await
+            }
+        };
+
+        object_cache_id = match result {
+            // Send the object to the client if the first cache is exist as track
+            Ok(Some((id, CacheObject::Track(object)))) => {
+                let mut buf = BytesMut::new();
+                object.packetize(&mut buf);
+
+                let mut message_buf = BytesMut::with_capacity(buf.len());
+                message_buf.extend(buf);
+
+                if let Err(e) = send_stream.write_all(&message_buf).await {
+                    tracing::warn!("Failed to write to stream: {:?}", e);
+                    bail!(e);
+                }
+
+                Some(id)
+            }
+            // Send the object to the client if the first cache is exist as subgroup
+            Ok(Some((id, CacheObject::Subgroup(object)))) => {
+                let mut buf = BytesMut::new();
+                object.packetize(&mut buf);
+
+                let mut message_buf = BytesMut::with_capacity(buf.len());
+                message_buf.extend(buf);
+
+                if let Err(e) = send_stream.write_all(&message_buf).await {
+                    tracing::warn!("Failed to write to stream: {:?}", e);
+                    bail!(e);
+                }
+
+                Some(id)
+            }
+            // Will be retried if the first cache is not exist
+            Ok(None) => {
+                thread::sleep(sleep_time);
+                object_cache_id
+            }
+            _ => {
+                let msg = "cache is not exist";
+                close_connection_tx
+                    .send((
+                        u8::from(TerminationErrorCode::InternalError) as u64,
+                        msg.to_string(),
+                    ))
+                    .await?;
+                break;
+            }
+        };
+    }
+
+    loop {
+        // Get the next object from the cache storage
+        object_cache_id = match object_cache_storage
+            .get_next_object(
+                upstream_session_id,
+                upstream_subscribe_id,
+                object_cache_id.unwrap(),
+            )
+            .await
+        {
+            // Send the object to the client if the next cache is exist as track
+            Ok(Some((id, CacheObject::Track(object)))) => {
+                let mut buf = BytesMut::new();
+                object.packetize(&mut buf);
+
+                let mut message_buf = BytesMut::with_capacity(buf.len());
+                message_buf.extend(buf);
+
+                if let Err(e) = send_stream.write_all(&message_buf).await {
+                    tracing::warn!("Failed to write to stream: {:?}", e);
+                    bail!(e);
+                }
+
+                // Judge whether ids are reached to end of the range if the filter type is AbsoluteRange
+                if filter_type == FilterType::AbsoluteRange {
+                    let is_end = (object.group_id() == end_group.unwrap()
+                        && object.object_id() == end_object.unwrap())
+                        || (object.group_id() > end_group.unwrap());
+
+                    if is_end {
+                        break;
+                    }
+                }
+
+                Some(id)
+            }
+            // Send the object to the client if the next cache is exist as subgroup
+            Ok(Some((id, CacheObject::Subgroup(object)))) => {
+                let mut buf = BytesMut::new();
+                object.packetize(&mut buf);
+
+                let mut message_buf = BytesMut::with_capacity(buf.len());
+                message_buf.extend(buf);
+
+                if let Err(e) = send_stream.write_all(&message_buf).await {
+                    tracing::warn!("Failed to write to stream: {:?}", e);
+                    bail!(e);
+                }
+
+                // Judge whether ids are reached to end of the range if the filter type is AbsoluteRange
+                let header = subgroup_header.as_ref().unwrap();
+                if filter_type == FilterType::AbsoluteRange {
+                    let is_end = (header.group_id() == end_group.unwrap()
+                        && object.object_id() == end_object.unwrap())
+                        || (header.group_id() > end_group.unwrap());
+
+                    if is_end {
+                        break;
+                    }
+                }
+
+                Some(id)
+            }
+            // Will be retried if the next cache is not exist
+            Ok(None) => {
+                thread::sleep(sleep_time);
+                object_cache_id
+            }
+            _ => {
+                let msg = "cache is not exist";
+                close_connection_tx
+                    .send((
+                        u8::from(TerminationErrorCode::InternalError) as u64,
+                        msg.to_string(),
+                    ))
+                    .await?;
+                break;
+            }
+        };
+    }
+
+    buffer_tx
+        .send(BufferCommand::ReleaseStream {
+            session_id: downstream_session_id,
+            stream_id: downstream_stream_id,
         })
         .await?;
 
@@ -429,28 +928,32 @@ struct BiStream {
     stable_id: usize,
     stream_id: u64,
     recv_stream: RecvStream,
-    shread_send_stream: Arc<Mutex<SendStream>>,
+    shared_send_stream: Arc<Mutex<SendStream>>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_incoming_bi_stream(
     stream: &mut BiStream,
     client: Arc<Mutex<MOQTClient>>,
     buffer_tx: Sender<BufferCommand>,
-    track_namespace_tx: Sender<TrackCommand>,
-    close_tx: Sender<(u64, String)>,
+    pubsub_relation_tx: Sender<PubSubRelationCommand>,
+    open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    close_connection_tx: Sender<(u64, String)>,
     send_stream_tx: Sender<SendStreamDispatchCommand>,
+    object_cache_tx: Sender<ObjectCacheStorageCommand>,
 ) -> Result<()> {
     let mut buffer = vec![0; 65536].into_boxed_slice();
 
     let stable_id = stream.stable_id;
     let stream_id = stream.stream_id;
     let recv_stream = &mut stream.recv_stream;
-    let shread_send_stream = &mut stream.shread_send_stream;
+    let shared_send_stream = &mut stream.shared_send_stream;
 
-    let mut track_namespace_manager =
-        modules::track_namespace_manager::TrackNamespaceManager::new(track_namespace_tx.clone());
-    let mut send_stream_dispatcher =
-        modules::send_stream_dispatcher::SendStreamDispatcher::new(send_stream_tx.clone());
+    let mut pubsub_relation_manager = PubSubRelationManagerWrapper::new(pubsub_relation_tx.clone());
+    let mut send_stream_dispatcher = SendStreamDispatcher::new(send_stream_tx.clone());
+
+    let mut object_cache_storage =
+        modules::object_cache_storage::ObjectCacheStorageWrapper::new(object_cache_tx.clone());
 
     loop {
         let bytes_read = match recv_stream.read(&mut buffer).await? {
@@ -461,35 +964,41 @@ async fn handle_incoming_bi_stream(
         tracing::debug!("bytes_read: {}", bytes_read);
 
         let read_buf = BytesMut::from(&buffer[..bytes_read]);
-        let buf = buffer_manager::request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
+        let buf = request_buffer(buffer_tx.clone(), stable_id, stream_id).await;
         let mut buf = buf.lock().await;
         buf.extend_from_slice(&read_buf);
 
-        let mut client = client.lock().await;
-        // TODO: Move the implementation of message_handler to the server side since it is only used by the server
-        let message_result = message_handler(
-            &mut buf,
-            StreamType::Bi,
-            UnderlayType::WebTransport,
-            &mut client,
-            &mut track_namespace_manager,
-            &mut send_stream_dispatcher,
-        )
-        .await;
+        let message_result: MessageProcessResult;
+        {
+            let mut client = client.lock().await;
+            // TODO: Move the implementation of control_message_handler to the server side since it is only used by the server
+            message_result = control_message_handler(
+                &mut buf,
+                UnderlayType::WebTransport,
+                &mut client,
+                open_downstream_subscription_txes.clone(),
+                &mut pubsub_relation_manager,
+                &mut send_stream_dispatcher,
+                &mut object_cache_storage,
+            )
+            .await;
+        }
 
         tracing::debug!("message_result: {:?}", message_result);
 
         match message_result {
             MessageProcessResult::Success(buf) => {
-                let mut shread_send_stream = shread_send_stream.lock().await;
-                shread_send_stream.write_all(&buf).await?;
+                let mut shared_send_stream = shared_send_stream.lock().await;
+                shared_send_stream.write_all(&buf).await?;
 
                 tracing::info!("Message is sent.");
                 tracing::debug!("sent message: {:x?}", buf.to_vec());
             }
             MessageProcessResult::SuccessWithoutResponse => {}
             MessageProcessResult::Failure(code, message) => {
-                close_tx.send((u8::from(code) as u64, message)).await?;
+                close_connection_tx
+                    .send((u8::from(code) as u64, message))
+                    .await?;
                 break;
             }
             MessageProcessResult::Fragment => (),
@@ -506,53 +1015,6 @@ async fn handle_incoming_bi_stream(
     Ok(())
 }
 
-async fn relay_object_message(mut send_stream: SendStream, message: Arc<Box<dyn MOQTPayload>>) {
-    let mut write_buf = BytesMut::new();
-    message.packetize(&mut write_buf);
-    let mut message_buf = BytesMut::with_capacity(write_buf.len() + 8);
-
-    if message
-        .as_any()
-        .downcast_ref::<ObjectWithPayloadLength>()
-        .is_some()
-    {
-        message_buf.extend(write_variable_integer(
-            u8::from(MessageType::ObjectWithPayloadLength) as u64,
-        ));
-        tracing::info!(
-            "Relayed Message Type: {:?}",
-            MessageType::ObjectWithPayloadLength
-        );
-    } else if message
-        .as_any()
-        .downcast_ref::<ObjectWithoutPayloadLength>()
-        .is_some()
-    {
-        message_buf.extend(write_variable_integer(
-            u8::from(MessageType::ObjectWithoutPayloadLength) as u64,
-        ));
-        tracing::info!(
-            "Relayed Message Type: {:?}",
-            MessageType::ObjectWithoutPayloadLength
-        );
-    } else {
-        tracing::warn!("Unsupported message type for uni-directional stream");
-
-        return;
-    }
-
-    message_buf.extend(write_buf);
-
-    if let Err(e) = send_stream.write_all(&message_buf).await {
-        tracing::warn!("Failed to write to stream: {:?}", e);
-        return;
-    }
-
-    tracing::info!("Object message is relayed.");
-    tracing::debug!("relayed message: {:?}", message_buf.to_vec());
-    let _ = send_stream.finish().await;
-}
-
 async fn wait_and_relay_control_message(
     send_stream: Arc<Mutex<SendStream>>,
     mut message_rx: Receiver<Arc<Box<dyn MOQTPayload>>>,
@@ -564,62 +1026,73 @@ async fn wait_and_relay_control_message(
 
         if message.as_any().downcast_ref::<Subscribe>().is_some() {
             message_buf.extend(write_variable_integer(
-                u8::from(MessageType::Subscribe) as u64
+                u8::from(ControlMessageType::Subscribe) as u64,
             ));
-            tracing::info!("Relayed Message Type: {:?}", MessageType::Subscribe);
+            tracing::info!("Relayed Message Type: {:?}", ControlMessageType::Subscribe);
         } else if message.as_any().downcast_ref::<SubscribeOk>().is_some() {
             message_buf.extend(write_variable_integer(
-                u8::from(MessageType::SubscribeOk) as u64
+                u8::from(ControlMessageType::SubscribeOk) as u64,
             ));
-            tracing::info!("Relayed Message Type: {:?}", MessageType::SubscribeOk);
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::SubscribeOk
+            );
         } else if message.as_any().downcast_ref::<SubscribeError>().is_some() {
             message_buf.extend(write_variable_integer(
-                u8::from(MessageType::SubscribeError) as u64,
+                u8::from(ControlMessageType::SubscribeError) as u64,
             ));
-            tracing::info!("Relayed Message Type: {:?}", MessageType::SubscribeError);
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::SubscribeError
+            );
+        } else if message.as_any().downcast_ref::<Announce>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::Announce) as u64,
+            ));
+            tracing::info!("Relayed Message Type: {:?}", ControlMessageType::Announce);
+        } else if message.as_any().downcast_ref::<AnnounceOk>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::AnnounceOk) as u64,
+            ));
+            tracing::info!("Relayed Message Type: {:?}", ControlMessageType::AnnounceOk);
+        } else if message
+            .as_any()
+            .downcast_ref::<SubscribeNamespace>()
+            .is_some()
+        {
+            message_buf.extend(write_variable_integer(u8::from(
+                ControlMessageType::SubscribeNamespace,
+            ) as u64));
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::SubscribeNamespace
+            );
+        } else if message
+            .as_any()
+            .downcast_ref::<SubscribeNamespaceOk>()
+            .is_some()
+        {
+            message_buf.extend(write_variable_integer(u8::from(
+                ControlMessageType::SubscribeNamespaceOk,
+            ) as u64));
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::SubscribeNamespaceOk
+            );
         } else {
             tracing::warn!("Unsupported message type for bi-directional stream");
             continue;
         }
-
+        message_buf.extend(write_variable_integer(write_buf.len() as u64));
         message_buf.extend(write_buf);
 
-        let mut shread_send_stream = send_stream.lock().await;
-        if let Err(e) = shread_send_stream.write_all(&message_buf).await {
+        let mut shared_send_stream = send_stream.lock().await;
+        if let Err(e) = shared_send_stream.write_all(&message_buf).await {
             tracing::warn!("Failed to write to stream: {:?}", e);
             break;
         }
 
         tracing::info!("Control message is relayed.");
-        tracing::debug!("relayed message: {:?}", message_buf.to_vec());
+        // tracing::debug!("relayed message: {:?}", message_buf.to_vec());
     }
-}
-
-fn init_logging(log_level: String) {
-    let level_filter: LevelFilter = match log_level.to_uppercase().as_str() {
-        "OFF" => LevelFilter::OFF,
-        "TRACE" => LevelFilter::TRACE,
-        "DEBUG" => LevelFilter::DEBUG,
-        "INFO" => LevelFilter::INFO,
-        "WARN" => LevelFilter::WARN,
-        "ERROR" => LevelFilter::ERROR,
-        _ => {
-            panic!(
-                "Invalid log level: '{}'.\n  Valid log levels: [OFF, TRACE, DEBUG, INFO, WARN, ERROR]",
-                log_level
-            );
-        }
-    };
-
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(level_filter.into())
-        .from_env_lossy();
-
-    tracing_subscriber::fmt()
-        .with_target(true)
-        .with_level(true)
-        .with_env_filter(env_filter)
-        .init();
-
-    tracing::info!("Logging initialized. (Level: {})", log_level);
 }
