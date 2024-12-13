@@ -106,26 +106,22 @@ async fn spawn_uni_recv_stream_thread(
     tokio::spawn(
         async move {
             let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
-            let mut uni_stream_receiver = UniStreamReceiver::init(stream, client)
-                .instrument(session_span)
-                .await;
+            let senders = client.lock().await.senders();
+            let mut uni_stream_receiver = UniStreamReceiver::init(stream, client).await;
 
-            let (code, reason) = match uni_stream_receiver.start().await {
-                Ok(_) => {
-                    let code = TerminationErrorCode::NoError;
-                    let reason = "ObjectStreamForwarder: Finished".to_string();
-                    tracing::info!(reason);
-
-                    (code, reason)
-                }
+            match uni_stream_receiver.start().instrument(session_span).await {
+                Ok(_) => {}
                 Err((code, reason)) => {
                     tracing::error!(reason);
 
-                    (code, reason)
+                    let _ = senders
+                        .close_session_tx()
+                        .send((u8::from(code) as u64, reason.to_string()))
+                        .await;
                 }
-            };
+            }
 
-            let _ = uni_stream_receiver.terminate(code, reason).await;
+            let _ = uni_stream_receiver.terminate().await;
         }
         .in_current_span(),
     );

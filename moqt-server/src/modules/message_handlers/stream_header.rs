@@ -9,7 +9,7 @@ use crate::{
             stream_track_subgroup::process_stream_header_subgroup,
         },
         moqt_client::{MOQTClient, MOQTClientStatus},
-        object_cache_storage::ObjectCacheStorageWrapper,
+        object_cache_storage::{CacheHeader, ObjectCacheStorageWrapper},
     },
 };
 use anyhow::{bail, Result};
@@ -23,7 +23,7 @@ use std::io::Cursor;
 
 #[derive(Debug, PartialEq)]
 pub enum StreamHeaderProcessResult {
-    Success((u64, DataStreamType)),
+    Success(CacheHeader),
     IncompleteMessage,
     Failure(TerminationErrorCode, String),
 }
@@ -92,7 +92,7 @@ pub async fn stream_header_handler(
         );
     }
 
-    let subscribe_id = match header_type {
+    match header_type {
         DataStreamType::StreamHeaderTrack => {
             match process_stream_header_track(
                 &mut read_cur,
@@ -102,16 +102,17 @@ pub async fn stream_header_handler(
             )
             .await
             {
-                Ok(subscribe_id) => {
+                Ok(received_header) => {
                     read_buf.advance(read_cur.position() as usize);
-                    subscribe_id
+
+                    StreamHeaderProcessResult::Success(received_header)
                 }
                 Err(err) => {
                     read_buf.advance(read_cur.position() as usize);
-                    return StreamHeaderProcessResult::Failure(
+                    StreamHeaderProcessResult::Failure(
                         TerminationErrorCode::InternalError,
                         err.to_string(),
-                    );
+                    )
                 }
             }
         }
@@ -124,26 +125,23 @@ pub async fn stream_header_handler(
             )
             .await
             {
-                Ok(subscribe_id) => {
+                Ok(received_header) => {
                     read_buf.advance(read_cur.position() as usize);
-                    subscribe_id
+
+                    StreamHeaderProcessResult::Success(received_header)
                 }
                 Err(err) => {
                     read_buf.advance(read_cur.position() as usize);
-                    return StreamHeaderProcessResult::Failure(
+                    StreamHeaderProcessResult::Failure(
                         TerminationErrorCode::InternalError,
                         err.to_string(),
-                    );
+                    )
                 }
             }
         }
-        unknown => {
-            return StreamHeaderProcessResult::Failure(
-                TerminationErrorCode::ProtocolViolation,
-                format!("Unknown message type: {:?}", unknown),
-            );
-        }
-    };
-
-    StreamHeaderProcessResult::Success((subscribe_id, header_type))
+        unknown => StreamHeaderProcessResult::Failure(
+            TerminationErrorCode::ProtocolViolation,
+            format!("Unknown message type: {:?}", unknown),
+        ),
+    }
 }

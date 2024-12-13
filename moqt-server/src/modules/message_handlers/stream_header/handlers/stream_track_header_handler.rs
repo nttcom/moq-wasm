@@ -16,7 +16,7 @@ pub(crate) async fn stream_header_track_handler(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
     client: &MOQTClient,
-) -> Result<u64> {
+) -> Result<CacheHeader> {
     tracing::trace!("stream_header_track_handler start.");
 
     tracing::debug!(
@@ -37,8 +37,12 @@ pub(crate) async fn stream_header_track_handler(
 
     let cache_header = CacheHeader::Track(stream_header_track_message);
     object_cache_storage
-        .set_subscription(upstream_session_id, upstream_subscribe_id, cache_header)
+        .set_subscription(
+            upstream_session_id,
+            upstream_subscribe_id,
+            cache_header.clone(),
+        )
         .await?;
 
-    Ok(upstream_subscribe_id)
+    Ok(cache_header)
 }
