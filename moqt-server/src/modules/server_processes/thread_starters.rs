@@ -151,6 +151,8 @@ async fn spawn_uni_send_stream_thread(
                     let code = TerminationErrorCode::InternalError;
                     let reason = format!("ObjectStreamForwarder: {:?}", e);
 
+                    tracing::error!(reason);
+
                     let _ = senders
                         .close_session_tx()
                         .send((u8::from(code) as u64, reason.to_string()))
