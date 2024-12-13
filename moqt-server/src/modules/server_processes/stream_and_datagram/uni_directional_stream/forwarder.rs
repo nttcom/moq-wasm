@@ -8,7 +8,6 @@ use crate::modules::{
 use anyhow::{bail, Result};
 use bytes::BytesMut;
 use moqt_core::{
-    constants::TerminationErrorCode,
     data_stream_type::DataStreamType,
     messages::{
         control_messages::subscribe::FilterType,
@@ -114,12 +113,7 @@ impl ObjectStreamForwarder {
         Ok(())
     }
 
-    pub(crate) async fn terminate(&self, code: TerminationErrorCode, reason: String) -> Result<()> {
-        self.senders
-            .close_session_tx()
-            .send((u8::from(code) as u64, reason.to_string()))
-            .await?;
-
+    pub(crate) async fn terminate(&self) -> Result<()> {
         let downstream_session_id = self.stream.stable_id();
         let downstream_stream_id = self.stream.stream_id();
         self.senders
@@ -129,6 +123,8 @@ impl ObjectStreamForwarder {
                 stream_id: downstream_stream_id,
             })
             .await?;
+
+        tracing::info!("Terminated ObjectStreamForwarder");
 
         Ok(())
     }

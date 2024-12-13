@@ -134,30 +134,31 @@ async fn spawn_uni_send_stream_thread(
     tokio::spawn(
         async move {
             let stream = UniSendStream::new(stable_id, stream_id, subscribe_id, send_stream);
+            let senders = client.lock().await.senders();
 
             let mut object_stream_forwarder =
                 ObjectStreamForwarder::init(stream, client, data_stream_type)
                     .await
                     .unwrap();
 
-            let (code, reason) = match object_stream_forwarder.start().await {
-                Ok(_) => {
-                    let code = TerminationErrorCode::NoError;
-                    let reason = "ObjectStreamForwarder: Finished".to_string();
-                    tracing::info!(reason);
-
-                    (code, reason)
-                }
+            match object_stream_forwarder
+                .start()
+                .instrument(session_span)
+                .await
+            {
+                Ok(_) => {}
                 Err(e) => {
                     let code = TerminationErrorCode::InternalError;
                     let reason = format!("ObjectStreamForwarder: {:?}", e);
-                    tracing::error!(reason);
 
-                    (code, reason)
+                    let _ = senders
+                        .close_session_tx()
+                        .send((u8::from(code) as u64, reason.to_string()))
+                        .await;
                 }
-            };
+            }
 
-            let _ = object_stream_forwarder.terminate(code, reason).await;
+            let _ = object_stream_forwarder.terminate().await;
         }
         .in_current_span(),
     );
