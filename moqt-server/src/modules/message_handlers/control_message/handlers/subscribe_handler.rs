@@ -296,7 +296,7 @@ async fn open_new_subscription(
         .clone();
 
     let _ = open_downstream_stream_or_datagram_tx
-        .send((downstream_subscribe_id, stream_header_type.clone()))
+        .send((downstream_subscribe_id, stream_header_type))
         .await;
 
     Ok(())
