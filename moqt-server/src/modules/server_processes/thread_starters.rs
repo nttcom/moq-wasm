@@ -2,7 +2,7 @@ use super::stream_and_datagram::{
     bi_directional_stream::{
         forwarder::forward_control_message, receiver::handle_bi_recv_stream, stream::BiStream,
     },
-    datagram::{forwarder::ObjectDatagramForwarder, receiver::DatagramReceiver},
+    datagram::{forwarder::DatagramForwarder, receiver::DatagramReceiver},
     uni_directional_stream::{
         forwarder::ObjectStreamForwarder,
         receiver::UniStreamReceiver,
@@ -219,20 +219,15 @@ async fn spawn_send_datagram_thread(
     tokio::spawn(
         async move {
             let senders = client.lock().await.senders();
-            let mut object_stream_forwarder =
-                ObjectDatagramForwarder::init(session, subscribe_id, client)
-                    .await
-                    .unwrap();
-
-            match object_stream_forwarder
-                .start()
-                .instrument(session_span)
+            let mut datagram_forwarder = DatagramForwarder::init(session, subscribe_id, client)
                 .await
-            {
+                .unwrap();
+
+            match datagram_forwarder.start().instrument(session_span).await {
                 Ok(_) => {}
                 Err(e) => {
                     let code = TerminationErrorCode::InternalError;
-                    let reason = format!("ObjectDatagramForwarder: {:?}", e);
+                    let reason = format!("DatagramForwarder: {:?}", e);
 
                     tracing::error!(reason);
 
@@ -243,7 +238,7 @@ async fn spawn_send_datagram_thread(
                 }
             }
 
-            let _ = object_stream_forwarder.terminate().await;
+            let _ = datagram_forwarder.terminate().await;
         }
         .in_current_span(),
     );

@@ -44,7 +44,7 @@ impl ObjectCacheKey {
     }
 }
 
-pub(crate) struct ObjectDatagramForwarder {
+pub(crate) struct DatagramForwarder {
     session: Arc<Connection>,
     senders: Arc<Senders>,
     downstream_subscribe_id: u64,
@@ -53,7 +53,7 @@ pub(crate) struct ObjectDatagramForwarder {
     sleep_time: Duration,
 }
 
-impl ObjectDatagramForwarder {
+impl DatagramForwarder {
     pub(crate) async fn init(
         session: Arc<Connection>,
         downstream_subscribe_id: u64,
@@ -78,7 +78,7 @@ impl ObjectDatagramForwarder {
 
         let object_cache_key = ObjectCacheKey::new(upstream_session_id, upstream_subscribe_id);
 
-        let object_datagram_forwarder = ObjectDatagramForwarder {
+        let datagram_forwarder = DatagramForwarder {
             session,
             senders,
             downstream_subscribe_id,
@@ -87,7 +87,7 @@ impl ObjectDatagramForwarder {
             sleep_time,
         };
 
-        Ok(object_datagram_forwarder)
+        Ok(datagram_forwarder)
     }
 
     pub(crate) async fn start(&mut self) -> Result<()> {
@@ -112,7 +112,7 @@ impl ObjectDatagramForwarder {
             })
             .await?;
 
-        tracing::info!("Terminated ObjectDatagramForwarder");
+        tracing::info!("Terminated DatagramForwarder");
 
         Ok(())
     }
