@@ -63,7 +63,7 @@ pub async fn control_message_handler(
     read_buf: &mut BytesMut,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
-    open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    open_downstream_stream_or_datagram_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
@@ -142,7 +142,7 @@ pub async fn control_message_handler(
                 pubsub_relation_manager_repository,
                 send_stream_dispatcher_repository,
                 object_cache_storage,
-                open_downstream_subscription_txes,
+                open_downstream_stream_or_datagram_txes,
             )
             .await
             {
@@ -361,6 +361,7 @@ pub(crate) mod test_helper_fn {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
     use crate::SenderToOpenSubscription;
     use bytes::BytesMut;
@@ -380,7 +381,8 @@ pub(crate) mod test_helper_fn {
 
         // Generate client
         let subscriber_sessin_id = 0;
-        let mut client = MOQTClient::new(subscriber_sessin_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let mut client = MOQTClient::new(subscriber_sessin_id, senders_mock);
         client.update_status(client_status);
 
         // Generate PubSubRelationManagerWrapper
@@ -404,7 +406,7 @@ pub(crate) mod test_helper_fn {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<
+        let open_downstream_stream_or_datagram_txes: Arc<
             Mutex<HashMap<usize, SenderToOpenSubscription>>,
         > = Arc::new(Mutex::new(HashMap::new()));
 
@@ -413,7 +415,7 @@ pub(crate) mod test_helper_fn {
             &mut buf,
             UnderlayType::WebTransport,
             &mut client,
-            open_downstream_subscription_txes,
+            open_downstream_stream_or_datagram_txes,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
