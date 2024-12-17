@@ -41,7 +41,6 @@ Supported version: draft-ietf-moq-transport-06
   - [ ] Priorities
   - [ ] Object Cache
 
-
 ## Modules
 
 ### moqt-core
