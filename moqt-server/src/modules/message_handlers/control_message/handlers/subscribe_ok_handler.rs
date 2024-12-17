@@ -47,19 +47,18 @@ pub(crate) async fn subscribe_ok_handler(
                     subscribe_ok_message.largest_object_id(),
                     subscribe_ok_message.subscribe_parameters().clone(),
                 );
-                let relaying_subscribe_ok_message: Box<dyn MOQTPayload> =
-                    Box::new(message_payload.clone());
+                let subscribe_ok_message: Box<dyn MOQTPayload> = Box::new(message_payload.clone());
 
                 send_stream_dispatcher_repository
                     .transfer_message_to_send_stream_thread(
                         *downstream_session_id,
-                        relaying_subscribe_ok_message,
+                        subscribe_ok_message,
                         StreamDirection::Bi,
                     )
                     .await?;
 
                 tracing::debug!(
-                    "message: {:#?} is sent to relay handler for client {:?}",
+                    "message: {:#?} is sent to forward handler for client {:?}",
                     message_payload,
                     downstream_session_id
                 );
@@ -90,24 +89,30 @@ pub(crate) async fn subscribe_ok_handler(
 #[cfg(test)]
 mod success {
     use super::subscribe_ok_handler;
-    use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
-        wrapper::PubSubRelationManagerWrapper,
+    use crate::modules::{
+        moqt_client::MOQTClient,
+        pubsub_relation_manager::{
+            commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+            wrapper::PubSubRelationManagerWrapper,
+        },
+        send_stream_dispatcher::{
+            send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
+        },
+        server_processes::senders,
     };
-    use crate::modules::send_stream_dispatcher::{
-        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-    };
-    use crate::MOQTClient;
     use bytes::BytesMut;
-    use moqt_core::constants::StreamDirection;
-    use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
-    use moqt_core::messages::control_messages::version_specific_parameters::{
-        AuthorizationInfo, VersionSpecificParameter,
+    use moqt_core::{
+        constants::StreamDirection,
+        messages::{
+            control_messages::{
+                subscribe::{FilterType, GroupOrder},
+                subscribe_ok::SubscribeOk,
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            },
+            moqt_payload::MOQTPayload,
+        },
+        pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     };
-    use moqt_core::messages::{
-        control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
-    };
-    use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
@@ -147,7 +152,8 @@ mod success {
 
         // Generate client
         let upstream_session_id = 1;
-        let client = MOQTClient::new(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -216,12 +222,12 @@ mod success {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: downstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -240,30 +246,36 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use crate::modules::message_handlers::control_message::handlers::subscribe_ok_handler::subscribe_ok_handler;
-    use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
-        wrapper::PubSubRelationManagerWrapper,
+    use super::subscribe_ok_handler;
+    use crate::modules::{
+        moqt_client::MOQTClient,
+        pubsub_relation_manager::{
+            commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+            wrapper::PubSubRelationManagerWrapper,
+        },
+        send_stream_dispatcher::{
+            send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
+        },
+        server_processes::senders,
     };
-    use crate::modules::send_stream_dispatcher::{
-        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-    };
-    use crate::MOQTClient;
     use bytes::BytesMut;
-    use moqt_core::constants::StreamDirection;
-    use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
-    use moqt_core::messages::control_messages::version_specific_parameters::{
-        AuthorizationInfo, VersionSpecificParameter,
+    use moqt_core::{
+        constants::StreamDirection,
+        messages::{
+            control_messages::{
+                subscribe::{FilterType, GroupOrder},
+                subscribe_ok::SubscribeOk,
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            },
+            moqt_payload::MOQTPayload,
+        },
+        pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     };
-    use moqt_core::messages::{
-        control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
-    };
-    use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
     #[tokio::test]
-    async fn relay_fail() {
+    async fn forward_fail() {
         // Generate SUBSCRIBE_OK message
         let downstream_subscribe_id = 0;
         let track_alias = 0;
@@ -298,7 +310,8 @@ mod failure {
 
         // Generate client
         let upstream_session_id = 1;
-        let client = MOQTClient::new(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -414,7 +427,8 @@ mod failure {
 
         // Generate client
         let upstream_session_id = 1;
-        let client = MOQTClient::new(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -455,12 +469,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: downstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -512,7 +526,8 @@ mod failure {
 
         // Generate client
         let upstream_session_id = 1;
-        let client = MOQTClient::new(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -585,12 +600,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: downstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -642,7 +657,8 @@ mod failure {
 
         // Generate client
         let upstream_session_id = 1;
-        let client = MOQTClient::new(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -715,12 +731,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: downstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
