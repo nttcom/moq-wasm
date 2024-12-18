@@ -116,6 +116,7 @@ mod success {
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
+    use crate::modules::server_processes::senders;
     use bytes::BytesMut;
     use moqt_core::constants::StreamDirection;
     use moqt_core::messages::control_messages::{
@@ -144,7 +145,8 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -177,19 +179,19 @@ mod success {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx.clone(),
+                sender: message_tx.clone(),
             })
             .await;
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: downstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -223,7 +225,8 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -260,12 +263,12 @@ mod success {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -294,6 +297,7 @@ mod failure {
     use crate::modules::send_stream_dispatcher::{
         send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
     };
+    use crate::modules::server_processes::senders;
     use bytes::BytesMut;
     use moqt_core::constants::StreamDirection;
     use moqt_core::messages::control_messages::{
@@ -320,7 +324,8 @@ mod failure {
 
         // Generate client
         let upstream_session_id = 0;
-        let client = MOQTClient::new(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -350,12 +355,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 

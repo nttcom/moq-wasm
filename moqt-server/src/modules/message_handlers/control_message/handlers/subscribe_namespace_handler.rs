@@ -113,6 +113,7 @@ mod success {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
     use bytes::BytesMut;
     use moqt_core::{
@@ -147,7 +148,8 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -175,12 +177,12 @@ mod success {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -210,6 +212,7 @@ mod failure {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
     use bytes::BytesMut;
     use moqt_core::{
@@ -244,7 +247,8 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper (register track_namespace_prefix in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -276,12 +280,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -325,7 +329,8 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper (register track_namespace_prefix that has same prefix in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -360,12 +365,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -410,7 +415,8 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper (register track_namespace_prefix that has same prefix in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -445,12 +451,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -476,7 +482,7 @@ mod failure {
     }
 
     #[tokio::test]
-    async fn relay_fail() {
+    async fn forward_fail() {
         // Generate SUBSCRIBE_NAMESPACE message
         let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string(), "ccc".to_string()]);
         let track_namespace_prefix = Vec::from(["aaa".to_string(), "bbb".to_string()]);
@@ -493,7 +499,8 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -552,7 +559,8 @@ mod failure {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -580,12 +588,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 

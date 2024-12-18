@@ -25,7 +25,7 @@ pub(crate) async fn subscribe_handler(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    open_downstream_stream_or_datagram_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
 ) -> Result<Option<SubscribeError>> {
     tracing::trace!("subscribe_handler start.");
 
@@ -136,7 +136,7 @@ pub(crate) async fn subscribe_handler(
             open_new_subscription(
                 pubsub_relation_manager_repository,
                 object_cache_storage,
-                open_downstream_subscription_txes,
+                open_downstream_stream_or_datagram_txes,
                 client,
                 subscribe_message,
             )
@@ -196,7 +196,7 @@ pub(crate) async fn subscribe_handler(
             )
             .unwrap();
 
-            let relaying_subscribe_message: Box<dyn MOQTPayload> =
+            let forwarding_subscribe_message: Box<dyn MOQTPayload> =
                 Box::new(message_payload.clone());
 
             // Notify to the publisher about the SUBSCRIBE message
@@ -205,7 +205,7 @@ pub(crate) async fn subscribe_handler(
             match send_stream_dispatcher_repository
                 .transfer_message_to_send_stream_thread(
                     session_id,
-                    relaying_subscribe_message,
+                    forwarding_subscribe_message,
                     StreamDirection::Bi,
                 )
                 .await
@@ -231,7 +231,7 @@ pub(crate) async fn subscribe_handler(
             }
 
             tracing::debug!(
-                "message: {:#?} is sent to relay handler for client {:?}",
+                "message: {:#?} is sent to forward handler for client {:?}",
                 message_payload.clone(),
                 session_id
             );
@@ -257,7 +257,7 @@ pub(crate) async fn subscribe_handler(
 async fn open_new_subscription(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    open_downstream_subscription_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    open_downstream_stream_or_datagram_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     client: &MOQTClient,
     subscribe_message: Subscribe,
 ) -> Result<()> {
@@ -288,15 +288,15 @@ async fn open_new_subscription(
         Err(_) => bail!("CacheHeader not found"),
     };
 
-    let open_downstream_subscription_tx = open_downstream_subscription_txes
+    let open_downstream_stream_or_datagram_tx = open_downstream_stream_or_datagram_txes
         .lock()
         .await
         .get(&downstream_session_id)
         .unwrap()
         .clone();
 
-    let _ = open_downstream_subscription_tx
-        .send((downstream_subscribe_id, stream_header_type.clone()))
+    let _ = open_downstream_stream_or_datagram_tx
+        .send((downstream_subscribe_id, stream_header_type))
         .await;
 
     Ok(())
@@ -522,6 +522,7 @@ mod success {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
     use crate::SenderToOpenSubscription;
     use moqt_core::{
@@ -578,7 +579,8 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -609,12 +611,12 @@ mod success {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -625,7 +627,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<
+        let open_downstream_stream_or_datagram_txes: Arc<
             Mutex<HashMap<usize, SenderToOpenSubscription>>,
         > = Arc::new(Mutex::new(HashMap::new()));
 
@@ -636,7 +638,7 @@ mod success {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_subscription_txes,
+            open_downstream_stream_or_datagram_txes,
         )
         .await;
 
@@ -699,7 +701,8 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -745,19 +748,19 @@ mod success {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx.clone(),
+                sender: message_tx.clone(),
             })
             .await;
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: downstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -768,7 +771,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<
+        let open_downstream_stream_or_datagram_txes: Arc<
             Mutex<HashMap<usize, SenderToOpenSubscription>>,
         > = Arc::new(Mutex::new(HashMap::new()));
 
@@ -779,7 +782,7 @@ mod success {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_subscription_txes,
+            open_downstream_stream_or_datagram_txes,
         )
         .await;
 
@@ -840,7 +843,8 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -886,19 +890,19 @@ mod success {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx.clone(),
+                sender: message_tx.clone(),
             })
             .await;
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: downstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -936,18 +940,18 @@ mod success {
         }
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<
+        let open_downstream_stream_or_datagram_txes: Arc<
             Mutex<HashMap<usize, SenderToOpenSubscription>>,
         > = Arc::new(Mutex::new(HashMap::new()));
-        let (open_downstream_subscription_tx, mut open_downstream_subscription_rx) =
+        let (open_downstream_stream_or_datagram_tx, mut open_downstream_stream_or_datagram_rx) =
             mpsc::channel::<(u64, DataStreamType)>(32);
-        open_downstream_subscription_txes
+        open_downstream_stream_or_datagram_txes
             .lock()
             .await
-            .insert(downstream_session_id, open_downstream_subscription_tx);
+            .insert(downstream_session_id, open_downstream_stream_or_datagram_tx);
 
         tokio::spawn(async move {
-            let _ = open_downstream_subscription_rx.recv().await;
+            let _ = open_downstream_stream_or_datagram_rx.recv().await;
         });
 
         // Execute subscribe_handler and get result
@@ -957,7 +961,7 @@ mod success {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_subscription_txes,
+            open_downstream_stream_or_datagram_txes,
         )
         .await;
 
@@ -998,6 +1002,7 @@ mod failure {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
     use crate::SenderToOpenSubscription;
     use moqt_core::{
@@ -1051,7 +1056,8 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper (register subscriber in advance)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1097,12 +1103,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -1113,7 +1119,7 @@ mod failure {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<
+        let open_downstream_stream_or_datagram_txes: Arc<
             Mutex<HashMap<usize, SenderToOpenSubscription>>,
         > = Arc::new(Mutex::new(HashMap::new()));
 
@@ -1124,7 +1130,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_subscription_txes,
+            open_downstream_stream_or_datagram_txes,
         )
         .await;
 
@@ -1133,7 +1139,7 @@ mod failure {
     }
 
     #[tokio::test]
-    async fn relay_fail() {
+    async fn forward_fail() {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
         let track_alias = 0;
@@ -1168,7 +1174,8 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1205,7 +1212,7 @@ mod failure {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<
+        let open_downstream_stream_or_datagram_txes: Arc<
             Mutex<HashMap<usize, SenderToOpenSubscription>>,
         > = Arc::new(Mutex::new(HashMap::new()));
 
@@ -1216,7 +1223,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_subscription_txes,
+            open_downstream_stream_or_datagram_txes,
         )
         .await;
 
@@ -1266,7 +1273,8 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper (without set publisher)
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1289,12 +1297,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -1305,7 +1313,7 @@ mod failure {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<
+        let open_downstream_stream_or_datagram_txes: Arc<
             Mutex<HashMap<usize, SenderToOpenSubscription>>,
         > = Arc::new(Mutex::new(HashMap::new()));
 
@@ -1316,7 +1324,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_subscription_txes,
+            open_downstream_stream_or_datagram_txes,
         )
         .await;
 
@@ -1372,7 +1380,8 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1403,12 +1412,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -1419,7 +1428,7 @@ mod failure {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<
+        let open_downstream_stream_or_datagram_txes: Arc<
             Mutex<HashMap<usize, SenderToOpenSubscription>>,
         > = Arc::new(Mutex::new(HashMap::new()));
 
@@ -1430,7 +1439,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_subscription_txes.clone(),
+            open_downstream_stream_or_datagram_txes.clone(),
         )
         .await;
 
@@ -1440,7 +1449,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_subscription_txes,
+            open_downstream_stream_or_datagram_txes,
         )
         .await;
 
@@ -1489,7 +1498,8 @@ mod failure {
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new(downstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -1520,12 +1530,12 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        let (uni_relay_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
+        let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
         let _ = send_stream_tx
             .send(SendStreamDispatchCommand::Set {
                 session_id: upstream_session_id,
                 stream_direction: StreamDirection::Bi,
-                sender: uni_relay_tx,
+                sender: message_tx,
             })
             .await;
 
@@ -1536,7 +1546,7 @@ mod failure {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         // Prepare open subscription sender
-        let open_downstream_subscription_txes: Arc<
+        let open_downstream_stream_or_datagram_txes: Arc<
             Mutex<HashMap<usize, SenderToOpenSubscription>>,
         > = Arc::new(Mutex::new(HashMap::new()));
 
@@ -1547,7 +1557,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_subscription_txes.clone(),
+            open_downstream_stream_or_datagram_txes.clone(),
         )
         .await;
 
@@ -1557,7 +1567,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_subscription_txes,
+            open_downstream_stream_or_datagram_txes,
         )
         .await;
 
