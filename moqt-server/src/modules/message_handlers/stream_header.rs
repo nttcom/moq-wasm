@@ -24,7 +24,7 @@ use std::io::Cursor;
 #[derive(Debug, PartialEq)]
 pub enum StreamHeaderProcessResult {
     Success((u64, DataStreamType)),
-    Continue,
+    IncompleteMessage,
     Failure(TerminationErrorCode, String),
 }
 
@@ -61,7 +61,7 @@ pub async fn stream_header_handler(
 
     // Check if the header type is exist
     if payload_length == 0 {
-        return StreamHeaderProcessResult::Continue;
+        return StreamHeaderProcessResult::IncompleteMessage;
     }
 
     let mut read_cur = Cursor::new(&read_buf[..]);

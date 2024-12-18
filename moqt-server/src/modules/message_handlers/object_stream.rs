@@ -18,7 +18,7 @@ use std::io::Cursor;
 #[derive(Debug, PartialEq)]
 pub enum ObjectStreamProcessResult {
     Success,
-    Continue,
+    IncompleteMessage,
     Failure(TerminationErrorCode, String),
 }
 
@@ -34,7 +34,7 @@ pub async fn object_stream_handler(
 
     // Check if the data is exist
     if payload_length == 0 {
-        return ObjectStreamProcessResult::Continue;
+        return ObjectStreamProcessResult::IncompleteMessage;
     }
 
     // TODO: Set the accurate duration
@@ -70,7 +70,7 @@ pub async fn object_stream_handler(
                 Err(err) => {
                     tracing::warn!("{:#?}", err);
                     read_cur.set_position(0);
-                    return ObjectStreamProcessResult::Continue;
+                    return ObjectStreamProcessResult::IncompleteMessage;
                 }
             }
         }
@@ -89,7 +89,7 @@ pub async fn object_stream_handler(
                 Err(err) => {
                     tracing::warn!("{:#?}", err);
                     read_cur.set_position(0);
-                    return ObjectStreamProcessResult::Continue;
+                    return ObjectStreamProcessResult::IncompleteMessage;
                 }
             }
         }
