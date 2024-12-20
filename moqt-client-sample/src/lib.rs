@@ -27,9 +27,9 @@ use moqt_core::{
     },
     messages::{
         data_streams::{
-            object_stream_subgroup::ObjectStreamSubgroup, object_stream_track::ObjectStreamTrack,
-            stream_header_subgroup::StreamHeaderSubgroup, stream_header_track::StreamHeaderTrack,
-            DataStreams,
+            object_datagram::ObjectDatagram, object_stream_subgroup::ObjectStreamSubgroup,
+            object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
+            stream_header_track::StreamHeaderTrack, DataStreams,
         },
         moqt_payload::MOQTPayload,
     },
@@ -79,6 +79,7 @@ pub struct MOQTClient {
     subscription_node: Rc<RefCell<SubscriptionNode>>,
     transport: Rc<RefCell<Option<web_sys::WebTransport>>>,
     control_stream_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
+    object_datagram_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
     object_stream_writers: Rc<RefCell<HashMap<u64, web_sys::WritableStreamDefaultWriter>>>,
     callbacks: Rc<RefCell<MOQTCallbacks>>,
 }
@@ -94,6 +95,7 @@ impl MOQTClient {
             subscription_node: Rc::new(RefCell::new(SubscriptionNode::new())),
             transport: Rc::new(RefCell::new(None)),
             control_stream_writer: Rc::new(RefCell::new(None)),
+            object_datagram_writer: Rc::new(RefCell::new(None)),
             object_stream_writers: Rc::new(RefCell::new(HashMap::new())),
             callbacks: Rc::new(RefCell::new(MOQTCallbacks::new())),
         }
@@ -135,6 +137,13 @@ impl MOQTClient {
         self.callbacks
             .borrow_mut()
             .set_subscribe_namespace_response_callback(callback);
+    }
+
+    #[wasm_bindgen(js_name = onObjectDatagram)]
+    pub fn set_object_datagram_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_object_datagram_callback(callback);
     }
 
     #[wasm_bindgen(js_name = onStreamHeaderTrack)]
@@ -487,6 +496,7 @@ impl MOQTClient {
         subscribe_id: u64,
         expires: u64,
         auth_info: String,
+        fowarding_preference: String,
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
             let auth_info =
@@ -538,21 +548,38 @@ impl MOQTClient {
                         .borrow_mut()
                         .activate_as_publisher(subscribe_id);
 
-                    let send_uni_stream = web_sys::WritableStream::from(
-                        JsFuture::from(
-                            self.transport
+                    match &*fowarding_preference {
+                        // stream
+                        "datagram" => {
+                            let datagram_writer = self
+                                .transport
                                 .borrow()
                                 .as_ref()
                                 .unwrap()
-                                .create_unidirectional_stream(),
-                        )
-                        .await?,
-                    );
-                    let send_uni_stream_writer = send_uni_stream.get_writer()?;
+                                .datagrams()
+                                .writable()
+                                .get_writer()?;
+                            *self.object_datagram_writer.borrow_mut() = Some(datagram_writer);
+                        }
+                        "track" | "subgroup" => {
+                            let send_uni_stream = web_sys::WritableStream::from(
+                                JsFuture::from(
+                                    self.transport
+                                        .borrow()
+                                        .as_ref()
+                                        .unwrap()
+                                        .create_unidirectional_stream(),
+                                )
+                                .await?,
+                            );
+                            let send_uni_stream_writer = send_uni_stream.get_writer()?;
 
-                    self.object_stream_writers
-                        .borrow_mut()
-                        .insert(subscribe_id, send_uni_stream_writer);
+                            self.object_stream_writers
+                                .borrow_mut()
+                                .insert(subscribe_id, send_uni_stream_writer);
+                        }
+                        _ => {}
+                    }
 
                     Ok(ok)
                 }
@@ -698,6 +725,54 @@ impl MOQTClient {
             }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
+        }
+    }
+
+    #[wasm_bindgen(js_name = sendObjectDatagram)]
+    pub async fn send_object_datagram(
+        &self,
+        subscribe_id: u64,
+        track_alias: u64,
+        group_id: u64,
+        object_id: u64,
+        publisher_priority: u8,
+        object_payload: Vec<u8>,
+    ) -> Result<JsValue, JsValue> {
+        if let Some(writer) = &*self.object_datagram_writer.borrow() {
+            let object_datagram = ObjectDatagram::new(
+                subscribe_id,
+                track_alias,
+                group_id,
+                object_id,
+                publisher_priority,
+                None,
+                object_payload,
+            )
+            .unwrap();
+            let mut object_datagram_buf = BytesMut::new();
+            let _ = object_datagram.packetize(&mut object_datagram_buf);
+
+            let mut buf = Vec::new();
+            // Message Type
+            buf.extend(write_variable_integer(
+                u8::from(DataStreamType::ObjectDatagram) as u64,
+            ));
+            buf.extend(object_datagram_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    log(std::format!("sent: object id: {:#?}", object_id).as_str());
+                    Ok(ok)
+                }
+                Err(e) => {
+                    log(std::format!("err: {:?}", e).as_str());
+                    Err(e)
+                }
+            }
+        } else {
+            return Err(JsValue::from_str("object_datagram_writer is None"));
         }
     }
 
@@ -889,7 +964,15 @@ impl MOQTClient {
             .await;
         });
 
-        // For receiving object messages
+        // // For receiving object messages as datagrams
+        let datagram_reader_readable = transport.datagrams().readable();
+        let datagram_reader = web_sys::ReadableStreamDefaultReader::new(&datagram_reader_readable)?;
+        let callbacks = self.callbacks.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = datagram_read_thread(callbacks, &datagram_reader).await;
+        });
+
+        // For receiving object messages as streams
         let incoming_uni_stream = transport.incoming_unidirectional_streams();
         let incoming_uni_stream_reader =
             web_sys::ReadableStreamDefaultReader::new(&&incoming_uni_stream.into())?;
@@ -1176,6 +1259,43 @@ async fn control_message_handler(
 }
 
 #[cfg(web_sys_unstable_apis)]
+async fn datagram_read_thread(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    reader: &ReadableStreamDefaultReader,
+) -> Result<(), JsValue> {
+    log("datagram_read_thread");
+
+    let mut buf = BytesMut::new();
+
+    loop {
+        let ret = reader.read();
+        let ret = JsFuture::from(ret).await?;
+
+        let ret_value = js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?;
+        let ret_done = js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?;
+        let ret_done = js_sys::Boolean::from(ret_done).value_of();
+
+        if ret_done {
+            break;
+        }
+
+        let ret_value = js_sys::Uint8Array::from(ret_value).to_vec();
+
+        for i in ret_value {
+            buf.put_u8(i);
+        }
+
+        while buf.len() > 0 {
+            if let Err(e) = datagram_handler(callbacks.clone(), &mut buf).await {
+                log(std::format!("error: {:#?}", e).as_str());
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(web_sys_unstable_apis)]
 async fn uni_directional_stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
@@ -1236,7 +1356,7 @@ async fn uni_directional_stream_read_thread(
                             object_stream_subgroup_handler(callbacks.clone(), &mut buf).await
                         {
                             log(std::format!("error: {:#?}", e).as_str());
-                            return Err(js_sys::Error::new(&e.to_string()).into());
+                            break;
                         }
                     }
                 }
@@ -1311,6 +1431,53 @@ async fn object_header_handler(
     };
 
     Ok(data_stream_type)
+}
+
+#[cfg(web_sys_unstable_apis)]
+async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut BytesMut) -> Result<()> {
+    let mut read_cur = Cursor::new(&buf[..]);
+    let header_type_value = read_variable_integer(&mut read_cur);
+
+    match header_type_value {
+        Ok(v) => {
+            let data_stream_type = DataStreamType::try_from(v as u8)?;
+
+            log(std::format!("data_stream_type_value: {:#x?}", data_stream_type).as_str());
+
+            if data_stream_type == DataStreamType::ObjectDatagram {
+                let object_datagram = match ObjectDatagram::depacketize(&mut read_cur) {
+                    Ok(v) => {
+                        log(std::format!("object_id: {:#?}", v.object_id()).as_str());
+                        buf.advance(read_cur.position() as usize);
+                        v
+                    }
+                    Err(e) => {
+                        read_cur.set_position(0);
+                        log(std::format!("retry because: {:#?}", e).as_str());
+                        return Err(e);
+                    }
+                };
+
+                if let Some(callback) = callbacks.borrow().object_datagram_callback() {
+                    callback
+                        .call1(&JsValue::null(), &JsValue::from("called2"))
+                        .unwrap();
+                    let v = serde_wasm_bindgen::to_value(&object_datagram).unwrap();
+                    callback.call1(&JsValue::null(), &(v)).unwrap();
+                }
+            } else {
+                let msg = "format error".to_string();
+                log(std::format!("{}", msg).as_str());
+                return Err(anyhow::anyhow!(msg));
+            }
+        }
+        Err(e) => {
+            log("data_stream_type_value is None");
+            return Err(e);
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -1561,6 +1728,7 @@ struct MOQTCallbacks {
     subscribe_callback: Option<js_sys::Function>,
     subscribe_response_callback: Option<js_sys::Function>,
     subscribe_namespace_response_callback: Option<js_sys::Function>,
+    object_datagram_callback: Option<js_sys::Function>,
     stream_header_track_callback: Option<js_sys::Function>,
     object_stream_track_callback: Option<js_sys::Function>,
     stream_header_subgroup_callback: Option<js_sys::Function>,
@@ -1577,6 +1745,7 @@ impl MOQTCallbacks {
             subscribe_callback: None,
             subscribe_response_callback: None,
             subscribe_namespace_response_callback: None,
+            object_datagram_callback: None,
             stream_header_track_callback: None,
             object_stream_track_callback: None,
             stream_header_subgroup_callback: None,
@@ -1630,6 +1799,14 @@ impl MOQTCallbacks {
 
     pub fn set_subscribe_namespace_response_callback(&mut self, callback: js_sys::Function) {
         self.subscribe_namespace_response_callback = Some(callback);
+    }
+
+    pub fn object_datagram_callback(&self) -> Option<js_sys::Function> {
+        self.object_datagram_callback.clone()
+    }
+
+    pub fn set_object_datagram_callback(&mut self, callback: js_sys::Function) {
+        self.object_datagram_callback = Some(callback);
     }
 
     pub fn stream_header_track_callback(&self) -> Option<js_sys::Function> {
