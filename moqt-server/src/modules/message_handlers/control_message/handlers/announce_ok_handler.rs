@@ -33,6 +33,8 @@ mod success {
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
     };
+    use crate::modules::server_processes::senders;
+    use bytes::BytesMut;
     use moqt_core::messages::control_messages::announce_ok::AnnounceOk;
     use moqt_core::messages::moqt_payload::MOQTPayload;
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
@@ -43,12 +45,14 @@ mod success {
         // Generate ANNOUNCE message
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let announce_ok_message = AnnounceOk::new(track_namespace.clone());
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         announce_ok_message.packetize(&mut buf);
 
         // Generate client
         let downstream_session_id = 0;
-        let client = MOQTClient::new_without_senders(downstream_session_id);
+
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(downstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =

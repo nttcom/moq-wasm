@@ -361,6 +361,7 @@ pub(crate) mod test_helper_fn {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
     use crate::SenderToOpenSubscription;
     use bytes::BytesMut;
@@ -380,7 +381,8 @@ pub(crate) mod test_helper_fn {
 
         // Generate client
         let subscriber_sessin_id = 0;
-        let mut client = MOQTClient::new_without_senders(subscriber_sessin_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let mut client = MOQTClient::new(subscriber_sessin_id, senders_mock);
         client.update_status(client_status);
 
         // Generate PubSubRelationManagerWrapper

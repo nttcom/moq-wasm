@@ -14,7 +14,8 @@ pub struct MOQTClient {
     id: usize,
     status: MOQTClientStatus,
     role: Option<RoleCase>,
-    senders: Option<Arc<Senders>>, // TODO: remove Option
+
+    senders: Arc<Senders>,
 }
 
 impl MOQTClient {
@@ -24,7 +25,7 @@ impl MOQTClient {
             id,
             status: MOQTClientStatus::Connected,
             role: None,
-            senders: Some(senders),
+            senders,
         }
     }
     pub fn id(&self) -> usize {
@@ -50,16 +51,6 @@ impl MOQTClient {
     }
 
     pub fn senders(&self) -> Arc<Senders> {
-        self.senders.clone().unwrap()
-    }
-
-    #[cfg(test)]
-    pub fn new_without_senders(id: usize) -> Self {
-        MOQTClient {
-            id,
-            status: MOQTClientStatus::Connected,
-            role: None,
-            senders: None,
-        }
+        self.senders.clone()
     }
 }
