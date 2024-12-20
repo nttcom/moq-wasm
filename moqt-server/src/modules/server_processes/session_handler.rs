@@ -21,7 +21,7 @@ use tracing::{self};
 use wtransport::{endpoint::IncomingSession, Connection};
 
 pub(crate) struct SessionHandler {
-    session: Connection,
+    session: Arc<Connection>,
     client: Arc<Mutex<MOQTClient>>,
     close_session_rx: mpsc::Receiver<(u64, String)>,
     open_downstream_stream_or_datagram_rx: mpsc::Receiver<(u64, DataStreamType)>,
@@ -86,6 +86,7 @@ impl SessionHandler {
             .insert(stable_id, open_downstream_stream_or_datagram_tx);
 
         let client = Arc::new(Mutex::new(MOQTClient::new(stable_id, senders)));
+        let session = Arc::new(session);
 
         let session_handler = SessionHandler {
             session,
@@ -103,7 +104,7 @@ impl SessionHandler {
         loop {
             match select_spawn_thread(
                 &self.client,
-                &self.session,
+                self.session.clone(),
                 &mut self.open_downstream_stream_or_datagram_rx,
                 &mut self.close_session_rx,
                 &mut is_control_stream_opened,

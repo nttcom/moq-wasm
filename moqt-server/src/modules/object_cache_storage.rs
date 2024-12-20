@@ -22,7 +22,7 @@ pub(crate) enum CacheHeader {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum CacheObject {
     Datagram(ObjectDatagram),
     Track(ObjectStreamTrack),

@@ -17,10 +17,14 @@ use modules::{
     },
 };
 pub use moqt_core::constants;
-use moqt_core::{constants::UnderlayType, data_stream_type::DataStreamType};
+use moqt_core::{
+    constants::{TerminationErrorCode, UnderlayType},
+    data_stream_type::DataStreamType,
+};
 
 type SubscribeId = u64;
 pub(crate) type SenderToOpenSubscription = Sender<(SubscribeId, DataStreamType)>;
+pub(crate) type TerminationError = (TerminationErrorCode, String);
 
 pub struct MOQTServer {
     port: u16,
