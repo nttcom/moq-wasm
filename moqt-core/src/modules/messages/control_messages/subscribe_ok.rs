@@ -1,8 +1,3 @@
-use anyhow::bail;
-use anyhow::Context;
-use serde::Serialize;
-use std::any::Any;
-
 use crate::{
     messages::{
         control_messages::{
@@ -13,6 +8,11 @@ use crate::{
     variable_bytes::read_fixed_length_bytes_from_buffer,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
+use anyhow::bail;
+use anyhow::Context;
+use bytes::BytesMut;
+use serde::Serialize;
+use std::any::Any;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeOk {
@@ -79,7 +79,7 @@ impl SubscribeOk {
 }
 
 impl MOQTPayload for SubscribeOk {
-    fn depacketize(buf: &mut bytes::BytesMut) -> anyhow::Result<Self>
+    fn depacketize(buf: &mut BytesMut) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
@@ -140,7 +140,7 @@ impl MOQTPayload for SubscribeOk {
         })
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    fn packetize(&self, buf: &mut BytesMut) {
         buf.extend(write_variable_integer(self.subscribe_id));
         buf.extend(write_variable_integer(self.expires));
         buf.extend(u8::from(self.group_order).to_be_bytes());
@@ -161,217 +161,223 @@ impl MOQTPayload for SubscribeOk {
 }
 
 #[cfg(test)]
-mod success {
-    use bytes::BytesMut;
+mod tests {
+    mod success {
+        use crate::messages::{
+            control_messages::{
+                subscribe_ok::{GroupOrder, SubscribeOk},
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            },
+            moqt_payload::MOQTPayload,
+        };
+        use bytes::BytesMut;
 
-    use crate::messages::{
-        control_messages::{
-            subscribe_ok::{GroupOrder, SubscribeOk},
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-        },
-        moqt_payload::MOQTPayload,
-    };
+        #[test]
+        fn packetize_content_not_exists() {
+            let subscribe_id = 0;
+            let expires = 1;
+            let group_order = GroupOrder::Ascending;
+            let content_exists = false;
+            let largest_group_id = None;
+            let largest_object_id = None;
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
 
-    #[test]
-    fn packetize_subscribe_ok_content_not_exists() {
-        let subscribe_id = 0;
-        let expires = 1;
-        let group_order = GroupOrder::Ascending;
-        let content_exists = false;
-        let largest_group_id = None;
-        let largest_object_id = None;
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
+            let subscribe_ok = SubscribeOk::new(
+                subscribe_id,
+                expires,
+                group_order,
+                content_exists,
+                largest_group_id,
+                largest_object_id,
+                subscribe_parameters,
+            );
+            let mut buf = BytesMut::new();
+            subscribe_ok.packetize(&mut buf);
 
-        let subscribe_ok = SubscribeOk::new(
-            subscribe_id,
-            expires,
-            group_order,
-            content_exists,
-            largest_group_id,
-            largest_object_id,
-            subscribe_parameters,
-        );
-        let mut buf = bytes::BytesMut::new();
-        subscribe_ok.packetize(&mut buf);
+            let expected_bytes_array = [
+                0, // Subscribe ID (i)
+                1, // Expires (i)
+                1, // Group Order (8)
+                0, // Content Exists (f)
+                1, // Track Request Parameters (..): Number of Parameters
+                2, // Parameter Type (i): AuthorizationInfo
+                4, // Parameter Length (i)
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+        }
 
-        let expected_bytes_array = [
-            0, // Subscribe ID (i)
-            1, // Expires (i)
-            1, // Group Order (8)
-            0, // Content Exists (f)
-            1, // Track Request Parameters (..): Number of Parameters
-            2, // Parameter Type (i): AuthorizationInfo
-            4, // Parameter Length (i)
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+        #[test]
+        fn packetize_content_exists() {
+            let subscribe_id = 0;
+            let expires = 1;
+            let group_order = GroupOrder::Descending;
+            let content_exists = true;
+            let largest_group_id = Some(10);
+            let largest_object_id = Some(20);
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
+
+            let subscribe_ok = SubscribeOk::new(
+                subscribe_id,
+                expires,
+                group_order,
+                content_exists,
+                largest_group_id,
+                largest_object_id,
+                subscribe_parameters,
+            );
+            let mut buf = BytesMut::new();
+            subscribe_ok.packetize(&mut buf);
+
+            let expected_bytes_array = [
+                0,  // Subscribe ID (i)
+                1,  // Expires (i)
+                2,  // Group Order (8)
+                1,  // Content Exists (f)
+                10, // Largest Group ID (i)
+                20, // Largest Object ID (i)
+                1,  // Track Request Parameters (..): Number of Parameters
+                2,  // Parameter Type (i): AuthorizationInfo
+                4,  // Parameter Length (i)
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+        }
+
+        #[test]
+        fn depacketize_content_not_exists() {
+            let bytes_array = [
+                0, // Subscribe ID (i)
+                1, // Expires (i)
+                2, // Group Order (8)
+                0, // Content Exists (f)
+                1, // Track Request Parameters (..): Number of Parameters
+                2, // Parameter Type (i): AuthorizationInfo
+                4, // Parameter Length (i)
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf).unwrap();
+
+            let subscribe_id = 0;
+            let expires = 1;
+            let group_order = GroupOrder::Descending;
+            let content_exists = false;
+            let largest_group_id = None;
+            let largest_object_id = None;
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
+
+            let expected_subscribe_ok = SubscribeOk::new(
+                subscribe_id,
+                expires,
+                group_order,
+                content_exists,
+                largest_group_id,
+                largest_object_id,
+                subscribe_parameters,
+            );
+
+            assert_eq!(depacketized_subscribe_ok, expected_subscribe_ok);
+        }
+
+        #[test]
+        fn depacketize_content_exists() {
+            let bytes_array = [
+                0, // Subscribe ID (i)
+                1, // Expires (i)
+                1, // Group Order (8)
+                1, // Content Exists (f)
+                0, // Largest Group ID (i)
+                5, // Largest Object ID (i)
+                1, // Track Request Parameters (..): Number of Parameters
+                2, // Parameter Type (i): AuthorizationInfo
+                4, // Parameter Length (i)
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf).unwrap();
+
+            let subscribe_id = 0;
+            let expires = 1;
+            let group_order = GroupOrder::Ascending;
+            let content_exists = true;
+            let largest_group_id = Some(0);
+            let largest_object_id = Some(5);
+            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
+                AuthorizationInfo::new("test".to_string()),
+            );
+            let subscribe_parameters = vec![version_specific_parameter];
+
+            let expected_subscribe_ok = SubscribeOk::new(
+                subscribe_id,
+                expires,
+                group_order,
+                content_exists,
+                largest_group_id,
+                largest_object_id,
+                subscribe_parameters,
+            );
+
+            assert_eq!(depacketized_subscribe_ok, expected_subscribe_ok);
+        }
     }
 
-    #[test]
-    fn packetize_subscribe_ok_content_exists() {
-        let subscribe_id = 0;
-        let expires = 1;
-        let group_order = GroupOrder::Descending;
-        let content_exists = true;
-        let largest_group_id = Some(10);
-        let largest_object_id = Some(20);
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
+    mod failure {
+        use bytes::BytesMut;
 
-        let subscribe_ok = SubscribeOk::new(
-            subscribe_id,
-            expires,
-            group_order,
-            content_exists,
-            largest_group_id,
-            largest_object_id,
-            subscribe_parameters,
-        );
-        let mut buf = bytes::BytesMut::new();
-        subscribe_ok.packetize(&mut buf);
+        use crate::messages::{
+            control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
+        };
 
-        let expected_bytes_array = [
-            0,  // Subscribe ID (i)
-            1,  // Expires (i)
-            2,  // Group Order (8)
-            1,  // Content Exists (f)
-            10, // Largest Group ID (i)
-            20, // Largest Object ID (i)
-            1,  // Track Request Parameters (..): Number of Parameters
-            2,  // Parameter Type (i): AuthorizationInfo
-            4,  // Parameter Length (i)
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
-    }
+        #[test]
+        fn depacketize_invalid_group_order() {
+            let bytes_array = [
+                0,  // Subscribe ID (i)
+                1,  // Expires (i)
+                20, // Group Order (8)
+                0,  // Content Exists (f)
+                1,  // Track Request Parameters (..): Number of Parameters
+                2,  // Parameter Type (i): AuthorizationInfo
+                4,  // Parameter Length (i)
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf);
 
-    #[test]
-    fn depacketize_subscribe_ok_content_not_exists() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            1, // Expires (i)
-            2, // Group Order (8)
-            0, // Content Exists (f)
-            1, // Track Request Parameters (..): Number of Parameters
-            2, // Parameter Type (i): AuthorizationInfo
-            4, // Parameter Length (i)
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf).unwrap();
+            assert!(depacketized_subscribe_ok.is_err());
+        }
 
-        let subscribe_id = 0;
-        let expires = 1;
-        let group_order = GroupOrder::Descending;
-        let content_exists = false;
-        let largest_group_id = None;
-        let largest_object_id = None;
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
+        #[test]
+        fn depacketize_invalid_content_exist() {
+            let bytes_array = [
+                0, // Subscribe ID (i)
+                1, // Expires (i)
+                1, // Group Order (8)
+                5, // Content Exists (f)
+                0, // Largest Group ID (i)
+                5, // Largest Object ID (i)
+                1, // Track Request Parameters (..): Number of Parameters
+                2, // Parameter Type (i): AuthorizationInfo
+                4, // Parameter Length (i)
+                116, 101, 115, 116, // Parameter Value (..): test
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf);
 
-        let expected_subscribe_ok = SubscribeOk::new(
-            subscribe_id,
-            expires,
-            group_order,
-            content_exists,
-            largest_group_id,
-            largest_object_id,
-            subscribe_parameters,
-        );
-
-        assert_eq!(depacketized_subscribe_ok, expected_subscribe_ok);
-    }
-
-    #[test]
-    fn depacketize_subscribe_ok_content_exists() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            1, // Expires (i)
-            1, // Group Order (8)
-            1, // Content Exists (f)
-            0, // Largest Group ID (i)
-            5, // Largest Object ID (i)
-            1, // Track Request Parameters (..): Number of Parameters
-            2, // Parameter Type (i): AuthorizationInfo
-            4, // Parameter Length (i)
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf).unwrap();
-
-        let subscribe_id = 0;
-        let expires = 1;
-        let group_order = GroupOrder::Ascending;
-        let content_exists = true;
-        let largest_group_id = Some(0);
-        let largest_object_id = Some(5);
-        let version_specific_parameter =
-            VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
-        let subscribe_parameters = vec![version_specific_parameter];
-
-        let expected_subscribe_ok = SubscribeOk::new(
-            subscribe_id,
-            expires,
-            group_order,
-            content_exists,
-            largest_group_id,
-            largest_object_id,
-            subscribe_parameters,
-        );
-
-        assert_eq!(depacketized_subscribe_ok, expected_subscribe_ok);
-    }
-}
-
-#[cfg(test)]
-mod failure {
-    use bytes::BytesMut;
-
-    use crate::messages::{control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload};
-
-    #[test]
-    fn depacketize_subscribe_ok_invalid_group_order() {
-        let bytes_array = [
-            0,  // Subscribe ID (i)
-            1,  // Expires (i)
-            20, // Group Order (8)
-            0,  // Content Exists (f)
-            1,  // Track Request Parameters (..): Number of Parameters
-            2,  // Parameter Type (i): AuthorizationInfo
-            4,  // Parameter Length (i)
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf);
-
-        assert!(depacketized_subscribe_ok.is_err());
-    }
-
-    #[test]
-    fn depacketize_subscribe_ok_invalid_content_exist() {
-        let bytes_array = [
-            0, // Subscribe ID (i)
-            1, // Expires (i)
-            1, // Group Order (8)
-            5, // Content Exists (f)
-            0, // Largest Group ID (i)
-            5, // Largest Object ID (i)
-            1, // Track Request Parameters (..): Number of Parameters
-            2, // Parameter Type (i): AuthorizationInfo
-            4, // Parameter Length (i)
-            116, 101, 115, 116, // Parameter Value (..): test
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf);
-
-        assert!(depacketized_subscribe_ok.is_err());
+            assert!(depacketized_subscribe_ok.is_err());
+        }
     }
 }

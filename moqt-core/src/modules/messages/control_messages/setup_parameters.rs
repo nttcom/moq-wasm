@@ -1,12 +1,12 @@
-use anyhow::{bail, ensure, Context, Result};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
-use serde::Serialize;
-use std::any::Any;
-
 use crate::{
     messages::moqt_payload::MOQTPayload,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
+use anyhow::{bail, ensure, Context, Result};
+use bytes::BytesMut;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use serde::Serialize;
+use std::any::Any;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub enum SetupParameter {
@@ -17,7 +17,7 @@ pub enum SetupParameter {
 }
 
 impl MOQTPayload for SetupParameter {
-    fn depacketize(buf: &mut bytes::BytesMut) -> Result<Self> {
+    fn depacketize(buf: &mut BytesMut) -> Result<Self> {
         let key = SetupParameterType::try_from(u8::try_from(
             read_variable_integer_from_buffer(buf).context("key")?,
         )?);
@@ -70,7 +70,7 @@ impl MOQTPayload for SetupParameter {
         }
     }
 
-    fn packetize(&self, buf: &mut bytes::BytesMut) {
+    fn packetize(&self, buf: &mut BytesMut) {
         match self {
             SetupParameter::Role(param) => {
                 buf.extend(write_variable_integer(u8::from(param.key) as u64));
@@ -169,174 +169,174 @@ impl MaxSubscribeID {
 }
 
 #[cfg(test)]
-mod success {
-    use bytes::BytesMut;
+mod tests {
+    mod success {
+        use bytes::BytesMut;
 
-    use crate::messages::{
-        control_messages::setup_parameters::{MaxSubscribeID, Role, RoleCase, SetupParameter},
-        moqt_payload::MOQTPayload,
-    };
+        use crate::messages::{
+            control_messages::setup_parameters::{MaxSubscribeID, Role, RoleCase, SetupParameter},
+            moqt_payload::MOQTPayload,
+        };
 
-    #[test]
-    fn packetize_role() {
-        let role_parameter = Role::new(RoleCase::Publisher);
-        let setup_parameter = SetupParameter::Role(role_parameter);
+        #[test]
+        fn packetize_role() {
+            let role_parameter = Role::new(RoleCase::Publisher);
+            let setup_parameter = SetupParameter::Role(role_parameter);
 
-        let mut buf = bytes::BytesMut::new();
-        setup_parameter.packetize(&mut buf);
+            let mut buf = BytesMut::new();
+            setup_parameter.packetize(&mut buf);
 
-        let expected_bytes_array = [
-            0, // Parameter Type (i): Role
-            1, // Parameter Length (i)
-            1, // Parameter Value (..): Role(Publisher)
-        ];
+            let expected_bytes_array = [
+                0, // Parameter Type (i): Role
+                1, // Parameter Length (i)
+                1, // Parameter Value (..): Role(Publisher)
+            ];
 
-        assert_eq!(buf.as_ref(), expected_bytes_array);
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
+
+        #[test]
+        fn packetize_max_subscribe_id() {
+            let max_subscribe_id = MaxSubscribeID::new(2000);
+            let setup_parameter = SetupParameter::MaxSubscribeID(max_subscribe_id);
+
+            let mut buf = BytesMut::new();
+            setup_parameter.packetize(&mut buf);
+
+            let expected_bytes_array = [
+                2,   // Parameter Type (i): Type(MaxSubscribeID)
+                2,   // Parameter Length (i)
+                71,  // Parameter Value (..): Length(01 of 2MSB)
+                208, // Parameter Value (..): Value(2000) in 62bit
+            ];
+
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
+
+        #[test]
+        fn depacketize_role() {
+            let bytes_array = [
+                0, // Parameter Type (i): Role
+                1, // Parameter Length (i)
+                2, // Parameter Value (..): Role(Subscriber)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf).unwrap();
+
+            let role_parameter = Role::new(RoleCase::Subscriber);
+            let expected_setup_parameter = SetupParameter::Role(role_parameter);
+            assert_eq!(depacketized_setup_parameter, expected_setup_parameter);
+        }
+
+        #[test]
+        fn depacketize_max_subscribe_id() {
+            let bytes_array = [
+                2,   // Parameter Type (i): Type(MaxSubscribeID)
+                2,   // Parameter Length (i)
+                75,  // Parameter Value (..): Length(01 of 2MSB)
+                184, // Parameter Value (..): Value(3000) in 62bit
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf).unwrap();
+
+            let max_subscribe_id = MaxSubscribeID::new(3000);
+            let expected_setup_parameter = SetupParameter::MaxSubscribeID(max_subscribe_id);
+            assert_eq!(depacketized_setup_parameter, expected_setup_parameter);
+        }
+
+        #[test]
+        fn depacketize_unknown() {
+            let bytes_array = [
+                3, // Parameter Type (i): Type(Unknown)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
+            assert!(depacketized_setup_parameter.is_ok());
+        }
     }
 
-    #[test]
-    fn depacketize_role() {
-        let bytes_array = [
-            0, // Parameter Type (i): Role
-            1, // Parameter Length (i)
-            2, // Parameter Value (..): Role(Subscriber)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf).unwrap();
+    mod failure {
+        use crate::messages::{
+            control_messages::setup_parameters::{Path, SetupParameter},
+            moqt_payload::MOQTPayload,
+        };
+        use bytes::BytesMut;
 
-        let role_parameter = Role::new(RoleCase::Subscriber);
-        let expected_setup_parameter = SetupParameter::Role(role_parameter);
-        assert_eq!(depacketized_setup_parameter, expected_setup_parameter);
-    }
+        #[test]
+        #[should_panic]
+        fn packetize_path() {
+            let path_parameter = Path::new(String::from("test"));
+            let setup_parameter = SetupParameter::Path(path_parameter);
 
-    #[test]
-    fn packetize_max_subscribe_id() {
-        let max_subscribe_id = MaxSubscribeID::new(2000);
-        let setup_parameter = SetupParameter::MaxSubscribeID(max_subscribe_id);
+            let mut buf = BytesMut::new();
+            setup_parameter.packetize(&mut buf);
+        }
 
-        let mut buf = bytes::BytesMut::new();
-        setup_parameter.packetize(&mut buf);
+        #[test]
+        #[should_panic]
+        fn packetize_unknown() {
+            let setup_parameter = SetupParameter::Unknown(99);
 
-        let expected_bytes_array = [
-            2,   // Parameter Type (i): Type(MaxSubscribeID)
-            2,   // Parameter Length (i)
-            71,  // Parameter Value (..): Length(01 of 2MSB)
-            208, // Parameter Value (..): Value(2000) in 62bit
-        ];
+            let mut buf = BytesMut::new();
+            setup_parameter.packetize(&mut buf);
+        }
 
-        assert_eq!(buf.as_ref(), expected_bytes_array);
-    }
+        #[test]
+        fn depacketize_role_invalid_length() {
+            let bytes_array = [
+                0,  // Parameter Type (i): Type(Role)
+                99, // Parameter Type (i): Length(Wrong)
+                1,  // Parameter Type (i): Role(Publisher)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
 
-    #[test]
-    fn depacketize_max_subscribe_id() {
-        let bytes_array = [
-            2,   // Parameter Type (i): Type(MaxSubscribeID)
-            2,   // Parameter Length (i)
-            75,  // Parameter Value (..): Length(01 of 2MSB)
-            184, // Parameter Value (..): Value(3000) in 62bit
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf).unwrap();
+            assert!(depacketized_setup_parameter.is_err());
+        }
 
-        let max_subscribe_id = MaxSubscribeID::new(3000);
-        let expected_setup_parameter = SetupParameter::MaxSubscribeID(max_subscribe_id);
-        assert_eq!(depacketized_setup_parameter, expected_setup_parameter);
-    }
+        #[test]
+        fn depacketize_role_invalid_value() {
+            let bytes_array = [
+                0,  // Parameter Type (i): Type(Role)
+                1,  // Parameter Type (i): Length
+                99, // Parameter Type (i): Role(Wrong)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
 
-    #[test]
-    fn depacketize_unknown() {
-        let bytes_array = [
-            3, // Parameter Type (i): Type(Unknown)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
-        assert!(depacketized_setup_parameter.is_ok());
-    }
-}
+            assert!(depacketized_setup_parameter.is_err());
+        }
 
-#[cfg(test)]
-mod failure {
-    use bytes::BytesMut;
+        #[test]
+        #[should_panic]
+        fn depacketize_path() {
+            let bytes_array = [
+                1, // Parameter Type (i): Type(Path)
+                4, // Parameter Type (i): Length
+                116, 101, 115, 116, // Parameter Type (i): Value("test")
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let _ = SetupParameter::depacketize(&mut buf).unwrap();
+        }
 
-    use crate::messages::{
-        control_messages::setup_parameters::{Path, SetupParameter},
-        moqt_payload::MOQTPayload,
-    };
+        #[test]
+        fn depacketize_max_subscribe_id_invalid_length() {
+            let bytes_array = [
+                2, // Parameter Type (i): Type(MaxSubscribeID)
+                2, // Parameter Length (i)
+                1, // Parameter Value (..)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
 
-    #[test]
-    fn depacketize_role_invalid_length() {
-        let bytes_array = [
-            0,  // Parameter Type (i): Type(Role)
-            99, // Parameter Type (i): Length(Wrong)
-            1,  // Parameter Type (i): Role(Publisher)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
-
-        assert!(depacketized_setup_parameter.is_err());
-    }
-
-    #[test]
-    fn depacketize_role_invalid_value() {
-        let bytes_array = [
-            0,  // Parameter Type (i): Type(Role)
-            1,  // Parameter Type (i): Length
-            99, // Parameter Type (i): Role(Wrong)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
-
-        assert!(depacketized_setup_parameter.is_err());
-    }
-
-    #[test]
-    #[should_panic]
-    fn packetize_path() {
-        let path_parameter = Path::new(String::from("test"));
-        let setup_parameter = SetupParameter::Path(path_parameter);
-
-        let mut buf = bytes::BytesMut::new();
-        setup_parameter.packetize(&mut buf);
-    }
-
-    #[test]
-    #[should_panic]
-    fn depacketize_path() {
-        let bytes_array = [
-            1, // Parameter Type (i): Type(Path)
-            4, // Parameter Type (i): Length
-            116, 101, 115, 116, // Parameter Type (i): Value("test")
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let _ = SetupParameter::depacketize(&mut buf).unwrap();
-    }
-
-    #[test]
-    fn depacketize_max_subscribe_id_invalid_length() {
-        let bytes_array = [
-            2, // Parameter Type (i): Type(MaxSubscribeID)
-            2, // Parameter Length (i)
-            1, // Parameter Value (..)
-        ];
-        let mut buf = BytesMut::with_capacity(bytes_array.len());
-        buf.extend_from_slice(&bytes_array);
-        let depacketized_setup_parameter = SetupParameter::depacketize(&mut buf);
-
-        assert!(depacketized_setup_parameter.is_err());
-    }
-
-    #[test]
-    #[should_panic]
-    fn packetize_unknown() {
-        let setup_parameter = SetupParameter::Unknown(99);
-
-        let mut buf = bytes::BytesMut::new();
-        setup_parameter.packetize(&mut buf);
+            assert!(depacketized_setup_parameter.is_err());
+        }
     }
 }

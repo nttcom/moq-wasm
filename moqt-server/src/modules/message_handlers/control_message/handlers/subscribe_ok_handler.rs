@@ -1,5 +1,4 @@
 use anyhow::Result;
-
 use moqt_core::{
     constants::StreamDirection,
     messages::{control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload},
@@ -48,13 +47,12 @@ pub(crate) async fn subscribe_ok_handler(
                     subscribe_ok_message.largest_object_id(),
                     subscribe_ok_message.subscribe_parameters().clone(),
                 );
-                let forwarding_subscribe_ok_message: Box<dyn MOQTPayload> =
-                    Box::new(message_payload.clone());
+                let subscribe_ok_message: Box<dyn MOQTPayload> = Box::new(message_payload.clone());
 
                 send_stream_dispatcher_repository
                     .transfer_message_to_send_stream_thread(
                         *downstream_session_id,
-                        forwarding_subscribe_ok_message,
+                        subscribe_ok_message,
                         StreamDirection::Bi,
                     )
                     .await?;
@@ -100,7 +98,9 @@ mod success {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
+    use bytes::BytesMut;
     use moqt_core::{
         constants::StreamDirection,
         messages::{
@@ -147,12 +147,13 @@ mod success {
             largest_object_id,
             subscribe_parameters,
         );
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
         let upstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -255,7 +256,9 @@ mod failure {
         send_stream_dispatcher::{
             send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
+        server_processes::senders,
     };
+    use bytes::BytesMut;
     use moqt_core::{
         constants::StreamDirection,
         messages::{
@@ -302,12 +305,13 @@ mod failure {
             largest_object_id,
             subscribe_parameters,
         );
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
         let upstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -418,12 +422,13 @@ mod failure {
             largest_object_id,
             subscribe_parameters,
         );
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
         let upstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -516,12 +521,13 @@ mod failure {
             largest_object_id,
             subscribe_parameters,
         );
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
         let upstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =
@@ -646,12 +652,13 @@ mod failure {
             largest_object_id,
             subscribe_parameters,
         );
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = BytesMut::new();
         subscribe_ok.packetize(&mut buf);
 
         // Generate client
         let upstream_session_id = 1;
-        let client = MOQTClient::new_without_senders(upstream_session_id);
+        let senders_mock = senders::test_helper_fn::create_senders_mock();
+        let client = MOQTClient::new(upstream_session_id, senders_mock);
 
         // Generate PubSubRelationManagerWrapper
         let (track_namespace_tx, mut track_namespace_rx) =

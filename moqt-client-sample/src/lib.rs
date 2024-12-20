@@ -698,22 +698,9 @@ impl MOQTClient {
     }
 
     #[wasm_bindgen(js_name = sendUnsubscribeMessage)]
-    pub async fn send_unsubscribe_message(
-        &self,
-        track_namespace: js_sys::Array,
-        track_name: String,
-    ) -> Result<JsValue, JsValue> {
+    pub async fn send_unsubscribe_message(&self, subscribe_id: u64) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.control_stream_writer.borrow() {
-            let length = track_namespace.length();
-            let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
-            for i in 0..length {
-                let js_element = track_namespace.get(i);
-                let string_element = js_element
-                    .as_string()
-                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
-                track_namespace_vec.push(string_element);
-            }
-            let unsubscribe_message = Unsubscribe::new(track_namespace_vec, track_name);
+            let unsubscribe_message = Unsubscribe::new(subscribe_id);
             let mut unsubscribe_message_buf = BytesMut::new();
             unsubscribe_message.packetize(&mut unsubscribe_message_buf);
 
