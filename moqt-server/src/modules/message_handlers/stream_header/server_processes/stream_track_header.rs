@@ -7,7 +7,8 @@ use moqt_core::{
 
 use crate::modules::{
     message_handlers::stream_header::handlers::stream_track_header_handler::stream_header_track_handler,
-    moqt_client::MOQTClient, object_cache_storage::ObjectCacheStorageWrapper,
+    moqt_client::MOQTClient,
+    object_cache_storage::{CacheHeader, ObjectCacheStorageWrapper},
 };
 
 pub(crate) async fn process_stream_header_track(
@@ -15,7 +16,7 @@ pub(crate) async fn process_stream_header_track(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
     client: &MOQTClient,
-) -> Result<u64> {
+) -> Result<CacheHeader> {
     let stream_header_track = match StreamHeaderTrack::depacketize(read_cur) {
         Ok(stream_header_track) => stream_header_track,
         Err(err) => {

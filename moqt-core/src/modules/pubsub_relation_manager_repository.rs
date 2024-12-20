@@ -53,6 +53,11 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         track_namespace: Vec<String>,
         track_name: String,
     ) -> Result<Option<Subscription>>;
+    async fn get_upstream_subscription_by_ids(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Option<Subscription>>;
     async fn get_downstream_subscription_by_ids(
         &self,
         downstream_session_id: usize,

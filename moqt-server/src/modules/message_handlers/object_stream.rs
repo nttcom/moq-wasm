@@ -17,7 +17,7 @@ use std::io::Cursor;
 
 #[derive(Debug, PartialEq)]
 pub enum ObjectStreamProcessResult {
-    Success,
+    Success(CacheObject),
     IncompleteMessage,
     Failure(TerminationErrorCode, String),
 }
@@ -61,16 +61,18 @@ pub async fn object_stream_handler(
                 Ok(object) => {
                     read_buf.advance(read_cur.position() as usize);
 
-                    let cache_object = CacheObject::Track(object);
+                    let received_object = CacheObject::Track(object);
                     object_cache_storage
-                        .set_object(client.id(), subscribe_id, cache_object, duration)
+                        .set_object(client.id(), subscribe_id, received_object.clone(), duration)
                         .await
                         .unwrap();
+
+                    ObjectStreamProcessResult::Success(received_object)
                 }
                 Err(err) => {
                     tracing::warn!("{:#?}", err);
                     read_cur.set_position(0);
-                    return ObjectStreamProcessResult::IncompleteMessage;
+                    ObjectStreamProcessResult::IncompleteMessage
                 }
             }
         }
@@ -80,26 +82,24 @@ pub async fn object_stream_handler(
                 Ok(object) => {
                     read_buf.advance(read_cur.position() as usize);
 
-                    let cache_object = CacheObject::Subgroup(object);
+                    let received_object = CacheObject::Subgroup(object);
                     object_cache_storage
-                        .set_object(client.id(), subscribe_id, cache_object, duration)
+                        .set_object(client.id(), subscribe_id, received_object.clone(), duration)
                         .await
                         .unwrap();
+
+                    ObjectStreamProcessResult::Success(received_object)
                 }
                 Err(err) => {
                     tracing::warn!("{:#?}", err);
                     read_cur.set_position(0);
-                    return ObjectStreamProcessResult::IncompleteMessage;
+                    ObjectStreamProcessResult::IncompleteMessage
                 }
             }
         }
-        unknown => {
-            return ObjectStreamProcessResult::Failure(
-                TerminationErrorCode::ProtocolViolation,
-                format!("Unknown message type: {:?}", unknown),
-            );
-        }
-    };
-
-    ObjectStreamProcessResult::Success
+        unknown => ObjectStreamProcessResult::Failure(
+            TerminationErrorCode::ProtocolViolation,
+            format!("Unknown message type: {:?}", unknown),
+        ),
+    }
 }
