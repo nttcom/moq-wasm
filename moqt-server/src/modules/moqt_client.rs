@@ -14,6 +14,7 @@ pub struct MOQTClient {
     id: usize,
     status: MOQTClientStatus,
     role: Option<RoleCase>,
+
     senders: Arc<Senders>,
 }
 

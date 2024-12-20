@@ -145,6 +145,7 @@ mod success {
         // Generate client
         let upstream_session_id = 0;
         let downstream_session_id = 1;
+
         let senders_mock = senders::test_helper_fn::create_senders_mock();
         let client = MOQTClient::new(upstream_session_id, senders_mock);
 
@@ -324,6 +325,7 @@ mod failure {
 
         // Generate client
         let upstream_session_id = 0;
+
         let senders_mock = senders::test_helper_fn::create_senders_mock();
         let client = MOQTClient::new(upstream_session_id, senders_mock);
 

@@ -50,6 +50,7 @@ mod success {
 
         // Generate client
         let downstream_session_id = 0;
+
         let senders_mock = senders::test_helper_fn::create_senders_mock();
         let client = MOQTClient::new(downstream_session_id, senders_mock);
 
