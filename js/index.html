@@ -17,6 +17,12 @@
         </div>
         <br />
         <div>
+          <h2>Forwarding Preference</h2>
+            <label><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram </label>
+            <label><input type="radio" name="forwarding-preference" id="selectTrack" value="track" checked/>Track </label>
+            <label><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" />Subgroup </label>
+            <br />
+            *You must select at first
           <h2>Message</h2>
           <label>AuthInfo: <input type="text" name="auth-info" id="" value="secret" /> </label>
           <br />
@@ -73,10 +79,9 @@
           <button type="button" id="sendSubscribeBtn">Send</button>
 
           <h3>OBJECT</h3>
-          <label><input type="radio" name="data-stream-type" id="selectTrack" value="track" checked/>Track Stream </label>
-          <label><input type="radio" name="data-stream-type" id="selectSubgroup" value="subgroup" />Track Subgroup </label>
-          <br />
-          <h4>Header</h4>
+          <div id="headerField" style="display: blocked;">
+            <h4>Header</h4>
+          </div>
           <label>Subscribe ID: <input type="text" name="object-subscribe-id" id="" value="0" /> </label>
           <br />
           <label>Track Alias: <input type="text" name="object-track-alias" id="" value="0" /> </label>
@@ -89,12 +94,14 @@
           </div>
           <label>Publisher Priority: <input type="text" name="publisher-priority" id="" value="0" /> </label>
           <br />
-          <h4>Object</h4>
-          <div id="trackObjectContents" style="display: blocked;">
-            Group ID: <p id="trackGroupId">0</p>
+          <div id="objectField" style="display: blocked;">
+            <h4>Object</h4>
+          </div>
+          <div id="notSubgroupObjectContents" style="display: blocked;">
+            Group ID: <p id="mutableGroupId">0</p>
             <br />
-            <button type="button" id="descendTrackGroupIdBtn">&lt;</button>
-            <button type="button" id="ascendTrackGroupIdBtn">&gt;</button>
+            <button type="button" id="descendMutableGroupIdBtn">&lt;</button>
+            <button type="button" id="ascendMutableGroupIdBtn">&gt;</button>
             <br />
             <br />
           </div>
@@ -104,6 +111,9 @@
           <label>Payload: 
             <br /><textarea name="payload" id="object-payload" rows="5" cols="33">test</textarea> </label>
           <br />
+          <div id="sendDatagramObject" style="display: none;">
+            <button type="button" id="sendDatagramObjectBtn">Send</button>
+          </div>
           <div id="sendTrackObject" style="display: blocked;">
             <button type="button" id="sendTrackObjectBtn">Send</button>
           </div>

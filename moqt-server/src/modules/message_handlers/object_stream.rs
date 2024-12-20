@@ -72,6 +72,7 @@ pub async fn object_stream_handler(
                 Err(err) => {
                     tracing::warn!("{:#?}", err);
                     read_cur.set_position(0);
+
                     ObjectStreamProcessResult::IncompleteMessage
                 }
             }
@@ -93,6 +94,7 @@ pub async fn object_stream_handler(
                 Err(err) => {
                     tracing::warn!("{:#?}", err);
                     read_cur.set_position(0);
+
                     ObjectStreamProcessResult::IncompleteMessage
                 }
             }
