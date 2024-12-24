@@ -23,8 +23,6 @@ use crate::modules::{
 use crate::SenderToOpenSubscription;
 use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
-use handlers::unsubscribe_handler::unsubscribe_handler;
-use moqt_core::messages::control_messages::unsubscribe::Unsubscribe;
 use moqt_core::{
     constants::UnderlayType,
     control_message_type::ControlMessageType,
