@@ -47,6 +47,10 @@ impl ObjectStreamSubgroup {
     pub fn object_id(&self) -> u64 {
         self.object_id
     }
+
+    pub fn object_status(&self) -> Option<ObjectStatus> {
+        self.object_status
+    }
 }
 
 impl DataStreams for ObjectStreamSubgroup {
