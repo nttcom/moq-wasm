@@ -312,6 +312,16 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
 
                 resp.send(result).unwrap();
             }
+            GetUpstreamSubscriptionBySessionIdAndSubscribeId {
+                upstream_session_id,
+                upstream_subscribe_id,
+                resp,
+            } => {
+                let consumer = consumers.get(&upstream_session_id).unwrap();
+                let result = consumer.get_subscription(upstream_subscribe_id);
+
+                resp.send(result).unwrap();
+            }
             GetDownstreamSubscriptionBySessionIdAndSubscribeId {
                 downstream_session_id,
                 downstream_subscribe_id,
