@@ -4,11 +4,7 @@ use moqt_core::messages::data_streams::{
     object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
     stream_header_track::StreamHeaderTrack,
 };
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::HashMap, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 use ttl_cache::TtlCache;
 type CacheId = usize;
@@ -103,12 +99,12 @@ pub(crate) enum ObjectCacheStorageCommand {
 #[derive(Clone)]
 pub(crate) struct Cache {
     cache_header: CacheHeader,
-    cache_objects: Arc<Mutex<TtlCache<CacheId, CacheObject>>>,
+    cache_objects: TtlCache<CacheId, CacheObject>,
 }
 
 impl Cache {
     pub(crate) fn new(cache_header: CacheHeader, store_size: usize) -> Self {
-        let cache_objects = Arc::new(Mutex::new(TtlCache::new(store_size)));
+        let cache_objects = TtlCache::new(store_size);
 
         Self {
             cache_header,
@@ -173,15 +169,12 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             } => {
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    {
-                        let id = *cache_ids.get(&(session_id, subscribe_id)).unwrap();
-                        cache.cache_objects.lock().unwrap().insert(
-                            id,
-                            cache_object,
-                            Duration::from_millis(duration),
-                        );
-                        *cache_ids.get_mut(&(session_id, subscribe_id)).unwrap() += 1;
-                    }
+                    let id = *cache_ids.get(&(session_id, subscribe_id)).unwrap();
+                    cache
+                        .cache_objects
+                        .insert(id, cache_object, Duration::from_millis(duration));
+                    *cache_ids.get_mut(&(session_id, subscribe_id)).unwrap() += 1;
+
                     resp.send(Ok(())).unwrap();
                 } else {
                     resp.send(Err(anyhow::anyhow!("fail to cache object")))
@@ -199,44 +192,28 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 if let Some(cache) = cache {
                     // Get an object that matches the given group_id and object_id
                     let cache_object = match &cache.cache_header {
-                        CacheHeader::Datagram => {
-                            // Minimize the time to be locked
-                            let mut cache_clone: TtlCache<usize, CacheObject>;
-                            {
-                                cache_clone = cache.cache_objects.lock().unwrap().clone();
-                            }
-
-                            cache_clone
-                                .iter()
-                                .find(|(_, v)| {
-                                    if let CacheObject::Datagram(object) = v {
-                                        object.group_id() == group_id
-                                            && object.object_id() == object_id
-                                    } else {
-                                        false
-                                    }
-                                })
-                                .map(|(k, v)| (*k, v.clone()))
-                        }
-                        CacheHeader::Track(_track) => {
-                            // Minimize the time to be locked
-                            let mut cache_clone: TtlCache<usize, CacheObject>;
-                            {
-                                cache_clone = cache.cache_objects.lock().unwrap().clone();
-                            }
-
-                            cache_clone
-                                .iter()
-                                .find(|(_, v)| {
-                                    if let CacheObject::Track(object) = v {
-                                        object.group_id() == group_id
-                                            && object.object_id() == object_id
-                                    } else {
-                                        false
-                                    }
-                                })
-                                .map(|(k, v)| (*k, v.clone()))
-                        }
+                        CacheHeader::Datagram => cache
+                            .cache_objects
+                            .iter()
+                            .find(|(_, v)| {
+                                if let CacheObject::Datagram(object) = v {
+                                    object.group_id() == group_id && object.object_id() == object_id
+                                } else {
+                                    false
+                                }
+                            })
+                            .map(|(k, v)| (*k, v.clone())),
+                        CacheHeader::Track(_track) => cache
+                            .cache_objects
+                            .iter()
+                            .find(|(_, v)| {
+                                if let CacheObject::Track(object) = v {
+                                    object.group_id() == group_id && object.object_id() == object_id
+                                } else {
+                                    false
+                                }
+                            })
+                            .map(|(k, v)| (*k, v.clone())),
                         CacheHeader::Subgroup(_subgroup) => {
                             if let CacheHeader::Subgroup(subgroup) = &cache.cache_header {
                                 if subgroup.group_id() != group_id {
@@ -245,14 +222,8 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                     continue;
                                 }
                             }
-
-                            // Minimize the time to be locked
-                            let mut cache_clone: TtlCache<usize, CacheObject>;
-                            {
-                                cache_clone = cache.cache_objects.lock().unwrap().clone();
-                            }
-
-                            cache_clone
+                            cache
+                                .cache_objects
                                 .iter()
                                 .find(|(_, v)| {
                                     if let CacheObject::Subgroup(object) = v {
@@ -285,13 +256,8 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             } => {
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    // Minimize the time to be locked
-                    let mut cache_clone: TtlCache<usize, CacheObject>;
-                    {
-                        cache_clone = cache.cache_objects.lock().unwrap().clone();
-                    }
-
-                    let cache_object = cache_clone.iter().next().map(|(k, v)| (*k, v.clone()));
+                    let mut cache_objects = cache.cache_objects.clone();
+                    let cache_object = cache_objects.iter().next().map(|(k, v)| (*k, v.clone()));
 
                     match cache_object {
                         Some(cache_object) => {
@@ -315,15 +281,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 let next_cache_id = cache_id + 1;
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    let cache_object: Option<CacheObject>;
-                    {
-                        cache_object = cache
-                            .cache_objects
-                            .lock()
-                            .unwrap()
-                            .get(&next_cache_id)
-                            .cloned();
-                    }
+                    let cache_object = cache.cache_objects.get(&next_cache_id).cloned();
 
                     match cache_object {
                         Some(cache_object) => {
@@ -344,22 +302,19 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             } => {
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    // Minimize the time to be locked
-                    let mut cache_clone: TtlCache<usize, CacheObject>;
-                    {
-                        cache_clone = cache.cache_objects.lock().unwrap().clone();
-                    }
+                    let mut cache_objects = cache.cache_objects.clone();
+
                     // Get the last group in both ascending and descending order
                     let cache_object = match &cache.cache_header {
                         // Check the group ID contained in objects and get the latest object in the latest group ID
                         CacheHeader::Datagram => {
                             let latest_group_id: Option<u64> =
-                                cache_clone.iter().last().map(|(_, v)| match v {
+                                cache_objects.iter().last().map(|(_, v)| match v {
                                     CacheObject::Datagram(object) => object.group_id(),
                                     _ => 0,
                                 });
 
-                            let latest_group = cache_clone.iter().filter_map(|(k, v)| {
+                            let latest_group = cache_objects.iter().filter_map(|(k, v)| {
                                 if let CacheObject::Datagram(object) = v {
                                     if object.group_id() == latest_group_id.unwrap() {
                                         Some((k, object.object_id(), (*v).clone()))
@@ -379,12 +334,12 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         // Check the group ID contained in objects and get the latest object in the latest group ID
                         CacheHeader::Track(_track) => {
                             let latest_group_id: Option<u64> =
-                                cache_clone.iter().last().map(|(_, v)| match v {
+                                cache_objects.iter().last().map(|(_, v)| match v {
                                     CacheObject::Track(object) => object.group_id(),
                                     _ => 0,
                                 });
 
-                            let latest_group = cache_clone.iter().filter_map(|(k, v)| {
+                            let latest_group = cache_objects.iter().filter_map(|(k, v)| {
                                 if let CacheObject::Track(object) = v {
                                     if object.group_id() == latest_group_id.unwrap() {
                                         Some((k, object.object_id(), (*v).clone()))
@@ -403,7 +358,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         }
                         // Get the latest object because the group ID is the same in the subgroup
                         CacheHeader::Subgroup(_subgroup) => {
-                            cache_clone.iter().next().map(|(k, v)| (*k, v.clone()))
+                            cache_objects.iter().next().map(|(k, v)| (*k, v.clone()))
                         }
                     };
 
@@ -427,13 +382,8 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             } => {
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    // Minimize the time to be locked
-                    let mut cache_clone: TtlCache<usize, CacheObject>;
-                    {
-                        cache_clone = cache.cache_objects.lock().unwrap().clone();
-                    }
-
-                    let cache_object = cache_clone.iter().last().map(|(k, v)| (*k, v.clone()));
+                    let mut cache_objects = cache.cache_objects.clone();
+                    let cache_object = cache_objects.iter().last().map(|(k, v)| (*k, v.clone()));
 
                     match cache_object {
                         Some(cache_object) => {
@@ -455,17 +405,13 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             } => {
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    // Minimize the time to be locked
-                    let mut cache_clone: TtlCache<usize, CacheObject>;
-                    {
-                        cache_clone = cache.cache_objects.lock().unwrap().clone();
-                    }
+                    let mut cache_objects = cache.cache_objects.clone();
 
                     // It is not decided whether the group ID is ascending or descending,
                     // so it is necessary to get the maximum value
                     let largest_group_id: Option<u64> = match &cache.cache_header {
                         CacheHeader::Datagram => {
-                            let max_group_id = cache_clone
+                            let max_group_id = cache_objects
                                 .iter()
                                 .map(|(_, v)| match v {
                                     CacheObject::Datagram(object) => object.group_id(),
@@ -476,7 +422,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                             max_group_id
                         }
                         CacheHeader::Track(_header) => {
-                            let max_group_id = cache_clone
+                            let max_group_id = cache_objects
                                 .iter()
                                 .map(|(_, v)| match v {
                                     CacheObject::Track(object) => object.group_id(),
@@ -510,15 +456,11 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             } => {
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    // Minimize the time to be locked
-                    let mut cache_clone: TtlCache<usize, CacheObject>;
-                    {
-                        cache_clone = cache.cache_objects.lock().unwrap().clone();
-                    }
+                    let mut cache_objects = cache.cache_objects.clone();
 
                     // Get the maximum object ID in the group
                     let largest_object_id: Option<u64> = match &cache.cache_header {
-                        CacheHeader::Datagram => cache_clone
+                        CacheHeader::Datagram => cache_objects
                             .iter()
                             .filter_map(|(_, v)| match v {
                                 CacheObject::Datagram(object) => {
@@ -531,7 +473,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 _ => None,
                             })
                             .max(),
-                        CacheHeader::Track(_header) => cache_clone
+                        CacheHeader::Track(_header) => cache_objects
                             .iter()
                             .filter_map(|(_, v)| match v {
                                 CacheObject::Track(object) => {
@@ -544,7 +486,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 _ => None,
                             })
                             .max(),
-                        CacheHeader::Subgroup(_header) => cache_clone
+                        CacheHeader::Subgroup(_header) => cache_objects
                             .iter()
                             .map(|(_, v)| match v {
                                 CacheObject::Subgroup(object) => object.object_id(),
