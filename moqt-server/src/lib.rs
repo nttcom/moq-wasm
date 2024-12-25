@@ -4,10 +4,10 @@ use tokio::sync::{mpsc, mpsc::Sender, Mutex};
 use tracing::{self, Instrument};
 use wtransport::{Endpoint, Identity, ServerConfig};
 mod modules;
-pub use modules::moqt_config::MOQTConfig;
+pub use modules::config::MOQTConfig;
 use modules::{
     buffer_manager::{buffer_manager, BufferCommand},
-    logging,
+    logging::init_logging,
     object_cache_storage::{object_cache_storage, ObjectCacheStorageCommand},
     pubsub_relation_manager::{commands::PubSubRelationCommand, manager::pubsub_relation_manager},
     send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
@@ -47,7 +47,7 @@ impl MOQTServer {
         }
     }
     pub async fn start(&self) -> Result<()> {
-        logging::init_logging(self.log_level.to_string());
+        init_logging(self.log_level.to_string());
 
         if self.underlay != UnderlayType::WebTransport {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
