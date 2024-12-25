@@ -1,0 +1,520 @@
+<mxfile host="65bd71144e">
+    <diagram id="7UmVD8WfxTtRmmYLdUPs" name="ページ1">
+        <mxGraphModel dx="1698" dy="926" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="166" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;fontSize=8;exitX=0.5;exitY=0;exitDx=0;exitDy=0;dashed=1;" parent="1" source="143" target="40" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="600" y="370"/>
+                            <mxPoint x="520" y="370"/>
+                            <mxPoint x="520" y="230"/>
+                            <mxPoint x="360" y="230"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="48" style="edgeStyle=none;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=8;" parent="1" source="32" target="36" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="32" value="サーバーの起動" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="110" y="80" width="60" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="50" style="edgeStyle=none;html=1;fontSize=8;" parent="1" source="36" target="49" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="36" value="マネージャースレッドの立ち上げ" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFFFF;" parent="1" vertex="1">
+                    <mxGeometry x="110" y="130" width="60" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="38" value="buffer_manager&lt;br&gt;初期化と&lt;br&gt;待機処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="184" y="170" width="60" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="39" value="pubsub_relation&lt;br&gt;_manager&lt;br&gt;初期化と&lt;br&gt;待機処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="260" y="170" width="60" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="198" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=8;fillColor=none;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#FFFFFF;startArrow=none;startFill=0;" parent="1" source="40" target="177" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="910" y="490" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="375" y="250"/>
+                            <mxPoint x="890" y="250"/>
+                            <mxPoint x="890" y="495"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="40" value="send_stream&lt;br&gt;_dispatcher&lt;br&gt;初期化と&lt;br&gt;待機処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="330" y="170" width="60" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="41" value="object_cache&lt;br&gt;_storage&lt;br&gt;初期化と&lt;br&gt;待機処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="400" y="170" width="60" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="43" value="" style="edgeStyle=segmentEdgeStyle;endArrow=classic;html=1;curved=0;rounded=0;endSize=8;startSize=8;fontSize=8;dashed=1;" parent="1" source="36" target="38" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="290" y="270" as="sourcePoint"/>
+                        <mxPoint x="340" y="220" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="45" value="" style="edgeStyle=segmentEdgeStyle;endArrow=classic;html=1;curved=0;rounded=0;endSize=8;startSize=8;fontSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=1;" parent="1" source="36" target="40" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="190" y="165" as="sourcePoint"/>
+                        <mxPoint x="234.00000000000023" y="190" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="46" value="" style="edgeStyle=segmentEdgeStyle;endArrow=classic;html=1;curved=0;rounded=0;endSize=8;startSize=8;fontSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;dashed=1;" parent="1" source="36" target="39" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="180" y="155" as="sourcePoint"/>
+                        <mxPoint x="370" y="180" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="47" value="" style="edgeStyle=segmentEdgeStyle;endArrow=classic;html=1;curved=0;rounded=0;endSize=8;startSize=8;fontSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=1;" parent="1" source="36" target="41" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="180" y="155" as="sourcePoint"/>
+                        <mxPoint x="370" y="180" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="52" style="edgeStyle=none;html=1;fontSize=8;dashed=1;" parent="1" source="49" target="51" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="49" value="WebTransportコネクションの待ち受け" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="110" y="230" width="60" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="119" style="edgeStyle=none;html=1;fontSize=8;elbow=vertical;" parent="1" source="51" target="118" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="51" value="WebTransport&lt;br&gt;スレッドの初期化" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="110" y="290" width="60" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="146" style="edgeStyle=elbowEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;" parent="1" source="63" target="96" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="63" value="uni-stream受信&lt;br&gt;スレッドの立ち上げ" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="420" y="330" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="147" style="edgeStyle=elbowEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;" parent="1" source="66" target="143" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="66" value="bi-stream&lt;br&gt;スレッドの立ち上げ" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="420" y="450" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="204" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#FFFFFF;fontSize=8;fillColor=none;" parent="1" source="68" target="202" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="68" value="datagram受信&lt;br&gt;スレッドの立ち上げ" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="420" y="570" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="70" value="recv_stream処理用のスレッドの立ち上げ" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="680" y="420" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="74" value="downstream/datagram開通リクエスト受信待機" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="259.5" y="690" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="75" value="uni-stream&lt;br&gt;待ち受け" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="260" y="330" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="76" value="bi-stream&lt;br&gt;待ち受け" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="260" y="450" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="78" value="datagram&lt;br&gt;待ち受け" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="260" y="570" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="79" value="sessionクローズリクスト受信" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="260" y="810" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="149" value="" style="edgeStyle=elbowEdgeStyle;html=1;fontSize=8;" parent="1" source="96" target="148" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="96" value="読み取り処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="560" y="330" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="112" value="" style="edgeStyle=elbowEdgeStyle;elbow=horizontal;endArrow=classic;html=1;curved=0;rounded=0;endSize=8;startSize=8;fontSize=8;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" target="118" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="140" y="620" as="sourcePoint"/>
+                        <mxPoint x="140" y="550" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="80" y="610"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="132" style="edgeStyle=elbowEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;" parent="1" source="118" target="74" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="133" style="edgeStyle=elbowEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;" parent="1" source="118" target="79" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="134" style="edgeStyle=elbowEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;" parent="1" source="118" target="75" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="145" style="edgeStyle=elbowEdgeStyle;html=1;fontSize=8;" parent="1" source="118" target="76" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="118" value="非同期処理のawaitがされた処理を実行" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="100" y="570" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="136" value="" style="endArrow=classic;dashed=1;html=1;fontSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;endFill=1;" parent="1" source="75" target="63" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="480" y="420" as="sourcePoint"/>
+                        <mxPoint x="530" y="370" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="137" value="" style="endArrow=classic;dashed=1;html=1;fontSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;endFill=1;" parent="1" source="76" target="66" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="339.5" y="474.78999999999996" as="sourcePoint"/>
+                        <mxPoint x="419.5" y="474.78999999999996" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="138" value="" style="endArrow=classic;dashed=1;html=1;fontSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;endFill=1;" parent="1" source="78" target="68" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="339.5000000000002" y="544.79" as="sourcePoint"/>
+                        <mxPoint x="419.5000000000002" y="544.79" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="227" style="edgeStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="139" target="226" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="139" value="uni-stream&lt;br&gt;送信スレッドの&lt;br&gt;立ち上げ" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="420" y="660" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="141" value="" style="endArrow=classic;dashed=1;html=1;fontSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;endFill=1;" parent="1" source="74" target="139" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="339.50000000000045" y="617.2" as="sourcePoint"/>
+                        <mxPoint x="419.50000000000045" y="617.2" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="142" value="" style="endArrow=none;html=1;fontSize=8;" parent="1" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="140" y="620" as="sourcePoint"/>
+                        <mxPoint x="140" y="600" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="172" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=-0.033;entryY=0.56;entryDx=0;entryDy=0;entryPerimeter=0;fontSize=8;fillColor=none;dashed=1;" parent="1" source="143" target="70" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="173" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;fillColor=none;dashed=1;" parent="1" source="143" target="171" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="143" value="SendStreamDispatcherへの登録処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="560" y="450" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="144" style="edgeStyle=elbowEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" parent="1" source="118" target="78" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="190" y="475" as="sourcePoint"/>
+                        <mxPoint x="270" y="595" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="153" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;" parent="1" source="148" target="150" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="162" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" parent="1" source="148" target="158" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="780" y="345"/>
+                            <mxPoint x="780" y="375"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="148" value="bufferへ格納" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="680" y="330" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="152" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=8;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="150" target="96" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="530" y="345" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="840" y="280"/>
+                            <mxPoint x="600" y="280"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="157" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;" parent="1" source="150" target="156" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="150" value="buffer読み取り&amp;amp;&lt;br&gt;StreamHeaderとして処理できるか判別" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="800" y="300" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="154" value="&lt;font style=&quot;font-size: 8px;&quot;&gt;断片であった場合には再度読み取り&lt;/font&gt;" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="600" y="280" width="150" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="159" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;" parent="1" source="156" target="158" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="164" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;fontSize=8;dashed=1;" parent="1" source="156" target="41" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="960" y="240"/>
+                            <mxPoint x="430" y="240"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="156" value="StreamHeaderの&lt;br&gt;登録/Cache処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="920" y="300" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="161" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;" parent="1" source="158" target="160" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="163" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=8;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="158" target="96" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="530" y="340" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="1081" y="280"/>
+                            <mxPoint x="600" y="280"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="158" value="buffer読み取り&amp;amp;&lt;br&gt;Objectとして処理できるか判別" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1041" y="360" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="165" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;fontSize=8;dashed=1;" parent="1" source="160" target="41" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1200" y="240"/>
+                            <mxPoint x="430" y="240"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="215" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#FFFFFF;fontSize=8;fillColor=none;" parent="1" source="160" target="96" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1270" y="375"/>
+                            <mxPoint x="1270" y="270"/>
+                            <mxPoint x="600" y="270"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="160" value="ObjectのCache処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1160" y="360" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="171" value="転送されたControlメッセージ処理用のスレッドの立ち上げ" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="680" y="480" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="180" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=8;fillColor=none;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="174" target="179" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1040" y="444.9999999999998" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="174" value="buffer読み取り" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="920" y="420" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="176" value="" style="endArrow=classic;html=1;fontSize=8;fillColor=none;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;endFill=1;" parent="1" source="70" target="174" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="790" y="490" as="sourcePoint"/>
+                        <mxPoint x="840" y="440" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="840" y="435"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="201" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#FFFFFF;fontSize=8;fillColor=none;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="177" target="200" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1040.0000000000005" y="505" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="177" value="転送されたメッセージの種別判定" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="920" y="480" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="178" value="" style="endArrow=classic;html=1;fontSize=8;fillColor=none;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;endFill=1;" parent="1" source="171" target="177" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="770" y="455" as="sourcePoint"/>
+                        <mxPoint x="930" y="455" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="182" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;fillColor=none;" parent="1" source="179" target="181" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="179" value="ControlMessageのTypeを種別" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1041" y="420" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="184" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;fillColor=none;" parent="1" source="181" target="183" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="181" value="種別に応じた処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FF6666;" parent="1" vertex="1">
+                    <mxGeometry x="1160" y="420" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="186" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;fillColor=none;" parent="1" source="183" target="185" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="193" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;fontSize=8;fillColor=none;dashed=1;" parent="1" source="183" target="40" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1320" y="230"/>
+                            <mxPoint x="360" y="230"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="183" value="必要な場合は&lt;br&gt;転送処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1280" y="420" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="246" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=none;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=1;startArrow=none;startFill=0;endArrow=classic;endFill=1;targetPerimeterSpacing=13;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" parent="1" source="185" target="174" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1500" y="435"/>
+                            <mxPoint x="1500" y="400"/>
+                            <mxPoint x="960" y="400"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="185" value="必要な場合は&lt;br&gt;レスポンスをSubscriberに送信" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1400" y="420" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="200" value="クライアント&lt;br&gt;への送信" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1040" y="480" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="205" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#FFFFFF;fontSize=8;fillColor=none;" parent="1" source="202" target="203" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="202" value="読み取り処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="560" y="570" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="207" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#FFFFFF;fontSize=8;fillColor=none;" parent="1" source="203" target="206" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="203" value="datagram.payloadをbufferへ格納" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="680" y="570" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="209" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#FFFFFF;fontSize=8;fillColor=none;" parent="1" source="206" target="208" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="206" value="DataStreamTypeの&lt;br&gt;判別" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="800" y="570" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="211" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#FFFFFF;fontSize=8;fillColor=none;" parent="1" source="208" target="210" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="208" value="bufferから読み取り、DataStreamへ&lt;br&gt;デパケタイズ" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="920" y="570" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="212" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;strokeColor=#FFFFFF;fontSize=8;fillColor=none;dashed=1;" parent="1" source="210" target="41" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1081" y="540"/>
+                            <mxPoint x="900" y="540"/>
+                            <mxPoint x="900" y="240"/>
+                            <mxPoint x="430" y="240"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="214" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#FFFFFF;fontSize=8;fillColor=none;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" parent="1" source="219" target="202" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1320" y="585"/>
+                            <mxPoint x="1320" y="550"/>
+                            <mxPoint x="600" y="550"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="220" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#FFFFFF;fontSize=8;fillColor=none;" parent="1" source="210" target="219" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="210" value="ObjectのCache処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1041" y="570" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="221" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#FFFFFF;fontSize=8;fillColor=none;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="219" target="74" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1230" y="630"/>
+                            <mxPoint x="300" y="630"/>
+                            <mxPoint x="300" y="690"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="219" value="このupstream_subscriptionに紐づくdownstream_subscriptionのdatagramが開いていなければ開通処理" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1160" y="570" width="140" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="253" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=1;fontSize=6;startArrow=none;startFill=0;endArrow=classic;endFill=1;targetPerimeterSpacing=13;" parent="1" source="223" target="252" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="223" value="datagram&lt;br&gt;送信スレッドの&lt;br&gt;立ち上げ" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;strokeColor=#FFFF99;" parent="1" vertex="1">
+                    <mxGeometry x="420" y="720" width="80" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="225" value="" style="endArrow=classic;dashed=1;html=1;fontSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;endFill=1;" parent="1" source="74" target="223" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="349.5" y="715" as="sourcePoint"/>
+                        <mxPoint x="430" y="685" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="229" style="edgeStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="226" target="228" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="226" value="upstreamから流れてくるObjectのForwardingPreferenceを取得" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="560" y="660" width="110" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="230" style="edgeStyle=elbowEdgeStyle;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;elbow=vertical;dashed=1;" parent="1" source="228" target="39" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="540" y="260"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="232" style="edgeStyle=elbowEdgeStyle;elbow=vertical;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="228" target="231" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="228" value="downstreamに流すForwardingPreferenceを登録する" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="720" y="660" width="110" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="235" style="edgeStyle=elbowEdgeStyle;elbow=vertical;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="231" target="233" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="231" value="subscriberにDataStream Headerを送信" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="880" y="660" width="110" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="248" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=none;html=1;entryX=0.466;entryY=-0.067;entryDx=0;entryDy=0;entryPerimeter=0;strokeColor=default;strokeWidth=1;startArrow=none;startFill=0;endArrow=classic;endFill=1;targetPerimeterSpacing=13;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" parent="1" source="250" target="231" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1330" y="675"/>
+                            <mxPoint x="1330" y="640"/>
+                            <mxPoint x="931" y="640"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="249" value="&lt;font style=&quot;font-size: 6px;&quot;&gt;無い場合は10ms sleep&lt;/font&gt;" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" parent="248" vertex="1" connectable="0">
+                    <mxGeometry x="-0.0634" relative="1" as="geometry">
+                        <mxPoint x="-14" as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="251" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=1;fontSize=6;startArrow=none;startFill=0;endArrow=classic;endFill=1;targetPerimeterSpacing=13;" parent="1" source="233" target="250" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="233" value="CacheStorageからObjectを取得" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1041" y="660" width="110" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="250" value="Subscriberに送信" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1200" y="660" width="110" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="255" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=1;fontSize=6;startArrow=none;startFill=0;endArrow=classic;endFill=1;targetPerimeterSpacing=13;" parent="1" source="252" target="254" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="252" value="upstreamから流れてくるObjectのForwardingPreferenceを取得" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="560" y="720" width="110" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="258" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=1;fontSize=6;startArrow=none;startFill=0;endArrow=classic;endFill=1;targetPerimeterSpacing=13;" parent="1" source="254" target="257" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="254" value="downstreamに流すForwardingPreferenceを登録する" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="720" y="720" width="110" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="260" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=1;fontSize=6;startArrow=none;startFill=0;endArrow=classic;endFill=1;targetPerimeterSpacing=13;" parent="1" source="257" target="259" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="257" value="subscriberにDataStream Headerを送信" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="880" y="720" width="110" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="263" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=none;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=1;fontSize=6;startArrow=none;startFill=0;endArrow=classic;endFill=1;targetPerimeterSpacing=13;" parent="1" source="259" target="261" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="259" value="CacheStorageからObjectを取得" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1041" y="720" width="110" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="264" value="無い場合は10ms sleep" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=none;html=1;entryX=0.455;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;strokeColor=default;strokeWidth=1;fontSize=6;startArrow=none;startFill=0;endArrow=classic;endFill=1;targetPerimeterSpacing=13;" parent="1" source="261" target="257" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1330" y="735"/>
+                            <mxPoint x="1330" y="700"/>
+                            <mxPoint x="930" y="700"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="261" value="Subscriberに送信" style="rounded=1;whiteSpace=wrap;html=1;fontSize=8;fillColor=#18141D;" parent="1" vertex="1">
+                    <mxGeometry x="1200" y="720" width="110" height="30" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
