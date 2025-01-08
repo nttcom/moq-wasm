@@ -101,7 +101,7 @@ impl DatagramForwarder {
         Ok(())
     }
 
-    pub(crate) async fn finish(&self) -> Result<()> {
+    pub(crate) async fn terminate(&self) -> Result<()> {
         let downstream_session_id = self.session.stable_id();
         let downstream_stream_id = 0; // stream_id of datagram does not exist (TODO: delete buffer manager)
         self.senders
@@ -112,7 +112,7 @@ impl DatagramForwarder {
             })
             .await?;
 
-        tracing::info!("DatagramForwarder finished");
+        tracing::info!("Terminated DatagramForwarder");
 
         Ok(())
     }
