@@ -42,7 +42,7 @@ impl SessionHandler {
 
         session_handler.main_loop().await?;
 
-        session_handler.finish().await?;
+        session_handler.terminate().await?;
 
         Ok(())
     }
@@ -122,7 +122,7 @@ impl SessionHandler {
         Ok(())
     }
 
-    async fn finish(&mut self) -> Result<()> {
+    async fn terminate(&mut self) -> Result<()> {
         let senders = self.client.lock().await.senders();
         let stable_id = self.client.lock().await.id();
 
@@ -154,7 +154,7 @@ impl SessionHandler {
             })
             .await?;
 
-        tracing::info!("SessionHandler finished");
+        tracing::info!("session terminated");
 
         Ok(())
     }
