@@ -251,7 +251,7 @@ async fn spawn_send_datagram_thread(
                 }
             }
 
-            let _ = datagram_forwarder.terminate().await;
+            let _ = datagram_forwarder.finish().await;
         }
         .in_current_span(),
     );
