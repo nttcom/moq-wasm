@@ -62,7 +62,7 @@ impl UniStreamReceiver {
         Ok(())
     }
 
-    pub(crate) async fn terminate(&self) -> Result<()> {
+    pub(crate) async fn finish(&self) -> Result<()> {
         self.senders
             .buffer_tx()
             .send(BufferCommand::ReleaseStream {
@@ -71,7 +71,7 @@ impl UniStreamReceiver {
             })
             .await?;
 
-        tracing::debug!("Terminated UniStreamReceiver");
+        tracing::debug!("UniStreamReceiver finished");
 
         Ok(())
     }
