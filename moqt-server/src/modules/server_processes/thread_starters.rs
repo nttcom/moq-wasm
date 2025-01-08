@@ -122,7 +122,7 @@ async fn spawn_uni_recv_stream_thread(
                 }
             }
 
-            let _ = uni_stream_receiver.terminate().await;
+            let _ = uni_stream_receiver.finish().await;
         }
         .in_current_span(),
     );
