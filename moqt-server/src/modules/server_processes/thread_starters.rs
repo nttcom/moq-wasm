@@ -174,7 +174,7 @@ async fn spawn_uni_send_stream_thread(
                 }
             }
 
-            let _ = object_stream_forwarder.terminate().await;
+            let _ = object_stream_forwarder.finish().await;
         }
         .in_current_span(),
     );
