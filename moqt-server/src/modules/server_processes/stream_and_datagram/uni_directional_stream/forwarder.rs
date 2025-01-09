@@ -113,7 +113,7 @@ impl ObjectStreamForwarder {
         Ok(())
     }
 
-    pub(crate) async fn terminate(&self) -> Result<()> {
+    pub(crate) async fn finish(&self) -> Result<()> {
         let downstream_session_id = self.stream.stable_id();
         let downstream_stream_id = self.stream.stream_id();
         self.senders
@@ -124,7 +124,7 @@ impl ObjectStreamForwarder {
             })
             .await?;
 
-        tracing::info!("Terminated ObjectStreamForwarder");
+        tracing::info!("ObjectStreamForwarder finished");
 
         Ok(())
     }

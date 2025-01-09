@@ -122,7 +122,7 @@ async fn spawn_uni_recv_stream_thread(
                 }
             }
 
-            let _ = uni_stream_receiver.terminate().await;
+            let _ = uni_stream_receiver.finish().await;
         }
         .in_current_span(),
     );
@@ -174,7 +174,7 @@ async fn spawn_uni_send_stream_thread(
                 }
             }
 
-            let _ = object_stream_forwarder.terminate().await;
+            let _ = object_stream_forwarder.finish().await;
         }
         .in_current_span(),
     );
@@ -251,7 +251,7 @@ async fn spawn_send_datagram_thread(
                 }
             }
 
-            let _ = datagram_forwarder.terminate().await;
+            let _ = datagram_forwarder.finish().await;
         }
         .in_current_span(),
     );
