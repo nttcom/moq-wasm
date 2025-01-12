@@ -5,13 +5,13 @@ use crate::modules::{
     pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
     server_processes::senders::Senders,
 };
-use anyhow::{bail, Result};
+use anyhow::{bail, Ok, Result};
 use bytes::BytesMut;
 use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::subscribe::FilterType,
-        data_streams::{object_datagram::ObjectDatagram, object_status::ObjectStatus, DataStreams},
+        data_streams::{object_status::ObjectStatus, DataStreams},
     },
     models::{subscriptions::Subscription, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -94,9 +94,13 @@ impl DatagramForwarder {
         let mut object_cache_storage =
             ObjectCacheStorageWrapper::new(self.senders.object_cache_tx().clone());
 
-        self.check_and_set_forwarding_preference().await?;
+        let upstream_forwarding_preference = self.get_upstream_forwarding_preference().await?;
+        self.validate_forwarding_preference(&upstream_forwarding_preference)
+            .await?;
+        self.set_forwarding_preference_to_downstream(upstream_forwarding_preference)
+            .await?;
 
-        self.forward_loop(&mut object_cache_storage).await?;
+        self.forward_objects(&mut object_cache_storage).await?;
 
         Ok(())
     }
@@ -117,38 +121,54 @@ impl DatagramForwarder {
         Ok(())
     }
 
-    async fn check_and_set_forwarding_preference(&self) -> Result<()> {
+    async fn get_upstream_forwarding_preference(&self) -> Result<Option<ForwardingPreference>> {
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
 
-        let downstream_session_id = self.session.stable_id();
-        let downstream_subscribe_id = self.downstream_subscribe_id;
         let upstream_session_id = self.object_cache_key.session_id();
         let upstream_subscribe_id = self.object_cache_key.subscribe_id();
 
-        match pubsub_relation_manager
+        pubsub_relation_manager
             .get_upstream_forwarding_preference(upstream_session_id, upstream_subscribe_id)
-            .await?
-        {
-            Some(ForwardingPreference::Datagram) => {
-                pubsub_relation_manager
-                    .set_downstream_forwarding_preference(
-                        downstream_session_id,
-                        downstream_subscribe_id,
-                        ForwardingPreference::Datagram,
-                    )
-                    .await?;
-            }
+            .await
+    }
+
+    async fn validate_forwarding_preference(
+        &self,
+        upstream_forwarding_preference: &Option<ForwardingPreference>,
+    ) -> Result<()> {
+        match upstream_forwarding_preference {
+            Some(ForwardingPreference::Datagram) => Ok(()),
             _ => {
-                let msg = "Invalid forwarding preference";
-                bail!(msg);
+                let msg = "Forwarding preference is not Datagram";
+                bail!(msg)
             }
-        };
+        }
+    }
+
+    async fn set_forwarding_preference_to_downstream(
+        &self,
+        upstream_forwarding_preference: Option<ForwardingPreference>,
+    ) -> Result<()> {
+        let forwarding_preference = upstream_forwarding_preference.unwrap();
+        let downstream_session_id = self.session.stable_id();
+        let downstream_subscribe_id = self.downstream_subscribe_id;
+
+        let pubsub_relation_manager =
+            PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
+
+        pubsub_relation_manager
+            .set_downstream_forwarding_preference(
+                downstream_session_id,
+                downstream_subscribe_id,
+                forwarding_preference,
+            )
+            .await?;
 
         Ok(())
     }
 
-    async fn forward_loop(
+    async fn forward_objects(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<()> {
@@ -161,43 +181,57 @@ impl DatagramForwarder {
             }
 
             (object_cache_id, is_end) = self
-                .get_and_forward_object(object_cache_storage, object_cache_id)
+                .forward_object(object_cache_storage, object_cache_id)
                 .await?;
         }
 
         Ok(())
     }
 
-    async fn get_and_forward_object(
+    async fn forward_object(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         cache_id: Option<usize>,
     ) -> Result<(Option<usize>, bool)> {
         // Do loop until get an object from the cache storage
         loop {
-            let cache = match cache_id {
-                None => self.try_to_get_first_object(object_cache_storage).await?,
-                Some(cache_id) => {
-                    self.try_to_get_subsequent_object(object_cache_storage, cache_id)
-                        .await?
-                }
-            };
+            let cache = self
+                .try_to_get_object(object_cache_storage, cache_id)
+                .await?;
 
-            match cache {
-                None => {
-                    // If there is no object in the cache storage, sleep for a while and try again
-                    thread::sleep(self.sleep_time);
-                    continue;
-                }
-                Some((cache_id, cache_object)) => {
-                    self.packetize_and_forward_object(&cache_object).await?;
-
-                    let is_end = self.judge_end_of_forwarding(&cache_object).await?;
-
-                    return Ok((Some(cache_id), is_end));
-                }
+            if cache.is_none() {
+                // If there is no object in the cache storage, sleep for a while and try again
+                thread::sleep(self.sleep_time);
+                continue;
             }
+
+            let (cache_id, cache_object) = cache.unwrap();
+
+            let message_buf = self.packetize(&cache_object).await?;
+            self.send(message_buf).await?;
+
+            let is_end = self.judge_end_of_forwarding(&cache_object).await?;
+
+            return Ok((Some(cache_id), is_end));
         }
+    }
+
+    async fn try_to_get_object(
+        &self,
+        object_cache_storage: &mut ObjectCacheStorageWrapper,
+        cache_id: Option<usize>,
+    ) -> Result<Option<(usize, CacheObject)>> {
+        let cache = match cache_id {
+            // Try to get the first object according to Filter Type
+            None => self.try_to_get_first_object(object_cache_storage).await?,
+            Some(cache_id) => {
+                // Try to get the subsequent object with cache_id
+                self.try_to_get_subsequent_object(object_cache_storage, cache_id)
+                    .await?
+            }
+        };
+
+        Ok(cache)
     }
 
     async fn try_to_get_first_object(
@@ -247,18 +281,25 @@ impl DatagramForwarder {
             .await
     }
 
-    async fn packetize_and_forward_object(&mut self, cache_object: &CacheObject) -> Result<()> {
-        let message_buf = match cache_object {
-            CacheObject::Datagram(object_datagram) => {
-                self.packetize_forwarding_object_datagram(object_datagram)
-                    .await
-            }
-            _ => {
-                let msg = "cache object not matched";
-                bail!(msg)
-            }
+    async fn packetize(&mut self, cache_object: &CacheObject) -> Result<BytesMut> {
+        let object_datagram = match cache_object {
+            CacheObject::Datagram(d) => d,
+            _ => bail!("cache object not matched"),
         };
 
+        let mut buf = BytesMut::new();
+        object_datagram.packetize(&mut buf);
+
+        let mut message_buf = BytesMut::with_capacity(buf.len());
+        message_buf.extend(write_variable_integer(
+            u8::from(DataStreamType::ObjectDatagram) as u64,
+        ));
+        message_buf.extend(buf);
+
+        Ok(message_buf)
+    }
+
+    async fn send(&mut self, message_buf: BytesMut) -> Result<()> {
         if let Err(e) = self.session.send_datagram(&message_buf) {
             tracing::warn!("Failed to send datagram: {:?}", e);
             bail!(e);
@@ -323,18 +364,5 @@ impl DatagramForwarder {
         };
 
         Ok(is_end)
-    }
-
-    async fn packetize_forwarding_object_datagram(&self, object: &ObjectDatagram) -> BytesMut {
-        let mut buf = BytesMut::new();
-        object.packetize(&mut buf);
-
-        let mut message_buf = BytesMut::with_capacity(buf.len());
-        message_buf.extend(write_variable_integer(
-            u8::from(DataStreamType::ObjectDatagram) as u64,
-        ));
-        message_buf.extend(buf);
-
-        message_buf
     }
 }
