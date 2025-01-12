@@ -12,8 +12,7 @@ use moqt_core::{
     messages::{
         control_messages::subscribe::FilterType,
         data_streams::{
-            object_status::ObjectStatus, object_stream_subgroup::ObjectStreamSubgroup,
-            object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
+            object_status::ObjectStatus, stream_header_subgroup::StreamHeaderSubgroup,
             stream_header_track::StreamHeaderTrack, DataStreams,
         },
     },
@@ -102,12 +101,16 @@ impl ObjectStreamForwarder {
 
         let mut subgroup_group_id: Option<u64> = None;
 
-        self.check_and_set_forwarding_preference().await?;
-
-        self.get_and_forward_header(&mut object_cache_storage, &mut subgroup_group_id)
+        let upstream_forwarding_preference = self.get_upstream_forwarding_preference().await?;
+        self.validate_forwarding_preference(&upstream_forwarding_preference)
+            .await?;
+        self.set_forwarding_preference_to_downstream(upstream_forwarding_preference)
             .await?;
 
-        self.forward_loop(&mut object_cache_storage, &subgroup_group_id)
+        self.forward_header(&mut object_cache_storage, &mut subgroup_group_id)
+            .await?;
+
+        self.forward_objects(&mut object_cache_storage, &subgroup_group_id)
             .await?;
 
         Ok(())
@@ -129,64 +132,78 @@ impl ObjectStreamForwarder {
         Ok(())
     }
 
-    async fn check_and_set_forwarding_preference(&self) -> Result<()> {
+    async fn get_upstream_forwarding_preference(&self) -> Result<Option<ForwardingPreference>> {
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
 
-        let downstream_session_id = self.stream.stable_id();
-        let downstream_subscribe_id = self.stream.subscribe_id();
         let upstream_session_id = self.object_cache_key.session_id();
         let upstream_subscribe_id = self.object_cache_key.subscribe_id();
 
-        match pubsub_relation_manager
+        pubsub_relation_manager
             .get_upstream_forwarding_preference(upstream_session_id, upstream_subscribe_id)
-            .await?
-        {
-            Some(ForwardingPreference::Track) => {
-                if self.data_stream_type == DataStreamType::StreamHeaderTrack {
-                    pubsub_relation_manager
-                        .set_downstream_forwarding_preference(
-                            downstream_session_id,
-                            downstream_subscribe_id,
-                            ForwardingPreference::Track,
-                        )
-                        .await?;
-                } else {
-                    let msg = std::format!(
-        "uni send stream's data stream type is wrong (expected Track, but got {:?})",
-        self.data_stream_type
-    );
-                    bail!(msg);
-                }
-            }
-            Some(ForwardingPreference::Subgroup) => {
-                if self.data_stream_type == DataStreamType::StreamHeaderSubgroup {
-                    pubsub_relation_manager
-                        .set_downstream_forwarding_preference(
-                            downstream_session_id,
-                            downstream_subscribe_id,
-                            ForwardingPreference::Subgroup,
-                        )
-                        .await?;
-                } else {
-                    let msg = std::format!(
-        "uni send stream's data stream type is wrong (expected Subgroup, but got {:?})",
-        self.data_stream_type
-    );
-                    bail!(msg);
-                }
-            }
+            .await
+    }
 
+    async fn validate_forwarding_preference(
+        &self,
+        upstream_forwarding_preference: &Option<ForwardingPreference>,
+    ) -> Result<()> {
+        match upstream_forwarding_preference {
+            Some(ForwardingPreference::Track) => self.check_data_stream_type_track().await?,
+            Some(ForwardingPreference::Subgroup) => self.check_data_stream_type_subgroup().await?,
             _ => {
-                let msg = "Invalid forwarding preference";
-                bail!(msg);
+                bail!("Forwarding preference is not Stream");
             }
-        };
+        }
 
         Ok(())
     }
 
-    async fn get_and_forward_header(
+    async fn check_data_stream_type_track(&self) -> Result<()> {
+        if self.data_stream_type != DataStreamType::StreamHeaderTrack {
+            bail!(
+                "uni send stream's data stream type is wrong (expected Track, but got {:?})",
+                self.data_stream_type
+            );
+        }
+
+        Ok(())
+    }
+
+    async fn check_data_stream_type_subgroup(&self) -> Result<()> {
+        if self.data_stream_type != DataStreamType::StreamHeaderSubgroup {
+            bail!(
+                "uni send stream's data stream type is wrong (expected Subgroup, but got {:?})",
+                self.data_stream_type
+            );
+        }
+
+        Ok(())
+    }
+
+    async fn set_forwarding_preference_to_downstream(
+        &self,
+        upstream_forwarding_preference: Option<ForwardingPreference>,
+    ) -> Result<()> {
+        let forwarding_preference = upstream_forwarding_preference.unwrap();
+        let downstream_session_id = self.stream.stable_id();
+        let downstream_subscribe_id = self.stream.subscribe_id();
+
+        let pubsub_relation_manager =
+            PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
+
+        pubsub_relation_manager
+            .set_downstream_forwarding_preference(
+                downstream_session_id,
+                downstream_subscribe_id,
+                forwarding_preference,
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn forward_header(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         subgroup_group_id: &mut Option<u64>,
@@ -194,37 +211,20 @@ impl ObjectStreamForwarder {
         let upstream_session_id = self.object_cache_key.session_id();
         let upstream_subscribe_id = self.object_cache_key.subscribe_id();
 
-        // Get the header from the cache storage and send it to the client
-        let message_buf = match object_cache_storage
+        let cache_header = object_cache_storage
             .get_header(upstream_session_id, upstream_subscribe_id)
-            .await?
-        {
-            CacheHeader::Track(stream_header_track) => {
-                self.packetize_forwarding_stream_header_track(&stream_header_track)
-                    .await
-            }
-            CacheHeader::Subgroup(stream_header_subgroup) => {
-                self.packetize_forwarding_stream_header_subgroup(
-                    &stream_header_subgroup,
-                    subgroup_group_id,
-                )
-                .await
-            }
-            _ => {
-                let msg = "cache header not matched";
-                bail!(msg)
-            }
-        };
+            .await?;
 
-        if let Err(e) = self.stream.write_all(&message_buf).await {
-            tracing::warn!("Failed to write to stream: {:?}", e);
-            bail!(e);
-        }
+        let message_buf = self
+            .packetize_header(&cache_header, subgroup_group_id)
+            .await?;
+
+        self.send(message_buf).await?;
 
         Ok(())
     }
 
-    async fn forward_loop(
+    async fn forward_objects(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         subgroup_group_id: &Option<u64>,
@@ -238,14 +238,14 @@ impl ObjectStreamForwarder {
             }
 
             (object_cache_id, is_end) = self
-                .get_and_forward_object(object_cache_storage, object_cache_id, subgroup_group_id)
+                .forward_object(object_cache_storage, object_cache_id, subgroup_group_id)
                 .await?;
         }
 
         Ok(())
     }
 
-    async fn get_and_forward_object(
+    async fn forward_object(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         cache_id: Option<usize>,
@@ -253,31 +253,45 @@ impl ObjectStreamForwarder {
     ) -> Result<(Option<usize>, bool)> {
         // Do loop until get an object from the cache storage
         loop {
-            let cache = match cache_id {
-                None => self.try_to_get_first_object(object_cache_storage).await?,
-                Some(cache_id) => {
-                    self.try_to_get_subsequent_object(object_cache_storage, cache_id)
-                        .await?
-                }
-            };
+            let cache = self
+                .try_to_get_object(object_cache_storage, cache_id)
+                .await?;
 
-            match cache {
-                None => {
-                    // If there is no object in the cache storage, sleep for a while and try again
-                    thread::sleep(self.sleep_time);
-                    continue;
-                }
-                Some((cache_id, cache_object)) => {
-                    self.packetize_and_forward_object(&cache_object).await?;
-
-                    let is_end = self
-                        .judge_end_of_forwarding(&cache_object, subgroup_group_id)
-                        .await?;
-
-                    return Ok((Some(cache_id), is_end));
-                }
+            if cache.is_none() {
+                // If there is no object in the cache storage, sleep for a while and try again
+                thread::sleep(self.sleep_time);
+                continue;
             }
+
+            let (cache_id, cache_object) = cache.unwrap();
+
+            let message_buf = self.packetize_object(&cache_object).await?;
+            self.send(message_buf).await?;
+
+            let is_end = self
+                .judge_end_of_forwarding(&cache_object, subgroup_group_id)
+                .await?;
+
+            return Ok((Some(cache_id), is_end));
         }
+    }
+
+    async fn try_to_get_object(
+        &self,
+        object_cache_storage: &mut ObjectCacheStorageWrapper,
+        cache_id: Option<usize>,
+    ) -> Result<Option<(usize, CacheObject)>> {
+        let cache = match cache_id {
+            // Try to get the first object according to Filter Type
+            None => self.try_to_get_first_object(object_cache_storage).await?,
+            Some(cache_id) => {
+                // Try to get the subsequent object with cache_id
+                self.try_to_get_subsequent_object(object_cache_storage, cache_id)
+                    .await?
+            }
+        };
+
+        Ok(cache)
     }
 
     async fn try_to_get_first_object(
@@ -327,22 +341,98 @@ impl ObjectStreamForwarder {
             .await
     }
 
-    async fn packetize_and_forward_object(&mut self, cache_object: &CacheObject) -> Result<()> {
-        let message_buf = match cache_object {
-            CacheObject::Track(object_stream_track) => {
-                self.packetize_forwarding_object_stream_track(object_stream_track)
-                    .await
-            }
-            CacheObject::Subgroup(object_stream_subgroup) => {
-                self.packetize_forwarding_object_stream_subgroup(object_stream_subgroup)
-                    .await
+    async fn packetize_header(
+        &mut self,
+        cache_header: &CacheHeader,
+        subgroup_group_id: &mut Option<u64>,
+    ) -> Result<BytesMut> {
+        let message_buf = match cache_header {
+            CacheHeader::Track(track_header) => self.packetize_track_header(track_header),
+            CacheHeader::Subgroup(subgroup_header) => {
+                self.packetize_subgroup_header(subgroup_header, subgroup_group_id)
             }
             _ => {
-                let msg = "cache object not matched";
+                let msg = "cache header not matched";
                 bail!(msg)
             }
         };
 
+        Ok(message_buf)
+    }
+
+    fn packetize_track_header(&self, header: &StreamHeaderTrack) -> BytesMut {
+        let mut buf = BytesMut::new();
+        let downstream_subscribe_id = self.stream.subscribe_id();
+        let downstream_track_alias = self.downstream_subscription.get_track_alias();
+
+        let header = StreamHeaderTrack::new(
+            downstream_subscribe_id,
+            downstream_track_alias,
+            header.publisher_priority(),
+        )
+        .unwrap();
+
+        header.packetize(&mut buf);
+
+        let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
+        message_buf.extend(write_variable_integer(
+            u8::from(DataStreamType::StreamHeaderTrack) as u64,
+        ));
+        message_buf.extend(buf);
+
+        message_buf
+    }
+
+    fn packetize_subgroup_header(
+        &self,
+        header: &StreamHeaderSubgroup,
+        subgroup_group_id: &mut Option<u64>,
+    ) -> BytesMut {
+        let mut buf = BytesMut::new();
+        let downstream_subscribe_id = self.stream.subscribe_id();
+        let downstream_track_alias = self.downstream_subscription.get_track_alias();
+
+        let header = StreamHeaderSubgroup::new(
+            downstream_subscribe_id,
+            downstream_track_alias,
+            header.group_id(),
+            header.subgroup_id(),
+            header.publisher_priority(),
+        )
+        .unwrap();
+
+        *subgroup_group_id = Some(header.group_id());
+
+        header.packetize(&mut buf);
+
+        let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
+        message_buf.extend(write_variable_integer(
+            u8::from(DataStreamType::StreamHeaderSubgroup) as u64,
+        ));
+        message_buf.extend(buf);
+
+        message_buf
+    }
+
+    async fn packetize_object(&mut self, cache_object: &CacheObject) -> Result<BytesMut> {
+        let mut buf = BytesMut::new();
+
+        match cache_object {
+            CacheObject::Track(track_object) => track_object.packetize(&mut buf),
+            CacheObject::Subgroup(subgroup_object) => subgroup_object.packetize(&mut buf),
+            _ => {
+                let msg = "cache object not matched";
+                bail!(msg)
+            }
+        }
+
+        let mut message_buf = BytesMut::with_capacity(buf.len());
+        message_buf.extend(buf);
+
+        Ok(message_buf)
+    }
+
+    async fn send(&mut self, message_buf: BytesMut) -> Result<()> {
         if let Err(e) = self.stream.write_all(&message_buf).await {
             tracing::warn!("Failed to write to stream: {:?}", e);
             bail!(e);
@@ -435,88 +525,5 @@ impl ObjectStreamForwarder {
         };
 
         Ok(is_end)
-    }
-
-    async fn packetize_forwarding_stream_header_track(
-        &self,
-        header: &StreamHeaderTrack,
-    ) -> BytesMut {
-        let mut buf = BytesMut::new();
-        let downstream_subscribe_id = self.stream.subscribe_id();
-        let downstream_track_alias = self.downstream_subscription.get_track_alias();
-
-        let header = StreamHeaderTrack::new(
-            downstream_subscribe_id,
-            downstream_track_alias,
-            header.publisher_priority(),
-        )
-        .unwrap();
-
-        header.packetize(&mut buf);
-
-        let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
-        message_buf.extend(write_variable_integer(
-            u8::from(DataStreamType::StreamHeaderTrack) as u64,
-        ));
-        message_buf.extend(buf);
-
-        message_buf
-    }
-
-    async fn packetize_forwarding_stream_header_subgroup(
-        &self,
-        header: &StreamHeaderSubgroup,
-        subgroup_group_id: &mut Option<u64>,
-    ) -> BytesMut {
-        let mut buf = BytesMut::new();
-        let downstream_subscribe_id = self.stream.subscribe_id();
-        let downstream_track_alias = self.downstream_subscription.get_track_alias();
-
-        let header = StreamHeaderSubgroup::new(
-            downstream_subscribe_id,
-            downstream_track_alias,
-            header.group_id(),
-            header.subgroup_id(),
-            header.publisher_priority(),
-        )
-        .unwrap();
-
-        *subgroup_group_id = Some(header.group_id());
-
-        header.packetize(&mut buf);
-
-        let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
-        message_buf.extend(write_variable_integer(
-            u8::from(DataStreamType::StreamHeaderSubgroup) as u64,
-        ));
-        message_buf.extend(buf);
-
-        message_buf
-    }
-
-    async fn packetize_forwarding_object_stream_track(
-        &self,
-        object: &ObjectStreamTrack,
-    ) -> BytesMut {
-        let mut buf = BytesMut::new();
-        object.packetize(&mut buf);
-
-        let mut message_buf = BytesMut::with_capacity(buf.len());
-        message_buf.extend(buf);
-
-        message_buf
-    }
-
-    async fn packetize_forwarding_object_stream_subgroup(
-        &self,
-        object: &ObjectStreamSubgroup,
-    ) -> BytesMut {
-        let mut buf = BytesMut::new();
-        object.packetize(&mut buf);
-
-        let mut message_buf = BytesMut::with_capacity(buf.len());
-        message_buf.extend(buf);
-
-        message_buf
     }
 }
