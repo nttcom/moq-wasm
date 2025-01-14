@@ -179,7 +179,7 @@ impl UniStreamReceiver {
 
         match result {
             StreamHeaderProcessResult::Success(stream_header) => Ok(Some(stream_header)),
-            StreamHeaderProcessResult::IncompleteMessage => Ok(None),
+            StreamHeaderProcessResult::Continue => Ok(None),
             StreamHeaderProcessResult::Failure(code, reason) => {
                 let msg = std::format!("stream_header_read failure: {:?}", reason);
                 Err((code, msg))
@@ -433,7 +433,7 @@ impl UniStreamReceiver {
 
         match result {
             ObjectStreamProcessResult::Success(stream_object) => Ok(Some(stream_object)),
-            ObjectStreamProcessResult::IncompleteMessage => Ok(None),
+            ObjectStreamProcessResult::Continue => Ok(None),
             ObjectStreamProcessResult::Failure(code, reason) => {
                 let msg = std::format!("object_stream_read failure: {:?}", reason);
                 Err((code, msg))
