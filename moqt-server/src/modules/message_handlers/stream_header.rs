@@ -36,17 +36,8 @@ fn read_data_stream_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataSt
         }
     };
 
-    let data_stream_type: DataStreamType = match DataStreamType::try_from(type_value) {
-        Ok(v) => {
-            if v == DataStreamType::ObjectDatagram {
-                bail!("{:?} is not data stream type", v);
-            }
-            v
-        }
-        Err(err) => {
-            bail!(err.to_string());
-        }
-    };
+    let data_stream_type = DataStreamType::try_from(type_value)
+        .map_err(|err| anyhow::anyhow!("Failed to convert value: {}", err))?;
     Ok(data_stream_type)
 }
 
@@ -90,45 +81,32 @@ pub async fn try_read_header(
     };
     tracing::info!("Received data stream type: {:?}", data_stream_type);
 
-    match data_stream_type {
+    let result = match data_stream_type {
         DataStreamType::StreamHeaderTrack => {
-            let result = StreamHeaderTrack::depacketize(&mut read_cur);
-            match result {
-                Ok(header) => {
-                    buf.advance(read_cur.position() as usize);
-
-                    let header = StreamHeader::Track(header);
-                    StreamHeaderProcessResult::Success(header)
-                }
-                Err(err) => {
-                    tracing::warn!("{:#?}", err);
-                    // Reset the cursor position because data for the header has not yet arrived
-                    buf.advance(read_cur.position() as usize);
-                    StreamHeaderProcessResult::Continue
-                }
-            }
+            StreamHeaderTrack::depacketize(&mut read_cur).map(StreamHeader::Track)
         }
         DataStreamType::StreamHeaderSubgroup => {
-            let result = StreamHeaderSubgroup::depacketize(&mut read_cur);
-            match result {
-                Ok(header) => {
-                    buf.advance(read_cur.position() as usize);
-
-                    let header = StreamHeader::Subgroup(header);
-                    StreamHeaderProcessResult::Success(header)
-                }
-                Err(err) => {
-                    tracing::warn!("{:#?}", err);
-                    // Reset the cursor position because data for the header has not yet arrived
-                    buf.advance(read_cur.position() as usize);
-                    StreamHeaderProcessResult::Continue
-                }
-            }
+            StreamHeaderSubgroup::depacketize(&mut read_cur).map(StreamHeader::Subgroup)
         }
-        unknown => StreamHeaderProcessResult::Failure(
-            TerminationErrorCode::ProtocolViolation,
-            format!("Unknown message type: {:?}", unknown),
-        ),
+        unknown => {
+            return StreamHeaderProcessResult::Failure(
+                TerminationErrorCode::ProtocolViolation,
+                format!("Unknown message type: {:?}", unknown),
+            );
+        }
+    };
+
+    match result {
+        Ok(stream_header) => {
+            buf.advance(read_cur.position() as usize);
+            StreamHeaderProcessResult::Success(stream_header)
+        }
+        Err(err) => {
+            tracing::warn!("{:#?}", err);
+            // Reset the cursor position because data for an object has not yet arrived
+            read_cur.set_position(0);
+            StreamHeaderProcessResult::Continue
+        }
     }
 }
 

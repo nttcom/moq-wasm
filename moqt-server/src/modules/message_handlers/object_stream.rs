@@ -35,48 +35,32 @@ pub async fn try_read_object(
     }
 
     let mut read_cur = Cursor::new(&buf[..]);
-
-    match data_stream_type {
+    let result = match data_stream_type {
         DataStreamType::StreamHeaderTrack => {
-            let result = ObjectStreamTrack::depacketize(&mut read_cur);
-            match result {
-                Ok(object) => {
-                    buf.advance(read_cur.position() as usize);
-
-                    let object = StreamObject::Track(object);
-                    ObjectStreamProcessResult::Success(object)
-                }
-                Err(err) => {
-                    tracing::warn!("{:#?}", err);
-                    // Reset the cursor position because data for an object has not yet arrived
-                    read_cur.set_position(0);
-
-                    ObjectStreamProcessResult::Continue
-                }
-            }
+            ObjectStreamTrack::depacketize(&mut read_cur).map(StreamObject::Track)
         }
         DataStreamType::StreamHeaderSubgroup => {
-            let result = ObjectStreamSubgroup::depacketize(&mut read_cur);
-            match result {
-                Ok(object) => {
-                    buf.advance(read_cur.position() as usize);
-
-                    let object = StreamObject::Subgroup(object);
-                    ObjectStreamProcessResult::Success(object)
-                }
-                Err(err) => {
-                    tracing::warn!("{:#?}", err);
-                    // // Reset the cursor position because data for an object has not yet arrived
-                    read_cur.set_position(0);
-
-                    ObjectStreamProcessResult::Continue
-                }
-            }
+            ObjectStreamSubgroup::depacketize(&mut read_cur).map(StreamObject::Subgroup)
         }
-        unknown => ObjectStreamProcessResult::Failure(
-            TerminationErrorCode::ProtocolViolation,
-            format!("Unknown message type: {:?}", unknown),
-        ),
+        unknown => {
+            return ObjectStreamProcessResult::Failure(
+                TerminationErrorCode::ProtocolViolation,
+                format!("Unknown message type: {:?}", unknown),
+            );
+        }
+    };
+
+    match result {
+        Ok(stream_object) => {
+            buf.advance(read_cur.position() as usize);
+            ObjectStreamProcessResult::Success(stream_object)
+        }
+        Err(err) => {
+            tracing::warn!("{:#?}", err);
+            // Reset the cursor position because data for an object has not yet arrived
+            read_cur.set_position(0);
+            ObjectStreamProcessResult::Continue
+        }
     }
 }
 

@@ -11,6 +11,7 @@ use moqt_core::{
 use std::io::Cursor;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
 #[derive(Debug, PartialEq)]
 pub enum ObjectDatagramProcessResult {
     Success(ObjectDatagram),
@@ -25,18 +26,8 @@ fn read_data_stream_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataSt
             bail!(err.to_string());
         }
     };
-
-    let data_stream_type: DataStreamType = match DataStreamType::try_from(type_value) {
-        Ok(v) => {
-            if v == DataStreamType::StreamHeaderTrack || v == DataStreamType::StreamHeaderSubgroup {
-                bail!("{:?} is not data stream type", v);
-            }
-            v
-        }
-        Err(err) => {
-            bail!(err.to_string());
-        }
-    };
+    let data_stream_type = DataStreamType::try_from(type_value)
+        .map_err(|err| anyhow::anyhow!("Failed to convert value: {}", err))?;
     Ok(data_stream_type)
 }
 
@@ -71,7 +62,6 @@ pub(crate) async fn try_read_object(
         Err(err) => {
             buf.advance(read_cur.position() as usize);
 
-            tracing::error!("data_stream_type is wrong: {:?}", err);
             return ObjectDatagramProcessResult::Failure(
                 TerminationErrorCode::ProtocolViolation,
                 err.to_string(),
@@ -79,27 +69,26 @@ pub(crate) async fn try_read_object(
         }
     };
 
-    match data_stream_type {
-        DataStreamType::ObjectDatagram => {
-            let result = ObjectDatagram::depacketize(&mut read_cur);
-            match result {
-                Ok(object) => {
-                    buf.advance(read_cur.position() as usize);
-
-                    ObjectDatagramProcessResult::Success(object)
-                }
-                Err(err) => {
-                    tracing::warn!("{:#?}", err);
-                    // Reset the cursor position because data for an object has not yet arrived
-                    read_cur.set_position(0);
-                    ObjectDatagramProcessResult::Continue
-                }
-            }
+    let result = match data_stream_type {
+        DataStreamType::ObjectDatagram => ObjectDatagram::depacketize(&mut read_cur),
+        _ => {
+            return ObjectDatagramProcessResult::Failure(
+                TerminationErrorCode::ProtocolViolation,
+                format!("Invalid message type: {:?}", data_stream_type),
+            );
         }
-        _ => ObjectDatagramProcessResult::Failure(
-            TerminationErrorCode::ProtocolViolation,
-            format!("Invalid message type: {:?}", data_stream_type),
-        ),
+    };
+    match result {
+        Ok(object) => {
+            buf.advance(read_cur.position() as usize);
+            ObjectDatagramProcessResult::Success(object)
+        }
+        Err(err) => {
+            tracing::warn!("{:#?}", err);
+            // Reset the cursor position because data for an object has not yet arrived
+            read_cur.set_position(0);
+            ObjectDatagramProcessResult::Continue
+        }
     }
 }
 
