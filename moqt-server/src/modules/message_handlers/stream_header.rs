@@ -104,10 +104,7 @@ pub async fn try_read_header(
                     tracing::warn!("{:#?}", err);
                     // Reset the cursor position because data for the header has not yet arrived
                     buf.advance(read_cur.position() as usize);
-                    StreamHeaderProcessResult::Failure(
-                        TerminationErrorCode::InternalError,
-                        err.to_string(),
-                    )
+                    StreamHeaderProcessResult::Continue
                 }
             }
         }
@@ -124,10 +121,7 @@ pub async fn try_read_header(
                     tracing::warn!("{:#?}", err);
                     // Reset the cursor position because data for the header has not yet arrived
                     buf.advance(read_cur.position() as usize);
-                    StreamHeaderProcessResult::Failure(
-                        TerminationErrorCode::InternalError,
-                        err.to_string(),
-                    )
+                    StreamHeaderProcessResult::Continue
                 }
             }
         }
