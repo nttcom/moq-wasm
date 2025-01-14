@@ -11,7 +11,7 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::subscribe::FilterType,
-        data_streams::{object_status::ObjectStatus, DataStreams},
+        data_streams::{object_datagram::ObjectDatagram, object_status::ObjectStatus, DataStreams},
     },
     models::{subscriptions::Subscription, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -97,7 +97,9 @@ impl DatagramForwarder {
         let upstream_forwarding_preference = self.get_upstream_forwarding_preference().await?;
         self.validate_forwarding_preference(&upstream_forwarding_preference)
             .await?;
-        self.set_forwarding_preference_to_downstream(upstream_forwarding_preference)
+
+        let downstream_forwarding_preference = upstream_forwarding_preference.clone();
+        self.set_forwarding_preference(downstream_forwarding_preference)
             .await?;
 
         self.forward_objects(&mut object_cache_storage).await?;
@@ -146,11 +148,11 @@ impl DatagramForwarder {
         }
     }
 
-    async fn set_forwarding_preference_to_downstream(
+    async fn set_forwarding_preference(
         &self,
-        upstream_forwarding_preference: Option<ForwardingPreference>,
+        downstream_forwarding_preference: Option<ForwardingPreference>,
     ) -> Result<()> {
-        let forwarding_preference = upstream_forwarding_preference.unwrap();
+        let forwarding_preference = downstream_forwarding_preference.unwrap();
         let downstream_session_id = self.session.stable_id();
         let downstream_subscribe_id = self.downstream_subscribe_id;
 
@@ -175,11 +177,7 @@ impl DatagramForwarder {
         let mut object_cache_id = None;
         let mut is_end = false;
 
-        loop {
-            if is_end {
-                break;
-            }
-
+        while !is_end {
             (object_cache_id, is_end) = self
                 .forward_object(object_cache_storage, object_cache_id)
                 .await?;
@@ -195,46 +193,51 @@ impl DatagramForwarder {
     ) -> Result<(Option<usize>, bool)> {
         // Do loop until get an object from the cache storage
         loop {
-            let cache = self
-                .try_to_get_object(object_cache_storage, cache_id)
-                .await?;
+            let (cache_id, object_datagram) =
+                match self.try_get_object(object_cache_storage, cache_id).await? {
+                    Some((id, object)) => (id, object),
+                    None => {
+                        // If there is no object in the cache storage, sleep for a while and try again
+                        thread::sleep(self.sleep_time);
+                        continue;
+                    }
+                };
 
-            if cache.is_none() {
-                // If there is no object in the cache storage, sleep for a while and try again
-                thread::sleep(self.sleep_time);
-                continue;
-            }
-
-            let (cache_id, cache_object) = cache.unwrap();
-
-            let message_buf = self.packetize(&cache_object).await?;
+            let message_buf = self.packetize(&object_datagram).await?;
             self.send(message_buf).await?;
 
-            let is_end = self.judge_end_of_forwarding(&cache_object).await?;
+            let is_end = self.judge_end_of_forwarding(&object_datagram).await?;
 
             return Ok((Some(cache_id), is_end));
         }
     }
 
-    async fn try_to_get_object(
+    async fn try_get_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         cache_id: Option<usize>,
-    ) -> Result<Option<(usize, CacheObject)>> {
+    ) -> Result<Option<(usize, ObjectDatagram)>> {
         let cache = match cache_id {
             // Try to get the first object according to Filter Type
-            None => self.try_to_get_first_object(object_cache_storage).await?,
+            None => self.try_get_first_object(object_cache_storage).await?,
             Some(cache_id) => {
                 // Try to get the subsequent object with cache_id
-                self.try_to_get_subsequent_object(object_cache_storage, cache_id)
+                self.try_get_subsequent_object(object_cache_storage, cache_id)
                     .await?
             }
         };
 
-        Ok(cache)
+        match cache {
+            None => Ok(None),
+            Some((cache_id, CacheObject::Datagram(object))) => Ok(Some((cache_id, object))),
+            _ => {
+                let msg = "cache object not matched";
+                bail!(msg)
+            }
+        }
     }
 
-    async fn try_to_get_first_object(
+    async fn try_get_first_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<(usize, CacheObject)>> {
@@ -268,7 +271,7 @@ impl DatagramForwarder {
         }
     }
 
-    async fn try_to_get_subsequent_object(
+    async fn try_get_subsequent_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,
@@ -281,12 +284,7 @@ impl DatagramForwarder {
             .await
     }
 
-    async fn packetize(&mut self, cache_object: &CacheObject) -> Result<BytesMut> {
-        let object_datagram = match cache_object {
-            CacheObject::Datagram(d) => d,
-            _ => bail!("cache object not matched"),
-        };
-
+    async fn packetize(&mut self, object_datagram: &ObjectDatagram) -> Result<BytesMut> {
         let mut buf = BytesMut::new();
         object_datagram.packetize(&mut buf);
 
@@ -308,15 +306,16 @@ impl DatagramForwarder {
         Ok(())
     }
 
-    async fn judge_end_of_forwarding(&self, cache_object: &CacheObject) -> Result<bool> {
-        let is_end_of_data_stream = self.judge_end_of_data_stream(cache_object).await?;
+    async fn judge_end_of_forwarding(&self, object_datagram: &ObjectDatagram) -> Result<bool> {
+        let is_end_of_data_stream = self.judge_end_of_data_stream(object_datagram).await?;
         if is_end_of_data_stream {
             return Ok(true);
         }
 
         let filter_type = self.downstream_subscription.get_filter_type();
         if filter_type == FilterType::AbsoluteRange {
-            let is_end_of_absolute_range = self.judge_end_of_absolute_range(cache_object).await?;
+            let is_end_of_absolute_range =
+                self.judge_end_of_absolute_range(object_datagram).await?;
             if is_end_of_absolute_range {
                 return Ok(true);
             }
@@ -325,44 +324,26 @@ impl DatagramForwarder {
         Ok(false)
     }
 
-    async fn judge_end_of_data_stream(&self, cache_object: &CacheObject) -> Result<bool> {
-        let is_end = match cache_object {
-            CacheObject::Datagram(object_datagram) => {
-                matches!(
-                    object_datagram.object_status(),
-                    Some(ObjectStatus::EndOfTrackAndGroup)
-                )
-            }
-            _ => {
-                let msg = "cache object not matched";
-                bail!(msg)
-            }
-        };
+    async fn judge_end_of_data_stream(&self, object_datagram: &ObjectDatagram) -> Result<bool> {
+        let is_end = matches!(
+            object_datagram.object_status(),
+            Some(ObjectStatus::EndOfTrackAndGroup)
+        );
 
         Ok(is_end)
     }
 
-    async fn judge_end_of_absolute_range(&self, cache_object: &CacheObject) -> Result<bool> {
+    async fn judge_end_of_absolute_range(&self, object_datagram: &ObjectDatagram) -> Result<bool> {
         let (end_group, end_object) = self.downstream_subscription.get_absolute_end();
         let end_group = end_group.unwrap();
         let end_object = end_object.unwrap();
 
-        let is_end = match cache_object {
-            CacheObject::Datagram(object_datagram) => {
-                let is_group_end = object_datagram.group_id() == end_group;
-                let is_object_end = object_datagram.object_id() == end_object;
-                let is_ending = is_group_end && is_object_end;
+        let is_group_end = object_datagram.group_id() == end_group;
+        let is_object_end = object_datagram.object_id() == end_object;
+        let is_ending = is_group_end && is_object_end;
 
-                let is_ended = object_datagram.group_id() > end_group;
+        let is_ended = object_datagram.group_id() > end_group;
 
-                is_ending || is_ended
-            }
-            _ => {
-                let msg = "cache object not matched";
-                bail!(msg)
-            }
-        };
-
-        Ok(is_end)
+        Ok(is_ending || is_ended)
     }
 }
