@@ -198,7 +198,7 @@ async fn spawn_recv_datagram_thread(
             let mut datagram_receiver = DatagramReceiver::init(client).await;
 
             match datagram_receiver
-                .receive(datagram)
+                .receive_object(datagram)
                 .instrument(session_span)
                 .await
             {
