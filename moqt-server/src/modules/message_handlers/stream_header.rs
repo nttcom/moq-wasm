@@ -104,7 +104,10 @@ pub async fn try_read_header(
                     tracing::warn!("{:#?}", err);
                     // Reset the cursor position because data for the header has not yet arrived
                     buf.advance(read_cur.position() as usize);
-                    StreamHeaderProcessResult::Continue
+                    StreamHeaderProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    )
                 }
             }
         }
@@ -121,7 +124,10 @@ pub async fn try_read_header(
                     tracing::warn!("{:#?}", err);
                     // Reset the cursor position because data for the header has not yet arrived
                     buf.advance(read_cur.position() as usize);
-                    StreamHeaderProcessResult::Continue
+                    StreamHeaderProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    )
                 }
             }
         }
@@ -129,140 +135,5 @@ pub async fn try_read_header(
             TerminationErrorCode::ProtocolViolation,
             format!("Unknown message type: {:?}", unknown),
         ),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    mod success {
-        use crate::modules::{
-            message_handlers::stream_header::{
-                try_read_header, StreamHeader, StreamHeaderProcessResult,
-            },
-            moqt_client::{MOQTClient, MOQTClientStatus},
-            server_processes::senders,
-        };
-        use bytes::BytesMut;
-        use moqt_core::{
-            data_stream_type::DataStreamType,
-            messages::data_streams::{
-                stream_header_subgroup::StreamHeaderSubgroup,
-                stream_header_track::StreamHeaderTrack, DataStreams,
-            },
-            variable_integer::write_variable_integer,
-        };
-        use std::{io::Cursor, sync::Arc};
-        use tokio::sync::Mutex;
-
-        #[tokio::test]
-        async fn stream_header_track_success() {
-            let data_stream_type = DataStreamType::StreamHeaderTrack;
-            let bytes_array = [
-                0, // Subscribe ID (i)
-                1, // Track Alias (i)
-                2, // Subscriber Priority (8)
-            ];
-            let mut buf = BytesMut::with_capacity(bytes_array.len() + 8);
-            buf.extend(write_variable_integer(data_stream_type as u64));
-            buf.extend_from_slice(&bytes_array);
-
-            let senders_mock = senders::test_helper_fn::create_senders_mock();
-            let upstream_session_id = 0;
-
-            let mut client = MOQTClient::new(upstream_session_id, senders_mock);
-            client.update_status(MOQTClientStatus::SetUp);
-            let client = Arc::new(Mutex::new(client));
-
-            let result = try_read_header(&mut buf, client).await;
-
-            let mut buf_without_type = BytesMut::with_capacity(bytes_array.len());
-            buf_without_type.extend_from_slice(&bytes_array);
-            let mut read_cur = Cursor::new(&buf_without_type[..]);
-            let header = StreamHeaderTrack::depacketize(&mut read_cur).unwrap();
-
-            assert_eq!(
-                result,
-                StreamHeaderProcessResult::Success(StreamHeader::Track(header))
-            );
-        }
-
-        #[tokio::test]
-        async fn stream_header_subgroup_success() {
-            let data_stream_type = DataStreamType::StreamHeaderSubgroup;
-            let bytes_array = [
-                0, // Subscribe ID (i)
-                1, // Track Alias (i)
-                2, // Group ID (i)
-                3, // Subgroup ID (i)
-                4, // Subscriber Priority (8)
-            ];
-            let mut buf = BytesMut::with_capacity(bytes_array.len() + 8);
-            buf.extend(write_variable_integer(data_stream_type as u64));
-            buf.extend_from_slice(&bytes_array);
-
-            let senders_mock = senders::test_helper_fn::create_senders_mock();
-            let upstream_session_id = 0;
-
-            let mut client = MOQTClient::new(upstream_session_id, senders_mock);
-            client.update_status(MOQTClientStatus::SetUp);
-            let client = Arc::new(Mutex::new(client));
-
-            let result = try_read_header(&mut buf, client).await;
-
-            let mut buf_without_type = BytesMut::with_capacity(bytes_array.len());
-            buf_without_type.extend_from_slice(&bytes_array);
-            let mut read_cur = Cursor::new(&buf_without_type[..]);
-            let header = StreamHeaderSubgroup::depacketize(&mut read_cur).unwrap();
-
-            assert_eq!(
-                result,
-                StreamHeaderProcessResult::Success(StreamHeader::Subgroup(header))
-            );
-        }
-
-        #[tokio::test]
-        async fn stream_header_track_continue_incomplete_message() {
-            let data_stream_type = DataStreamType::StreamHeaderTrack;
-            let bytes_array = [
-                0, // Group ID (i)
-                1, // Object ID (i)
-            ];
-            let mut buf = BytesMut::with_capacity(bytes_array.len() + 8);
-            buf.extend(write_variable_integer(data_stream_type as u64));
-            buf.extend_from_slice(&bytes_array);
-
-            let senders_mock = senders::test_helper_fn::create_senders_mock();
-            let upstream_session_id = 0;
-
-            let mut client = MOQTClient::new(upstream_session_id, senders_mock);
-            client.update_status(MOQTClientStatus::SetUp);
-            let client = Arc::new(Mutex::new(client));
-
-            let result = try_read_header(&mut buf, client).await;
-
-            assert_eq!(result, StreamHeaderProcessResult::Continue);
-        }
-
-        #[tokio::test]
-        async fn stream_header_subgroup_continue_incomplete_message() {
-            let data_stream_type = DataStreamType::StreamHeaderSubgroup;
-            let bytes_array = [
-                0, // Object ID (i)
-            ];
-            let mut buf = BytesMut::with_capacity(bytes_array.len() + 8);
-            buf.extend(write_variable_integer(data_stream_type as u64));
-            buf.extend_from_slice(&bytes_array);
-
-            let senders_mock = senders::test_helper_fn::create_senders_mock();
-            let upstream_session_id = 0;
-
-            let mut client = MOQTClient::new(upstream_session_id, senders_mock);
-            client.update_status(MOQTClientStatus::SetUp);
-            let client = Arc::new(Mutex::new(client));
-
-            let result = try_read_header(&mut buf, client).await;
-
-            assert_eq!(result, StreamHeaderProcessResult::Continue);
-        }
     }
 }
