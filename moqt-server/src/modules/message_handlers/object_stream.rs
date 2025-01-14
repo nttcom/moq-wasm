@@ -1,10 +1,4 @@
-use crate::{
-    constants::TerminationErrorCode,
-    modules::{
-        moqt_client::{MOQTClient, MOQTClientStatus},
-        object_cache_storage::{CacheObject, ObjectCacheStorageWrapper},
-    },
-};
+use crate::constants::TerminationErrorCode;
 use bytes::{Buf, BytesMut};
 use moqt_core::{
     data_stream_type::DataStreamType,
@@ -17,19 +11,22 @@ use std::io::Cursor;
 
 #[derive(Debug, PartialEq)]
 pub enum ObjectStreamProcessResult {
-    Success(CacheObject),
+    Success(StreamObject),
     IncompleteMessage,
     Failure(TerminationErrorCode, String),
 }
 
-pub async fn object_stream_handler(
-    header_type: DataStreamType,
-    subscribe_id: u64,
-    read_buf: &mut BytesMut,
-    client: &MOQTClient,
-    object_cache_storage: &mut ObjectCacheStorageWrapper,
+#[derive(Debug, PartialEq)]
+pub enum StreamObject {
+    Track(ObjectStreamTrack),
+    Subgroup(ObjectStreamSubgroup),
+}
+
+pub async fn try_read_object(
+    buf: &mut BytesMut,
+    data_stream_type: DataStreamType,
 ) -> ObjectStreamProcessResult {
-    let payload_length = read_buf.len();
+    let payload_length = buf.len();
     tracing::trace!("object_stream_handler! {}", payload_length);
 
     // Check if the data is exist
@@ -37,40 +34,21 @@ pub async fn object_stream_handler(
         return ObjectStreamProcessResult::IncompleteMessage;
     }
 
-    // TODO: Set the accurate duration
-    let duration = 100000;
+    let mut read_cur = Cursor::new(&buf[..]);
 
-    let mut read_cur = Cursor::new(&read_buf[..]);
-
-    // check subscription and judge if it is invalid timing
-    if client.status() != MOQTClientStatus::SetUp {
-        let message = String::from("Invalid timing");
-        tracing::error!(message);
-        return ObjectStreamProcessResult::Failure(
-            TerminationErrorCode::ProtocolViolation,
-            message,
-        );
-    }
-
-    tracing::debug!("object_stream: read_buf: {:?}", read_buf);
-
-    match header_type {
+    match data_stream_type {
         DataStreamType::StreamHeaderTrack => {
             let result = ObjectStreamTrack::depacketize(&mut read_cur);
             match result {
                 Ok(object) => {
-                    read_buf.advance(read_cur.position() as usize);
+                    buf.advance(read_cur.position() as usize);
 
-                    let received_object = CacheObject::Track(object);
-                    object_cache_storage
-                        .set_object(client.id(), subscribe_id, received_object.clone(), duration)
-                        .await
-                        .unwrap();
-
-                    ObjectStreamProcessResult::Success(received_object)
+                    let object = StreamObject::Track(object);
+                    ObjectStreamProcessResult::Success(object)
                 }
                 Err(err) => {
                     tracing::warn!("{:#?}", err);
+                    // Reset the cursor position because data for an object has not yet arrived
                     read_cur.set_position(0);
 
                     ObjectStreamProcessResult::IncompleteMessage
@@ -81,18 +59,14 @@ pub async fn object_stream_handler(
             let result = ObjectStreamSubgroup::depacketize(&mut read_cur);
             match result {
                 Ok(object) => {
-                    read_buf.advance(read_cur.position() as usize);
+                    buf.advance(read_cur.position() as usize);
 
-                    let received_object = CacheObject::Subgroup(object);
-                    object_cache_storage
-                        .set_object(client.id(), subscribe_id, received_object.clone(), duration)
-                        .await
-                        .unwrap();
-
-                    ObjectStreamProcessResult::Success(received_object)
+                    let object = StreamObject::Subgroup(object);
+                    ObjectStreamProcessResult::Success(object)
                 }
                 Err(err) => {
                     tracing::warn!("{:#?}", err);
+                    // // Reset the cursor position because data for an object has not yet arrived
                     read_cur.set_position(0);
 
                     ObjectStreamProcessResult::IncompleteMessage
