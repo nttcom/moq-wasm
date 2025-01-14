@@ -12,7 +12,7 @@ use std::io::Cursor;
 #[derive(Debug, PartialEq)]
 pub enum ObjectStreamProcessResult {
     Success(StreamObject),
-    IncompleteMessage,
+    Continue,
     Failure(TerminationErrorCode, String),
 }
 
@@ -31,7 +31,7 @@ pub async fn try_read_object(
 
     // Check if the data is exist
     if payload_length == 0 {
-        return ObjectStreamProcessResult::IncompleteMessage;
+        return ObjectStreamProcessResult::Continue;
     }
 
     let mut read_cur = Cursor::new(&buf[..]);
@@ -51,7 +51,7 @@ pub async fn try_read_object(
                     // Reset the cursor position because data for an object has not yet arrived
                     read_cur.set_position(0);
 
-                    ObjectStreamProcessResult::IncompleteMessage
+                    ObjectStreamProcessResult::Continue
                 }
             }
         }
@@ -69,7 +69,7 @@ pub async fn try_read_object(
                     // // Reset the cursor position because data for an object has not yet arrived
                     read_cur.set_position(0);
 
-                    ObjectStreamProcessResult::IncompleteMessage
+                    ObjectStreamProcessResult::Continue
                 }
             }
         }
