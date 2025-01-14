@@ -18,7 +18,7 @@ use tokio::sync::Mutex;
 #[derive(Debug, PartialEq)]
 pub enum StreamHeaderProcessResult {
     Success(StreamHeader),
-    IncompleteMessage,
+    Continue,
     Failure(TerminationErrorCode, String),
 }
 
@@ -59,7 +59,7 @@ pub async fn try_read_header(
 
     // Check if the data stream type is exist
     if payload_length == 0 {
-        return StreamHeaderProcessResult::IncompleteMessage;
+        return StreamHeaderProcessResult::Continue;
     }
 
     // check subscription and judge if it is invalid timing

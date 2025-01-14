@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 #[derive(Debug, PartialEq)]
 pub enum ObjectDatagramProcessResult {
     Success(ObjectDatagram),
-    IncompleteMessage,
+    Continue,
     Failure(TerminationErrorCode, String),
 }
 
@@ -49,7 +49,7 @@ pub(crate) async fn try_read_object(
 
     // Check if the data is exist
     if payload_length == 0 {
-        return ObjectDatagramProcessResult::IncompleteMessage;
+        return ObjectDatagramProcessResult::Continue;
     }
 
     // check subscription and judge if it is invalid timing
@@ -92,7 +92,7 @@ pub(crate) async fn try_read_object(
                     tracing::warn!("{:#?}", err);
                     // Reset the cursor position because data for an object has not yet arrived
                     read_cur.set_position(0);
-                    ObjectDatagramProcessResult::IncompleteMessage
+                    ObjectDatagramProcessResult::Continue
                 }
             }
         }

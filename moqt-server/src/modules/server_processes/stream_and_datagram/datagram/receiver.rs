@@ -98,7 +98,7 @@ impl DatagramReceiver {
 
         match result {
             ObjectDatagramProcessResult::Success(datagram_object) => Ok(Some(datagram_object)),
-            ObjectDatagramProcessResult::IncompleteMessage => Ok(None),
+            ObjectDatagramProcessResult::Continue => Ok(None),
             ObjectDatagramProcessResult::Failure(code, reason) => {
                 let msg = std::format!("object_stream_read failure: {:?}", reason);
                 tracing::error!(msg);
