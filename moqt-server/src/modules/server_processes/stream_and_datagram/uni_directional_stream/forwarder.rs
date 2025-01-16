@@ -229,11 +229,11 @@ impl ObjectStreamForwarder {
         let upstream_session_id = self.object_cache_key.session_id();
         let upstream_subscribe_id = self.object_cache_key.subscribe_id();
 
-        let cache_header = object_cache_storage
+        let header_cache = object_cache_storage
             .get_header(upstream_session_id, upstream_subscribe_id)
             .await;
 
-        match cache_header {
+        match header_cache {
             Ok(object_cache_storage::Header::Track(header)) => Ok(StreamHeader::Track(header)),
             Ok(object_cache_storage::Header::Subgroup(header)) => {
                 Ok(StreamHeader::Subgroup(header))

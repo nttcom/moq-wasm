@@ -31,7 +31,7 @@ pub(crate) enum ObjectCacheStorageCommand {
     SetSubscription {
         session_id: usize,
         subscribe_id: u64,
-        cache_header: Header,
+        header_cache: Header,
         resp: oneshot::Sender<Result<()>>,
     },
     GetHeader {
@@ -98,16 +98,16 @@ pub(crate) enum ObjectCacheStorageCommand {
 
 #[derive(Clone)]
 pub(crate) struct Cache {
-    cache_header: Header,
+    header_cache: Header,
     cache_objects: TtlCache<CacheId, CacheObject>,
 }
 
 impl Cache {
-    pub(crate) fn new(cache_header: Header, store_size: usize) -> Self {
+    pub(crate) fn new(header_cache: Header, store_size: usize) -> Self {
         let cache_objects = TtlCache::new(store_size);
 
         Self {
-            cache_header,
+            header_cache,
             cache_objects,
         }
     }
@@ -118,7 +118,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
     tracing::trace!("object_cache_storage start");
     // {
     //   "${(session_id, subscribe_id)}" : {
-    //     "cache_header" : Header,
+    //     "header_cache" : Header,
     //     "cache_objects" : TtlCache<CacheObject>,
     //   }
     // }
@@ -131,11 +131,11 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             ObjectCacheStorageCommand::SetSubscription {
                 session_id,
                 subscribe_id,
-                cache_header,
+                header_cache,
                 resp,
             } => {
                 // TODO: set accurate size
-                let cache = Cache::new(cache_header, 1000);
+                let cache = Cache::new(header_cache, 1000);
 
                 storage.insert((session_id, subscribe_id), cache);
                 cache_ids.entry((session_id, subscribe_id)).or_insert(0);
@@ -148,11 +148,11 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 resp,
             } => {
                 let cache = storage.get(&(session_id, subscribe_id));
-                let cache_header = cache.map(|store| store.cache_header.clone());
+                let header_cache = cache.map(|store| store.header_cache.clone());
 
-                match cache_header {
-                    Some(cache_header) => {
-                        resp.send(Ok(cache_header)).unwrap();
+                match header_cache {
+                    Some(header_cache) => {
+                        resp.send(Ok(header_cache)).unwrap();
                     }
                     None => {
                         resp.send(Err(anyhow::anyhow!("cache header not found")))
@@ -191,7 +191,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
                     // Get an object that matches the given group_id and object_id
-                    let cache_object = match &cache.cache_header {
+                    let cache_object = match &cache.header_cache {
                         Header::Datagram => cache
                             .cache_objects
                             .iter()
@@ -215,7 +215,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                             })
                             .map(|(k, v)| (*k, v.clone())),
                         Header::Subgroup(_subgroup) => {
-                            if let Header::Subgroup(subgroup) = &cache.cache_header {
+                            if let Header::Subgroup(subgroup) = &cache.header_cache {
                                 if subgroup.group_id() != group_id {
                                     resp.send(Err(anyhow::anyhow!("cache group not matched")))
                                         .unwrap();
@@ -305,7 +305,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     let mut cache_objects = cache.cache_objects.clone();
 
                     // Get the last group in both ascending and descending order
-                    let cache_object = match &cache.cache_header {
+                    let cache_object = match &cache.header_cache {
                         // Check the group ID contained in objects and get the latest object in the latest group ID
                         Header::Datagram => {
                             let latest_group_id: Option<u64> =
@@ -409,7 +409,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
 
                     // It is not decided whether the group ID is ascending or descending,
                     // so it is necessary to get the maximum value
-                    let largest_group_id: Option<u64> = match &cache.cache_header {
+                    let largest_group_id: Option<u64> = match &cache.header_cache {
                         Header::Datagram => {
                             let max_group_id = cache_objects
                                 .iter()
@@ -459,7 +459,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     let mut cache_objects = cache.cache_objects.clone();
 
                     // Get the maximum object ID in the group
-                    let largest_object_id: Option<u64> = match &cache.cache_header {
+                    let largest_object_id: Option<u64> = match &cache.header_cache {
                         Header::Datagram => cache_objects
                             .iter()
                             .filter_map(|(_, v)| match v {
@@ -545,14 +545,14 @@ impl ObjectCacheStorageWrapper {
         &mut self,
         session_id: usize,
         subscribe_id: u64,
-        cache_header: Header,
+        header_cache: Header,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
         let cmd = ObjectCacheStorageCommand::SetSubscription {
             session_id,
             subscribe_id,
-            cache_header,
+            header_cache,
             resp: resp_tx,
         };
 
@@ -584,7 +584,7 @@ impl ObjectCacheStorageWrapper {
         let result = resp_rx.await.unwrap();
 
         match result {
-            Ok(cache_header) => Ok(cache_header),
+            Ok(header_cache) => Ok(header_cache),
             Err(err) => bail!(err),
         }
     }
@@ -879,11 +879,11 @@ mod success {
 
         assert!(result.is_ok());
 
-        let cache_header = match result.unwrap() {
+        let header_cache = match result.unwrap() {
             Header::Datagram => Header::Datagram,
             _ => panic!("cache header not matched"),
         };
-        assert_eq!(cache_header, header);
+        assert_eq!(header_cache, header);
     }
 
     #[tokio::test]
