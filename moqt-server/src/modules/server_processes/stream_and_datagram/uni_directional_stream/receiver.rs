@@ -9,7 +9,7 @@ use crate::{
             stream_header::{self, StreamHeaderProcessResult},
         },
         moqt_client::MOQTClient,
-        object_cache_storage::{self, CacheObject, ObjectCacheStorageWrapper},
+        object_cache_storage::{self, ObjectCacheStorageWrapper},
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         server_processes::senders::Senders,
     },
@@ -299,9 +299,7 @@ impl UniStreamReceiver {
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<(), TerminationError> {
         let header_cache = match stream_header {
-            StreamHeader::Track(track_header) => {
-                object_cache_storage::Header::Track(track_header)
-            }
+            StreamHeader::Track(track_header) => object_cache_storage::Header::Track(track_header),
             StreamHeader::Subgroup(subgroup_header) => {
                 object_cache_storage::Header::Subgroup(subgroup_header)
             }
@@ -460,8 +458,10 @@ impl UniStreamReceiver {
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<(), TerminationError> {
         let object_cache = match stream_object {
-            StreamObject::Track(object) => CacheObject::Track(object.clone()),
-            StreamObject::Subgroup(object) => CacheObject::Subgroup(object.clone()),
+            StreamObject::Track(object) => object_cache_storage::Object::Track(object.clone()),
+            StreamObject::Subgroup(object) => {
+                object_cache_storage::Object::Subgroup(object.clone())
+            }
         };
 
         match object_cache_storage

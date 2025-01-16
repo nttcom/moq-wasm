@@ -511,8 +511,7 @@ mod success {
     use crate::modules::{
         moqt_client::MOQTClient,
         object_cache_storage::{
-            self, object_cache_storage, CacheObject, ObjectCacheStorageCommand,
-            ObjectCacheStorageWrapper,
+            self, object_cache_storage, ObjectCacheStorageCommand, ObjectCacheStorageWrapper,
         },
         pubsub_relation_manager::{
             commands::PubSubRelationCommand,
@@ -932,7 +931,7 @@ mod success {
             let track =
                 ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
-            let cache_object = CacheObject::Track(track.clone());
+            let cache_object = object_cache_storage::Object::Track(track.clone());
 
             let _ = object_cache_storage
                 .set_object(upstream_session_id, subscribe_id, cache_object, duration)
