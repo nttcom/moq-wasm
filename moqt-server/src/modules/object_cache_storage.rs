@@ -9,7 +9,6 @@ use tokio::sync::{mpsc, oneshot};
 use ttl_cache::TtlCache;
 type CacheId = usize;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Header {
     Datagram,
@@ -17,7 +16,6 @@ pub(crate) enum Header {
     Subgroup(StreamHeaderSubgroup),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Object {
     Datagram(ObjectDatagram),
@@ -25,7 +23,6 @@ pub(crate) enum Object {
     Subgroup(ObjectStreamSubgroup),
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum ObjectCacheStorageCommand {
     SetSubscription {
@@ -534,7 +531,6 @@ pub(crate) struct ObjectCacheStorageWrapper {
     tx: mpsc::Sender<ObjectCacheStorageCommand>,
 }
 
-#[allow(dead_code)]
 impl ObjectCacheStorageWrapper {
     pub fn new(tx: mpsc::Sender<ObjectCacheStorageCommand>) -> Self {
         Self { tx }
