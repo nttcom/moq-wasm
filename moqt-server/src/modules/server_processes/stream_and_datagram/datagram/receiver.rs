@@ -3,7 +3,7 @@ use crate::{
         buffer_manager::request_buffer,
         message_handlers::object_datagram::{self, ObjectDatagramProcessResult},
         moqt_client::MOQTClient,
-        object_cache_storage::{CacheHeader, CacheObject, ObjectCacheStorageWrapper},
+        object_cache_storage::{self, ObjectCacheStorageWrapper},
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         server_processes::senders::Senders,
     },
@@ -124,10 +124,10 @@ impl DatagramReceiver {
             .get_header(upstream_session_id, upstream_subscribe_id)
             .await
         {
-            Ok(CacheHeader::Datagram) => Ok(false),
+            Ok(object_cache_storage::Header::Datagram) => Ok(false),
             Err(_) => Ok(true),
             _ => {
-                let msg = "Unexpected cache header is already set".to_string();
+                let msg = "Unexpected header cache is already set".to_string();
                 let code = TerminationErrorCode::InternalError;
                 Err((code, msg))
             }
@@ -169,7 +169,7 @@ impl DatagramReceiver {
             .set_subscription(
                 upstream_session_id,
                 upstream_subscribe_id,
-                CacheHeader::Datagram,
+                object_cache_storage::Header::Datagram,
             )
             .await
         {
@@ -190,7 +190,7 @@ impl DatagramReceiver {
         upstream_subscribe_id: u64,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<(), TerminationError> {
-        let object_cache = CacheObject::Datagram(datagram_object);
+        let object_cache = object_cache_storage::Object::Datagram(datagram_object);
 
         match object_cache_storage
             .set_object(

@@ -1,7 +1,7 @@
 use crate::modules::{
     buffer_manager::BufferCommand,
     moqt_client::MOQTClient,
-    object_cache_storage::{CacheObject, ObjectCacheStorageWrapper},
+    object_cache_storage::{self, ObjectCacheStorageWrapper},
     pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
     server_processes::senders::Senders,
 };
@@ -229,7 +229,9 @@ impl DatagramForwarder {
 
         match cache {
             None => Ok(None),
-            Some((cache_id, CacheObject::Datagram(object))) => Ok(Some((cache_id, object))),
+            Some((cache_id, object_cache_storage::Object::Datagram(object))) => {
+                Ok(Some((cache_id, object)))
+            }
             _ => {
                 let msg = "cache object not matched";
                 bail!(msg)
@@ -240,7 +242,7 @@ impl DatagramForwarder {
     async fn try_get_first_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<Option<(usize, CacheObject)>> {
+    ) -> Result<Option<(usize, object_cache_storage::Object)>> {
         let filter_type = self.downstream_subscription.get_filter_type();
         let upstream_session_id = self.object_cache_key.session_id();
         let upstream_subscribe_id = self.object_cache_key.subscribe_id();
@@ -275,7 +277,7 @@ impl DatagramForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,
-    ) -> Result<Option<(usize, CacheObject)>> {
+    ) -> Result<Option<(usize, object_cache_storage::Object)>> {
         let upstream_session_id = self.object_cache_key.session_id();
         let upstream_subscribe_id = self.object_cache_key.subscribe_id();
 
