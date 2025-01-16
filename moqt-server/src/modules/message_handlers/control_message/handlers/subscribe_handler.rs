@@ -931,10 +931,10 @@ mod success {
             let track =
                 ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
-            let cache_object = object_cache_storage::Object::Track(track.clone());
+            let object_cache = object_cache_storage::Object::Track(track.clone());
 
             let _ = object_cache_storage
-                .set_object(upstream_session_id, subscribe_id, cache_object, duration)
+                .set_object(upstream_session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 

@@ -42,7 +42,7 @@ pub(crate) enum ObjectCacheStorageCommand {
     SetObject {
         session_id: usize,
         subscribe_id: u64,
-        cache_object: Object,
+        object_cache: Object,
         duration: u64,
         resp: oneshot::Sender<Result<()>>,
     },
@@ -99,16 +99,16 @@ pub(crate) enum ObjectCacheStorageCommand {
 #[derive(Clone)]
 pub(crate) struct Cache {
     header_cache: Header,
-    cache_objects: TtlCache<CacheId, Object>,
+    object_caches: TtlCache<CacheId, Object>,
 }
 
 impl Cache {
     pub(crate) fn new(header_cache: Header, store_size: usize) -> Self {
-        let cache_objects = TtlCache::new(store_size);
+        let object_caches = TtlCache::new(store_size);
 
         Self {
             header_cache,
-            cache_objects,
+            object_caches,
         }
     }
 }
@@ -119,7 +119,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
     // {
     //   "${(session_id, subscribe_id)}" : {
     //     "header_cache" : Header,
-    //     "cache_objects" : TtlCache<Object>,
+    //     "object_caches" : TtlCache<Object>,
     //   }
     // }
     let mut storage = HashMap::<(usize, u64), Cache>::new();
@@ -163,7 +163,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             ObjectCacheStorageCommand::SetObject {
                 session_id,
                 subscribe_id,
-                cache_object,
+                object_cache,
                 duration,
                 resp,
             } => {
@@ -171,8 +171,8 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 if let Some(cache) = cache {
                     let id = *cache_ids.get(&(session_id, subscribe_id)).unwrap();
                     cache
-                        .cache_objects
-                        .insert(id, cache_object, Duration::from_millis(duration));
+                        .object_caches
+                        .insert(id, object_cache, Duration::from_millis(duration));
                     *cache_ids.get_mut(&(session_id, subscribe_id)).unwrap() += 1;
 
                     resp.send(Ok(())).unwrap();
@@ -191,9 +191,9 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
                     // Get an object that matches the given group_id and object_id
-                    let cache_object = match &cache.header_cache {
+                    let object_cache = match &cache.header_cache {
                         Header::Datagram => cache
-                            .cache_objects
+                            .object_caches
                             .iter()
                             .find(|(_, v)| {
                                 if let Object::Datagram(object) = v {
@@ -204,7 +204,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                             })
                             .map(|(k, v)| (*k, v.clone())),
                         Header::Track(_track) => cache
-                            .cache_objects
+                            .object_caches
                             .iter()
                             .find(|(_, v)| {
                                 if let Object::Track(object) = v {
@@ -223,7 +223,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 }
                             }
                             cache
-                                .cache_objects
+                                .object_caches
                                 .iter()
                                 .find(|(_, v)| {
                                     if let Object::Subgroup(object) = v {
@@ -236,9 +236,9 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         }
                     };
 
-                    match cache_object {
-                        Some(cache_object) => {
-                            let (id, object) = cache_object;
+                    match object_cache {
+                        Some(object_cache) => {
+                            let (id, object) = object_cache;
                             resp.send(Ok(Some((id, object)))).unwrap();
                         }
                         None => {
@@ -256,12 +256,12 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             } => {
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    let mut cache_objects = cache.cache_objects.clone();
-                    let cache_object = cache_objects.iter().next().map(|(k, v)| (*k, v.clone()));
+                    let mut object_caches = cache.object_caches.clone();
+                    let object_cache = object_caches.iter().next().map(|(k, v)| (*k, v.clone()));
 
-                    match cache_object {
-                        Some(cache_object) => {
-                            let (id, object) = cache_object;
+                    match object_cache {
+                        Some(object_cache) => {
+                            let (id, object) = object_cache;
                             resp.send(Ok(Some((id, object)))).unwrap();
                         }
                         None => {
@@ -281,11 +281,11 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 let next_cache_id = cache_id + 1;
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    let cache_object = cache.cache_objects.get(&next_cache_id).cloned();
+                    let object_cache = cache.object_caches.get(&next_cache_id).cloned();
 
-                    match cache_object {
-                        Some(cache_object) => {
-                            resp.send(Ok(Some((next_cache_id, cache_object)))).unwrap();
+                    match object_cache {
+                        Some(object_cache) => {
+                            resp.send(Ok(Some((next_cache_id, object_cache)))).unwrap();
                         }
                         None => {
                             resp.send(Ok(None)).unwrap();
@@ -302,19 +302,19 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             } => {
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    let mut cache_objects = cache.cache_objects.clone();
+                    let mut object_caches = cache.object_caches.clone();
 
                     // Get the last group in both ascending and descending order
-                    let cache_object = match &cache.header_cache {
+                    let object_cache = match &cache.header_cache {
                         // Check the group ID contained in objects and get the latest object in the latest group ID
                         Header::Datagram => {
                             let latest_group_id: Option<u64> =
-                                cache_objects.iter().last().map(|(_, v)| match v {
+                                object_caches.iter().last().map(|(_, v)| match v {
                                     Object::Datagram(object) => object.group_id(),
                                     _ => 0,
                                 });
 
-                            let latest_group = cache_objects.iter().filter_map(|(k, v)| {
+                            let latest_group = object_caches.iter().filter_map(|(k, v)| {
                                 if let Object::Datagram(object) = v {
                                     if object.group_id() == latest_group_id.unwrap() {
                                         Some((k, object.object_id(), (*v).clone()))
@@ -334,12 +334,12 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         // Check the group ID contained in objects and get the latest object in the latest group ID
                         Header::Track(_track) => {
                             let latest_group_id: Option<u64> =
-                                cache_objects.iter().last().map(|(_, v)| match v {
+                                object_caches.iter().last().map(|(_, v)| match v {
                                     Object::Track(object) => object.group_id(),
                                     _ => 0,
                                 });
 
-                            let latest_group = cache_objects.iter().filter_map(|(k, v)| {
+                            let latest_group = object_caches.iter().filter_map(|(k, v)| {
                                 if let Object::Track(object) = v {
                                     if object.group_id() == latest_group_id.unwrap() {
                                         Some((k, object.object_id(), (*v).clone()))
@@ -358,13 +358,13 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         }
                         // Get the latest object because the group ID is the same in the subgroup
                         Header::Subgroup(_subgroup) => {
-                            cache_objects.iter().next().map(|(k, v)| (*k, v.clone()))
+                            object_caches.iter().next().map(|(k, v)| (*k, v.clone()))
                         }
                     };
 
-                    match cache_object {
-                        Some(cache_object) => {
-                            let (id, object) = cache_object;
+                    match object_cache {
+                        Some(object_cache) => {
+                            let (id, object) = object_cache;
                             resp.send(Ok(Some((id, object)))).unwrap();
                         }
                         None => {
@@ -382,12 +382,12 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             } => {
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    let mut cache_objects = cache.cache_objects.clone();
-                    let cache_object = cache_objects.iter().last().map(|(k, v)| (*k, v.clone()));
+                    let mut object_caches = cache.object_caches.clone();
+                    let object_cache = object_caches.iter().last().map(|(k, v)| (*k, v.clone()));
 
-                    match cache_object {
-                        Some(cache_object) => {
-                            let (id, object) = cache_object;
+                    match object_cache {
+                        Some(object_cache) => {
+                            let (id, object) = object_cache;
                             resp.send(Ok(Some((id, object)))).unwrap();
                         }
                         None => {
@@ -405,13 +405,13 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             } => {
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    let mut cache_objects = cache.cache_objects.clone();
+                    let mut object_caches = cache.object_caches.clone();
 
                     // It is not decided whether the group ID is ascending or descending,
                     // so it is necessary to get the maximum value
                     let largest_group_id: Option<u64> = match &cache.header_cache {
                         Header::Datagram => {
-                            let max_group_id = cache_objects
+                            let max_group_id = object_caches
                                 .iter()
                                 .map(|(_, v)| match v {
                                     Object::Datagram(object) => object.group_id(),
@@ -422,7 +422,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                             max_group_id
                         }
                         Header::Track(_header) => {
-                            let max_group_id = cache_objects
+                            let max_group_id = object_caches
                                 .iter()
                                 .map(|(_, v)| match v {
                                     Object::Track(object) => object.group_id(),
@@ -456,11 +456,11 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             } => {
                 let cache = storage.get_mut(&(session_id, subscribe_id));
                 if let Some(cache) = cache {
-                    let mut cache_objects = cache.cache_objects.clone();
+                    let mut object_caches = cache.object_caches.clone();
 
                     // Get the maximum object ID in the group
                     let largest_object_id: Option<u64> = match &cache.header_cache {
-                        Header::Datagram => cache_objects
+                        Header::Datagram => object_caches
                             .iter()
                             .filter_map(|(_, v)| match v {
                                 Object::Datagram(object) => {
@@ -473,7 +473,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 _ => None,
                             })
                             .max(),
-                        Header::Track(_header) => cache_objects
+                        Header::Track(_header) => object_caches
                             .iter()
                             .filter_map(|(_, v)| match v {
                                 Object::Track(object) => {
@@ -486,7 +486,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 _ => None,
                             })
                             .max(),
-                        Header::Subgroup(_header) => cache_objects
+                        Header::Subgroup(_header) => object_caches
                             .iter()
                             .map(|(_, v)| match v {
                                 Object::Subgroup(object) => object.object_id(),
@@ -593,7 +593,7 @@ impl ObjectCacheStorageWrapper {
         &mut self,
         session_id: usize,
         subscribe_id: u64,
-        cache_object: Object,
+        object_cache: Object,
         duration: u64,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
@@ -601,7 +601,7 @@ impl ObjectCacheStorageWrapper {
         let cmd = ObjectCacheStorageCommand::SetObject {
             session_id,
             subscribe_id,
-            cache_object,
+            object_cache,
             duration,
             resp: resp_tx,
         };
@@ -638,7 +638,7 @@ impl ObjectCacheStorageWrapper {
         let result = resp_rx.await.unwrap();
 
         match result {
-            Ok(cache_object) => Ok(cache_object),
+            Ok(object_cache) => Ok(object_cache),
             Err(err) => bail!(err),
         }
     }
@@ -661,7 +661,7 @@ impl ObjectCacheStorageWrapper {
         let result = resp_rx.await.unwrap();
 
         match result {
-            Ok(cache_object) => Ok(cache_object),
+            Ok(object_cache) => Ok(object_cache),
             Err(err) => bail!(err),
         }
     }
@@ -686,7 +686,7 @@ impl ObjectCacheStorageWrapper {
         let result = resp_rx.await.unwrap();
 
         match result {
-            Ok(cache_object) => Ok(cache_object),
+            Ok(object_cache) => Ok(object_cache),
             Err(err) => bail!(err),
         }
     }
@@ -709,7 +709,7 @@ impl ObjectCacheStorageWrapper {
         let result = resp_rx.await.unwrap();
 
         match result {
-            Ok(cache_object) => Ok(cache_object),
+            Ok(object_cache) => Ok(object_cache),
             Err(err) => bail!(err),
         }
     }
@@ -732,7 +732,7 @@ impl ObjectCacheStorageWrapper {
         let result = resp_rx.await.unwrap();
 
         match result {
-            Ok(cache_object) => Ok(cache_object),
+            Ok(object_cache) => Ok(object_cache),
             Err(err) => bail!(err),
         }
     }
@@ -974,7 +974,7 @@ mod success {
         let object_status = None;
         let object_payload = vec![1, 2, 3, 4];
         let duration = 1000;
-        let cache_object = Object::Datagram(
+        let object_cache = Object::Datagram(
             ObjectDatagram::new(
                 subscribe_id,
                 track_alias,
@@ -998,7 +998,7 @@ mod success {
             .set_subscription(session_id, subscribe_id, header)
             .await;
         let result = object_cache_storage
-            .set_object(session_id, subscribe_id, cache_object, duration)
+            .set_object(session_id, subscribe_id, object_cache, duration)
             .await;
 
         assert!(result.is_ok());
@@ -1039,10 +1039,10 @@ mod success {
             )
             .unwrap();
 
-            let cache_object = Object::Datagram(datagram.clone());
+            let object_cache = Object::Datagram(datagram.clone());
 
             let _ = object_cache_storage
-                .set_object(session_id, subscribe_id, cache_object, duration)
+                .set_object(session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 
@@ -1102,10 +1102,10 @@ mod success {
             let track =
                 ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
-            let cache_object = Object::Track(track.clone());
+            let object_cache = Object::Track(track.clone());
 
             let _ = object_cache_storage
-                .set_object(session_id, subscribe_id, cache_object, duration)
+                .set_object(session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 
@@ -1166,10 +1166,10 @@ mod success {
             let subgroup =
                 ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
 
-            let cache_object = Object::Subgroup(subgroup.clone());
+            let object_cache = Object::Subgroup(subgroup.clone());
 
             let _ = object_cache_storage
-                .set_object(session_id, subscribe_id, cache_object, duration)
+                .set_object(session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 
@@ -1227,10 +1227,10 @@ mod success {
             )
             .unwrap();
 
-            let cache_object = Object::Datagram(datagram.clone());
+            let object_cache = Object::Datagram(datagram.clone());
 
             let _ = object_cache_storage
-                .set_object(session_id, subscribe_id, cache_object, duration)
+                .set_object(session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 
@@ -1296,10 +1296,10 @@ mod success {
             )
             .unwrap();
 
-            let cache_object = Object::Datagram(datagram.clone());
+            let object_cache = Object::Datagram(datagram.clone());
 
             let _ = object_cache_storage
-                .set_object(session_id, subscribe_id, cache_object, duration)
+                .set_object(session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 
@@ -1360,10 +1360,10 @@ mod success {
             let track =
                 ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
-            let cache_object = Object::Track(track.clone());
+            let object_cache = Object::Track(track.clone());
 
             let _ = object_cache_storage
-                .set_object(session_id, subscribe_id, cache_object, duration)
+                .set_object(session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 
@@ -1429,10 +1429,10 @@ mod success {
             let subgroup =
                 ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
 
-            let cache_object = Object::Subgroup(subgroup.clone());
+            let object_cache = Object::Subgroup(subgroup.clone());
 
             let _ = object_cache_storage
-                .set_object(session_id, subscribe_id, cache_object, duration)
+                .set_object(session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 
@@ -1492,10 +1492,10 @@ mod success {
             )
             .unwrap();
 
-            let cache_object = Object::Datagram(datagram.clone());
+            let object_cache = Object::Datagram(datagram.clone());
 
             let _ = object_cache_storage
-                .set_object(session_id, subscribe_id, cache_object, duration)
+                .set_object(session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 
@@ -1555,10 +1555,10 @@ mod success {
             let track =
                 ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
-            let cache_object = Object::Track(track.clone());
+            let object_cache = Object::Track(track.clone());
 
             let _ = object_cache_storage
-                .set_object(session_id, subscribe_id, cache_object, duration)
+                .set_object(session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 
@@ -1623,10 +1623,10 @@ mod success {
             let subgroup =
                 ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
 
-            let cache_object = Object::Subgroup(subgroup.clone());
+            let object_cache = Object::Subgroup(subgroup.clone());
 
             let _ = object_cache_storage
-                .set_object(session_id, subscribe_id, cache_object, duration)
+                .set_object(session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 
@@ -1693,10 +1693,10 @@ mod success {
                 )
                 .unwrap();
 
-                let cache_object = Object::Datagram(datagram.clone());
+                let object_cache = Object::Datagram(datagram.clone());
 
                 let _ = object_cache_storage
-                    .set_object(session_id, subscribe_id, cache_object, duration)
+                    .set_object(session_id, subscribe_id, object_cache, duration)
                     .await;
             }
         }
@@ -1772,10 +1772,10 @@ mod success {
                 )
                 .unwrap();
 
-                let cache_object = Object::Datagram(datagram.clone());
+                let object_cache = Object::Datagram(datagram.clone());
 
                 let _ = object_cache_storage
-                    .set_object(session_id, subscribe_id, cache_object, duration)
+                    .set_object(session_id, subscribe_id, object_cache, duration)
                     .await;
             }
         }
@@ -1846,10 +1846,10 @@ mod success {
                     ObjectStreamTrack::new(group_id, object_id, object_status, object_payload)
                         .unwrap();
 
-                let cache_object = Object::Track(track.clone());
+                let object_cache = Object::Track(track.clone());
 
                 let _ = object_cache_storage
-                    .set_object(session_id, subscribe_id, cache_object, duration)
+                    .set_object(session_id, subscribe_id, object_cache, duration)
                     .await;
             }
         }
@@ -1917,10 +1917,10 @@ mod success {
                     ObjectStreamTrack::new(group_id, object_id, object_status, object_payload)
                         .unwrap();
 
-                let cache_object = Object::Track(track.clone());
+                let object_cache = Object::Track(track.clone());
 
                 let _ = object_cache_storage
-                    .set_object(session_id, subscribe_id, cache_object, duration)
+                    .set_object(session_id, subscribe_id, object_cache, duration)
                     .await;
             }
         }
@@ -1995,10 +1995,10 @@ mod success {
                 let subgroup =
                     ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
 
-                let cache_object = Object::Subgroup(subgroup.clone());
+                let object_cache = Object::Subgroup(subgroup.clone());
 
                 let _ = object_cache_storage
-                    .set_object(session_id, subscribe_id, cache_object, duration)
+                    .set_object(session_id, subscribe_id, object_cache, duration)
                     .await;
             }
         }
@@ -2066,10 +2066,10 @@ mod success {
                 )
                 .unwrap();
 
-                let cache_object = Object::Datagram(datagram.clone());
+                let object_cache = Object::Datagram(datagram.clone());
 
                 let _ = object_cache_storage
-                    .set_object(session_id, subscribe_id, cache_object, duration)
+                    .set_object(session_id, subscribe_id, object_cache, duration)
                     .await;
             }
         }
@@ -2134,10 +2134,10 @@ mod success {
                     ObjectStreamTrack::new(group_id, object_id, object_status, object_payload)
                         .unwrap();
 
-                let cache_object = Object::Track(track.clone());
+                let object_cache = Object::Track(track.clone());
 
                 let _ = object_cache_storage
-                    .set_object(session_id, subscribe_id, cache_object, duration)
+                    .set_object(session_id, subscribe_id, object_cache, duration)
                     .await;
             }
         }
@@ -2209,10 +2209,10 @@ mod success {
                 let subgroup =
                     ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
 
-                let cache_object = Object::Subgroup(subgroup.clone());
+                let object_cache = Object::Subgroup(subgroup.clone());
 
                 let _ = object_cache_storage
-                    .set_object(session_id, subscribe_id, cache_object, duration)
+                    .set_object(session_id, subscribe_id, object_cache, duration)
                     .await;
             }
         }
