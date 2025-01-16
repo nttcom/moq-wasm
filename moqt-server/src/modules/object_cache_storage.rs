@@ -50,11 +50,6 @@ pub(crate) enum ObjectCacheStorageCommand {
         object_id: u64,
         resp: oneshot::Sender<Result<Option<(CacheId, Object)>>>,
     },
-    GetFirstObject {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, Object)>>>,
-    },
     GetNextObject {
         session_id: usize,
         subscribe_id: u64,
@@ -81,11 +76,6 @@ pub(crate) enum ObjectCacheStorageCommand {
         subscribe_id: u64,
         group_id: u64,
         resp: oneshot::Sender<Result<u64>>,
-    },
-    DeleteSubscription {
-        session_id: usize,
-        subscribe_id: u64,
-        resp: oneshot::Sender<Result<()>>,
     },
     DeleteClient {
         session_id: usize,
@@ -231,29 +221,6 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 .map(|(k, v)| (*k, v.clone()))
                         }
                     };
-
-                    match object_cache {
-                        Some(object_cache) => {
-                            let (id, object) = object_cache;
-                            resp.send(Ok(Some((id, object)))).unwrap();
-                        }
-                        None => {
-                            resp.send(Ok(None)).unwrap();
-                        }
-                    }
-                } else {
-                    resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
-                }
-            }
-            ObjectCacheStorageCommand::GetFirstObject {
-                session_id,
-                subscribe_id,
-                resp,
-            } => {
-                let cache = storage.get_mut(&(session_id, subscribe_id));
-                if let Some(cache) = cache {
-                    let mut object_caches = cache.object_caches.clone();
-                    let object_cache = object_caches.iter().next().map(|(k, v)| (*k, v.clone()));
 
                     match object_cache {
                         Some(object_cache) => {
@@ -504,14 +471,6 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
                 }
             }
-            ObjectCacheStorageCommand::DeleteSubscription {
-                session_id,
-                subscribe_id,
-                resp,
-            } => {
-                let _ = storage.remove(&(session_id, subscribe_id));
-                resp.send(Ok(())).unwrap();
-            }
             ObjectCacheStorageCommand::DeleteClient { session_id, resp } => {
                 let keys: Vec<(usize, u64)> = storage.keys().cloned().collect();
                 for key in keys {
@@ -625,29 +584,6 @@ impl ObjectCacheStorageWrapper {
             subscribe_id,
             group_id,
             object_id,
-            resp: resp_tx,
-        };
-
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(object_cache) => Ok(object_cache),
-            Err(err) => bail!(err),
-        }
-    }
-
-    pub(crate) async fn get_first_object(
-        &mut self,
-        session_id: usize,
-        subscribe_id: u64,
-    ) -> Result<Option<(CacheId, Object)>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, Object)>>>();
-
-        let cmd = ObjectCacheStorageCommand::GetFirstObject {
-            session_id,
-            subscribe_id,
             resp: resp_tx,
         };
 
@@ -776,25 +712,6 @@ impl ObjectCacheStorageWrapper {
 
         match result {
             Ok(group_id) => Ok(group_id),
-            Err(err) => bail!(err),
-        }
-    }
-
-    async fn delete_subscription(&mut self, session_id: usize, subscribe_id: u64) -> Result<()> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
-
-        let cmd = ObjectCacheStorageCommand::DeleteSubscription {
-            session_id,
-            subscribe_id,
-            resp: resp_tx,
-        };
-
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(_) => Ok(()),
             Err(err) => bail!(err),
         }
     }
@@ -1185,75 +1102,6 @@ mod success {
         };
 
         assert_eq!(result_object, expected_subgroup);
-    }
-
-    #[tokio::test]
-    async fn get_first_object_datagram() {
-        let session_id = 0;
-        let subscribe_id = 1;
-        let track_alias = 3;
-        let group_id = 4;
-        let publisher_priority = 5;
-        let object_status = None;
-        let duration = 1000;
-        let header = Header::Datagram;
-
-        // start object cache storage thread
-        let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
-        tokio::spawn(async move { object_cache_storage(&mut cache_rx).await });
-        let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
-
-        let _ = object_cache_storage
-            .set_subscription(session_id, subscribe_id, header.clone())
-            .await;
-
-        for i in 0..10 {
-            let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
-            let object_id = i as u64;
-
-            let datagram = ObjectDatagram::new(
-                subscribe_id,
-                track_alias,
-                group_id,
-                object_id,
-                publisher_priority,
-                object_status,
-                object_payload,
-            )
-            .unwrap();
-
-            let object_cache = Object::Datagram(datagram.clone());
-
-            let _ = object_cache_storage
-                .set_object(session_id, subscribe_id, object_cache, duration)
-                .await;
-        }
-
-        let expected_object_id = 0;
-        let expected_object_payload = vec![0, 1, 2, 3];
-        let expected_datagram = ObjectDatagram::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            expected_object_id,
-            publisher_priority,
-            object_status,
-            expected_object_payload,
-        )
-        .unwrap();
-
-        let result = object_cache_storage
-            .get_first_object(session_id, subscribe_id)
-            .await;
-
-        assert!(result.is_ok());
-
-        let result_object = match result.unwrap().unwrap() {
-            (_, Object::Datagram(object)) => object,
-            _ => panic!("object cache not matched"),
-        };
-
-        assert_eq!(result_object, expected_datagram);
     }
 
     #[tokio::test]
@@ -2232,48 +2080,6 @@ mod success {
 
         let largest_object = object_result.unwrap();
         assert_eq!(largest_object, expected_object_id);
-    }
-
-    #[tokio::test]
-    async fn delete_subscription() {
-        let session_id = 0;
-        let subscribe_id = 1;
-        let track_alias = 3;
-        let group_id = 4;
-        let subgroup_id = 5;
-        let publisher_priority = 6;
-        let header = Header::Subgroup(
-            StreamHeaderSubgroup::new(
-                subscribe_id,
-                track_alias,
-                group_id,
-                subgroup_id,
-                publisher_priority,
-            )
-            .unwrap(),
-        );
-
-        // start object cache storage thread
-        let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
-        tokio::spawn(async move { object_cache_storage(&mut cache_rx).await });
-
-        let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
-
-        let _ = object_cache_storage
-            .set_subscription(session_id, subscribe_id, header.clone())
-            .await;
-
-        let delete_result = object_cache_storage
-            .delete_subscription(session_id, subscribe_id)
-            .await;
-
-        assert!(delete_result.is_ok());
-
-        let get_result = object_cache_storage
-            .get_header(session_id, subscribe_id)
-            .await;
-
-        assert!(get_result.is_err());
     }
 
     #[tokio::test]
