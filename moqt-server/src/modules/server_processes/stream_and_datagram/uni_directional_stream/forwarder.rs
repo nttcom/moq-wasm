@@ -239,7 +239,7 @@ impl ObjectStreamForwarder {
                 Ok(StreamHeader::Subgroup(header))
             }
             _ => {
-                let msg = "cache header not matched";
+                let msg = "header cache not matched";
                 bail!(msg)
             }
         }

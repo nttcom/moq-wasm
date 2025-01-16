@@ -127,7 +127,7 @@ impl DatagramReceiver {
             Ok(object_cache_storage::Header::Datagram) => Ok(false),
             Err(_) => Ok(true),
             _ => {
-                let msg = "Unexpected cache header is already set".to_string();
+                let msg = "Unexpected header cache is already set".to_string();
                 let code = TerminationErrorCode::InternalError;
                 Err((code, msg))
             }

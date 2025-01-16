@@ -155,7 +155,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         resp.send(Ok(header_cache)).unwrap();
                     }
                     None => {
-                        resp.send(Err(anyhow::anyhow!("cache header not found")))
+                        resp.send(Err(anyhow::anyhow!("header cache not found")))
                             .unwrap();
                     }
                 }
@@ -881,7 +881,7 @@ mod success {
 
         let header_cache = match result.unwrap() {
             Header::Datagram => Header::Datagram,
-            _ => panic!("cache header not matched"),
+            _ => panic!("header cache not matched"),
         };
         assert_eq!(header_cache, header);
     }
@@ -915,7 +915,7 @@ mod success {
 
         let result_track = match result.unwrap() {
             Header::Track(track) => track,
-            _ => panic!("cache header not matched"),
+            _ => panic!("header cache not matched"),
         };
 
         assert_eq!(result_track, stream_header_track);
@@ -958,7 +958,7 @@ mod success {
 
         let result_subgroup = match result.unwrap() {
             Header::Subgroup(subgroup) => subgroup,
-            _ => panic!("cache header not matched"),
+            _ => panic!("header cache not matched"),
         };
 
         assert_eq!(result_subgroup, stream_header_subgroup);
