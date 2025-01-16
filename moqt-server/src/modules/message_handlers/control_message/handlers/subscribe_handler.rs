@@ -17,7 +17,7 @@ use moqt_core::{
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
-use crate::modules::object_cache_storage::{CacheHeader, ObjectCacheStorageWrapper};
+use crate::modules::object_cache_storage::{self, ObjectCacheStorageWrapper};
 
 pub(crate) async fn subscribe_handler(
     subscribe_message: Subscribe,
@@ -282,10 +282,10 @@ async fn open_new_subscription(
         .get_header(upstream_session_id, upstream_subscribe_id)
         .await
     {
-        Ok(CacheHeader::Datagram) => DataStreamType::ObjectDatagram,
-        Ok(CacheHeader::Track(_)) => DataStreamType::StreamHeaderTrack,
-        Ok(CacheHeader::Subgroup(_)) => DataStreamType::StreamHeaderSubgroup,
-        Err(_) => bail!("CacheHeader not found"),
+        Ok(object_cache_storage::Header::Datagram) => DataStreamType::ObjectDatagram,
+        Ok(object_cache_storage::Header::Track(_)) => DataStreamType::StreamHeaderTrack,
+        Ok(object_cache_storage::Header::Subgroup(_)) => DataStreamType::StreamHeaderSubgroup,
+        Err(_) => bail!("object_cache_storage::Header not found"),
     };
 
     let open_downstream_stream_or_datagram_tx = open_downstream_stream_or_datagram_txes
@@ -511,8 +511,7 @@ mod success {
     use crate::modules::{
         moqt_client::MOQTClient,
         object_cache_storage::{
-            object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
-            ObjectCacheStorageWrapper,
+            self, object_cache_storage, ObjectCacheStorageCommand, ObjectCacheStorageWrapper,
         },
         pubsub_relation_manager::{
             commands::PubSubRelationCommand,
@@ -917,7 +916,7 @@ mod success {
         let duration = 1000;
         let publisher_priority = 0;
 
-        let header = CacheHeader::Track(
+        let header = object_cache_storage::Header::Track(
             StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
@@ -932,10 +931,10 @@ mod success {
             let track =
                 ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
 
-            let cache_object = CacheObject::Track(track.clone());
+            let object_cache = object_cache_storage::Object::Track(track.clone());
 
             let _ = object_cache_storage
-                .set_object(upstream_session_id, subscribe_id, cache_object, duration)
+                .set_object(upstream_session_id, subscribe_id, object_cache, duration)
                 .await;
         }
 

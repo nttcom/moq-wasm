@@ -2,7 +2,7 @@ use crate::modules::{
     buffer_manager::BufferCommand,
     message_handlers::{object_stream::StreamObject, stream_header::StreamHeader},
     moqt_client::MOQTClient,
-    object_cache_storage::{CacheHeader, CacheObject, ObjectCacheStorageWrapper},
+    object_cache_storage::{self, ObjectCacheStorageWrapper},
     pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
     server_processes::senders::Senders,
 };
@@ -229,15 +229,17 @@ impl ObjectStreamForwarder {
         let upstream_session_id = self.object_cache_key.session_id();
         let upstream_subscribe_id = self.object_cache_key.subscribe_id();
 
-        let cache_header = object_cache_storage
+        let header_cache = object_cache_storage
             .get_header(upstream_session_id, upstream_subscribe_id)
             .await;
 
-        match cache_header {
-            Ok(CacheHeader::Track(header)) => Ok(StreamHeader::Track(header)),
-            Ok(CacheHeader::Subgroup(header)) => Ok(StreamHeader::Subgroup(header)),
+        match header_cache {
+            Ok(object_cache_storage::Header::Track(header)) => Ok(StreamHeader::Track(header)),
+            Ok(object_cache_storage::Header::Subgroup(header)) => {
+                Ok(StreamHeader::Subgroup(header))
+            }
             _ => {
-                let msg = "cache header not matched";
+                let msg = "header cache not matched";
                 bail!(msg)
             }
         }
@@ -306,16 +308,16 @@ impl ObjectStreamForwarder {
 
         match cache {
             None => Ok(None),
-            Some((cache_id, CacheObject::Track(object))) => {
+            Some((cache_id, object_cache_storage::Object::Track(object))) => {
                 let object = StreamObject::Track(object);
                 Ok(Some((cache_id, object)))
             }
-            Some((cache_id, CacheObject::Subgroup(object))) => {
+            Some((cache_id, object_cache_storage::Object::Subgroup(object))) => {
                 let object = StreamObject::Subgroup(object);
                 Ok(Some((cache_id, object)))
             }
             _ => {
-                let msg = "cache object not matched";
+                let msg = "object cache not matched";
                 bail!(msg)
             }
         }
@@ -324,7 +326,7 @@ impl ObjectStreamForwarder {
     async fn try_get_first_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<Option<(usize, CacheObject)>> {
+    ) -> Result<Option<(usize, object_cache_storage::Object)>> {
         let filter_type = self.downstream_subscription.get_filter_type();
         let upstream_session_id = self.object_cache_key.session_id();
         let upstream_subscribe_id = self.object_cache_key.subscribe_id();
@@ -359,7 +361,7 @@ impl ObjectStreamForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,
-    ) -> Result<Option<(usize, CacheObject)>> {
+    ) -> Result<Option<(usize, object_cache_storage::Object)>> {
         let upstream_session_id = self.object_cache_key.session_id();
         let upstream_subscribe_id = self.object_cache_key.subscribe_id();
 
