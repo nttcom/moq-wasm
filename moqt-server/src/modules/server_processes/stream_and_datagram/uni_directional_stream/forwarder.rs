@@ -317,7 +317,7 @@ impl ObjectStreamForwarder {
                 Ok(Some((cache_id, object)))
             }
             _ => {
-                let msg = "cache object not matched";
+                let msg = "object cache not matched";
                 bail!(msg)
             }
         }
