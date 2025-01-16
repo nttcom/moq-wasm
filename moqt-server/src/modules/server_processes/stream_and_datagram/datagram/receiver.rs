@@ -3,7 +3,7 @@ use crate::{
         buffer_manager::request_buffer,
         message_handlers::object_datagram::{self, ObjectDatagramProcessResult},
         moqt_client::MOQTClient,
-        object_cache_storage::{CacheHeader, CacheObject, ObjectCacheStorageWrapper},
+        object_cache_storage::{self, CacheObject, ObjectCacheStorageWrapper},
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         server_processes::senders::Senders,
     },
@@ -124,7 +124,7 @@ impl DatagramReceiver {
             .get_header(upstream_session_id, upstream_subscribe_id)
             .await
         {
-            Ok(CacheHeader::Datagram) => Ok(false),
+            Ok(object_cache_storage::Header::Datagram) => Ok(false),
             Err(_) => Ok(true),
             _ => {
                 let msg = "Unexpected cache header is already set".to_string();
@@ -169,7 +169,7 @@ impl DatagramReceiver {
             .set_subscription(
                 upstream_session_id,
                 upstream_subscribe_id,
-                CacheHeader::Datagram,
+                object_cache_storage::Header::Datagram,
             )
             .await
         {

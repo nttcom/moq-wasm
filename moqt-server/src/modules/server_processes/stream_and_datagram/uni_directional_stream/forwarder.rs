@@ -2,7 +2,7 @@ use crate::modules::{
     buffer_manager::BufferCommand,
     message_handlers::{object_stream::StreamObject, stream_header::StreamHeader},
     moqt_client::MOQTClient,
-    object_cache_storage::{CacheHeader, CacheObject, ObjectCacheStorageWrapper},
+    object_cache_storage::{self, CacheObject, ObjectCacheStorageWrapper},
     pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
     server_processes::senders::Senders,
 };
@@ -234,8 +234,10 @@ impl ObjectStreamForwarder {
             .await;
 
         match cache_header {
-            Ok(CacheHeader::Track(header)) => Ok(StreamHeader::Track(header)),
-            Ok(CacheHeader::Subgroup(header)) => Ok(StreamHeader::Subgroup(header)),
+            Ok(object_cache_storage::Header::Track(header)) => Ok(StreamHeader::Track(header)),
+            Ok(object_cache_storage::Header::Subgroup(header)) => {
+                Ok(StreamHeader::Subgroup(header))
+            }
             _ => {
                 let msg = "cache header not matched";
                 bail!(msg)

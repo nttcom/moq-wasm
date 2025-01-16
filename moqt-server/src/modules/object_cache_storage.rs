@@ -11,7 +11,7 @@ type CacheId = usize;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum CacheHeader {
+pub(crate) enum Header {
     Datagram,
     Track(StreamHeaderTrack),
     Subgroup(StreamHeaderSubgroup),
@@ -31,13 +31,13 @@ pub(crate) enum ObjectCacheStorageCommand {
     SetSubscription {
         session_id: usize,
         subscribe_id: u64,
-        cache_header: CacheHeader,
+        cache_header: Header,
         resp: oneshot::Sender<Result<()>>,
     },
     GetHeader {
         session_id: usize,
         subscribe_id: u64,
-        resp: oneshot::Sender<Result<CacheHeader>>,
+        resp: oneshot::Sender<Result<Header>>,
     },
     SetObject {
         session_id: usize,
@@ -98,12 +98,12 @@ pub(crate) enum ObjectCacheStorageCommand {
 
 #[derive(Clone)]
 pub(crate) struct Cache {
-    cache_header: CacheHeader,
+    cache_header: Header,
     cache_objects: TtlCache<CacheId, CacheObject>,
 }
 
 impl Cache {
-    pub(crate) fn new(cache_header: CacheHeader, store_size: usize) -> Self {
+    pub(crate) fn new(cache_header: Header, store_size: usize) -> Self {
         let cache_objects = TtlCache::new(store_size);
 
         Self {
@@ -118,7 +118,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
     tracing::trace!("object_cache_storage start");
     // {
     //   "${(session_id, subscribe_id)}" : {
-    //     "cache_header" : CacheHeader,
+    //     "cache_header" : Header,
     //     "cache_objects" : TtlCache<CacheObject>,
     //   }
     // }
@@ -192,7 +192,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 if let Some(cache) = cache {
                     // Get an object that matches the given group_id and object_id
                     let cache_object = match &cache.cache_header {
-                        CacheHeader::Datagram => cache
+                        Header::Datagram => cache
                             .cache_objects
                             .iter()
                             .find(|(_, v)| {
@@ -203,7 +203,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 }
                             })
                             .map(|(k, v)| (*k, v.clone())),
-                        CacheHeader::Track(_track) => cache
+                        Header::Track(_track) => cache
                             .cache_objects
                             .iter()
                             .find(|(_, v)| {
@@ -214,8 +214,8 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 }
                             })
                             .map(|(k, v)| (*k, v.clone())),
-                        CacheHeader::Subgroup(_subgroup) => {
-                            if let CacheHeader::Subgroup(subgroup) = &cache.cache_header {
+                        Header::Subgroup(_subgroup) => {
+                            if let Header::Subgroup(subgroup) = &cache.cache_header {
                                 if subgroup.group_id() != group_id {
                                     resp.send(Err(anyhow::anyhow!("cache group not matched")))
                                         .unwrap();
@@ -307,7 +307,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     // Get the last group in both ascending and descending order
                     let cache_object = match &cache.cache_header {
                         // Check the group ID contained in objects and get the latest object in the latest group ID
-                        CacheHeader::Datagram => {
+                        Header::Datagram => {
                             let latest_group_id: Option<u64> =
                                 cache_objects.iter().last().map(|(_, v)| match v {
                                     CacheObject::Datagram(object) => object.group_id(),
@@ -332,7 +332,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 .map(|(k, _, v)| (*k, v))
                         }
                         // Check the group ID contained in objects and get the latest object in the latest group ID
-                        CacheHeader::Track(_track) => {
+                        Header::Track(_track) => {
                             let latest_group_id: Option<u64> =
                                 cache_objects.iter().last().map(|(_, v)| match v {
                                     CacheObject::Track(object) => object.group_id(),
@@ -357,7 +357,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 .map(|(k, _, v)| (*k, v))
                         }
                         // Get the latest object because the group ID is the same in the subgroup
-                        CacheHeader::Subgroup(_subgroup) => {
+                        Header::Subgroup(_subgroup) => {
                             cache_objects.iter().next().map(|(k, v)| (*k, v.clone()))
                         }
                     };
@@ -410,7 +410,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     // It is not decided whether the group ID is ascending or descending,
                     // so it is necessary to get the maximum value
                     let largest_group_id: Option<u64> = match &cache.cache_header {
-                        CacheHeader::Datagram => {
+                        Header::Datagram => {
                             let max_group_id = cache_objects
                                 .iter()
                                 .map(|(_, v)| match v {
@@ -421,7 +421,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
 
                             max_group_id
                         }
-                        CacheHeader::Track(_header) => {
+                        Header::Track(_header) => {
                             let max_group_id = cache_objects
                                 .iter()
                                 .map(|(_, v)| match v {
@@ -432,7 +432,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
 
                             max_group_id
                         }
-                        CacheHeader::Subgroup(header) => Some(header.group_id()),
+                        Header::Subgroup(header) => Some(header.group_id()),
                     };
 
                     match largest_group_id {
@@ -460,7 +460,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
 
                     // Get the maximum object ID in the group
                     let largest_object_id: Option<u64> = match &cache.cache_header {
-                        CacheHeader::Datagram => cache_objects
+                        Header::Datagram => cache_objects
                             .iter()
                             .filter_map(|(_, v)| match v {
                                 CacheObject::Datagram(object) => {
@@ -473,7 +473,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 _ => None,
                             })
                             .max(),
-                        CacheHeader::Track(_header) => cache_objects
+                        Header::Track(_header) => cache_objects
                             .iter()
                             .filter_map(|(_, v)| match v {
                                 CacheObject::Track(object) => {
@@ -486,7 +486,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 _ => None,
                             })
                             .max(),
-                        CacheHeader::Subgroup(_header) => cache_objects
+                        Header::Subgroup(_header) => cache_objects
                             .iter()
                             .map(|(_, v)| match v {
                                 CacheObject::Subgroup(object) => object.object_id(),
@@ -545,7 +545,7 @@ impl ObjectCacheStorageWrapper {
         &mut self,
         session_id: usize,
         subscribe_id: u64,
-        cache_header: CacheHeader,
+        cache_header: Header,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
@@ -570,8 +570,8 @@ impl ObjectCacheStorageWrapper {
         &mut self,
         session_id: usize,
         subscribe_id: u64,
-    ) -> Result<CacheHeader> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<CacheHeader>>();
+    ) -> Result<Header> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Header>>();
 
         let cmd = ObjectCacheStorageCommand::GetHeader {
             session_id,
@@ -834,7 +834,7 @@ mod success {
     };
 
     use crate::modules::object_cache_storage::{
-        object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
+        object_cache_storage, CacheObject, Header, ObjectCacheStorageCommand,
         ObjectCacheStorageWrapper,
     };
 
@@ -842,7 +842,7 @@ mod success {
     async fn set_subscription() {
         let session_id = 0;
         let subscribe_id = 1;
-        let header = CacheHeader::Datagram;
+        let header = Header::Datagram;
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -861,7 +861,7 @@ mod success {
     async fn get_header_datagram() {
         let session_id = 0;
         let subscribe_id = 1;
-        let header = CacheHeader::Datagram;
+        let header = Header::Datagram;
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -880,7 +880,7 @@ mod success {
         assert!(result.is_ok());
 
         let cache_header = match result.unwrap() {
-            CacheHeader::Datagram => CacheHeader::Datagram,
+            Header::Datagram => Header::Datagram,
             _ => panic!("cache header not matched"),
         };
         assert_eq!(cache_header, header);
@@ -895,7 +895,7 @@ mod success {
 
         let stream_header_track =
             StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap();
-        let header = CacheHeader::Track(stream_header_track.clone());
+        let header = Header::Track(stream_header_track.clone());
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -914,7 +914,7 @@ mod success {
         assert!(result.is_ok());
 
         let result_track = match result.unwrap() {
-            CacheHeader::Track(track) => track,
+            Header::Track(track) => track,
             _ => panic!("cache header not matched"),
         };
 
@@ -938,7 +938,7 @@ mod success {
             publisher_priority,
         )
         .unwrap();
-        let header = CacheHeader::Subgroup(stream_header_subgroup.clone());
+        let header = Header::Subgroup(stream_header_subgroup.clone());
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -957,7 +957,7 @@ mod success {
         assert!(result.is_ok());
 
         let result_subgroup = match result.unwrap() {
-            CacheHeader::Subgroup(subgroup) => subgroup,
+            Header::Subgroup(subgroup) => subgroup,
             _ => panic!("cache header not matched"),
         };
 
@@ -987,7 +987,7 @@ mod success {
             )
             .unwrap(),
         );
-        let header = CacheHeader::Datagram;
+        let header = Header::Datagram;
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -1014,7 +1014,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Datagram;
+        let header = Header::Datagram;
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -1083,7 +1083,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Track(
+        let header = Header::Track(
             StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
@@ -1140,7 +1140,7 @@ mod success {
         let publisher_priority = 6;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Subgroup(
+        let header = Header::Subgroup(
             StreamHeaderSubgroup::new(
                 subscribe_id,
                 track_alias,
@@ -1202,7 +1202,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Datagram;
+        let header = Header::Datagram;
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -1271,7 +1271,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Datagram;
+        let header = Header::Datagram;
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -1341,7 +1341,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Track(
+        let header = Header::Track(
             StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
@@ -1403,7 +1403,7 @@ mod success {
         let publisher_priority = 6;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Subgroup(
+        let header = Header::Subgroup(
             StreamHeaderSubgroup::new(
                 subscribe_id,
                 track_alias,
@@ -1467,7 +1467,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Datagram;
+        let header = Header::Datagram;
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -1536,7 +1536,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Track(
+        let header = Header::Track(
             StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
@@ -1597,7 +1597,7 @@ mod success {
         let publisher_priority = 6;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Subgroup(
+        let header = Header::Subgroup(
             StreamHeaderSubgroup::new(
                 subscribe_id,
                 track_alias,
@@ -1659,7 +1659,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Datagram;
+        let header = Header::Datagram;
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -1738,7 +1738,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Datagram;
+        let header = Header::Datagram;
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -1817,7 +1817,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Track(
+        let header = Header::Track(
             StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
@@ -1888,7 +1888,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Track(
+        let header = Header::Track(
             StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
@@ -1961,7 +1961,7 @@ mod success {
         let publisher_priority = 6;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Subgroup(
+        let header = Header::Subgroup(
             StreamHeaderSubgroup::new(
                 subscribe_id,
                 track_alias,
@@ -2032,7 +2032,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Datagram;
+        let header = Header::Datagram;
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -2105,7 +2105,7 @@ mod success {
         let publisher_priority = 5;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Track(
+        let header = Header::Track(
             StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
@@ -2175,7 +2175,7 @@ mod success {
         let publisher_priority = 6;
         let object_status = None;
         let duration = 1000;
-        let header = CacheHeader::Subgroup(
+        let header = Header::Subgroup(
             StreamHeaderSubgroup::new(
                 subscribe_id,
                 track_alias,
@@ -2248,7 +2248,7 @@ mod success {
         let group_id = 4;
         let subgroup_id = 5;
         let publisher_priority = 6;
-        let header = CacheHeader::Subgroup(
+        let header = Header::Subgroup(
             StreamHeaderSubgroup::new(
                 subscribe_id,
                 track_alias,
@@ -2288,7 +2288,7 @@ mod success {
         let subscribe_id = 1;
         let track_alias = 3;
         let publisher_priority = 6;
-        let header = CacheHeader::Track(
+        let header = Header::Track(
             StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
