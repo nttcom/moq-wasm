@@ -113,13 +113,12 @@ impl Cache {
     }
 }
 
-// TODO: Remove dedicated thread and change to execute on each thread
 pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStorageCommand>) {
     tracing::trace!("object_cache_storage start");
     // {
     //   "${(session_id, subscribe_id)}" : {
     //     "header_cache" : Header,
-    //     "object_caches" : TtlCache<Object>,
+    //     "object_caches" : TtlCache<CacheId, Object>,
     //   }
     // }
     let mut storage = HashMap::<(usize, u64), Cache>::new();
