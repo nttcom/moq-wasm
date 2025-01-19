@@ -22,7 +22,7 @@ use tokio::sync::Mutex;
 use tracing::{self};
 use wtransport::Connection;
 
-pub(crate) struct DatagramForwarder {
+pub(crate) struct ObjectDatagramForwarder {
     session: Arc<Connection>,
     senders: Arc<Senders>,
     downstream_subscribe_id: u64,
@@ -31,7 +31,7 @@ pub(crate) struct DatagramForwarder {
     sleep_time: Duration,
 }
 
-impl DatagramForwarder {
+impl ObjectDatagramForwarder {
     pub(crate) async fn init(
         session: Arc<Connection>,
         downstream_subscribe_id: u64,
@@ -56,7 +56,7 @@ impl DatagramForwarder {
 
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 
-        let datagram_forwarder = DatagramForwarder {
+        let object_datagram_forwarder = ObjectDatagramForwarder {
             session,
             senders,
             downstream_subscribe_id,
@@ -65,7 +65,7 @@ impl DatagramForwarder {
             sleep_time,
         };
 
-        Ok(datagram_forwarder)
+        Ok(object_datagram_forwarder)
     }
 
     pub(crate) async fn start(&mut self) -> Result<()> {
@@ -96,7 +96,7 @@ impl DatagramForwarder {
             })
             .await?;
 
-        tracing::info!("DatagramForwarder finished");
+        tracing::info!("ObjectDatagramForwarder finished");
 
         Ok(())
     }

@@ -1,3 +1,4 @@
+use super::uni_stream::UniSendStream;
 use crate::modules::{
     buffer_manager::BufferCommand,
     message_handlers::{object_stream::StreamObject, stream_header::StreamHeader},
@@ -24,8 +25,6 @@ use moqt_core::{
 use std::{sync::Arc, thread, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{self};
-
-use super::streams::UniSendStream;
 
 pub(crate) struct ObjectStreamForwarder {
     stream: UniSendStream,
