@@ -2,7 +2,7 @@ use super::stream_and_datagram::{
     bi_directional_stream::{
         handler::handle_control_stream, sender::send_control_stream, stream::BiStream,
     },
-    datagram::{forwarder::ObjectDatagramForwarder, receiver::DatagramReceiver},
+    datagram::{forwarder::ObjectDatagramForwarder, receiver::ObjectDatagramReceiver},
     uni_directional_stream::{
         forwarder::ObjectStreamForwarder,
         receiver::UniStreamReceiver,
@@ -202,11 +202,11 @@ async fn spawn_recv_datagram_thread(
     tokio::spawn(
         async move {
             let senders = client.lock().await.senders();
-            let mut datagram_receiver = DatagramReceiver::init(client)
+            let mut object_datagram_receiver = ObjectDatagramReceiver::init(client)
                 .instrument(session_span.clone())
                 .await;
 
-            match datagram_receiver
+            match object_datagram_receiver
                 .receive_object(datagram)
                 .instrument(session_span)
                 .await

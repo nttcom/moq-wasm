@@ -23,14 +23,14 @@ use wtransport::datagram::Datagram;
 
 use self::object_cache_storage::CacheKey;
 
-pub(crate) struct DatagramReceiver {
+pub(crate) struct ObjectDatagramReceiver {
     buf: Arc<Mutex<BytesMut>>,
     senders: Arc<Senders>,
     client: Arc<Mutex<MOQTClient>>,
     duration: u64,
 }
 
-impl DatagramReceiver {
+impl ObjectDatagramReceiver {
     pub(crate) async fn init(client: Arc<Mutex<MOQTClient>>) -> Self {
         let senders = client.lock().await.senders();
         let stable_id = client.lock().await.id();
@@ -39,7 +39,7 @@ impl DatagramReceiver {
         // TODO: Set the accurate duration
         let duration = 100000;
 
-        DatagramReceiver {
+        ObjectDatagramReceiver {
             buf,
             senders,
             client,
