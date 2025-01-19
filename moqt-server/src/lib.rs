@@ -105,17 +105,22 @@ impl MOQTServer {
                     senders_to_management_thread,
                     incoming_session,
                 )
+                .instrument(session_span.clone())
                 .await
                 .unwrap();
 
-                match session_handler.start().instrument(session_span).await {
+                match session_handler
+                    .start()
+                    .instrument(session_span.clone())
+                    .await
+                {
                     Ok(_) => {}
                     Err(err) => {
                         tracing::error!("{:#?}", err);
                     }
                 }
 
-                let _ = session_handler.finish().await;
+                let _ = session_handler.finish().instrument(session_span).await;
             });
         }
 
