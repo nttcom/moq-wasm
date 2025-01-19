@@ -490,13 +490,13 @@ impl ObjectCacheStorageWrapper {
 
     pub(crate) async fn set_subscription(
         &mut self,
-        cache_key: CacheKey,
+        cache_key: &CacheKey,
         header_cache: Header,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
         let cmd = ObjectCacheStorageCommand::SetSubscription {
-            cache_key,
+            cache_key: cache_key.clone(),
             header_cache,
             resp: resp_tx,
         };
@@ -511,11 +511,11 @@ impl ObjectCacheStorageWrapper {
         }
     }
 
-    pub(crate) async fn get_header(&mut self, cache_key: CacheKey) -> Result<Header> {
+    pub(crate) async fn get_header(&mut self, cache_key: &CacheKey) -> Result<Header> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Header>>();
 
         let cmd = ObjectCacheStorageCommand::GetHeader {
-            cache_key,
+            cache_key: cache_key.clone(),
             resp: resp_tx,
         };
 
@@ -531,14 +531,14 @@ impl ObjectCacheStorageWrapper {
 
     pub(crate) async fn set_object(
         &mut self,
-        cache_key: CacheKey,
+        cache_key: &CacheKey,
         object_cache: Object,
         duration: u64,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
         let cmd = ObjectCacheStorageCommand::SetObject {
-            cache_key,
+            cache_key: cache_key.clone(),
             object_cache,
             duration,
             resp: resp_tx,
@@ -556,14 +556,14 @@ impl ObjectCacheStorageWrapper {
 
     pub(crate) async fn get_absolute_object(
         &mut self,
-        cache_key: CacheKey,
+        cache_key: &CacheKey,
         group_id: u64,
         object_id: u64,
     ) -> Result<Option<(CacheId, Object)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, Object)>>>();
 
         let cmd = ObjectCacheStorageCommand::GetAbsoluteObject {
-            cache_key,
+            cache_key: cache_key.clone(),
             group_id,
             object_id,
             resp: resp_tx,
@@ -581,13 +581,13 @@ impl ObjectCacheStorageWrapper {
 
     pub(crate) async fn get_next_object(
         &mut self,
-        cache_key: CacheKey,
+        cache_key: &CacheKey,
         cache_id: usize,
     ) -> Result<Option<(CacheId, Object)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, Object)>>>();
 
         let cmd = ObjectCacheStorageCommand::GetNextObject {
-            cache_key,
+            cache_key: cache_key.clone(),
             cache_id,
             resp: resp_tx,
         };
@@ -604,12 +604,12 @@ impl ObjectCacheStorageWrapper {
 
     pub(crate) async fn get_latest_object(
         &mut self,
-        cache_key: CacheKey,
+        cache_key: &CacheKey,
     ) -> Result<Option<(CacheId, Object)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, Object)>>>();
 
         let cmd = ObjectCacheStorageCommand::GetLatestObject {
-            cache_key,
+            cache_key: cache_key.clone(),
             resp: resp_tx,
         };
 
@@ -625,12 +625,12 @@ impl ObjectCacheStorageWrapper {
 
     pub(crate) async fn get_latest_group(
         &mut self,
-        cache_key: CacheKey,
+        cache_key: &CacheKey,
     ) -> Result<Option<(CacheId, Object)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, Object)>>>();
 
         let cmd = ObjectCacheStorageCommand::GetLatestGroup {
-            cache_key,
+            cache_key: cache_key.clone(),
             resp: resp_tx,
         };
 
@@ -644,11 +644,11 @@ impl ObjectCacheStorageWrapper {
         }
     }
 
-    pub(crate) async fn get_largest_group_id(&mut self, cache_key: CacheKey) -> Result<u64> {
+    pub(crate) async fn get_largest_group_id(&mut self, cache_key: &CacheKey) -> Result<u64> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<u64>>();
 
         let cmd = ObjectCacheStorageCommand::GetLargestGroupId {
-            cache_key,
+            cache_key: cache_key.clone(),
             resp: resp_tx,
         };
 
@@ -664,13 +664,13 @@ impl ObjectCacheStorageWrapper {
 
     pub(crate) async fn get_largest_object_id(
         &mut self,
-        cache_key: CacheKey,
+        cache_key: &CacheKey,
         group_id: u64,
     ) -> Result<u64> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<u64>>();
 
         let cmd = ObjectCacheStorageCommand::GetLargestObjectId {
-            cache_key,
+            cache_key: cache_key.clone(),
             group_id,
             resp: resp_tx,
         };
@@ -733,7 +733,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let result = object_cache_storage
-            .set_subscription(cache_key, header)
+            .set_subscription(&cache_key, header)
             .await;
 
         assert!(result.is_ok());
@@ -753,10 +753,10 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
-        let result = object_cache_storage.get_header(cache_key).await;
+        let result = object_cache_storage.get_header(&cache_key).await;
 
         assert!(result.is_ok());
 
@@ -786,10 +786,10 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
-        let result = object_cache_storage.get_header(cache_key).await;
+        let result = object_cache_storage.get_header(&cache_key).await;
 
         assert!(result.is_ok());
 
@@ -828,10 +828,10 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
-        let result = object_cache_storage.get_header(cache_key).await;
+        let result = object_cache_storage.get_header(&cache_key).await;
 
         assert!(result.is_ok());
 
@@ -876,10 +876,10 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header)
+            .set_subscription(&cache_key, header)
             .await;
         let result = object_cache_storage
-            .set_object(cache_key, object_cache, duration)
+            .set_object(&cache_key, object_cache, duration)
             .await;
 
         assert!(result.is_ok());
@@ -903,7 +903,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for i in 0..10 {
@@ -924,7 +924,7 @@ mod success {
             let object_cache = Object::Datagram(datagram.clone());
 
             let _ = object_cache_storage
-                .set_object(cache_key.clone(), object_cache, duration)
+                .set_object(&cache_key, object_cache, duration)
                 .await;
         }
 
@@ -942,7 +942,7 @@ mod success {
         .unwrap();
 
         let result = object_cache_storage
-            .get_absolute_object(cache_key, group_id, object_id)
+            .get_absolute_object(&cache_key, group_id, object_id)
             .await;
 
         assert!(result.is_ok());
@@ -975,7 +975,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for i in 0..10 {
@@ -988,7 +988,7 @@ mod success {
             let object_cache = Object::Track(track.clone());
 
             let _ = object_cache_storage
-                .set_object(cache_key.clone(), object_cache, duration)
+                .set_object(&cache_key, object_cache, duration)
                 .await;
         }
 
@@ -999,7 +999,7 @@ mod success {
                 .unwrap();
 
         let result = object_cache_storage
-            .get_absolute_object(cache_key, group_id, object_id)
+            .get_absolute_object(&cache_key, group_id, object_id)
             .await;
 
         assert!(result.is_ok());
@@ -1040,7 +1040,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for i in 0..10 {
@@ -1053,7 +1053,7 @@ mod success {
             let object_cache = Object::Subgroup(subgroup.clone());
 
             let _ = object_cache_storage
-                .set_object(cache_key.clone(), object_cache, duration)
+                .set_object(&cache_key, object_cache, duration)
                 .await;
         }
 
@@ -1063,7 +1063,7 @@ mod success {
             ObjectStreamSubgroup::new(object_id, object_status, expected_object_payload).unwrap();
 
         let result = object_cache_storage
-            .get_absolute_object(cache_key, group_id, object_id)
+            .get_absolute_object(&cache_key, group_id, object_id)
             .await;
 
         assert!(result.is_ok());
@@ -1094,7 +1094,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for i in 0..10 {
@@ -1115,7 +1115,7 @@ mod success {
             let object_cache = Object::Datagram(datagram.clone());
 
             let _ = object_cache_storage
-                .set_object(cache_key.clone(), object_cache, duration)
+                .set_object(&cache_key, object_cache, duration)
                 .await;
         }
 
@@ -1134,7 +1134,7 @@ mod success {
         .unwrap();
 
         let result = object_cache_storage
-            .get_next_object(cache_key.clone(), cache_id)
+            .get_next_object(&cache_key, cache_id)
             .await;
 
         assert!(result.is_ok());
@@ -1167,7 +1167,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for i in 0..10 {
@@ -1180,7 +1180,7 @@ mod success {
             let object_cache = Object::Track(track.clone());
 
             let _ = object_cache_storage
-                .set_object(cache_key.clone(), object_cache, duration)
+                .set_object(&cache_key, object_cache, duration)
                 .await;
         }
 
@@ -1196,7 +1196,7 @@ mod success {
         .unwrap();
 
         let result = object_cache_storage
-            .get_next_object(cache_key, cache_id)
+            .get_next_object(&cache_key, cache_id)
             .await;
 
         assert!(result.is_ok());
@@ -1237,7 +1237,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for i in 0..10 {
@@ -1250,7 +1250,7 @@ mod success {
             let object_cache = Object::Subgroup(subgroup.clone());
 
             let _ = object_cache_storage
-                .set_object(cache_key.clone(), object_cache, duration)
+                .set_object(&cache_key, object_cache, duration)
                 .await;
         }
 
@@ -1262,7 +1262,7 @@ mod success {
                 .unwrap();
 
         let result = object_cache_storage
-            .get_next_object(cache_key.clone(), cache_id)
+            .get_next_object(&cache_key, cache_id)
             .await;
 
         assert!(result.is_ok());
@@ -1293,7 +1293,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for i in 0..6 {
@@ -1314,7 +1314,7 @@ mod success {
             let object_cache = Object::Datagram(datagram.clone());
 
             let _ = object_cache_storage
-                .set_object(cache_key.clone(), object_cache, duration)
+                .set_object(&cache_key, object_cache, duration)
                 .await;
         }
 
@@ -1331,7 +1331,7 @@ mod success {
         )
         .unwrap();
 
-        let result = object_cache_storage.get_latest_object(cache_key).await;
+        let result = object_cache_storage.get_latest_object(&cache_key).await;
 
         assert!(result.is_ok());
 
@@ -1363,7 +1363,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for i in 0..13 {
@@ -1376,7 +1376,7 @@ mod success {
             let object_cache = Object::Track(track.clone());
 
             let _ = object_cache_storage
-                .set_object(cache_key.clone(), object_cache, duration)
+                .set_object(&cache_key, object_cache, duration)
                 .await;
         }
 
@@ -1390,7 +1390,7 @@ mod success {
         )
         .unwrap();
 
-        let result = object_cache_storage.get_latest_object(cache_key).await;
+        let result = object_cache_storage.get_latest_object(&cache_key).await;
 
         assert!(result.is_ok());
 
@@ -1430,7 +1430,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for i in 0..20 {
@@ -1443,7 +1443,7 @@ mod success {
             let object_cache = Object::Subgroup(subgroup.clone());
 
             let _ = object_cache_storage
-                .set_object(cache_key.clone(), object_cache, duration)
+                .set_object(&cache_key, object_cache, duration)
                 .await;
         }
 
@@ -1453,7 +1453,7 @@ mod success {
             ObjectStreamSubgroup::new(expected_object_id, object_status, expected_object_payload)
                 .unwrap();
 
-        let result = object_cache_storage.get_latest_object(cache_key).await;
+        let result = object_cache_storage.get_latest_object(&cache_key).await;
 
         assert!(result.is_ok());
 
@@ -1482,7 +1482,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for j in 0..4 {
@@ -1512,7 +1512,7 @@ mod success {
                 let object_cache = Object::Datagram(datagram.clone());
 
                 let _ = object_cache_storage
-                    .set_object(cache_key.clone(), object_cache, duration)
+                    .set_object(&cache_key, object_cache, duration)
                     .await;
             }
         }
@@ -1531,7 +1531,7 @@ mod success {
         )
         .unwrap();
 
-        let result = object_cache_storage.get_latest_group(cache_key).await;
+        let result = object_cache_storage.get_latest_group(&cache_key).await;
 
         assert!(result.is_ok());
 
@@ -1560,7 +1560,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for j in (2..10).rev() {
@@ -1590,7 +1590,7 @@ mod success {
                 let object_cache = Object::Datagram(datagram.clone());
 
                 let _ = object_cache_storage
-                    .set_object(cache_key.clone(), object_cache, duration)
+                    .set_object(&cache_key, object_cache, duration)
                     .await;
             }
         }
@@ -1609,7 +1609,7 @@ mod success {
         )
         .unwrap();
 
-        let result = object_cache_storage.get_latest_group(cache_key).await;
+        let result = object_cache_storage.get_latest_group(&cache_key).await;
 
         assert!(result.is_ok());
 
@@ -1640,7 +1640,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for j in 0..8 {
@@ -1663,7 +1663,7 @@ mod success {
                 let object_cache = Object::Track(track.clone());
 
                 let _ = object_cache_storage
-                    .set_object(cache_key.clone(), object_cache, duration)
+                    .set_object(&cache_key, object_cache, duration)
                     .await;
             }
         }
@@ -1679,7 +1679,7 @@ mod success {
         )
         .unwrap();
 
-        let result = object_cache_storage.get_latest_group(cache_key).await;
+        let result = object_cache_storage.get_latest_group(&cache_key).await;
 
         assert!(result.is_ok());
 
@@ -1710,7 +1710,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for j in (5..9).rev() {
@@ -1733,7 +1733,7 @@ mod success {
                 let object_cache = Object::Track(track.clone());
 
                 let _ = object_cache_storage
-                    .set_object(cache_key.clone(), object_cache, duration)
+                    .set_object(&cache_key, object_cache, duration)
                     .await;
             }
         }
@@ -1749,7 +1749,7 @@ mod success {
         )
         .unwrap();
 
-        let result = object_cache_storage.get_latest_group(cache_key).await;
+        let result = object_cache_storage.get_latest_group(&cache_key).await;
 
         assert!(result.is_ok());
 
@@ -1789,7 +1789,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for j in 0..10 {
@@ -1810,7 +1810,7 @@ mod success {
                 let object_cache = Object::Subgroup(subgroup.clone());
 
                 let _ = object_cache_storage
-                    .set_object(cache_key.clone(), object_cache, duration)
+                    .set_object(&cache_key, object_cache, duration)
                     .await;
             }
         }
@@ -1821,7 +1821,7 @@ mod success {
             ObjectStreamSubgroup::new(expected_object_id, object_status, expected_object_payload)
                 .unwrap();
 
-        let result = object_cache_storage.get_latest_group(cache_key).await;
+        let result = object_cache_storage.get_latest_group(&cache_key).await;
 
         assert!(result.is_ok());
 
@@ -1850,7 +1850,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for j in 0..4 {
@@ -1880,7 +1880,7 @@ mod success {
                 let object_cache = Object::Datagram(datagram.clone());
 
                 let _ = object_cache_storage
-                    .set_object(cache_key.clone(), object_cache, duration)
+                    .set_object(&cache_key, object_cache, duration)
                     .await;
             }
         }
@@ -1888,9 +1888,7 @@ mod success {
         let expected_object_id = 6;
         let expected_group_id = 3;
 
-        let group_result = object_cache_storage
-            .get_largest_group_id(cache_key.clone())
-            .await;
+        let group_result = object_cache_storage.get_largest_group_id(&cache_key).await;
 
         assert!(group_result.is_ok());
 
@@ -1898,7 +1896,7 @@ mod success {
         assert_eq!(largest_group_id, expected_group_id);
 
         let object_result = object_cache_storage
-            .get_largest_object_id(cache_key, largest_group_id)
+            .get_largest_object_id(&cache_key, largest_group_id)
             .await;
 
         assert!(object_result.is_ok());
@@ -1926,7 +1924,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for j in 0..8 {
@@ -1949,7 +1947,7 @@ mod success {
                 let object_cache = Object::Track(track.clone());
 
                 let _ = object_cache_storage
-                    .set_object(cache_key.clone(), object_cache, duration)
+                    .set_object(&cache_key, object_cache, duration)
                     .await;
             }
         }
@@ -1957,9 +1955,7 @@ mod success {
         let expected_object_id = 11;
         let expected_group_id = 7;
 
-        let group_result = object_cache_storage
-            .get_largest_group_id(cache_key.clone())
-            .await;
+        let group_result = object_cache_storage.get_largest_group_id(&cache_key).await;
 
         assert!(group_result.is_ok());
 
@@ -1967,7 +1963,7 @@ mod success {
         assert_eq!(largest_group_id, expected_group_id);
 
         let object_result = object_cache_storage
-            .get_largest_object_id(cache_key, largest_group_id)
+            .get_largest_object_id(&cache_key, largest_group_id)
             .await;
 
         assert!(object_result.is_ok());
@@ -2004,7 +2000,7 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for j in 0..10 {
@@ -2025,7 +2021,7 @@ mod success {
                 let object_cache = Object::Subgroup(subgroup.clone());
 
                 let _ = object_cache_storage
-                    .set_object(cache_key.clone(), object_cache, duration)
+                    .set_object(&cache_key, object_cache, duration)
                     .await;
             }
         }
@@ -2033,9 +2029,7 @@ mod success {
         let expected_object_id = 14;
         let expected_group_id = 4;
 
-        let group_result = object_cache_storage
-            .get_largest_group_id(cache_key.clone())
-            .await;
+        let group_result = object_cache_storage.get_largest_group_id(&cache_key).await;
 
         assert!(group_result.is_ok());
 
@@ -2043,7 +2037,7 @@ mod success {
         assert_eq!(largest_group_id, expected_group_id);
 
         let object_result = object_cache_storage
-            .get_largest_object_id(cache_key, largest_group_id)
+            .get_largest_object_id(&cache_key, largest_group_id)
             .await;
 
         assert!(object_result.is_ok());
@@ -2070,14 +2064,14 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let _ = object_cache_storage
-            .set_subscription(cache_key.clone(), header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         let delete_result = object_cache_storage.delete_client(session_id).await;
 
         assert!(delete_result.is_ok());
 
-        let get_result = object_cache_storage.get_header(cache_key).await;
+        let get_result = object_cache_storage.get_header(&cache_key).await;
 
         assert!(get_result.is_err());
     }
