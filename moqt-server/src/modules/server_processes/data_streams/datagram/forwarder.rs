@@ -184,7 +184,8 @@ impl ObjectDatagramForwarder {
             let message_buf = self.packetize(&object_datagram).await?;
             self.send(message_buf).await?;
 
-            let is_end = self.judge_end_of_forwarding(&object_datagram).await?;
+            let is_end = self.is_subscription_ended(&object_datagram)
+                || self.is_data_stream_ended(&object_datagram);
 
             return Ok((Some(cache_id), is_end));
         }
@@ -276,44 +277,17 @@ impl ObjectDatagramForwarder {
         Ok(())
     }
 
-    async fn judge_end_of_forwarding(&self, object_datagram: &ObjectDatagram) -> Result<bool> {
-        let is_end_of_data_stream = self.judge_end_of_data_stream(object_datagram).await?;
-        if is_end_of_data_stream {
-            return Ok(true);
-        }
+    fn is_subscription_ended(&self, object_datagram: &ObjectDatagram) -> bool {
+        let group_id = object_datagram.group_id();
+        let object_id = object_datagram.object_id();
 
-        let filter_type = self.downstream_subscription.get_filter_type();
-        if filter_type == FilterType::AbsoluteRange {
-            let is_end_of_absolute_range =
-                self.judge_end_of_absolute_range(object_datagram).await?;
-            if is_end_of_absolute_range {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
+        self.downstream_subscription.is_end(group_id, object_id)
     }
 
-    async fn judge_end_of_data_stream(&self, object_datagram: &ObjectDatagram) -> Result<bool> {
-        let is_end = matches!(
+    fn is_data_stream_ended(&self, object_datagram: &ObjectDatagram) -> bool {
+        matches!(
             object_datagram.object_status(),
             Some(ObjectStatus::EndOfTrackAndGroup)
-        );
-
-        Ok(is_end)
-    }
-
-    async fn judge_end_of_absolute_range(&self, object_datagram: &ObjectDatagram) -> Result<bool> {
-        let (end_group, end_object) = self.downstream_subscription.get_absolute_end();
-        let end_group = end_group.unwrap();
-        let end_object = end_object.unwrap();
-
-        let is_group_end = object_datagram.group_id() == end_group;
-        let is_object_end = object_datagram.object_id() == end_object;
-        let is_ending = is_group_end && is_object_end;
-
-        let is_ended = object_datagram.group_id() > end_group;
-
-        Ok(is_ending || is_ended)
+        )
     }
 }
