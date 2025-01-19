@@ -101,9 +101,6 @@ async fn spawn_uni_recv_stream_thread(
     });
     let stream_id = recv_stream.id().into_u64();
 
-    let mut recv_stream = Arc::new(Mutex::new(recv_stream));
-    recv_stream = Arc::clone(&recv_stream);
-
     tokio::spawn(
         async move {
             let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
