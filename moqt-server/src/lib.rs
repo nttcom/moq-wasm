@@ -100,15 +100,22 @@ impl MOQTServer {
 
             // Create a thread for each session
             tokio::spawn(async move {
-                let result = SessionHandler::start(
+                let mut session_handler = SessionHandler::init(
                     sender_to_other_connection_thread,
                     senders_to_management_thread,
                     incoming_session,
                 )
-                .instrument(session_span)
-                .await;
+                .await
+                .unwrap();
 
-                tracing::error!("{:?}", result);
+                match session_handler.start().instrument(session_span).await {
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::error!("{:#?}", err);
+                    }
+                }
+
+                let _ = session_handler.finish().await;
             });
         }
 
