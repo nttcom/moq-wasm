@@ -14,7 +14,7 @@ use tracing::{self};
 
 use super::stream::BiStream;
 
-pub(crate) async fn handle_bi_recv_stream(
+pub(crate) async fn handle_control_stream(
     stream: &mut BiStream,
     client: Arc<Mutex<MOQTClient>>,
 ) -> Result<()> {

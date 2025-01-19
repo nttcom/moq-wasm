@@ -16,7 +16,7 @@ use tokio::sync::{mpsc::Receiver, Mutex};
 use tracing::{self};
 use wtransport::SendStream;
 
-pub(crate) async fn forward_control_message(
+pub(crate) async fn send_control_stream(
     send_stream: Arc<Mutex<SendStream>>,
     mut message_rx: Receiver<Arc<Box<dyn MOQTPayload>>>,
 ) {

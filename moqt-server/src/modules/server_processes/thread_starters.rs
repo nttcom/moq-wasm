@@ -1,6 +1,6 @@
 use super::stream_and_datagram::{
     bi_directional_stream::{
-        forwarder::forward_control_message, receiver::handle_bi_recv_stream, stream::BiStream,
+        handler::handle_control_stream, sender::send_control_stream, stream::BiStream,
     },
     datagram::{forwarder::DatagramForwarder, receiver::DatagramReceiver},
     uni_directional_stream::{
@@ -68,7 +68,7 @@ async fn spawn_bi_stream_threads(
     tokio::spawn(
         async move {
             let mut stream = BiStream::new(stable_id, stream_id, recv_stream, send_stream);
-            handle_bi_recv_stream(&mut stream, client)
+            handle_control_stream(&mut stream, client)
                 .instrument(session_span)
                 .await
         }
@@ -80,7 +80,7 @@ async fn spawn_bi_stream_threads(
     tokio::spawn(
         async move {
             let session_span = tracing::info_span!("Session", stable_id);
-            forward_control_message(send_stream, message_rx)
+            send_control_stream(send_stream, message_rx)
                 .instrument(session_span)
                 .await;
         }
