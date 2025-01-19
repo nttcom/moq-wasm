@@ -21,6 +21,8 @@ use tokio::sync::Mutex;
 use tracing::{self};
 use wtransport::datagram::Datagram;
 
+use self::object_cache_storage::CacheKey;
+
 pub(crate) struct DatagramReceiver {
     buf: Arc<Mutex<BytesMut>>,
     senders: Arc<Senders>,
@@ -120,10 +122,8 @@ impl DatagramReceiver {
         upstream_subscribe_id: u64,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<bool, TerminationError> {
-        match object_cache_storage
-            .get_header(upstream_session_id, upstream_subscribe_id)
-            .await
-        {
+        let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
+        match object_cache_storage.get_header(&cache_key).await {
             Ok(object_cache_storage::Header::Datagram) => Ok(false),
             Err(_) => Ok(true),
             _ => {
@@ -165,12 +165,9 @@ impl DatagramReceiver {
         upstream_subscribe_id: u64,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<(), TerminationError> {
+        let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
         match object_cache_storage
-            .set_subscription(
-                upstream_session_id,
-                upstream_subscribe_id,
-                object_cache_storage::Header::Datagram,
-            )
+            .set_subscription(&cache_key, object_cache_storage::Header::Datagram)
             .await
         {
             Ok(_) => Ok(()),
@@ -192,13 +189,9 @@ impl DatagramReceiver {
     ) -> Result<(), TerminationError> {
         let object_cache = object_cache_storage::Object::Datagram(datagram_object);
 
+        let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
         match object_cache_storage
-            .set_object(
-                upstream_session_id,
-                upstream_subscribe_id,
-                object_cache,
-                self.duration,
-            )
+            .set_object(&cache_key, object_cache, self.duration)
             .await
         {
             Ok(_) => Ok(()),

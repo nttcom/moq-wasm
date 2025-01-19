@@ -204,12 +204,7 @@ impl ObjectStreamForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<StreamHeader> {
-        let upstream_session_id = self.cache_key.session_id();
-        let upstream_subscribe_id = self.cache_key.subscribe_id();
-
-        let header_cache = object_cache_storage
-            .get_header(upstream_session_id, upstream_subscribe_id)
-            .await;
+        let header_cache = object_cache_storage.get_header(&self.cache_key).await;
 
         match header_cache {
             Ok(object_cache_storage::Header::Track(header)) => Ok(StreamHeader::Track(header)),
@@ -306,18 +301,12 @@ impl ObjectStreamForwarder {
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<(usize, object_cache_storage::Object)>> {
         let filter_type = self.downstream_subscription.get_filter_type();
-        let upstream_session_id = self.cache_key.session_id();
-        let upstream_subscribe_id = self.cache_key.subscribe_id();
 
         match filter_type {
-            FilterType::LatestGroup => {
-                object_cache_storage
-                    .get_latest_group(upstream_session_id, upstream_subscribe_id)
-                    .await
-            }
+            FilterType::LatestGroup => object_cache_storage.get_latest_group(&self.cache_key).await,
             FilterType::LatestObject => {
                 object_cache_storage
-                    .get_latest_object(upstream_session_id, upstream_subscribe_id)
+                    .get_latest_object(&self.cache_key)
                     .await
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
@@ -325,8 +314,7 @@ impl ObjectStreamForwarder {
 
                 object_cache_storage
                     .get_absolute_object(
-                        upstream_session_id,
-                        upstream_subscribe_id,
+                        &self.cache_key,
                         start_group.unwrap(),
                         start_object.unwrap(),
                     )
@@ -340,11 +328,8 @@ impl ObjectStreamForwarder {
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,
     ) -> Result<Option<(usize, object_cache_storage::Object)>> {
-        let upstream_session_id = self.cache_key.session_id();
-        let upstream_subscribe_id = self.cache_key.subscribe_id();
-
         object_cache_storage
-            .get_next_object(upstream_session_id, upstream_subscribe_id, object_cache_id)
+            .get_next_object(&self.cache_key, object_cache_id)
             .await
     }
 
