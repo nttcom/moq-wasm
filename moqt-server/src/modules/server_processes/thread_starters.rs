@@ -144,11 +144,11 @@ async fn spawn_uni_send_stream_thread(
 
     tokio::spawn(
         async move {
-            let stream = UniSendStream::new(stable_id, stream_id, subscribe_id, send_stream);
+            let stream = UniSendStream::new(stable_id, stream_id, send_stream);
             let senders = client.lock().await.senders();
 
             let mut object_stream_forwarder =
-                ObjectStreamForwarder::init(stream, client, data_stream_type)
+                ObjectStreamForwarder::init(stream, subscribe_id, client, data_stream_type)
                     .await
                     .unwrap();
 

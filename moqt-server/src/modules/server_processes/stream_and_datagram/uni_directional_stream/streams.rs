@@ -37,21 +37,14 @@ impl UniRecvStream {
 pub(crate) struct UniSendStream {
     stable_id: usize,
     stream_id: u64,
-    subscribe_id: u64,
     send_stream: SendStream,
 }
 
 impl UniSendStream {
-    pub fn new(
-        stable_id: usize,
-        stream_id: u64,
-        subscribe_id: u64,
-        send_stream: SendStream,
-    ) -> UniSendStream {
+    pub fn new(stable_id: usize, stream_id: u64, send_stream: SendStream) -> UniSendStream {
         UniSendStream {
             stable_id,
             stream_id,
-            subscribe_id,
             send_stream,
         }
     }
@@ -62,10 +55,6 @@ impl UniSendStream {
 
     pub(crate) fn stream_id(&self) -> u64 {
         self.stream_id
-    }
-
-    pub(crate) fn subscribe_id(&self) -> u64 {
-        self.subscribe_id
     }
 
     pub(crate) async fn write_all(&mut self, buffer: &[u8]) -> Result<(), StreamWriteError> {
