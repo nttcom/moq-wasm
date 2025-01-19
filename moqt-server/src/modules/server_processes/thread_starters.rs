@@ -105,9 +105,15 @@ async fn spawn_uni_recv_stream_thread(
         async move {
             let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
             let senders = client.lock().await.senders();
-            let mut uni_stream_receiver = UniStreamReceiver::init(stream, client).await;
+            let mut uni_stream_receiver = UniStreamReceiver::init(stream, client)
+                .instrument(session_span.clone())
+                .await;
 
-            match uni_stream_receiver.start().instrument(session_span).await {
+            match uni_stream_receiver
+                .start()
+                .instrument(session_span.clone())
+                .await
+            {
                 Ok(_) => {}
                 Err((code, reason)) => {
                     tracing::error!(reason);
@@ -119,7 +125,7 @@ async fn spawn_uni_recv_stream_thread(
                 }
             }
 
-            let _ = uni_stream_receiver.finish().await;
+            let _ = uni_stream_receiver.finish().instrument(session_span).await;
         }
         .in_current_span(),
     );
@@ -149,12 +155,13 @@ async fn spawn_uni_send_stream_thread(
 
             let mut object_stream_forwarder =
                 ObjectStreamForwarder::init(stream, subscribe_id, client, data_stream_type)
+                    .instrument(session_span.clone())
                     .await
                     .unwrap();
 
             match object_stream_forwarder
                 .start()
-                .instrument(session_span)
+                .instrument(session_span.clone())
                 .await
             {
                 Ok(_) => {}
@@ -171,7 +178,10 @@ async fn spawn_uni_send_stream_thread(
                 }
             }
 
-            let _ = object_stream_forwarder.finish().await;
+            let _ = object_stream_forwarder
+                .finish()
+                .instrument(session_span)
+                .await;
         }
         .in_current_span(),
     );
@@ -192,7 +202,9 @@ async fn spawn_recv_datagram_thread(
     tokio::spawn(
         async move {
             let senders = client.lock().await.senders();
-            let mut datagram_receiver = DatagramReceiver::init(client).await;
+            let mut datagram_receiver = DatagramReceiver::init(client)
+                .instrument(session_span.clone())
+                .await;
 
             match datagram_receiver
                 .receive_object(datagram)
@@ -230,10 +242,15 @@ async fn spawn_send_datagram_thread(
         async move {
             let senders = client.lock().await.senders();
             let mut datagram_forwarder = DatagramForwarder::init(session, subscribe_id, client)
+                .instrument(session_span.clone())
                 .await
                 .unwrap();
 
-            match datagram_forwarder.start().instrument(session_span).await {
+            match datagram_forwarder
+                .start()
+                .instrument(session_span.clone())
+                .await
+            {
                 Ok(_) => {}
                 Err(e) => {
                     let code = TerminationErrorCode::InternalError;
@@ -248,7 +265,7 @@ async fn spawn_send_datagram_thread(
                 }
             }
 
-            let _ = datagram_forwarder.finish().await;
+            let _ = datagram_forwarder.finish().instrument(session_span).await;
         }
         .in_current_span(),
     );
