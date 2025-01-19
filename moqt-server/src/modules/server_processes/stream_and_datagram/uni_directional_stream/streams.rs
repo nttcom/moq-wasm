@@ -1,5 +1,3 @@
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use wtransport::{
     error::{StreamReadError, StreamWriteError},
     RecvStream, SendStream,
@@ -8,15 +6,11 @@ use wtransport::{
 pub(crate) struct UniRecvStream {
     stable_id: usize,
     stream_id: u64,
-    recv_stream: Arc<Mutex<RecvStream>>,
+    recv_stream: RecvStream,
 }
 
 impl UniRecvStream {
-    pub(crate) fn new(
-        stable_id: usize,
-        stream_id: u64,
-        recv_stream: Arc<Mutex<RecvStream>>,
-    ) -> UniRecvStream {
+    pub(crate) fn new(stable_id: usize, stream_id: u64, recv_stream: RecvStream) -> UniRecvStream {
         UniRecvStream {
             stable_id,
             stream_id,
@@ -36,29 +30,21 @@ impl UniRecvStream {
         &mut self,
         buffer: &mut [u8],
     ) -> Result<Option<usize>, StreamReadError> {
-        let mut recv_stream = self.recv_stream.lock().await;
-        recv_stream.read(buffer).await
+        self.recv_stream.read(buffer).await
     }
 }
 
 pub(crate) struct UniSendStream {
     stable_id: usize,
     stream_id: u64,
-    subscribe_id: u64,
     send_stream: SendStream,
 }
 
 impl UniSendStream {
-    pub fn new(
-        stable_id: usize,
-        stream_id: u64,
-        subscribe_id: u64,
-        send_stream: SendStream,
-    ) -> UniSendStream {
+    pub fn new(stable_id: usize, stream_id: u64, send_stream: SendStream) -> UniSendStream {
         UniSendStream {
             stable_id,
             stream_id,
-            subscribe_id,
             send_stream,
         }
     }
@@ -69,10 +55,6 @@ impl UniSendStream {
 
     pub(crate) fn stream_id(&self) -> u64 {
         self.stream_id
-    }
-
-    pub(crate) fn subscribe_id(&self) -> u64 {
-        self.subscribe_id
     }
 
     pub(crate) async fn write_all(&mut self, buffer: &[u8]) -> Result<(), StreamWriteError> {

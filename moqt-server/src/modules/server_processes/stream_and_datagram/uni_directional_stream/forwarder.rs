@@ -30,6 +30,7 @@ use super::streams::UniSendStream;
 pub(crate) struct ObjectStreamForwarder {
     stream: UniSendStream,
     senders: Arc<Senders>,
+    downstream_subscribe_id: u64,
     downstream_subscription: Subscription,
     data_stream_type: DataStreamType,
     cache_key: CacheKey,
@@ -39,6 +40,7 @@ pub(crate) struct ObjectStreamForwarder {
 impl ObjectStreamForwarder {
     pub(crate) async fn init(
         stream: UniSendStream,
+        downstream_subscribe_id: u64,
         client: Arc<Mutex<MOQTClient>>,
         data_stream_type: DataStreamType,
     ) -> Result<Self> {
@@ -48,7 +50,6 @@ impl ObjectStreamForwarder {
             PubSubRelationManagerWrapper::new(senders.pubsub_relation_tx().clone());
 
         let downstream_session_id = stream.stable_id();
-        let downstream_subscribe_id = stream.subscribe_id();
 
         let downstream_subscription = pubsub_relation_manager
             .get_downstream_subscription_by_ids(downstream_session_id, downstream_subscribe_id)
@@ -65,6 +66,7 @@ impl ObjectStreamForwarder {
         let object_stream_forwarder = ObjectStreamForwarder {
             stream,
             senders,
+            downstream_subscribe_id,
             downstream_subscription,
             data_stream_type,
             cache_key,
@@ -168,7 +170,7 @@ impl ObjectStreamForwarder {
     ) -> Result<()> {
         let forwarding_preference = downstream_forwarding_preference.unwrap();
         let downstream_session_id = self.stream.stable_id();
-        let downstream_subscribe_id = self.stream.subscribe_id();
+        let downstream_subscribe_id = self.downstream_subscribe_id;
 
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
@@ -350,7 +352,7 @@ impl ObjectStreamForwarder {
 
     fn packetize_track_header(&self, header: &StreamHeaderTrack) -> BytesMut {
         let mut buf = BytesMut::new();
-        let downstream_subscribe_id = self.stream.subscribe_id();
+        let downstream_subscribe_id = self.downstream_subscribe_id;
         let downstream_track_alias = self.downstream_subscription.get_track_alias();
 
         let header = StreamHeaderTrack::new(
@@ -377,7 +379,7 @@ impl ObjectStreamForwarder {
         subgroup_group_id: &mut Option<u64>,
     ) -> BytesMut {
         let mut buf = BytesMut::new();
-        let downstream_subscribe_id = self.stream.subscribe_id();
+        let downstream_subscribe_id = self.downstream_subscribe_id;
         let downstream_track_alias = self.downstream_subscription.get_track_alias();
 
         let header = StreamHeaderSubgroup::new(
