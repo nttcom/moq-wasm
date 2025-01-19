@@ -19,6 +19,8 @@ use tokio::sync::Mutex;
 
 use crate::modules::object_cache_storage::{self, ObjectCacheStorageWrapper};
 
+use self::object_cache_storage::CacheKey;
+
 pub(crate) async fn subscribe_handler(
     subscribe_message: Subscribe,
     client: &MOQTClient,
@@ -278,10 +280,8 @@ async fn open_new_subscription(
         .await?
         .unwrap();
 
-    let stream_header_type = match object_cache_storage
-        .get_header(upstream_session_id, upstream_subscribe_id)
-        .await
-    {
+    let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
+    let stream_header_type = match object_cache_storage.get_header(&cache_key).await {
         Ok(object_cache_storage::Header::Datagram) => DataStreamType::ObjectDatagram,
         Ok(object_cache_storage::Header::Track(_)) => DataStreamType::StreamHeaderTrack,
         Ok(object_cache_storage::Header::Subgroup(_)) => DataStreamType::StreamHeaderSubgroup,
@@ -321,10 +321,8 @@ async fn generate_subscribe_ok_message(
         .await?
         .unwrap();
 
-    let largest_group_id = match object_cache_storage
-        .get_largest_group_id(upstream_session_id, upstream_subscribe_id)
-        .await
-    {
+    let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
+    let largest_group_id = match object_cache_storage.get_largest_group_id(&cache_key).await {
         Ok(group_id) => Some(group_id),
         Err(_) => None,
     };
@@ -332,7 +330,7 @@ async fn generate_subscribe_ok_message(
     // The largest object_id is None if the largest_group_id is None
     let largest_object_id = if let Some(group_id) = largest_group_id {
         match object_cache_storage
-            .get_largest_object_id(upstream_session_id, upstream_subscribe_id, group_id)
+            .get_largest_object_id(&cache_key, group_id)
             .await
         {
             Ok(object_id) => Some(object_id),
@@ -511,7 +509,8 @@ mod success {
     use crate::modules::{
         moqt_client::MOQTClient,
         object_cache_storage::{
-            self, object_cache_storage, ObjectCacheStorageCommand, ObjectCacheStorageWrapper,
+            self, object_cache_storage, CacheKey, ObjectCacheStorageCommand,
+            ObjectCacheStorageWrapper,
         },
         pubsub_relation_manager::{
             commands::PubSubRelationCommand,
@@ -920,8 +919,9 @@ mod success {
             StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
+        let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
         let _ = object_cache_storage
-            .set_subscription(upstream_session_id, subscribe_id, header.clone())
+            .set_subscription(&cache_key, header.clone())
             .await;
 
         for i in 0..10 {
@@ -934,7 +934,7 @@ mod success {
             let object_cache = object_cache_storage::Object::Track(track.clone());
 
             let _ = object_cache_storage
-                .set_object(upstream_session_id, subscribe_id, object_cache, duration)
+                .set_object(&cache_key, object_cache, duration)
                 .await;
         }
 

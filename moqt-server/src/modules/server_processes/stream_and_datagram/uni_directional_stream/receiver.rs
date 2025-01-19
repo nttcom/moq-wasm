@@ -1,4 +1,6 @@
-use self::{object_stream::StreamObject, stream_header::StreamHeader};
+use self::{
+    object_cache_storage::CacheKey, object_stream::StreamObject, stream_header::StreamHeader,
+};
 
 use super::streams::UniRecvStream;
 use crate::{
@@ -305,8 +307,9 @@ impl UniStreamReceiver {
             }
         };
 
+        let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
         match object_cache_storage
-            .set_subscription(upstream_session_id, upstream_subscribe_id, header_cache)
+            .set_subscription(&cache_key, header_cache)
             .await
         {
             Ok(_) => Ok(()),
@@ -464,13 +467,9 @@ impl UniStreamReceiver {
             }
         };
 
+        let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
         match object_cache_storage
-            .set_object(
-                upstream_session_id,
-                upstream_subscribe_id,
-                object_cache,
-                self.duration,
-            )
+            .set_object(&cache_key, object_cache, self.duration)
             .await
         {
             Ok(_) => Ok(()),
