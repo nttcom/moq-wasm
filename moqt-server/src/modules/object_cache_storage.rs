@@ -23,6 +23,28 @@ pub(crate) enum Object {
     Subgroup(ObjectStreamSubgroup),
 }
 
+pub(crate) struct CacheKey {
+    session_id: usize,
+    subscribe_id: u64,
+}
+
+impl CacheKey {
+    pub(crate) fn new(session_id: usize, subscribe_id: u64) -> Self {
+        CacheKey {
+            session_id,
+            subscribe_id,
+        }
+    }
+
+    pub(crate) fn session_id(&self) -> usize {
+        self.session_id
+    }
+
+    pub(crate) fn subscribe_id(&self) -> u64 {
+        self.subscribe_id
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum ObjectCacheStorageCommand {
     SetSubscription {
