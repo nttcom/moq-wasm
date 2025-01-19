@@ -28,26 +28,7 @@ pub(crate) struct SessionHandler {
 }
 
 impl SessionHandler {
-    pub(crate) async fn start(
-        senders_to_other_connection_thread: SenderToOtherConnectionThread,
-        senders_to_management_thread: SendersToManagementThread,
-        incoming_session: IncomingSession,
-    ) -> Result<()> {
-        let mut session_handler = Self::init(
-            senders_to_other_connection_thread,
-            senders_to_management_thread,
-            incoming_session,
-        )
-        .await?;
-
-        session_handler.main_loop().await?;
-
-        session_handler.finish().await?;
-
-        Ok(())
-    }
-
-    async fn init(
+    pub(crate) async fn init(
         senders_to_other_connection_thread: SenderToOtherConnectionThread,
         senders_to_management_thread: SendersToManagementThread,
         incoming_session: IncomingSession,
@@ -98,7 +79,7 @@ impl SessionHandler {
         Ok(session_handler)
     }
 
-    async fn main_loop(&mut self) -> Result<()> {
+    pub(crate) async fn start(&mut self) -> Result<()> {
         let mut is_control_stream_opened = false;
 
         loop {
@@ -122,7 +103,7 @@ impl SessionHandler {
         Ok(())
     }
 
-    async fn finish(&mut self) -> Result<()> {
+    pub(crate) async fn finish(&mut self) -> Result<()> {
         let senders = self.client.lock().await.senders();
         let stable_id = self.client.lock().await.id();
 
