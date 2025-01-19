@@ -32,7 +32,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{self};
 
-pub(crate) struct UniStreamReceiver {
+pub(crate) struct ObjectStreamReceiver {
     stream: UniRecvStream,
     buf: Arc<Mutex<BytesMut>>,
     senders: Arc<Senders>,
@@ -43,7 +43,7 @@ pub(crate) struct UniStreamReceiver {
     upstream_subscription: Option<Subscription>,
 }
 
-impl UniStreamReceiver {
+impl ObjectStreamReceiver {
     pub(crate) async fn init(stream: UniRecvStream, client: Arc<Mutex<MOQTClient>>) -> Self {
         let senders = client.lock().await.senders();
         let stable_id = stream.stable_id();
@@ -52,7 +52,7 @@ impl UniStreamReceiver {
         // TODO: Set the accurate duration
         let duration = 100000;
 
-        UniStreamReceiver {
+        ObjectStreamReceiver {
             stream,
             buf,
             senders,
@@ -109,7 +109,7 @@ impl UniStreamReceiver {
             })
             .await?;
 
-        tracing::debug!("UniStreamReceiver finished");
+        tracing::debug!("ObjectStreamReceiver finished");
 
         Ok(())
     }

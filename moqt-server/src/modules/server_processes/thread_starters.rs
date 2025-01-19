@@ -5,7 +5,7 @@ use super::stream_and_datagram::{
     datagram::{forwarder::ObjectDatagramForwarder, receiver::ObjectDatagramReceiver},
     uni_directional_stream::{
         forwarder::ObjectStreamForwarder,
-        receiver::UniStreamReceiver,
+        receiver::ObjectStreamReceiver,
         streams::{UniRecvStream, UniSendStream},
     },
 };
@@ -105,11 +105,11 @@ async fn spawn_uni_recv_stream_thread(
         async move {
             let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
             let senders = client.lock().await.senders();
-            let mut uni_stream_receiver = UniStreamReceiver::init(stream, client)
+            let mut object_stream_receiver = ObjectStreamReceiver::init(stream, client)
                 .instrument(session_span.clone())
                 .await;
 
-            match uni_stream_receiver
+            match object_stream_receiver
                 .start()
                 .instrument(session_span.clone())
                 .await
@@ -125,7 +125,10 @@ async fn spawn_uni_recv_stream_thread(
                 }
             }
 
-            let _ = uni_stream_receiver.finish().instrument(session_span).await;
+            let _ = object_stream_receiver
+                .finish()
+                .instrument(session_span)
+                .await;
         }
         .in_current_span(),
     );
