@@ -261,7 +261,7 @@ pub(crate) async fn select_spawn_thread(
     session: Arc<Connection>,
     open_downstream_stream_or_datagram_rx: &mut mpsc::Receiver<(u64, DataStreamType)>,
     close_session_rx: &mut mpsc::Receiver<(u64, String)>,
-    is_control_stream_opened: &mut bool,
+    is_control_stream_opened: &mut bool, // TODO: separate it from arguments
 ) -> Result<()> {
     // TODO: FIXME: Need to store information between threads for QUIC-level reconnection support
     tokio::select! {
