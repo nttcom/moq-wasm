@@ -2,7 +2,7 @@ use self::{
     object_cache_storage::CacheKey, object_stream::StreamObject, stream_header::StreamHeader,
 };
 
-use super::streams::UniRecvStream;
+use super::uni_stream::UniRecvStream;
 use crate::{
     modules::{
         buffer_manager::{request_buffer, BufferCommand},

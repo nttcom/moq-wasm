@@ -1,3 +1,4 @@
+use super::bi_stream::BiStream;
 use crate::modules::{
     buffer_manager::{request_buffer, BufferCommand},
     message_handlers::control_message::{control_message_handler, MessageProcessResult},
@@ -11,8 +12,6 @@ use moqt_core::constants::UnderlayType;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{self};
-
-use super::stream::BiStream;
 
 pub(crate) async fn handle_control_stream(
     stream: &mut BiStream,

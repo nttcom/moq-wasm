@@ -1,12 +1,14 @@
-use super::stream_and_datagram::{
-    bi_directional_stream::{
-        handler::handle_control_stream, sender::send_control_stream, stream::BiStream,
+use super::{
+    control_stream::{
+        bi_stream::BiStream, handler::handle_control_stream, sender::send_control_stream,
     },
-    datagram::{forwarder::ObjectDatagramForwarder, receiver::ObjectDatagramReceiver},
-    uni_directional_stream::{
-        forwarder::ObjectStreamForwarder,
-        receiver::ObjectStreamReceiver,
-        streams::{UniRecvStream, UniSendStream},
+    data_streams::{
+        datagram::{forwarder::ObjectDatagramForwarder, receiver::ObjectDatagramReceiver},
+        stream::{
+            forwarder::ObjectStreamForwarder,
+            receiver::ObjectStreamReceiver,
+            uni_stream::{UniRecvStream, UniSendStream},
+        },
     },
 };
 use crate::modules::{moqt_client::MOQTClient, send_stream_dispatcher::SendStreamDispatchCommand};
