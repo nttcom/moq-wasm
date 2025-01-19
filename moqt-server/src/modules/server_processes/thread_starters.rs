@@ -23,7 +23,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{self, Instrument};
 use wtransport::{datagram::Datagram, Connection, RecvStream, SendStream};
 
-async fn spawn_bi_stream_threads(
+async fn spawn_control_stream_threads(
     client: Arc<Mutex<MOQTClient>>,
     send_stream: SendStream,
     recv_stream: RecvStream,
@@ -47,7 +47,7 @@ async fn spawn_bi_stream_threads(
     let stable_id = client.lock().await.id();
     let session_span = tracing::info_span!("Session", stable_id);
     session_span.in_scope(|| {
-        tracing::info!("Accepted BI stream");
+        tracing::info!("Accepted bi-directional stream");
     });
 
     let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
@@ -63,7 +63,7 @@ async fn spawn_bi_stream_threads(
     // The send_stream is wrapped with a Mutex to make it thread-safe since it can be called from multiple threads for returning and forwarding messages.
     let shared_send_stream = Arc::new(Mutex::new(send_stream));
 
-    // Spawn thread listenning for WebTransport messages
+    // Spawn a thread to listen for control messages from the client
     let send_stream = Arc::clone(&shared_send_stream);
     let session_span = session_span.clone();
     let stream_id = recv_stream.id().into_u64();
@@ -77,7 +77,7 @@ async fn spawn_bi_stream_threads(
         .in_current_span(),
     );
 
-    // Thread to forward messages (ANNOUNCE SUBSCRIBE) from the server
+    // Spawn a thread to send control messages: respond to the client or forward to the other client
     let send_stream = Arc::clone(&shared_send_stream);
     tokio::spawn(
         async move {
@@ -92,14 +92,14 @@ async fn spawn_bi_stream_threads(
     Ok(())
 }
 
-async fn spawn_uni_recv_stream_thread(
+async fn spawn_object_stream_receiver_thread(
     client: Arc<Mutex<MOQTClient>>,
     recv_stream: RecvStream,
 ) -> Result<()> {
     let stable_id = client.lock().await.id();
     let session_span = tracing::info_span!("Session", stable_id);
     session_span.in_scope(|| {
-        tracing::info!("Accepted UNI Recv stream");
+        tracing::info!("Accepted uni-directional recv stream");
     });
     let stream_id = recv_stream.id().into_u64();
 
@@ -137,7 +137,7 @@ async fn spawn_uni_recv_stream_thread(
     Ok(())
 }
 
-async fn spawn_uni_send_stream_thread(
+async fn spawn_object_stream_forwarder_thread(
     client: Arc<Mutex<MOQTClient>>,
     send_stream: SendStream,
     subscribe_id: u64,
@@ -147,7 +147,7 @@ async fn spawn_uni_send_stream_thread(
     let session_span = tracing::info_span!("Session", stable_id);
     session_span.in_scope(|| {
         tracing::info!(
-            "Open UNI Send stream for stream type: {:?}",
+            "Open uni-directional send for stream type: {:?}",
             data_stream_type
         );
     });
@@ -193,14 +193,14 @@ async fn spawn_uni_send_stream_thread(
     Ok(())
 }
 
-async fn spawn_recv_datagram_thread(
+async fn spawn_object_datagram_receiver_thread(
     client: Arc<Mutex<MOQTClient>>,
     datagram: Datagram,
 ) -> Result<()> {
     let stable_id = client.lock().await.id();
     let session_span = tracing::info_span!("Session", stable_id);
     session_span.in_scope(|| {
-        tracing::info!("Accepted Datagram");
+        tracing::info!("Received a datagram");
     });
 
     // No loop: End after receiving once
@@ -232,7 +232,7 @@ async fn spawn_recv_datagram_thread(
     Ok(())
 }
 
-async fn spawn_send_datagram_thread(
+async fn spawn_object_datagram_forwarder_thread(
     client: Arc<Mutex<MOQTClient>>,
     session: Arc<Connection>,
     subscribe_id: u64,
@@ -240,7 +240,7 @@ async fn spawn_send_datagram_thread(
     let stable_id = client.lock().await.id();
     let session_span = tracing::info_span!("Session", stable_id);
     session_span.in_scope(|| {
-        tracing::info!("Accepted Datagram");
+        tracing::info!("Open datagrams send thread");
     });
 
     tokio::spawn(
@@ -293,26 +293,26 @@ pub(crate) async fn select_spawn_thread(
     tokio::select! {
         stream = session.accept_bi() => {
             let (send_stream, recv_stream) = stream?;
-            spawn_bi_stream_threads(client.clone(), send_stream, recv_stream, is_control_stream_opened).await?;
+            spawn_control_stream_threads(client.clone(), send_stream, recv_stream, is_control_stream_opened).await?;
         },
         stream = session.accept_uni() => {
             let recv_stream = stream?;
-            spawn_uni_recv_stream_thread(client.clone(), recv_stream).await?;
+            spawn_object_stream_receiver_thread(client.clone(), recv_stream).await?;
         },
         datagram = session.receive_datagram() => {
             let datagram = datagram?;
-            spawn_recv_datagram_thread(client.clone(), datagram).await?;
+            spawn_object_datagram_receiver_thread(client.clone(), datagram).await?;
         },
-        // Waiting for a uni-directional send stream open request and forwarding the message
+        // Waiting for requests to open a new data stream thread
         Some((subscribe_id, data_stream_type)) = open_downstream_stream_or_datagram_rx.recv() => {
             match data_stream_type {
                 DataStreamType::StreamHeaderTrack | DataStreamType::StreamHeaderSubgroup => {
                     let send_stream = session.open_uni().await?.await?;
-                    spawn_uni_send_stream_thread(client.clone(), send_stream, subscribe_id, data_stream_type).await?;
+                    spawn_object_stream_forwarder_thread(client.clone(), send_stream, subscribe_id, data_stream_type).await?;
                 }
                 DataStreamType::ObjectDatagram => {
                     let session = session.clone();
-                    spawn_send_datagram_thread(client.clone(), session, subscribe_id).await?;
+                    spawn_object_datagram_forwarder_thread(client.clone(), session, subscribe_id).await?;
 
                 }
             }
