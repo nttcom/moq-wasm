@@ -506,6 +506,11 @@ impl ObjectStreamReceiver {
             .is_end(group_id, object_id)
     }
 
+    // This function is implemented according to the following sentence in draft.
+    //   A relay MAY treat receipt of EndOfGroup, EndOfSubgroup, GroupDoesNotExist, or
+    //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
+    //   has not arrived, as further objects on the stream would be a protocol violation.
+    // TODO: Add handling for FIN message
     fn is_data_stream_ended(&self, stream_object: &StreamObject) -> bool {
         match stream_object {
             StreamObject::Track(object_stream_track) => {
