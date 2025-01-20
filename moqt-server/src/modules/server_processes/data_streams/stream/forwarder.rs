@@ -257,9 +257,8 @@ impl ObjectStreamForwarder {
             let message_buf = self.packetize_object(&stream_object).await?;
             self.send(message_buf).await?;
 
-            let is_end = self
-                .judge_end_of_forwarding(&stream_object, subgroup_group_id)
-                .await?;
+            let is_end = self.is_subscription_ended(&stream_object, subgroup_group_id)
+                || self.is_data_stream_ended(&stream_object);
 
             return Ok((Some(cache_id), is_end));
         }
@@ -426,31 +425,31 @@ impl ObjectStreamForwarder {
         Ok(())
     }
 
-    async fn judge_end_of_forwarding(
+    fn is_subscription_ended(
         &self,
         stream_object: &StreamObject,
         subgroup_group_id: &Option<u64>,
-    ) -> Result<bool> {
-        let is_end_of_data_stream = self.judge_end_of_data_stream(stream_object).await?;
-        if is_end_of_data_stream {
-            return Ok(true);
-        }
+    ) -> bool {
+        let (group_id, object_id) = match stream_object {
+            StreamObject::Track(object_stream_track) => (
+                object_stream_track.group_id(),
+                object_stream_track.object_id(),
+            ),
+            StreamObject::Subgroup(object_stream_subgroup) => (
+                subgroup_group_id.unwrap(),
+                object_stream_subgroup.object_id(),
+            ),
+        };
 
-        let filter_type = self.downstream_subscription.get_filter_type();
-        if filter_type == FilterType::AbsoluteRange {
-            let is_end_of_absolute_range = self
-                .judge_end_of_absolute_range(stream_object, subgroup_group_id)
-                .await?;
-            if is_end_of_absolute_range {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
+        self.downstream_subscription.is_end(group_id, object_id)
     }
 
-    async fn judge_end_of_data_stream(&self, stream_object: &StreamObject) -> Result<bool> {
-        let is_end = match stream_object {
+    // This function is implemented according to the following sentence in draft.
+    //   A relay MAY treat receipt of EndOfGroup, EndOfSubgroup, GroupDoesNotExist, or
+    //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
+    //   has not arrived, as further objects on the stream would be a protocol violation.
+    fn is_data_stream_ended(&self, stream_object: &StreamObject) -> bool {
+        match stream_object {
             StreamObject::Track(object_stream_track) => {
                 matches!(
                     object_stream_track.object_status(),
@@ -465,42 +464,6 @@ impl ObjectStreamForwarder {
                         | Some(ObjectStatus::EndOfTrackAndGroup)
                 )
             }
-        };
-
-        Ok(is_end)
-    }
-
-    async fn judge_end_of_absolute_range(
-        &self,
-        stream_object: &StreamObject,
-        subgroup_group_id: &Option<u64>,
-    ) -> Result<bool> {
-        let (end_group, end_object) = self.downstream_subscription.get_absolute_end();
-        let end_group = end_group.unwrap();
-        let end_object = end_object.unwrap();
-
-        let is_end = match stream_object {
-            StreamObject::Track(object_stream_track) => {
-                let is_group_end = object_stream_track.group_id() == end_group;
-                let is_object_end = object_stream_track.object_id() == end_object;
-                let is_ending = is_group_end && is_object_end;
-
-                let is_ended = object_stream_track.group_id() > end_group;
-
-                is_ending || is_ended
-            }
-            StreamObject::Subgroup(object_stream_subgroup) => {
-                let subgroup_group_id = subgroup_group_id.unwrap();
-                let is_group_end = subgroup_group_id == end_group;
-                let is_object_end = object_stream_subgroup.object_id() == end_object;
-                let is_ending = is_group_end && is_object_end;
-
-                let is_ended = subgroup_group_id > end_group;
-
-                is_ending || is_ended
-            }
-        };
-
-        Ok(is_end)
+        }
     }
 }

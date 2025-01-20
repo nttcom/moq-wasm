@@ -22,9 +22,7 @@ use bytes::BytesMut;
 use moqt_core::{
     constants::TerminationErrorCode,
     data_stream_type::DataStreamType,
-    messages::{
-        control_messages::subscribe::FilterType, data_streams::object_status::ObjectStatus,
-    },
+    messages::data_streams::object_status::ObjectStatus,
     models::{subscriptions::Subscription, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
@@ -416,19 +414,23 @@ impl ObjectStreamReceiver {
         subgroup_group_id: Option<u64>,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<bool>, TerminationError> {
-        let object = match self.read_object_from_buf().await? {
+        let stream_object = match self.read_object_from_buf().await? {
             Some(object) => object,
             None => {
                 return Ok(None);
             }
         };
 
-        self.store_object(&object, session_id, subscribe_id, object_cache_storage)
-            .await?;
+        self.store_object(
+            &stream_object,
+            session_id,
+            subscribe_id,
+            object_cache_storage,
+        )
+        .await?;
 
-        let is_end = self
-            .judge_end_of_receiving(&object, &subgroup_group_id)
-            .await?;
+        let is_end = self.is_subscription_ended(&stream_object, &subgroup_group_id)
+            || self.is_data_stream_ended(&stream_object);
 
         Ok(Some(is_end))
     }
@@ -482,35 +484,35 @@ impl ObjectStreamReceiver {
         }
     }
 
-    async fn judge_end_of_receiving(
+    fn is_subscription_ended(
         &self,
         object: &StreamObject,
         subgroup_group_id: &Option<u64>,
-    ) -> Result<bool, TerminationError> {
-        let is_end_of_data_stream = self.judge_end_of_data_stream(object).await?;
-        if is_end_of_data_stream {
-            return Ok(true);
-        }
+    ) -> bool {
+        let (group_id, object_id) = match object {
+            StreamObject::Track(object_stream_track) => (
+                object_stream_track.group_id(),
+                object_stream_track.object_id(),
+            ),
+            StreamObject::Subgroup(object_stream_subgroup) => (
+                subgroup_group_id.unwrap(),
+                object_stream_subgroup.object_id(),
+            ),
+        };
 
-        let upstream_subscription = self.upstream_subscription.as_ref().unwrap();
-        let filter_type = upstream_subscription.get_filter_type();
-        if filter_type == FilterType::AbsoluteRange {
-            let is_end_of_absolute_range = self
-                .judge_end_of_absolute_range(object, subgroup_group_id)
-                .await?;
-            if is_end_of_absolute_range {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
+        self.upstream_subscription
+            .as_ref()
+            .unwrap()
+            .is_end(group_id, object_id)
     }
 
-    async fn judge_end_of_data_stream(
-        &self,
-        object: &StreamObject,
-    ) -> Result<bool, TerminationError> {
-        let is_end = match object {
+    // This function is implemented according to the following sentence in draft.
+    //   A relay MAY treat receipt of EndOfGroup, EndOfSubgroup, GroupDoesNotExist, or
+    //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
+    //   has not arrived, as further objects on the stream would be a protocol violation.
+    // TODO: Add handling for FIN message
+    fn is_data_stream_ended(&self, stream_object: &StreamObject) -> bool {
+        match stream_object {
             StreamObject::Track(object_stream_track) => {
                 matches!(
                     object_stream_track.object_status(),
@@ -525,43 +527,6 @@ impl ObjectStreamReceiver {
                         | Some(ObjectStatus::EndOfTrackAndGroup)
                 )
             }
-        };
-
-        Ok(is_end)
-    }
-
-    async fn judge_end_of_absolute_range(
-        &self,
-        object: &StreamObject,
-        subgroup_group_id: &Option<u64>,
-    ) -> Result<bool, TerminationError> {
-        let upstream_subscription = self.upstream_subscription.as_ref().unwrap();
-        let (end_group, end_object) = upstream_subscription.get_absolute_end();
-        let end_group = end_group.unwrap();
-        let end_object = end_object.unwrap();
-
-        let is_end = match object {
-            StreamObject::Track(object_stream_track) => {
-                let is_group_end = object_stream_track.group_id() == end_group;
-                let is_object_end = object_stream_track.object_id() == end_object;
-                let is_ending = is_group_end && is_object_end;
-
-                let is_ended = object_stream_track.group_id() > end_group;
-
-                is_ending || is_ended
-            }
-            StreamObject::Subgroup(object_stream_subgroup) => {
-                let subgroup_group_id = subgroup_group_id.unwrap();
-                let is_group_end = subgroup_group_id == end_group;
-                let is_object_end = object_stream_subgroup.object_id() == end_object;
-                let is_ending = is_group_end && is_object_end;
-
-                let is_ended = subgroup_group_id > end_group;
-
-                is_ending || is_ended
-            }
-        };
-
-        Ok(is_end)
+        }
     }
 }
