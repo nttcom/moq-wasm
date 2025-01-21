@@ -3,61 +3,137 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Document</title>
+    <title>MOQT Message Test</title>
   </head>
   <body>
     <div id="app">
       <form name="form">
         <div>
-          <h2>URL</h2>
+          <h2>Connection</h2>
           <label for="url">URL:</label>
           <input type="url" name="url" id="url" value="https://localhost:4433" />
           <button type="button" id="connectBtn">Connect</button>
           <button type="button" id="closeBtn">Close</button>
         </div>
+        <br />
         <div>
-          <h2>Stream / Datagram</h2>
-          <label><input type="radio" name="stream-datagram" id="" value="datagram" />Datagram</label>
-          <label><input type="radio" name="stream-datagram" id="" value="uni-stream" />Uni stream</label>
-          <label><input type="radio" name="stream-datagram" id="" value="bi-stream" checked />Bi stream</label>
-        </div>
-        <div>
-          <h2>Message Type</h2>
-          <label><input type="radio" name="message-type" id="" value="setup" checked />SETUP</label>
+          <h2>Forwarding Preference</h2>
+            <label><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram </label>
+            <label><input type="radio" name="forwarding-preference" id="selectTrack" value="track" checked/>Track </label>
+            <label><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" />Subgroup </label>
+            <br />
+            *You must select at first
+          <h2>Message</h2>
+          <label>AuthInfo: <input type="text" name="auth-info" id="" value="secret" /> </label>
           <br />
-          <label><input type="radio" name="message-type" id="" value="object" />OBJECT</label>
-          <label><input type="radio" name="message-type" id="" value="object-wo-length" />OBJECT W/O LENGTH</label>
+          <h3>CLIENT_SETUP</h3>
+          <label>Supported Version: <input type="text" name="versions" id="" value="0xff000006" /></label>
           <br />
-          <label><input type="radio" name="message-type" id="" value="announce" />ANNOUNCE</label>
-          <label><input type="radio" name="message-type" id="" value="unannounce" />UNANNOUNCE</label>
+          Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="1" />
           <br />
-          <label><input type="radio" name="message-type" id="" value="subscribe" />SUBSCRIBE</label>
-          <label><input type="radio" name="message-type" id="" value="unsubscribe" />UNSUBSCRIBE</label>
-          <div>
-            <!-- <label>Supported versions: <input type="text" name="versions" id="" value="0xc0000000ff000001"></label> -->
-            <label>Supported versions: <input type="text" name="versions" id="" value="0xff000001" /></label>
-            <br />
-            <label>Track NameSpace: <input type="text" name="track-namespace" id="" value="vc" /> </label>
-            <br />
-            <label>Track Name: <input type="text" name="track-name" id="" value="vc_track" /> </label>
-            <br />
-            Role:
-            <label><input type="radio" name="role" id="" value="1" checked />Injection</label>
-            <label><input type="radio" name="role" id="" value="2" />Delivery</label>
-            <label><input type="radio" name="role" id="" value="3" />Both</label>
-            <label><input type="radio" name="role" id="" value="42" />Other</label>
-            <br />
-            <br />
-            <label>AuthInfo: <input type="text" name="auth-info" id="" value="secret" /> </label>
-            <br />
-            <label><input type="checkbox" name="add-path" id="" />Add path parameter</label>
-            <br />
-            <button type="button" id="sendBtn">Send</button>
+          Role:
+          <label><input type="radio" name="role" id="" value="1" checked />Publisher</label>
+          <label><input type="radio" name="role" id="" value="2" />Subscriber</label>
+          <label><input type="radio" name="role" id="" value="3" />PubSub</label>
+          <br />
+          <button type="button" id="sendSetupBtn">Send</button>
+
+          <h3>ANNOUNCE</h3>
+          <label>Track Namespace: <input type="text" name="announce-track-namespace" id="" value="vc/aa" /> </label>
+          <br />
+          <button type="button" id="sendAnnounceBtn">Send</button>
+          
+          <h3>SUBSCRIBE_NAMESPACE</h3>
+          <label>Track Namespace Prefix: <input type="text" name="track-namespace-prefix" id="" value="vc" /> </label>
+          <br />
+          <button type="button" id="sendSubscribeNamespaceBtn">Send</button>
+
+          <h3>SUBSCRIBE</h3>
+          <label>Subscribe ID: <input type="text" name="subscribe-subscribe-id" id="" value="0" /> </label>
+          <br />
+          <label>Track Alias: <input type="text" name="subscribe-track-alias" id="" value="0" /> </label>
+          <br />
+          <label>Track Namespace: <input type="text" name="subscribe-track-namespace" id="" value="vc/aa" /> </label>
+          <br />
+          <label>Track Name: <input type="text" name="track-name" id="" value="vc_track" /> </label>
+          <br />
+          <br />
+          <label>Subscriber Priority: <input type="text" name="subscriber-priority" id="" value="0" /> </label>
+          <br />
+          Group Order:
+          <label><input type="radio" name="group-order" id="" value="0" checked />Original</label>
+          <label><input type="radio" name="group-order" id="" value="1" />Ascending</label>
+          <label><input type="radio" name="group-order" id="" value="2" />Descending</label>
+          <br />
+          <br />
+          Filter Type:
+          <label><input type="radio" name="filter-type" id="" value="1" checked />Latest Group</label>
+          <label><input type="radio" name="filter-type" id="" value="2" />Latest Object</label>
+          <label><input type="radio" name="filter-type" id="" value="3" />Absolute Start </label>
+          <label><input type="radio" name="filter-type" id="" value="4" />Absolute Range</label>
+          <br />
+          Start Group: <input type="text" name="start-group" id="" value="0" />  Start Object: <input type="text" name="start-object" id="" value="0" />
+          <br />
+          End Group: <input type="text" name="end-group" id="" value="10000" />  End Object: <input type="text" name="end-object" id="" value="10000" />
+          <br />
+          <button type="button" id="sendSubscribeBtn">Send</button>
+
+          <h3>OBJECT</h3>
+          <div id="headerField" style="display: blocked;">
+            <h4>Header</h4>
           </div>
+          <label>Subscribe ID: <input type="text" name="object-subscribe-id" id="" value="0" /> </label>
+          <br />
+          <label>Track Alias: <input type="text" name="object-track-alias" id="" value="0" /> </label>
+          <br />
+          <div id="subgroupHeaderContents" style="display: none;">
+            <label>Group ID: <input type="text" name="subgroup-group-id" id="" value="0" /> </label>
+            <br />
+            <label>Subgroup ID: <input type="text" name="subgroup-id" id="" value="0" /> </label>
+            <br />
+          </div>
+          <label>Publisher Priority: <input type="text" name="publisher-priority" id="" value="0" /> </label>
+          <br />
+          <div id="objectField" style="display: blocked;">
+            <h4>Object</h4>
+          </div>
+          <div id="notSubgroupObjectContents" style="display: blocked;">
+            Group ID: <p id="mutableGroupId">0</p>
+            <br />
+            <button type="button" id="descendMutableGroupIdBtn">&lt;</button>
+            <button type="button" id="ascendMutableGroupIdBtn">&gt;</button>
+            <br />
+            <br />
+          </div>
+          Object ID: <p id="objectId">0</p>
+          <br />
+          <br />
+          <label>Payload: 
+            <br /><textarea name="payload" id="object-payload" rows="5" cols="33">test</textarea> </label>
+          <br />
+          <div id="sendDatagramObject" style="display: none;">
+            <button type="button" id="sendDatagramObjectBtn">Send</button>
+          </div>
+          <div id="sendTrackObject" style="display: blocked;">
+            <button type="button" id="sendTrackObjectBtn">Send</button>
+          </div>
+          <div id="sendSubgroupObject" style="display: none;">
+            <button type="button" id="sendSubgroupObjectBtn">Send</button>
+          </div>
+        </div>
+        <br />
+        <div>
+          <h2>Received</h2>
+          <div id="received-text"></div>
         </div>
       </form>
     </div>
 
     <script type="module" src="/main.js"></script>
   </body>
+  <style>
+    p{
+      display: inline;
+    }
+  </style>
 </html>

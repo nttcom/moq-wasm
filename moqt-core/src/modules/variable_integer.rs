@@ -1,7 +1,6 @@
-use std::io::Cursor;
-
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, BytesMut};
+use std::io::Cursor;
 
 // See https://datatracker.ietf.org/doc/html/rfc9000#name-variable-length-integer-enc
 
@@ -73,7 +72,7 @@ pub fn write_variable_integer(value: u64) -> BytesMut {
 mod decoder {
     use bytes::{Buf, BufMut, BytesMut};
 
-    use super::read_variable_integer;
+    use crate::variable_integer::read_variable_integer;
 
     use std::io::Cursor;
 
@@ -153,7 +152,7 @@ mod decoder {
 mod encoder {
     use bytes::Buf;
 
-    use crate::modules::variable_integer::write_variable_integer;
+    use crate::variable_integer::write_variable_integer;
 
     #[test]
     fn encode_single_byte_1() {

@@ -1,7 +1,7 @@
-use crate::messages::moqt_payload::MOQTPayload;
-use crate::stream_type::StreamType;
 use anyhow::Result;
 use async_trait::async_trait;
+
+use crate::{constants::StreamDirection, messages::moqt_payload::MOQTPayload};
 
 #[async_trait]
 pub trait SendStreamDispatcherRepository: Send + Sync {
@@ -10,10 +10,10 @@ pub trait SendStreamDispatcherRepository: Send + Sync {
         session_id: Option<usize>,
         message: Box<dyn MOQTPayload>,
     ) -> Result<()>;
-    async fn send_message_to_send_stream_thread(
+    async fn transfer_message_to_send_stream_thread(
         &self,
         session_id: usize,
         message: Box<dyn MOQTPayload>,
-        stream_type: StreamType,
+        stream_direction: StreamDirection,
     ) -> Result<()>;
 }

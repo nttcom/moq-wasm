@@ -1,15 +1,3 @@
-pub mod announce;
-pub mod announce_error;
-pub mod announce_ok;
-pub mod client_setup;
-pub mod go_away;
+pub mod control_messages;
+pub mod data_streams;
 pub mod moqt_payload;
-pub mod object;
-pub mod server_setup;
-pub mod setup_parameters;
-pub mod subscribe;
-pub mod subscribe_error;
-pub mod subscribe_ok;
-pub mod unannounce;
-pub mod unsubscribe;
-pub mod version_specific_parameters;
