@@ -5,11 +5,11 @@
   },
   "[rust]": {
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
-    "editor.inlayHints.enabled": "off"
-  },
-  "rust-analyzer.cargo.cfgs": {
-    "web_sys_unstable_apis": ""
+    "editor.inlayHints.enabled": "on"
   },
   "rust-analyzer.checkOnSave": true,
-  "rust-analyzer.check.command": "clippy"
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.cargo.extraEnv": {
+    "RUSTFLAGS": "--cfg web_sys_unstable_apis"
+  }
 }

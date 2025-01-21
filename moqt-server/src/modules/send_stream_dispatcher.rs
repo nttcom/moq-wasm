@@ -1,40 +1,59 @@
-use std::{collections::HashMap, sync::Arc};
-
 use anyhow::Result;
 use async_trait::async_trait;
 use moqt_core::{
-    messages::moqt_payload::MOQTPayload, stream_type::StreamType, SendStreamDispatcherRepository,
+    constants::StreamDirection, messages::moqt_payload::MOQTPayload, SendStreamDispatcherRepository,
 };
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, oneshot};
-
 type SenderToSendStreamThread = mpsc::Sender<Arc<Box<dyn MOQTPayload>>>;
 
-use SendStreamDispatchCommand::*;
-// Called as a separate thread
+#[derive(Debug)]
+pub(crate) enum SendStreamDispatchCommand {
+    Set {
+        session_id: usize,
+        stream_direction: StreamDirection,
+        sender: SenderToSendStreamThread,
+    },
+    List {
+        stream_direction: StreamDirection,
+        exclude_session_id: Option<usize>, // Currently, exclude_session_id is only used in broadcast for List
+        resp: oneshot::Sender<Vec<SenderToSendStreamThread>>,
+    },
+    Get {
+        session_id: usize,
+        stream_direction: StreamDirection,
+        resp: oneshot::Sender<Option<SenderToSendStreamThread>>,
+    },
+    Delete {
+        session_id: usize,
+    },
+}
+
 pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDispatchCommand>) {
     tracing::trace!("send_stream_dispatcher start");
     // {
     //   "${session_id}" : {
-    //     "unidirectional_stream" : tx,
-    //     "bidirectional_stream" : tx,
+    //     "StreamDirection::Uni" : tx,
+    //     "StreamDirection::Bi" : tx,
     //   }
     // }
-    let mut dispatcher = HashMap::<usize, HashMap<String, SenderToSendStreamThread>>::new();
+    let mut dispatcher =
+        HashMap::<usize, HashMap<StreamDirection, SenderToSendStreamThread>>::new();
 
     while let Some(cmd) = rx.recv().await {
         tracing::debug!("command received: {:#?}", cmd);
         match cmd {
-            Set {
+            SendStreamDispatchCommand::Set {
                 session_id,
-                stream_type,
+                stream_direction,
                 sender,
             } => {
                 let inner_map = dispatcher.entry(session_id).or_default();
-                inner_map.insert(stream_type.to_string(), sender);
-                tracing::debug!("set: {:?} of {:?}", stream_type, session_id);
+                inner_map.insert(stream_direction, sender);
+                tracing::debug!("set: {:?} of {:?}", stream_direction, session_id);
             }
-            List {
-                stream_type,
+            SendStreamDispatchCommand::List {
+                stream_direction,
                 exclude_session_id,
                 resp,
             } => {
@@ -45,25 +64,25 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
                             continue;
                         }
                     }
-                    if let Some(sender) = inner_map.get(&stream_type) {
+                    if let Some(sender) = inner_map.get(&stream_direction) {
                         senders.push(sender.clone());
                     }
                 }
                 let _ = resp.send(senders);
             }
-            Get {
+            SendStreamDispatchCommand::Get {
                 session_id,
-                stream_type,
+                stream_direction,
                 resp,
             } => {
                 let sender = dispatcher
                     .get(&session_id)
-                    .and_then(|inner_map| inner_map.get(&stream_type))
+                    .and_then(|inner_map| inner_map.get(&stream_direction))
                     .cloned();
                 tracing::debug!("get: {:?}", sender);
                 let _ = resp.send(sender);
             }
-            Delete { session_id } => {
+            SendStreamDispatchCommand::Delete { session_id } => {
                 dispatcher.remove(&session_id);
                 tracing::debug!("delete: {:?}", session_id);
             }
@@ -71,28 +90,6 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
     }
 
     tracing::trace!("send_stream_dispatcher end");
-}
-
-#[derive(Debug)]
-pub(crate) enum SendStreamDispatchCommand {
-    Set {
-        session_id: usize,
-        stream_type: String,
-        sender: SenderToSendStreamThread,
-    },
-    List {
-        stream_type: String,
-        exclude_session_id: Option<usize>, // Currently, exclude_session_id is only used in broadcast for List
-        resp: oneshot::Sender<Vec<SenderToSendStreamThread>>,
-    },
-    Get {
-        session_id: usize,
-        stream_type: String,
-        resp: oneshot::Sender<Option<SenderToSendStreamThread>>,
-    },
-    Delete {
-        session_id: usize,
-    },
 }
 
 pub(crate) struct SendStreamDispatcher {
@@ -114,7 +111,7 @@ impl SendStreamDispatcherRepository for SendStreamDispatcher {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Vec<SenderToSendStreamThread>>();
         let cmd = SendStreamDispatchCommand::List {
-            stream_type: "bidirectional_stream".to_string(),
+            stream_direction: StreamDirection::Bi,
             exclude_session_id: session_id,
             resp: resp_tx,
         };
@@ -128,21 +125,17 @@ impl SendStreamDispatcherRepository for SendStreamDispatcher {
         }
         Ok(())
     }
-    async fn send_message_to_send_stream_thread(
+    async fn transfer_message_to_send_stream_thread(
         &self,
         session_id: usize,
         message: Box<dyn MOQTPayload>,
-        stream_type: StreamType,
+        stream_direction: StreamDirection,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Option<SenderToSendStreamThread>>();
 
-        let stream_type_str = match stream_type {
-            StreamType::Uni => "unidirectional_stream",
-            StreamType::Bi => "bidirectional_stream",
-        };
         let cmd = SendStreamDispatchCommand::Get {
             session_id,
-            stream_type: stream_type_str.to_string(),
+            stream_direction,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();

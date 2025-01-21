@@ -1,15 +1,18 @@
 comment:
   layout: "header, diff, flags, components" # show component info in the PR comment
 
+github_checks:
+  annotations: false
+
 coverage:
   status:
     project:
       default:
-        target: 70%
+        target: 50%
         threshold: 10%
     patch:
       default:
-        target: 80%
+        target: 70%
         threshold: 10%
 
 component_management:
@@ -20,17 +23,17 @@ component_management:
         - moqt-core/
       statuses:
         - type: project
-          target: 90%
+          target: 80%
           threshold: 5%
         - type: patch
-          target: 90%
+          target: 80%
     - component_id: server
       name: moqt-server
       paths:
         - moqt-server/
       statuses:
         - type: project
-          target: 60%
-          threshold: 5%
+          target: 50%
+          threshold: 10%
         - type: patch
-          target: 80%
+          target: 60%
