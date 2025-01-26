@@ -2,9 +2,6 @@
 
 Both server and browser client are written in Rust.
 
-> [!NOTE]
-> draft-ietf-moq-transport-06 prototype is [here](https://github.com/nttcom/moq-wasm/tree/draft-06)
-
 ## Implementation
 
 Supported version: draft-ietf-moq-transport-06
