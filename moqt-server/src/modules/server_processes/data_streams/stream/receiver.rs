@@ -1,5 +1,5 @@
 use self::{
-    object_cache_storage::CacheKey, object_stream::StreamObject, stream_header::StreamHeader,
+    object_cache_storage::CacheKey, stream_header::StreamHeader, stream_object::StreamObject,
 };
 
 use super::uni_stream::UniRecvStream;
@@ -7,8 +7,8 @@ use crate::{
     modules::{
         buffer_manager::{request_buffer, BufferCommand},
         message_handlers::{
-            object_stream::{self, ObjectStreamProcessResult},
             stream_header::{self, StreamHeaderProcessResult},
+            stream_object::{self, StreamObjectProcessResult},
         },
         moqt_client::MOQTClient,
         object_cache_storage::{self, ObjectCacheStorageWrapper},
@@ -439,20 +439,20 @@ impl ObjectStreamReceiver {
         let result = self.try_read_object_from_buf().await;
 
         match result {
-            ObjectStreamProcessResult::Success(stream_object) => Ok(Some(stream_object)),
-            ObjectStreamProcessResult::Continue => Ok(None),
-            ObjectStreamProcessResult::Failure(code, reason) => {
+            StreamObjectProcessResult::Success(stream_object) => Ok(Some(stream_object)),
+            StreamObjectProcessResult::Continue => Ok(None),
+            StreamObjectProcessResult::Failure(code, reason) => {
                 let msg = std::format!("object_stream_read failure: {:?}", reason);
                 Err((code, msg))
             }
         }
     }
 
-    async fn try_read_object_from_buf(&self) -> ObjectStreamProcessResult {
+    async fn try_read_object_from_buf(&self) -> StreamObjectProcessResult {
         let mut buf = self.buf.lock().await;
         let data_stream_type = self.data_stream_type.unwrap();
 
-        object_stream::try_read_object(&mut buf, data_stream_type).await
+        stream_object::try_read_object(&mut buf, data_stream_type).await
     }
 
     async fn store_object(

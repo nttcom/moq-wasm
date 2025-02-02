@@ -1,7 +1,7 @@
 use crate::{
     modules::{
         buffer_manager::request_buffer,
-        message_handlers::object_datagram::{self, ObjectDatagramProcessResult},
+        message_handlers::datagram_object::{self, DatagramObjectProcessResult},
         moqt_client::MOQTClient,
         object_cache_storage::{self, ObjectCacheStorageWrapper},
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
@@ -99,9 +99,9 @@ impl ObjectDatagramReceiver {
         let result = self.try_read_object_from_buf().await;
 
         match result {
-            ObjectDatagramProcessResult::Success(datagram_object) => Ok(Some(datagram_object)),
-            ObjectDatagramProcessResult::Continue => Ok(None),
-            ObjectDatagramProcessResult::Failure(code, reason) => {
+            DatagramObjectProcessResult::Success(datagram_object) => Ok(Some(datagram_object)),
+            DatagramObjectProcessResult::Continue => Ok(None),
+            DatagramObjectProcessResult::Failure(code, reason) => {
                 let msg = std::format!("object_stream_read failure: {:?}", reason);
                 tracing::error!(msg);
                 Err((code, reason))
@@ -109,11 +109,11 @@ impl ObjectDatagramReceiver {
         }
     }
 
-    async fn try_read_object_from_buf(&self) -> ObjectDatagramProcessResult {
+    async fn try_read_object_from_buf(&self) -> DatagramObjectProcessResult {
         let mut buf = self.buf.lock().await;
         let client = self.client.clone();
 
-        object_datagram::try_read_object(&mut buf, client).await
+        datagram_object::try_read_object(&mut buf, client).await
     }
 
     async fn is_first_object(
