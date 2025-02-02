@@ -75,8 +75,8 @@ pub struct MOQTClient {
     subscription_node: Rc<RefCell<SubscriptionNode>>,
     transport: Rc<RefCell<Option<web_sys::WebTransport>>>,
     control_stream_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
-    datagram_object_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
-    object_stream_writers: Rc<RefCell<HashMap<u64, web_sys::WritableStreamDefaultWriter>>>,
+    datagram_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
+    stream_writers: Rc<RefCell<HashMap<u64, web_sys::WritableStreamDefaultWriter>>>,
     callbacks: Rc<RefCell<MOQTCallbacks>>,
 }
 
@@ -91,8 +91,8 @@ impl MOQTClient {
             subscription_node: Rc::new(RefCell::new(SubscriptionNode::new())),
             transport: Rc::new(RefCell::new(None)),
             control_stream_writer: Rc::new(RefCell::new(None)),
-            datagram_object_writer: Rc::new(RefCell::new(None)),
-            object_stream_writers: Rc::new(RefCell::new(HashMap::new())),
+            datagram_writer: Rc::new(RefCell::new(None)),
+            stream_writers: Rc::new(RefCell::new(HashMap::new())),
             callbacks: Rc::new(RefCell::new(MOQTCallbacks::new())),
         }
     }
@@ -555,7 +555,7 @@ impl MOQTClient {
                                 .datagrams()
                                 .writable()
                                 .get_writer()?;
-                            *self.datagram_object_writer.borrow_mut() = Some(datagram_writer);
+                            *self.datagram_writer.borrow_mut() = Some(datagram_writer);
                         }
                         "track" | "subgroup" => {
                             let send_uni_stream = web_sys::WritableStream::from(
@@ -570,7 +570,7 @@ impl MOQTClient {
                             );
                             let send_uni_stream_writer = send_uni_stream.get_writer()?;
 
-                            self.object_stream_writers
+                            self.stream_writers
                                 .borrow_mut()
                                 .insert(subscribe_id, send_uni_stream_writer);
                         }
@@ -734,7 +734,7 @@ impl MOQTClient {
         publisher_priority: u8,
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.datagram_object_writer.borrow() {
+        if let Some(writer) = &*self.datagram_writer.borrow() {
             let datagram_object = datagram::Object::new(
                 subscribe_id,
                 track_alias,
@@ -768,7 +768,7 @@ impl MOQTClient {
                 }
             }
         } else {
-            return Err(JsValue::from_str("datagram_object_writer is None"));
+            return Err(JsValue::from_str("datagram_writer is None"));
         }
     }
 
@@ -779,8 +779,8 @@ impl MOQTClient {
         track_alias: u64,
         publisher_priority: u8,
     ) -> Result<JsValue, JsValue> {
-        let object_stream_writers = self.object_stream_writers.borrow();
-        if let Some(writer) = object_stream_writers.get(&subscribe_id) {
+        let stream_writers = self.stream_writers.borrow();
+        if let Some(writer) = stream_writers.get(&subscribe_id) {
             let track_stream_header_message =
                 stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority)
                     .unwrap();
@@ -808,7 +808,7 @@ impl MOQTClient {
                 Err(e) => Err(e),
             }
         } else {
-            return Err(JsValue::from_str("object_stream_writer is None"));
+            return Err(JsValue::from_str("stream_writer is None"));
         }
     }
 
@@ -820,8 +820,8 @@ impl MOQTClient {
         object_id: u64,
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
-        let object_stream_writers = self.object_stream_writers.borrow();
-        if let Some(writer) = object_stream_writers.get(&subscribe_id) {
+        let stream_writers = self.stream_writers.borrow();
+        if let Some(writer) = stream_writers.get(&subscribe_id) {
             let track_stream_object =
                 stream_per_track::Object::new(group_id, object_id, None, object_payload).unwrap();
             let mut track_stream_object_buf = BytesMut::new();
@@ -844,7 +844,7 @@ impl MOQTClient {
                 }
             }
         } else {
-            return Err(JsValue::from_str("object_stream_writer is None"));
+            return Err(JsValue::from_str("stream_writer is None"));
         }
     }
 
@@ -857,8 +857,8 @@ impl MOQTClient {
         subgroup_id: u64,
         publisher_priority: u8,
     ) -> Result<JsValue, JsValue> {
-        let object_stream_writers = self.object_stream_writers.borrow();
-        if let Some(writer) = object_stream_writers.get(&subscribe_id) {
+        let stream_writers = self.stream_writers.borrow();
+        if let Some(writer) = stream_writers.get(&subscribe_id) {
             let subgroup_stream_header_message = stream_per_subgroup::Header::new(
                 subscribe_id,
                 track_alias,
@@ -882,7 +882,7 @@ impl MOQTClient {
             buffer.copy_from(&buf);
             JsFuture::from(writer.write_with_chunk(&buffer)).await
         } else {
-            return Err(JsValue::from_str("object_stream_writer is None"));
+            return Err(JsValue::from_str("stream_writer is None"));
         }
     }
 
@@ -893,8 +893,8 @@ impl MOQTClient {
         object_id: u64,
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
-        let object_stream_writers = self.object_stream_writers.borrow();
-        if let Some(writer) = object_stream_writers.get(&subscribe_id) {
+        let stream_writers = self.stream_writers.borrow();
+        if let Some(writer) = stream_writers.get(&subscribe_id) {
             let subgroup_stream_object =
                 stream_per_subgroup::Object::new(object_id, None, object_payload).unwrap();
             let mut subgroup_stream_object_buf = BytesMut::new();
@@ -917,7 +917,7 @@ impl MOQTClient {
                 }
             }
         } else {
-            return Err(JsValue::from_str("object_stream_writer is None"));
+            return Err(JsValue::from_str("stream_writer is None"));
         }
     }
 
@@ -974,7 +974,7 @@ impl MOQTClient {
         let incoming_uni_stream_reader =
             web_sys::ReadableStreamDefaultReader::new(&&incoming_uni_stream.into())?;
         let callbacks = self.callbacks.clone();
-        *self.object_stream_writers.borrow_mut() = HashMap::new();
+        *self.stream_writers.borrow_mut() = HashMap::new();
 
         wasm_bindgen_futures::spawn_local(async move {
             let _ = receive_unidirectional_thread(callbacks, &incoming_uni_stream_reader).await;
