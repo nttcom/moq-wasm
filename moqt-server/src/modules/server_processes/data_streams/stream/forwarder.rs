@@ -25,7 +25,7 @@ use std::{sync::Arc, thread, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{self};
 
-pub(crate) struct ObjectStreamForwarder {
+pub(crate) struct StreamObjectForwarder {
     stream: UniSendStream,
     senders: Arc<Senders>,
     downstream_subscribe_id: u64,
@@ -35,7 +35,7 @@ pub(crate) struct ObjectStreamForwarder {
     sleep_time: Duration,
 }
 
-impl ObjectStreamForwarder {
+impl StreamObjectForwarder {
     pub(crate) async fn init(
         stream: UniSendStream,
         downstream_subscribe_id: u64,
@@ -61,7 +61,7 @@ impl ObjectStreamForwarder {
 
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 
-        let object_stream_forwarder = ObjectStreamForwarder {
+        let stream_object_forwarder = StreamObjectForwarder {
             stream,
             senders,
             downstream_subscribe_id,
@@ -71,7 +71,7 @@ impl ObjectStreamForwarder {
             sleep_time,
         };
 
-        Ok(object_stream_forwarder)
+        Ok(stream_object_forwarder)
     }
 
     pub(crate) async fn start(&mut self) -> Result<()> {
@@ -108,7 +108,7 @@ impl ObjectStreamForwarder {
             })
             .await?;
 
-        tracing::info!("ObjectStreamForwarder finished");
+        tracing::info!("StreamObjectForwarder finished");
 
         Ok(())
     }
@@ -434,9 +434,9 @@ impl ObjectStreamForwarder {
                 track_stream_object.group_id(),
                 track_stream_object.object_id(),
             ),
-            StreamObject::Subgroup(object_stream_subgroup) => (
+            StreamObject::Subgroup(subgroup_stream_object) => (
                 subgroup_group_id.unwrap(),
-                object_stream_subgroup.object_id(),
+                subgroup_stream_object.object_id(),
             ),
         };
 
@@ -455,9 +455,9 @@ impl ObjectStreamForwarder {
                     Some(ObjectStatus::EndOfTrackAndGroup)
                 )
             }
-            StreamObject::Subgroup(object_stream_subgroup) => {
+            StreamObject::Subgroup(subgroup_stream_object) => {
                 matches!(
-                    object_stream_subgroup.object_status(),
+                    subgroup_stream_object.object_status(),
                     Some(ObjectStatus::EndOfSubgroup)
                         | Some(ObjectStatus::EndOfGroup)
                         | Some(ObjectStatus::EndOfTrackAndGroup)

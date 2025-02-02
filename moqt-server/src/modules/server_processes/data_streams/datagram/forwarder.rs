@@ -22,7 +22,7 @@ use tokio::sync::Mutex;
 use tracing::{self};
 use wtransport::Connection;
 
-pub(crate) struct ObjectDatagramForwarder {
+pub(crate) struct DatagramObjectForwarder {
     session: Arc<Connection>,
     senders: Arc<Senders>,
     downstream_subscribe_id: u64,
@@ -31,7 +31,7 @@ pub(crate) struct ObjectDatagramForwarder {
     sleep_time: Duration,
 }
 
-impl ObjectDatagramForwarder {
+impl DatagramObjectForwarder {
     pub(crate) async fn init(
         session: Arc<Connection>,
         downstream_subscribe_id: u64,
@@ -56,7 +56,7 @@ impl ObjectDatagramForwarder {
 
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 
-        let object_datagram_forwarder = ObjectDatagramForwarder {
+        let datagram_object_forwarder = DatagramObjectForwarder {
             session,
             senders,
             downstream_subscribe_id,
@@ -65,7 +65,7 @@ impl ObjectDatagramForwarder {
             sleep_time,
         };
 
-        Ok(object_datagram_forwarder)
+        Ok(datagram_object_forwarder)
     }
 
     pub(crate) async fn start(&mut self) -> Result<()> {
@@ -96,7 +96,7 @@ impl ObjectDatagramForwarder {
             })
             .await?;
 
-        tracing::info!("ObjectDatagramForwarder finished");
+        tracing::info!("DatagramObjectForwarder finished");
 
         Ok(())
     }
@@ -171,7 +171,7 @@ impl ObjectDatagramForwarder {
     ) -> Result<(Option<usize>, bool)> {
         // Do loop until get an object from the cache storage
         loop {
-            let (cache_id, object_datagram) =
+            let (cache_id, datagram_object) =
                 match self.try_get_object(object_cache_storage, cache_id).await? {
                     Some((id, object)) => (id, object),
                     None => {
@@ -181,11 +181,11 @@ impl ObjectDatagramForwarder {
                     }
                 };
 
-            let message_buf = self.packetize(&object_datagram).await?;
+            let message_buf = self.packetize(&datagram_object).await?;
             self.send(message_buf).await?;
 
-            let is_end = self.is_subscription_ended(&object_datagram)
-                || self.is_data_stream_ended(&object_datagram);
+            let is_end = self.is_subscription_ended(&datagram_object)
+                || self.is_data_stream_ended(&datagram_object);
 
             return Ok((Some(cache_id), is_end));
         }
@@ -255,9 +255,9 @@ impl ObjectDatagramForwarder {
             .await
     }
 
-    async fn packetize(&mut self, object_datagram: &datagram::Object) -> Result<BytesMut> {
+    async fn packetize(&mut self, datagram_object: &datagram::Object) -> Result<BytesMut> {
         let mut buf = BytesMut::new();
-        object_datagram.packetize(&mut buf);
+        datagram_object.packetize(&mut buf);
 
         let mut message_buf = BytesMut::with_capacity(buf.len());
         message_buf.extend(write_variable_integer(
@@ -277,9 +277,9 @@ impl ObjectDatagramForwarder {
         Ok(())
     }
 
-    fn is_subscription_ended(&self, object_datagram: &datagram::Object) -> bool {
-        let group_id = object_datagram.group_id();
-        let object_id = object_datagram.object_id();
+    fn is_subscription_ended(&self, datagram_object: &datagram::Object) -> bool {
+        let group_id = datagram_object.group_id();
+        let object_id = datagram_object.object_id();
 
         self.downstream_subscription.is_end(group_id, object_id)
     }
@@ -288,9 +288,9 @@ impl ObjectDatagramForwarder {
     //   A relay MAY treat receipt of EndOfGroup, EndOfSubgroup, GroupDoesNotExist, or
     //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
     //   has not arrived, as further objects on the stream would be a protocol violation.
-    fn is_data_stream_ended(&self, object_datagram: &datagram::Object) -> bool {
+    fn is_data_stream_ended(&self, datagram_object: &datagram::Object) -> bool {
         matches!(
-            object_datagram.object_status(),
+            datagram_object.object_status(),
             Some(ObjectStatus::EndOfTrackAndGroup)
         )
     }

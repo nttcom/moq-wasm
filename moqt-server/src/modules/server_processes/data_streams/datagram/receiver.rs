@@ -23,14 +23,14 @@ use wtransport::datagram::Datagram;
 
 use self::object_cache_storage::CacheKey;
 
-pub(crate) struct ObjectDatagramReceiver {
+pub(crate) struct DatagramObjectReceiver {
     buf: Arc<Mutex<BytesMut>>,
     senders: Arc<Senders>,
     client: Arc<Mutex<MOQTClient>>,
     duration: u64,
 }
 
-impl ObjectDatagramReceiver {
+impl DatagramObjectReceiver {
     pub(crate) async fn init(client: Arc<Mutex<MOQTClient>>) -> Self {
         let senders = client.lock().await.senders();
         let stable_id = client.lock().await.id();
@@ -39,7 +39,7 @@ impl ObjectDatagramReceiver {
         // TODO: Set the accurate duration
         let duration = 100000;
 
-        ObjectDatagramReceiver {
+        DatagramObjectReceiver {
             buf,
             senders,
             client,
@@ -102,7 +102,7 @@ impl ObjectDatagramReceiver {
             DatagramObjectProcessResult::Success(datagram_object) => Ok(Some(datagram_object)),
             DatagramObjectProcessResult::Continue => Ok(None),
             DatagramObjectProcessResult::Failure(code, reason) => {
-                let msg = std::format!("object_stream_read failure: {:?}", reason);
+                let msg = std::format!("stream_object_read failure: {:?}", reason);
                 tracing::error!(msg);
                 Err((code, reason))
             }

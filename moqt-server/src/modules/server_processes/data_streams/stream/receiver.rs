@@ -30,7 +30,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{self};
 
-pub(crate) struct ObjectStreamReceiver {
+pub(crate) struct StreamObjectReceiver {
     stream: UniRecvStream,
     buf: Arc<Mutex<BytesMut>>,
     senders: Arc<Senders>,
@@ -41,7 +41,7 @@ pub(crate) struct ObjectStreamReceiver {
     upstream_subscription: Option<Subscription>,
 }
 
-impl ObjectStreamReceiver {
+impl StreamObjectReceiver {
     pub(crate) async fn init(stream: UniRecvStream, client: Arc<Mutex<MOQTClient>>) -> Self {
         let senders = client.lock().await.senders();
         let stable_id = stream.stable_id();
@@ -50,7 +50,7 @@ impl ObjectStreamReceiver {
         // TODO: Set the accurate duration
         let duration = 100000;
 
-        ObjectStreamReceiver {
+        StreamObjectReceiver {
             stream,
             buf,
             senders,
@@ -107,7 +107,7 @@ impl ObjectStreamReceiver {
             })
             .await?;
 
-        tracing::debug!("ObjectStreamReceiver finished");
+        tracing::debug!("StreamObjectReceiver finished");
 
         Ok(())
     }
@@ -442,7 +442,7 @@ impl ObjectStreamReceiver {
             StreamObjectProcessResult::Success(stream_object) => Ok(Some(stream_object)),
             StreamObjectProcessResult::Continue => Ok(None),
             StreamObjectProcessResult::Failure(code, reason) => {
-                let msg = std::format!("object_stream_read failure: {:?}", reason);
+                let msg = std::format!("stream_object_read failure: {:?}", reason);
                 Err((code, msg))
             }
         }
@@ -494,9 +494,9 @@ impl ObjectStreamReceiver {
                 track_stream_object.group_id(),
                 track_stream_object.object_id(),
             ),
-            StreamObject::Subgroup(object_stream_subgroup) => (
+            StreamObject::Subgroup(subgroup_stream_object) => (
                 subgroup_group_id.unwrap(),
-                object_stream_subgroup.object_id(),
+                subgroup_stream_object.object_id(),
             ),
         };
 
@@ -519,9 +519,9 @@ impl ObjectStreamReceiver {
                     Some(ObjectStatus::EndOfTrackAndGroup)
                 )
             }
-            StreamObject::Subgroup(object_stream_subgroup) => {
+            StreamObject::Subgroup(subgroup_stream_object) => {
                 matches!(
-                    object_stream_subgroup.object_status(),
+                    subgroup_stream_object.object_status(),
                     Some(ObjectStatus::EndOfSubgroup)
                         | Some(ObjectStatus::EndOfGroup)
                         | Some(ObjectStatus::EndOfTrackAndGroup)
