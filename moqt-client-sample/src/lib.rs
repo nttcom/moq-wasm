@@ -27,9 +27,8 @@ use moqt_core::{
     },
     messages::{
         data_streams::{
-            datagram, object_stream_subgroup::ObjectStreamSubgroup,
-            object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
-            stream_header_track::StreamHeaderTrack, DataStreams,
+            datagram, object_stream_track::ObjectStreamTrack,
+            stream_header_track::StreamHeaderTrack, stream_per_subgroup, DataStreams,
         },
         moqt_payload::MOQTPayload,
     },
@@ -160,18 +159,18 @@ impl MOQTClient {
             .set_object_stream_track_callback(callback);
     }
 
-    #[wasm_bindgen(js_name = onStreamHeaderSubgroup)]
-    pub fn set_stream_header_subgroup_callback(&mut self, callback: js_sys::Function) {
+    #[wasm_bindgen(js_name = onSubgroupStreamHeader)]
+    pub fn set_subgroup_stream_header_callback(&mut self, callback: js_sys::Function) {
         self.callbacks
             .borrow_mut()
-            .set_stream_header_subgroup_callback(callback);
+            .set_subgroup_stream_header_callback(callback);
     }
 
-    #[wasm_bindgen(js_name = onObjectStreamSubgroup)]
-    pub fn set_object_stream_subgroup_callback(&mut self, callback: js_sys::Function) {
+    #[wasm_bindgen(js_name = onSubgroupStreamObject)]
+    pub fn set_subgroup_stream_object_callback(&mut self, callback: js_sys::Function) {
         self.callbacks
             .borrow_mut()
-            .set_object_stream_subgroup_callback(callback);
+            .set_subgroup_stream_object_callback(callback);
     }
 
     #[wasm_bindgen(js_name = sendSetupMessage)]
@@ -851,8 +850,8 @@ impl MOQTClient {
         }
     }
 
-    #[wasm_bindgen(js_name = sendStreamHeaderSubgroupMessage)]
-    pub async fn send_stream_header_subgroup_message(
+    #[wasm_bindgen(js_name = sendSubgroupStreamHeaderMessage)]
+    pub async fn send_subgroup_stream_header_message(
         &self,
         subscribe_id: u64,
         track_alias: u64,
@@ -862,7 +861,7 @@ impl MOQTClient {
     ) -> Result<JsValue, JsValue> {
         let object_stream_writers = self.object_stream_writers.borrow();
         if let Some(writer) = object_stream_writers.get(&subscribe_id) {
-            let stream_header_subgroup_message = StreamHeaderSubgroup::new(
+            let subgroup_stream_header_message = stream_per_subgroup::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -870,16 +869,16 @@ impl MOQTClient {
                 publisher_priority,
             )
             .unwrap();
-            let mut stream_header_subgroup_message_buf = BytesMut::new();
+            let mut subgroup_stream_header_message_buf = BytesMut::new();
             let _ =
-                stream_header_subgroup_message.packetize(&mut stream_header_subgroup_message_buf);
+                subgroup_stream_header_message.packetize(&mut subgroup_stream_header_message_buf);
 
             let mut buf = Vec::new();
             // Message Type
             buf.extend(write_variable_integer(
                 u8::from(DataStreamType::StreamHeaderSubgroup) as u64,
             ));
-            buf.extend(stream_header_subgroup_message_buf);
+            buf.extend(subgroup_stream_header_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
@@ -889,8 +888,8 @@ impl MOQTClient {
         }
     }
 
-    #[wasm_bindgen(js_name = sendObjectStreamSubgroup)]
-    pub async fn send_object_stream_subgroup(
+    #[wasm_bindgen(js_name = sendSubgroupStreamObject)]
+    pub async fn send_subgroup_stream_object(
         &self,
         subscribe_id: u64,
         object_id: u64,
@@ -898,14 +897,14 @@ impl MOQTClient {
     ) -> Result<JsValue, JsValue> {
         let object_stream_writers = self.object_stream_writers.borrow();
         if let Some(writer) = object_stream_writers.get(&subscribe_id) {
-            let object_stream_subgroup =
-                ObjectStreamSubgroup::new(object_id, None, object_payload).unwrap();
-            let mut object_stream_subgroup_buf = BytesMut::new();
-            let _ = object_stream_subgroup.packetize(&mut object_stream_subgroup_buf);
+            let subgroup_stream_object =
+                stream_per_subgroup::Object::new(object_id, None, object_payload).unwrap();
+            let mut subgroup_stream_object_buf = BytesMut::new();
+            let _ = subgroup_stream_object.packetize(&mut subgroup_stream_object_buf);
 
             let mut buf = Vec::new();
             // Message Payload and Payload Length
-            buf.extend(object_stream_subgroup_buf);
+            buf.extend(subgroup_stream_object_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
@@ -1353,7 +1352,7 @@ async fn uni_directional_stream_read_thread(
                     }
                     DataStreamType::StreamHeaderSubgroup => {
                         if let Err(e) =
-                            object_stream_subgroup_handler(callbacks.clone(), &mut buf).await
+                            subgroup_stream_object_handler(callbacks.clone(), &mut buf).await
                         {
                             log(std::format!("error: {:#?}", e).as_str());
                             break;
@@ -1400,19 +1399,20 @@ async fn object_header_handler(
                     }
                 }
                 DataStreamType::StreamHeaderSubgroup => {
-                    let stream_header_subgroup = StreamHeaderSubgroup::depacketize(&mut read_cur)?;
+                    let subgroup_stream_header =
+                        stream_per_subgroup::Header::depacketize(&mut read_cur)?;
                     buf.advance(read_cur.position() as usize);
 
                     log(
-                        std::format!("stream_header_subgroup: {:#x?}", stream_header_subgroup)
+                        std::format!("subgroup_stream_header: {:#x?}", subgroup_stream_header)
                             .as_str(),
                     );
 
-                    if let Some(callback) = callbacks.borrow().stream_header_subgroup_callback() {
+                    if let Some(callback) = callbacks.borrow().subgroup_stream_header_callback() {
                         callback
                             .call1(&JsValue::null(), &JsValue::from("called2"))
                             .unwrap();
-                        let v = serde_wasm_bindgen::to_value(&stream_header_subgroup).unwrap();
+                        let v = serde_wasm_bindgen::to_value(&subgroup_stream_header).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
@@ -1511,12 +1511,12 @@ async fn object_stream_track_handler(
 }
 
 #[cfg(web_sys_unstable_apis)]
-async fn object_stream_subgroup_handler(
+async fn subgroup_stream_object_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     buf: &mut BytesMut,
 ) -> Result<()> {
     let mut read_cur = Cursor::new(&buf[..]);
-    let object_stream_subgroup = match ObjectStreamSubgroup::depacketize(&mut read_cur) {
+    let subgroup_stream_object = match stream_per_subgroup::Object::depacketize(&mut read_cur) {
         Ok(v) => {
             log(std::format!("object_id: {:#?}", v.object_id()).as_str());
             buf.advance(read_cur.position() as usize);
@@ -1529,11 +1529,11 @@ async fn object_stream_subgroup_handler(
         }
     };
 
-    if let Some(callback) = callbacks.borrow().object_stream_subgroup_callback() {
+    if let Some(callback) = callbacks.borrow().subgroup_stream_object_callback() {
         callback
             .call1(&JsValue::null(), &JsValue::from("called2"))
             .unwrap();
-        let v = serde_wasm_bindgen::to_value(&object_stream_subgroup).unwrap();
+        let v = serde_wasm_bindgen::to_value(&subgroup_stream_object).unwrap();
         callback.call1(&JsValue::null(), &(v)).unwrap();
     }
 
@@ -1731,8 +1731,8 @@ struct MOQTCallbacks {
     datagram_object_callback: Option<js_sys::Function>,
     stream_header_track_callback: Option<js_sys::Function>,
     object_stream_track_callback: Option<js_sys::Function>,
-    stream_header_subgroup_callback: Option<js_sys::Function>,
-    object_stream_subgroup_callback: Option<js_sys::Function>,
+    subgroup_stream_header_callback: Option<js_sys::Function>,
+    subgroup_stream_object_callback: Option<js_sys::Function>,
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -1748,8 +1748,8 @@ impl MOQTCallbacks {
             datagram_object_callback: None,
             stream_header_track_callback: None,
             object_stream_track_callback: None,
-            stream_header_subgroup_callback: None,
-            object_stream_subgroup_callback: None,
+            subgroup_stream_header_callback: None,
+            subgroup_stream_object_callback: None,
         }
     }
 
@@ -1825,19 +1825,19 @@ impl MOQTCallbacks {
         self.object_stream_track_callback = Some(callback);
     }
 
-    pub fn stream_header_subgroup_callback(&self) -> Option<js_sys::Function> {
-        self.stream_header_subgroup_callback.clone()
+    pub fn subgroup_stream_header_callback(&self) -> Option<js_sys::Function> {
+        self.subgroup_stream_header_callback.clone()
     }
 
-    pub fn set_stream_header_subgroup_callback(&mut self, callback: js_sys::Function) {
-        self.stream_header_subgroup_callback = Some(callback);
+    pub fn set_subgroup_stream_header_callback(&mut self, callback: js_sys::Function) {
+        self.subgroup_stream_header_callback = Some(callback);
     }
 
-    pub fn object_stream_subgroup_callback(&self) -> Option<js_sys::Function> {
-        self.object_stream_subgroup_callback.clone()
+    pub fn subgroup_stream_object_callback(&self) -> Option<js_sys::Function> {
+        self.subgroup_stream_object_callback.clone()
     }
 
-    pub fn set_object_stream_subgroup_callback(&mut self, callback: js_sys::Function) {
-        self.object_stream_subgroup_callback = Some(callback);
+    pub fn set_subgroup_stream_object_callback(&mut self, callback: js_sys::Function) {
+        self.subgroup_stream_object_callback = Some(callback);
     }
 }

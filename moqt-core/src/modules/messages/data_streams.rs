@@ -1,9 +1,8 @@
 pub mod datagram;
 pub mod object_status;
-pub mod object_stream_subgroup;
 pub mod object_stream_track;
-pub mod stream_header_subgroup;
 pub mod stream_header_track;
+pub mod stream_per_subgroup;
 
 use anyhow::Result;
 use bytes::BytesMut;

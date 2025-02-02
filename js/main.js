@@ -88,13 +88,13 @@ init().then(async () => {
       describeReceivedObject(objectStreamTrack.object_payload)
     })
 
-    client.onStreamHeaderSubgroup(async (streamHeaderSubgroup) => {
-      console.log({ streamHeaderSubgroup })
+    client.onSubgroupStreamHeader(async (subgroupStreamHeader) => {
+      console.log({ subgroupStreamHeader })
     })
 
-    client.onObjectStreamSubgroup(async (objectStreamSubgroup) => {
-      console.log({ objectStreamSubgroup })
-      describeReceivedObject(objectStreamSubgroup.object_payload)
+    client.onSubgroupStreamObject(async (subgroupStreamObject) => {
+      console.log({ subgroupStreamObject })
+      describeReceivedObject(subgroupStreamObject.object_payload)
     })
 
     const objectIdElement = document.getElementById('objectId')
@@ -219,7 +219,7 @@ init().then(async () => {
 
       // send header if it is the first time
       if (!headerSend) {
-        await client.sendStreamHeaderSubgroupMessage(
+        await client.sendSubgroupStreamHeaderMessage(
           BigInt(subscribeId),
           BigInt(trackAlias),
           BigInt(groupId),
@@ -229,7 +229,7 @@ init().then(async () => {
         headerSend = true
       }
 
-      await client.sendObjectStreamSubgroup(subscribeId, objectId++, objectPayloadArray)
+      await client.sendSubgroupStreamObject(subscribeId, objectId++, objectPayloadArray)
       objectIdElement.textContent = objectId
     })
 

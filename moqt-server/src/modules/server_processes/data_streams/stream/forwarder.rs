@@ -14,8 +14,8 @@ use moqt_core::{
     messages::{
         control_messages::subscribe::FilterType,
         data_streams::{
-            object_status::ObjectStatus, stream_header_subgroup::StreamHeaderSubgroup,
-            stream_header_track::StreamHeaderTrack, DataStreams,
+            object_status::ObjectStatus, stream_header_track::StreamHeaderTrack,
+            stream_per_subgroup, DataStreams,
         },
     },
     models::{subscriptions::Subscription, tracks::ForwardingPreference},
@@ -373,14 +373,14 @@ impl ObjectStreamForwarder {
 
     fn packetize_subgroup_header(
         &self,
-        header: &StreamHeaderSubgroup,
+        header: &stream_per_subgroup::Header,
         subgroup_group_id: &mut Option<u64>,
     ) -> BytesMut {
         let mut buf = BytesMut::new();
         let downstream_subscribe_id = self.downstream_subscribe_id;
         let downstream_track_alias = self.downstream_subscription.get_track_alias();
 
-        let header = StreamHeaderSubgroup::new(
+        let header = stream_per_subgroup::Header::new(
             downstream_subscribe_id,
             downstream_track_alias,
             header.group_id(),

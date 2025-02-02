@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use moqt_core::messages::data_streams::{
-    datagram, object_stream_subgroup::ObjectStreamSubgroup, object_stream_track::ObjectStreamTrack,
-    stream_header_subgroup::StreamHeaderSubgroup, stream_header_track::StreamHeaderTrack,
+    datagram, object_stream_track::ObjectStreamTrack, stream_header_track::StreamHeaderTrack,
+    stream_per_subgroup,
 };
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::{mpsc, oneshot};
@@ -12,14 +12,14 @@ type CacheId = usize;
 pub(crate) enum Header {
     Datagram,
     Track(StreamHeaderTrack),
-    Subgroup(StreamHeaderSubgroup),
+    Subgroup(stream_per_subgroup::Header),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Object {
     Datagram(datagram::Object),
     Track(ObjectStreamTrack),
-    Subgroup(ObjectStreamSubgroup),
+    Subgroup(stream_per_subgroup::Object),
 }
 
 #[derive(Eq, Hash, PartialEq, Debug, Clone)]
@@ -708,9 +708,8 @@ mod success {
     use tokio::sync::mpsc;
 
     use moqt_core::messages::data_streams::{
-        datagram, object_stream_subgroup::ObjectStreamSubgroup,
-        object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
-        stream_header_track::StreamHeaderTrack,
+        datagram, object_stream_track::ObjectStreamTrack, stream_header_track::StreamHeaderTrack,
+        stream_per_subgroup,
     };
 
     use crate::modules::object_cache_storage::{
@@ -810,7 +809,7 @@ mod success {
         let subgroup_id = 4;
         let publisher_priority = 5;
 
-        let stream_header_subgroup = StreamHeaderSubgroup::new(
+        let subgroup_stream_header = stream_per_subgroup::Header::new(
             subscribe_id,
             track_alias,
             group_id,
@@ -818,7 +817,7 @@ mod success {
             publisher_priority,
         )
         .unwrap();
-        let header = Header::Subgroup(stream_header_subgroup.clone());
+        let header = Header::Subgroup(subgroup_stream_header.clone());
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -839,7 +838,7 @@ mod success {
             _ => panic!("header cache not matched"),
         };
 
-        assert_eq!(result_subgroup, stream_header_subgroup);
+        assert_eq!(result_subgroup, subgroup_stream_header);
     }
 
     #[tokio::test]
@@ -1023,7 +1022,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Subgroup(
-            StreamHeaderSubgroup::new(
+            stream_per_subgroup::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -1046,10 +1045,10 @@ mod success {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let subgroup =
-                ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
+            let subgroup_stream_object =
+                stream_per_subgroup::Object::new(object_id, object_status, object_payload).unwrap();
 
-            let object_cache = Object::Subgroup(subgroup.clone());
+            let object_cache = Object::Subgroup(subgroup_stream_object.clone());
 
             let _ = object_cache_storage
                 .set_object(&cache_key, object_cache, duration)
@@ -1058,8 +1057,9 @@ mod success {
 
         let object_id = 9;
         let expected_object_payload = vec![9, 10, 11, 12];
-        let expected_subgroup =
-            ObjectStreamSubgroup::new(object_id, object_status, expected_object_payload).unwrap();
+        let expected_object =
+            stream_per_subgroup::Object::new(object_id, object_status, expected_object_payload)
+                .unwrap();
 
         let result = object_cache_storage
             .get_absolute_object(&cache_key, group_id, object_id)
@@ -1072,7 +1072,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_subgroup);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1220,7 +1220,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Subgroup(
-            StreamHeaderSubgroup::new(
+            stream_per_subgroup::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -1243,10 +1243,10 @@ mod success {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let subgroup =
-                ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
+            let subgroup_stream_object =
+                stream_per_subgroup::Object::new(object_id, object_status, object_payload).unwrap();
 
-            let object_cache = Object::Subgroup(subgroup.clone());
+            let object_cache = Object::Subgroup(subgroup_stream_object.clone());
 
             let _ = object_cache_storage
                 .set_object(&cache_key, object_cache, duration)
@@ -1256,9 +1256,12 @@ mod success {
         let cache_id = 0;
         let expected_object_id = 1;
         let expected_object_payload = vec![1, 2, 3, 4];
-        let expected_subgroup =
-            ObjectStreamSubgroup::new(expected_object_id, object_status, expected_object_payload)
-                .unwrap();
+        let expected_object = stream_per_subgroup::Object::new(
+            expected_object_id,
+            object_status,
+            expected_object_payload,
+        )
+        .unwrap();
 
         let result = object_cache_storage
             .get_next_object(&cache_key, cache_id)
@@ -1271,7 +1274,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_subgroup);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1413,7 +1416,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Subgroup(
-            StreamHeaderSubgroup::new(
+            stream_per_subgroup::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -1436,10 +1439,10 @@ mod success {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let subgroup =
-                ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
+            let subgroup_stream_object =
+                stream_per_subgroup::Object::new(object_id, object_status, object_payload).unwrap();
 
-            let object_cache = Object::Subgroup(subgroup.clone());
+            let object_cache = Object::Subgroup(subgroup_stream_object.clone());
 
             let _ = object_cache_storage
                 .set_object(&cache_key, object_cache, duration)
@@ -1448,9 +1451,12 @@ mod success {
 
         let expected_object_id = 19;
         let expected_object_payload = vec![19, 20, 21, 22];
-        let expected_subgroup =
-            ObjectStreamSubgroup::new(expected_object_id, object_status, expected_object_payload)
-                .unwrap();
+        let expected_object = stream_per_subgroup::Object::new(
+            expected_object_id,
+            object_status,
+            expected_object_payload,
+        )
+        .unwrap();
 
         let result = object_cache_storage.get_latest_object(&cache_key).await;
 
@@ -1461,7 +1467,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_subgroup);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1772,7 +1778,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Subgroup(
-            StreamHeaderSubgroup::new(
+            stream_per_subgroup::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id, // Group ID is fixed
@@ -1803,10 +1809,11 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let subgroup =
-                    ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
+                let subgroup_stream_object =
+                    stream_per_subgroup::Object::new(object_id, object_status, object_payload)
+                        .unwrap();
 
-                let object_cache = Object::Subgroup(subgroup.clone());
+                let object_cache = Object::Subgroup(subgroup_stream_object.clone());
 
                 let _ = object_cache_storage
                     .set_object(&cache_key, object_cache, duration)
@@ -1816,9 +1823,12 @@ mod success {
 
         let expected_object_id = 0;
         let expected_object_payload = vec![0, 1, 2, 3];
-        let expected_subgroup =
-            ObjectStreamSubgroup::new(expected_object_id, object_status, expected_object_payload)
-                .unwrap();
+        let expected_object = stream_per_subgroup::Object::new(
+            expected_object_id,
+            object_status,
+            expected_object_payload,
+        )
+        .unwrap();
 
         let result = object_cache_storage.get_latest_group(&cache_key).await;
 
@@ -1829,7 +1839,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_subgroup);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1983,7 +1993,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Subgroup(
-            StreamHeaderSubgroup::new(
+            stream_per_subgroup::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id, // Group ID is fixed
@@ -2014,10 +2024,11 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let subgroup =
-                    ObjectStreamSubgroup::new(object_id, object_status, object_payload).unwrap();
+                let subgroup_stream_object =
+                    stream_per_subgroup::Object::new(object_id, object_status, object_payload)
+                        .unwrap();
 
-                let object_cache = Object::Subgroup(subgroup.clone());
+                let object_cache = Object::Subgroup(subgroup_stream_object.clone());
 
                 let _ = object_cache_storage
                     .set_object(&cache_key, object_cache, duration)

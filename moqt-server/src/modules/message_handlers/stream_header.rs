@@ -7,8 +7,7 @@ use bytes::{Buf, BytesMut};
 use moqt_core::{
     data_stream_type::DataStreamType,
     messages::data_streams::{
-        stream_header_subgroup::StreamHeaderSubgroup, stream_header_track::StreamHeaderTrack,
-        DataStreams,
+        stream_header_track::StreamHeaderTrack, stream_per_subgroup, DataStreams,
     },
     variable_integer::read_variable_integer,
 };
@@ -25,7 +24,7 @@ pub enum StreamHeaderProcessResult {
 #[derive(Debug, PartialEq)]
 pub enum StreamHeader {
     Track(StreamHeaderTrack),
-    Subgroup(StreamHeaderSubgroup),
+    Subgroup(stream_per_subgroup::Header),
 }
 
 fn read_data_stream_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataStreamType> {
@@ -86,7 +85,7 @@ pub async fn try_read_header(
             StreamHeaderTrack::depacketize(&mut read_cur).map(StreamHeader::Track)
         }
         DataStreamType::StreamHeaderSubgroup => {
-            StreamHeaderSubgroup::depacketize(&mut read_cur).map(StreamHeader::Subgroup)
+            stream_per_subgroup::Header::depacketize(&mut read_cur).map(StreamHeader::Subgroup)
         }
         unknown => {
             return StreamHeaderProcessResult::Failure(
@@ -124,8 +123,7 @@ mod tests {
         use moqt_core::{
             data_stream_type::DataStreamType,
             messages::data_streams::{
-                stream_header_subgroup::StreamHeaderSubgroup,
-                stream_header_track::StreamHeaderTrack, DataStreams,
+                stream_header_track::StreamHeaderTrack, stream_per_subgroup, DataStreams,
             },
             variable_integer::write_variable_integer,
         };
@@ -165,7 +163,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn stream_header_subgroup_success() {
+        async fn subgroup_stream_header_success() {
             let data_stream_type = DataStreamType::StreamHeaderSubgroup;
             let bytes_array = [
                 0, // Subscribe ID (i)
@@ -190,7 +188,7 @@ mod tests {
             let mut buf_without_type = BytesMut::with_capacity(bytes_array.len());
             buf_without_type.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf_without_type[..]);
-            let header = StreamHeaderSubgroup::depacketize(&mut read_cur).unwrap();
+            let header = stream_per_subgroup::Header::depacketize(&mut read_cur).unwrap();
 
             assert_eq!(
                 result,
@@ -222,7 +220,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn stream_header_subgroup_continue_incomplete_message() {
+        async fn subgroup_stream_header_continue_incomplete_message() {
             let data_stream_type = DataStreamType::StreamHeaderSubgroup;
             let bytes_array = [
                 0, // Object ID (i)
