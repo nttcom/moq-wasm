@@ -1,8 +1,5 @@
 use anyhow::{bail, Result};
-use moqt_core::messages::data_streams::{
-    datagram, object_stream_track::ObjectStreamTrack, stream_header_track::StreamHeaderTrack,
-    stream_per_subgroup,
-};
+use moqt_core::messages::data_streams::{datagram, stream_per_subgroup, stream_per_track};
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 use ttl_cache::TtlCache;
@@ -11,14 +8,14 @@ type CacheId = usize;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Header {
     Datagram,
-    Track(StreamHeaderTrack),
+    Track(stream_per_track::Header),
     Subgroup(stream_per_subgroup::Header),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Object {
     Datagram(datagram::Object),
-    Track(ObjectStreamTrack),
+    Track(stream_per_track::Object),
     Subgroup(stream_per_subgroup::Object),
 }
 
@@ -707,10 +704,7 @@ impl ObjectCacheStorageWrapper {
 mod success {
     use tokio::sync::mpsc;
 
-    use moqt_core::messages::data_streams::{
-        datagram, object_stream_track::ObjectStreamTrack, stream_header_track::StreamHeaderTrack,
-        stream_per_subgroup,
-    };
+    use moqt_core::messages::data_streams::{datagram, stream_per_subgroup, stream_per_track};
 
     use crate::modules::object_cache_storage::{
         object_cache_storage, CacheKey, Header, Object, ObjectCacheStorageCommand,
@@ -773,9 +767,9 @@ mod success {
         let track_alias = 2;
         let publisher_priority = 3;
 
-        let stream_header_track =
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap();
-        let header = Header::Track(stream_header_track.clone());
+        let track_stream_header =
+            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap();
+        let header = Header::Track(track_stream_header.clone());
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -796,7 +790,7 @@ mod success {
             _ => panic!("header cache not matched"),
         };
 
-        assert_eq!(result_track, stream_header_track);
+        assert_eq!(result_track, track_stream_header);
     }
 
     #[tokio::test]
@@ -964,7 +958,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -981,7 +975,8 @@ mod success {
             let object_id = i as u64;
 
             let track =
-                ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
+                stream_per_track::Object::new(group_id, object_id, object_status, object_payload)
+                    .unwrap();
 
             let object_cache = Object::Track(track.clone());
 
@@ -992,9 +987,13 @@ mod success {
 
         let object_id = 7;
         let expected_object_payload = vec![7, 8, 9, 10];
-        let expected_track =
-            ObjectStreamTrack::new(group_id, object_id, object_status, expected_object_payload)
-                .unwrap();
+        let expected_object = stream_per_track::Object::new(
+            group_id,
+            object_id,
+            object_status,
+            expected_object_payload,
+        )
+        .unwrap();
 
         let result = object_cache_storage
             .get_absolute_object(&cache_key, group_id, object_id)
@@ -1007,7 +1006,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_track);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1157,7 +1156,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -1174,7 +1173,8 @@ mod success {
             let object_id = i as u64;
 
             let track =
-                ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
+                stream_per_track::Object::new(group_id, object_id, object_status, object_payload)
+                    .unwrap();
 
             let object_cache = Object::Track(track.clone());
 
@@ -1186,7 +1186,7 @@ mod success {
         let cache_id = 4;
         let expected_object_id = 5;
         let expected_object_payload = vec![5, 6, 7, 8];
-        let expected_track = ObjectStreamTrack::new(
+        let expected_object = stream_per_track::Object::new(
             group_id,
             expected_object_id,
             object_status,
@@ -1205,7 +1205,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_track);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1356,7 +1356,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -1373,7 +1373,8 @@ mod success {
             let object_id = i as u64;
 
             let track =
-                ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
+                stream_per_track::Object::new(group_id, object_id, object_status, object_payload)
+                    .unwrap();
 
             let object_cache = Object::Track(track.clone());
 
@@ -1384,7 +1385,7 @@ mod success {
 
         let expected_object_id = 12;
         let expected_object_payload = vec![12, 13, 14, 15];
-        let expected_track = ObjectStreamTrack::new(
+        let expected_object = stream_per_track::Object::new(
             group_id,
             expected_object_id,
             object_status,
@@ -1401,7 +1402,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_track);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1636,7 +1637,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -1661,11 +1662,15 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let track =
-                    ObjectStreamTrack::new(group_id, object_id, object_status, object_payload)
-                        .unwrap();
+                let track_stream_object = stream_per_track::Object::new(
+                    group_id,
+                    object_id,
+                    object_status,
+                    object_payload,
+                )
+                .unwrap();
 
-                let object_cache = Object::Track(track.clone());
+                let object_cache = Object::Track(track_stream_object.clone());
 
                 let _ = object_cache_storage
                     .set_object(&cache_key, object_cache, duration)
@@ -1676,7 +1681,7 @@ mod success {
         let expected_object_id = 0;
         let expected_group_id = 7;
         let expected_object_payload = vec![84, 85, 86, 87];
-        let expected_track = ObjectStreamTrack::new(
+        let expected_object = stream_per_track::Object::new(
             expected_group_id,
             expected_object_id,
             object_status,
@@ -1693,7 +1698,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_track);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1706,7 +1711,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -1731,11 +1736,15 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let track =
-                    ObjectStreamTrack::new(group_id, object_id, object_status, object_payload)
-                        .unwrap();
+                let track_stream_object = stream_per_track::Object::new(
+                    group_id,
+                    object_id,
+                    object_status,
+                    object_payload,
+                )
+                .unwrap();
 
-                let object_cache = Object::Track(track.clone());
+                let object_cache = Object::Track(track_stream_object.clone());
 
                 let _ = object_cache_storage
                     .set_object(&cache_key, object_cache, duration)
@@ -1746,7 +1755,7 @@ mod success {
         let expected_object_id = 0;
         let expected_group_id = 5;
         let expected_object_payload = vec![60, 61, 62, 63];
-        let expected_track = ObjectStreamTrack::new(
+        let expected_object = stream_per_track::Object::new(
             expected_group_id,
             expected_object_id,
             object_status,
@@ -1763,7 +1772,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_track);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1924,7 +1933,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -1949,11 +1958,15 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let track =
-                    ObjectStreamTrack::new(group_id, object_id, object_status, object_payload)
-                        .unwrap();
+                let track_stream_object = stream_per_track::Object::new(
+                    group_id,
+                    object_id,
+                    object_status,
+                    object_payload,
+                )
+                .unwrap();
 
-                let object_cache = Object::Track(track.clone());
+                let object_cache = Object::Track(track_stream_object.clone());
 
                 let _ = object_cache_storage
                     .set_object(&cache_key, object_cache, duration)
@@ -2064,7 +2077,7 @@ mod success {
         let track_alias = 3;
         let publisher_priority = 6;
         let header = Header::Track(
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread

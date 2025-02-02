@@ -531,8 +531,7 @@ mod success {
                 subscribe::{FilterType, GroupOrder, Subscribe},
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
-            data_streams::object_stream_track::ObjectStreamTrack,
-            data_streams::stream_header_track::StreamHeaderTrack,
+            data_streams::stream_per_track,
             moqt_payload::MOQTPayload,
         },
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -916,7 +915,7 @@ mod success {
         let publisher_priority = 0;
 
         let header = object_cache_storage::Header::Track(
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
@@ -929,7 +928,8 @@ mod success {
             let object_id = i as u64;
 
             let track =
-                ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
+                stream_per_track::Object::new(group_id, object_id, object_status, object_payload)
+                    .unwrap();
 
             let object_cache = object_cache_storage::Object::Track(track.clone());
 

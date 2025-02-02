@@ -26,10 +26,7 @@ use moqt_core::{
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     messages::{
-        data_streams::{
-            datagram, object_stream_track::ObjectStreamTrack,
-            stream_header_track::StreamHeaderTrack, stream_per_subgroup, DataStreams,
-        },
+        data_streams::{datagram, stream_per_subgroup, stream_per_track, DataStreams},
         moqt_payload::MOQTPayload,
     },
     models::subscriptions::{
@@ -145,18 +142,18 @@ impl MOQTClient {
             .set_datagram_object_callback(callback);
     }
 
-    #[wasm_bindgen(js_name = onStreamHeaderTrack)]
-    pub fn set_stream_header_track_callback(&mut self, callback: js_sys::Function) {
+    #[wasm_bindgen(js_name = onTrackStreamHeader)]
+    pub fn set_track_stream_header_callback(&mut self, callback: js_sys::Function) {
         self.callbacks
             .borrow_mut()
-            .set_stream_header_track_callback(callback);
+            .set_track_stream_header_callback(callback);
     }
 
-    #[wasm_bindgen(js_name = onObjectStreamTrack)]
-    pub fn set_object_stream_track_callback(&mut self, callback: js_sys::Function) {
+    #[wasm_bindgen(js_name = onTrackStreamObject)]
+    pub fn set_track_stream_object_callback(&mut self, callback: js_sys::Function) {
         self.callbacks
             .borrow_mut()
-            .set_object_stream_track_callback(callback);
+            .set_track_stream_object_callback(callback);
     }
 
     #[wasm_bindgen(js_name = onSubgroupStreamHeader)]
@@ -775,8 +772,8 @@ impl MOQTClient {
         }
     }
 
-    #[wasm_bindgen(js_name = sendStreamHeaderTrackMessage)]
-    pub async fn send_stream_header_track_message(
+    #[wasm_bindgen(js_name = sendTrackStreamHeaderMessage)]
+    pub async fn send_track_stream_header_message(
         &self,
         subscribe_id: u64,
         track_alias: u64,
@@ -784,25 +781,26 @@ impl MOQTClient {
     ) -> Result<JsValue, JsValue> {
         let object_stream_writers = self.object_stream_writers.borrow();
         if let Some(writer) = object_stream_writers.get(&subscribe_id) {
-            let stream_header_track_message =
-                StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap();
-            let mut stream_header_track_message_buf = BytesMut::new();
-            let _ = stream_header_track_message.packetize(&mut stream_header_track_message_buf);
+            let track_stream_header_message =
+                stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority)
+                    .unwrap();
+            let mut track_stream_header_message_buf = BytesMut::new();
+            let _ = track_stream_header_message.packetize(&mut track_stream_header_message_buf);
 
             let mut buf = Vec::new();
             // Message Type
             buf.extend(write_variable_integer(
                 u8::from(DataStreamType::StreamHeaderTrack) as u64,
             ));
-            buf.extend(stream_header_track_message_buf);
+            buf.extend(track_stream_header_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(ok) => {
                     log(std::format!(
-                        "sent: stream_header_track: {:#x?}",
-                        stream_header_track_message
+                        "sent: track_stream_header: {:#x?}",
+                        track_stream_header_message
                     )
                     .as_str());
                     Ok(ok)
@@ -814,8 +812,8 @@ impl MOQTClient {
         }
     }
 
-    #[wasm_bindgen(js_name = sendObjectStreamTrack)]
-    pub async fn send_object_stream_track(
+    #[wasm_bindgen(js_name = sendTrackStreamObject)]
+    pub async fn send_track_stream_object(
         &self,
         subscribe_id: u64,
         group_id: u64,
@@ -824,14 +822,14 @@ impl MOQTClient {
     ) -> Result<JsValue, JsValue> {
         let object_stream_writers = self.object_stream_writers.borrow();
         if let Some(writer) = object_stream_writers.get(&subscribe_id) {
-            let object_stream_track =
-                ObjectStreamTrack::new(group_id, object_id, None, object_payload).unwrap();
-            let mut object_stream_track_buf = BytesMut::new();
-            let _ = object_stream_track.packetize(&mut object_stream_track_buf);
+            let track_stream_object =
+                stream_per_track::Object::new(group_id, object_id, None, object_payload).unwrap();
+            let mut track_stream_object_buf = BytesMut::new();
+            let _ = track_stream_object.packetize(&mut track_stream_object_buf);
 
             let mut buf = Vec::new();
             // Message Payload and Payload Length
-            buf.extend(object_stream_track_buf);
+            buf.extend(track_stream_object_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
@@ -1344,7 +1342,7 @@ async fn uni_directional_stream_read_thread(
                     }
                     DataStreamType::StreamHeaderTrack => {
                         if let Err(e) =
-                            object_stream_track_handler(callbacks.clone(), &mut buf).await
+                            track_stream_object_handler(callbacks.clone(), &mut buf).await
                         {
                             log(std::format!("error: {:#?}", e).as_str());
                             break;
@@ -1382,19 +1380,19 @@ async fn object_header_handler(
 
             match data_stream_type {
                 DataStreamType::StreamHeaderTrack => {
-                    let stream_header_track = StreamHeaderTrack::depacketize(&mut read_cur)?;
+                    let track_stream_header = stream_per_track::Header::depacketize(&mut read_cur)?;
                     buf.advance(read_cur.position() as usize);
 
                     log(
-                        std::format!("recv: stream_header_track: {:#x?}", stream_header_track)
+                        std::format!("recv: track_stream_header: {:#x?}", track_stream_header)
                             .as_str(),
                     );
 
-                    if let Some(callback) = callbacks.borrow().stream_header_track_callback() {
+                    if let Some(callback) = callbacks.borrow().track_stream_header_callback() {
                         callback
                             .call1(&JsValue::null(), &JsValue::from("called2"))
                             .unwrap();
-                        let v = serde_wasm_bindgen::to_value(&stream_header_track).unwrap();
+                        let v = serde_wasm_bindgen::to_value(&track_stream_header).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
@@ -1481,12 +1479,12 @@ async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut Bytes
 }
 
 #[cfg(web_sys_unstable_apis)]
-async fn object_stream_track_handler(
+async fn track_stream_object_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     buf: &mut BytesMut,
 ) -> Result<()> {
     let mut read_cur = Cursor::new(&buf[..]);
-    let object_stream_track = match ObjectStreamTrack::depacketize(&mut read_cur) {
+    let track_stream_object = match stream_per_track::Object::depacketize(&mut read_cur) {
         Ok(v) => {
             log(std::format!("object_id: {:#?}", v.object_id()).as_str());
             buf.advance(read_cur.position() as usize);
@@ -1499,11 +1497,11 @@ async fn object_stream_track_handler(
         }
     };
 
-    if let Some(callback) = callbacks.borrow().object_stream_track_callback() {
+    if let Some(callback) = callbacks.borrow().track_stream_object_callback() {
         callback
             .call1(&JsValue::null(), &JsValue::from("called2"))
             .unwrap();
-        let v = serde_wasm_bindgen::to_value(&object_stream_track).unwrap();
+        let v = serde_wasm_bindgen::to_value(&track_stream_object).unwrap();
         callback.call1(&JsValue::null(), &(v)).unwrap();
     }
 
@@ -1729,8 +1727,8 @@ struct MOQTCallbacks {
     subscribe_response_callback: Option<js_sys::Function>,
     subscribe_namespace_response_callback: Option<js_sys::Function>,
     datagram_object_callback: Option<js_sys::Function>,
-    stream_header_track_callback: Option<js_sys::Function>,
-    object_stream_track_callback: Option<js_sys::Function>,
+    track_stream_header_callback: Option<js_sys::Function>,
+    track_stream_object_callback: Option<js_sys::Function>,
     subgroup_stream_header_callback: Option<js_sys::Function>,
     subgroup_stream_object_callback: Option<js_sys::Function>,
 }
@@ -1746,8 +1744,8 @@ impl MOQTCallbacks {
             subscribe_response_callback: None,
             subscribe_namespace_response_callback: None,
             datagram_object_callback: None,
-            stream_header_track_callback: None,
-            object_stream_track_callback: None,
+            track_stream_header_callback: None,
+            track_stream_object_callback: None,
             subgroup_stream_header_callback: None,
             subgroup_stream_object_callback: None,
         }
@@ -1809,20 +1807,20 @@ impl MOQTCallbacks {
         self.datagram_object_callback = Some(callback);
     }
 
-    pub fn stream_header_track_callback(&self) -> Option<js_sys::Function> {
-        self.stream_header_track_callback.clone()
+    pub fn track_stream_header_callback(&self) -> Option<js_sys::Function> {
+        self.track_stream_header_callback.clone()
     }
 
-    pub fn set_stream_header_track_callback(&mut self, callback: js_sys::Function) {
-        self.stream_header_track_callback = Some(callback);
+    pub fn set_track_stream_header_callback(&mut self, callback: js_sys::Function) {
+        self.track_stream_header_callback = Some(callback);
     }
 
-    pub fn object_stream_track_callback(&self) -> Option<js_sys::Function> {
-        self.object_stream_track_callback.clone()
+    pub fn track_stream_object_callback(&self) -> Option<js_sys::Function> {
+        self.track_stream_object_callback.clone()
     }
 
-    pub fn set_object_stream_track_callback(&mut self, callback: js_sys::Function) {
-        self.object_stream_track_callback = Some(callback);
+    pub fn set_track_stream_object_callback(&mut self, callback: js_sys::Function) {
+        self.track_stream_object_callback = Some(callback);
     }
 
     pub fn subgroup_stream_header_callback(&self) -> Option<js_sys::Function> {

@@ -14,8 +14,7 @@ use moqt_core::{
     messages::{
         control_messages::subscribe::FilterType,
         data_streams::{
-            object_status::ObjectStatus, stream_header_track::StreamHeaderTrack,
-            stream_per_subgroup, DataStreams,
+            object_status::ObjectStatus, stream_per_subgroup, stream_per_track, DataStreams,
         },
     },
     models::{subscriptions::Subscription, tracks::ForwardingPreference},
@@ -348,12 +347,12 @@ impl ObjectStreamForwarder {
         Ok(message_buf)
     }
 
-    fn packetize_track_header(&self, header: &StreamHeaderTrack) -> BytesMut {
+    fn packetize_track_header(&self, header: &stream_per_track::Header) -> BytesMut {
         let mut buf = BytesMut::new();
         let downstream_subscribe_id = self.downstream_subscribe_id;
         let downstream_track_alias = self.downstream_subscription.get_track_alias();
 
-        let header = StreamHeaderTrack::new(
+        let header = stream_per_track::Header::new(
             downstream_subscribe_id,
             downstream_track_alias,
             header.publisher_priority(),
@@ -431,9 +430,9 @@ impl ObjectStreamForwarder {
         subgroup_group_id: &Option<u64>,
     ) -> bool {
         let (group_id, object_id) = match stream_object {
-            StreamObject::Track(object_stream_track) => (
-                object_stream_track.group_id(),
-                object_stream_track.object_id(),
+            StreamObject::Track(track_stream_object) => (
+                track_stream_object.group_id(),
+                track_stream_object.object_id(),
             ),
             StreamObject::Subgroup(object_stream_subgroup) => (
                 subgroup_group_id.unwrap(),
@@ -450,9 +449,9 @@ impl ObjectStreamForwarder {
     //   has not arrived, as further objects on the stream would be a protocol violation.
     fn is_data_stream_ended(&self, stream_object: &StreamObject) -> bool {
         match stream_object {
-            StreamObject::Track(object_stream_track) => {
+            StreamObject::Track(track_stream_object) => {
                 matches!(
-                    object_stream_track.object_status(),
+                    track_stream_object.object_status(),
                     Some(ObjectStatus::EndOfTrackAndGroup)
                 )
             }

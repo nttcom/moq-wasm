@@ -2,9 +2,7 @@ use crate::constants::TerminationErrorCode;
 use bytes::{Buf, BytesMut};
 use moqt_core::{
     data_stream_type::DataStreamType,
-    messages::data_streams::{
-        object_stream_track::ObjectStreamTrack, stream_per_subgroup, DataStreams,
-    },
+    messages::data_streams::{stream_per_subgroup, stream_per_track, DataStreams},
 };
 use std::io::Cursor;
 
@@ -17,7 +15,7 @@ pub enum ObjectStreamProcessResult {
 
 #[derive(Debug, PartialEq)]
 pub enum StreamObject {
-    Track(ObjectStreamTrack),
+    Track(stream_per_track::Object),
     Subgroup(stream_per_subgroup::Object),
 }
 
@@ -36,7 +34,7 @@ pub async fn try_read_object(
     let mut read_cur = Cursor::new(&buf[..]);
     let result = match data_stream_type {
         DataStreamType::StreamHeaderTrack => {
-            ObjectStreamTrack::depacketize(&mut read_cur).map(StreamObject::Track)
+            stream_per_track::Object::depacketize(&mut read_cur).map(StreamObject::Track)
         }
         DataStreamType::StreamHeaderSubgroup => {
             stream_per_subgroup::Object::depacketize(&mut read_cur).map(StreamObject::Subgroup)
@@ -72,9 +70,7 @@ mod tests {
         use bytes::BytesMut;
         use moqt_core::{
             data_stream_type::DataStreamType,
-            messages::data_streams::{
-                object_stream_track::ObjectStreamTrack, stream_per_subgroup, DataStreams,
-            },
+            messages::data_streams::{stream_per_subgroup, stream_per_track, DataStreams},
         };
         use std::io::Cursor;
 
@@ -94,7 +90,7 @@ mod tests {
             let result = try_read_object(&mut buf, data_stream_type).await;
 
             let mut read_cur = Cursor::new(&buf_clone[..]);
-            let object = ObjectStreamTrack::depacketize(&mut read_cur).unwrap();
+            let object = stream_per_track::Object::depacketize(&mut read_cur).unwrap();
 
             assert_eq!(
                 result,

@@ -490,9 +490,9 @@ impl ObjectStreamReceiver {
         subgroup_group_id: &Option<u64>,
     ) -> bool {
         let (group_id, object_id) = match object {
-            StreamObject::Track(object_stream_track) => (
-                object_stream_track.group_id(),
-                object_stream_track.object_id(),
+            StreamObject::Track(track_stream_object) => (
+                track_stream_object.group_id(),
+                track_stream_object.object_id(),
             ),
             StreamObject::Subgroup(object_stream_subgroup) => (
                 subgroup_group_id.unwrap(),
@@ -513,9 +513,9 @@ impl ObjectStreamReceiver {
     // TODO: Add handling for FIN message
     fn is_data_stream_ended(&self, stream_object: &StreamObject) -> bool {
         match stream_object {
-            StreamObject::Track(object_stream_track) => {
+            StreamObject::Track(track_stream_object) => {
                 matches!(
-                    object_stream_track.object_status(),
+                    track_stream_object.object_status(),
                     Some(ObjectStatus::EndOfTrackAndGroup)
                 )
             }

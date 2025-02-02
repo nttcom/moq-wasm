@@ -79,13 +79,13 @@ init().then(async () => {
       describeReceivedObject(datagramObject.object_payload)
     })
 
-    client.onStreamHeaderTrack(async (streamHeaderTrack) => {
-      console.log({ streamHeaderTrack })
+    client.onTrackStreamHeader(async (trackStreamHeader) => {
+      console.log({ trackStreamHeader })
     })
 
-    client.onObjectStreamTrack(async (objectStreamTrack) => {
-      console.log({ objectStreamTrack })
-      describeReceivedObject(objectStreamTrack.object_payload)
+    client.onTrackStreamObject(async (trackStreamObject) => {
+      console.log({ trackStreamObject })
+      describeReceivedObject(trackStreamObject.object_payload)
     })
 
     client.onSubgroupStreamHeader(async (subgroupStreamHeader) => {
@@ -196,11 +196,11 @@ init().then(async () => {
 
       // send header if it is the first time
       if (!headerSend) {
-        await client.sendStreamHeaderTrackMessage(BigInt(subscribeId), BigInt(trackAlias), publisherPriority)
+        await client.sendTrackStreamHeaderMessage(BigInt(subscribeId), BigInt(trackAlias), publisherPriority)
         headerSend = true
       }
 
-      await client.sendObjectStreamTrack(BigInt(subscribeId), mutableGroupId, objectId++, objectPayloadArray)
+      await client.sendTrackStreamObject(BigInt(subscribeId), mutableGroupId, objectId++, objectPayloadArray)
       objectIdElement.textContent = objectId
     })
 
