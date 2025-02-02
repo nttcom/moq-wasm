@@ -71,7 +71,7 @@ impl DataStreams for Header {
         let publisher_priority =
             read_fixed_length_bytes(read_cur, 1).context("publisher priority")?[0];
 
-        tracing::trace!("Depacketized Stream Header Track message.");
+        tracing::trace!("Depacketized Subgroup Stream Header message.");
 
         Ok(Header {
             subscribe_id,
@@ -89,7 +89,7 @@ impl DataStreams for Header {
         buf.extend(write_variable_integer(self.subgroup_id));
         buf.extend(self.publisher_priority.to_be_bytes());
 
-        tracing::trace!("Packetized Stream Header Track message.");
+        tracing::trace!("Packetized Subgroup Stream Header message.");
     }
     /// Method to enable downcasting from MOQTPayload to StreamHeaderSubgroup
     fn as_any(&self) -> &dyn Any {
@@ -178,7 +178,7 @@ impl DataStreams for Object {
             vec![]
         };
 
-        tracing::trace!("Depacketized Object Stream Subgroup message.");
+        tracing::trace!("Depacketized Subgroup Stream Object message.");
 
         Ok(Object {
             object_id,
@@ -198,7 +198,7 @@ impl DataStreams for Object {
         }
         buf.extend(&self.object_payload);
 
-        tracing::trace!("Packetized Object Stream Subgroup message.");
+        tracing::trace!("Packetized Subgroup Stream Object message.");
     }
     /// Method to enable downcasting from MOQTPayload to Object of stream per subgroup
     fn as_any(&self) -> &dyn Any {
