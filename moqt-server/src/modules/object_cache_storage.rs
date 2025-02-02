@@ -1075,7 +1075,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn get_next_object_datagram() {
+    async fn get_next_datagram_object() {
         let session_id = 0;
         let subscribe_id = 1;
         let cache_key = CacheKey::new(session_id, subscribe_id);
