@@ -8,7 +8,7 @@ use bytes::BytesMut;
 use serde::Serialize;
 use std::any::Any;
 
-/// Implement object message per QUIC Datagram.
+/// Implementation of object message per QUIC Datagram.
 /// Type of Data Streams: OBJECT_DATAGRAM (0x1)
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Object {
