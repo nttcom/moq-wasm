@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use moqt_core::messages::data_streams::{datagram, stream_per_subgroup, stream_per_track};
+use moqt_core::messages::data_streams::{datagram, subgroup_stream, track_stream};
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 use ttl_cache::TtlCache;
@@ -8,15 +8,15 @@ type CacheId = usize;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Header {
     Datagram,
-    Track(stream_per_track::Header),
-    Subgroup(stream_per_subgroup::Header),
+    Track(track_stream::Header),
+    Subgroup(subgroup_stream::Header),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Object {
     Datagram(datagram::Object),
-    Track(stream_per_track::Object),
-    Subgroup(stream_per_subgroup::Object),
+    Track(track_stream::Object),
+    Subgroup(subgroup_stream::Object),
 }
 
 #[derive(Eq, Hash, PartialEq, Debug, Clone)]
@@ -704,7 +704,7 @@ impl ObjectCacheStorageWrapper {
 mod success {
     use tokio::sync::mpsc;
 
-    use moqt_core::messages::data_streams::{datagram, stream_per_subgroup, stream_per_track};
+    use moqt_core::messages::data_streams::{datagram, subgroup_stream, track_stream};
 
     use crate::modules::object_cache_storage::{
         object_cache_storage, CacheKey, Header, Object, ObjectCacheStorageCommand,
@@ -768,7 +768,7 @@ mod success {
         let publisher_priority = 3;
 
         let track_stream_header =
-            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap();
+            track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap();
         let header = Header::Track(track_stream_header.clone());
 
         // start object cache storage thread
@@ -803,7 +803,7 @@ mod success {
         let subgroup_id = 4;
         let publisher_priority = 5;
 
-        let subgroup_stream_header = stream_per_subgroup::Header::new(
+        let subgroup_stream_header = subgroup_stream::Header::new(
             subscribe_id,
             track_alias,
             group_id,
@@ -958,7 +958,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -975,7 +975,7 @@ mod success {
             let object_id = i as u64;
 
             let track =
-                stream_per_track::Object::new(group_id, object_id, object_status, object_payload)
+                track_stream::Object::new(group_id, object_id, object_status, object_payload)
                     .unwrap();
 
             let object_cache = Object::Track(track.clone());
@@ -987,13 +987,9 @@ mod success {
 
         let object_id = 7;
         let expected_object_payload = vec![7, 8, 9, 10];
-        let expected_object = stream_per_track::Object::new(
-            group_id,
-            object_id,
-            object_status,
-            expected_object_payload,
-        )
-        .unwrap();
+        let expected_object =
+            track_stream::Object::new(group_id, object_id, object_status, expected_object_payload)
+                .unwrap();
 
         let result = object_cache_storage
             .get_absolute_object(&cache_key, group_id, object_id)
@@ -1021,7 +1017,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Subgroup(
-            stream_per_subgroup::Header::new(
+            subgroup_stream::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -1045,7 +1041,7 @@ mod success {
             let object_id = i as u64;
 
             let subgroup_stream_object =
-                stream_per_subgroup::Object::new(object_id, object_status, object_payload).unwrap();
+                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
 
             let object_cache = Object::Subgroup(subgroup_stream_object.clone());
 
@@ -1057,7 +1053,7 @@ mod success {
         let object_id = 9;
         let expected_object_payload = vec![9, 10, 11, 12];
         let expected_object =
-            stream_per_subgroup::Object::new(object_id, object_status, expected_object_payload)
+            subgroup_stream::Object::new(object_id, object_status, expected_object_payload)
                 .unwrap();
 
         let result = object_cache_storage
@@ -1156,7 +1152,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -1173,7 +1169,7 @@ mod success {
             let object_id = i as u64;
 
             let track =
-                stream_per_track::Object::new(group_id, object_id, object_status, object_payload)
+                track_stream::Object::new(group_id, object_id, object_status, object_payload)
                     .unwrap();
 
             let object_cache = Object::Track(track.clone());
@@ -1186,7 +1182,7 @@ mod success {
         let cache_id = 4;
         let expected_object_id = 5;
         let expected_object_payload = vec![5, 6, 7, 8];
-        let expected_object = stream_per_track::Object::new(
+        let expected_object = track_stream::Object::new(
             group_id,
             expected_object_id,
             object_status,
@@ -1220,7 +1216,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Subgroup(
-            stream_per_subgroup::Header::new(
+            subgroup_stream::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -1244,7 +1240,7 @@ mod success {
             let object_id = i as u64;
 
             let subgroup_stream_object =
-                stream_per_subgroup::Object::new(object_id, object_status, object_payload).unwrap();
+                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
 
             let object_cache = Object::Subgroup(subgroup_stream_object.clone());
 
@@ -1256,7 +1252,7 @@ mod success {
         let cache_id = 0;
         let expected_object_id = 1;
         let expected_object_payload = vec![1, 2, 3, 4];
-        let expected_object = stream_per_subgroup::Object::new(
+        let expected_object = subgroup_stream::Object::new(
             expected_object_id,
             object_status,
             expected_object_payload,
@@ -1356,7 +1352,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -1373,7 +1369,7 @@ mod success {
             let object_id = i as u64;
 
             let track =
-                stream_per_track::Object::new(group_id, object_id, object_status, object_payload)
+                track_stream::Object::new(group_id, object_id, object_status, object_payload)
                     .unwrap();
 
             let object_cache = Object::Track(track.clone());
@@ -1385,7 +1381,7 @@ mod success {
 
         let expected_object_id = 12;
         let expected_object_payload = vec![12, 13, 14, 15];
-        let expected_object = stream_per_track::Object::new(
+        let expected_object = track_stream::Object::new(
             group_id,
             expected_object_id,
             object_status,
@@ -1417,7 +1413,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Subgroup(
-            stream_per_subgroup::Header::new(
+            subgroup_stream::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -1441,7 +1437,7 @@ mod success {
             let object_id = i as u64;
 
             let subgroup_stream_object =
-                stream_per_subgroup::Object::new(object_id, object_status, object_payload).unwrap();
+                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
 
             let object_cache = Object::Subgroup(subgroup_stream_object.clone());
 
@@ -1452,7 +1448,7 @@ mod success {
 
         let expected_object_id = 19;
         let expected_object_payload = vec![19, 20, 21, 22];
-        let expected_object = stream_per_subgroup::Object::new(
+        let expected_object = subgroup_stream::Object::new(
             expected_object_id,
             object_status,
             expected_object_payload,
@@ -1637,7 +1633,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -1662,13 +1658,9 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let track_stream_object = stream_per_track::Object::new(
-                    group_id,
-                    object_id,
-                    object_status,
-                    object_payload,
-                )
-                .unwrap();
+                let track_stream_object =
+                    track_stream::Object::new(group_id, object_id, object_status, object_payload)
+                        .unwrap();
 
                 let object_cache = Object::Track(track_stream_object.clone());
 
@@ -1681,7 +1673,7 @@ mod success {
         let expected_object_id = 0;
         let expected_group_id = 7;
         let expected_object_payload = vec![84, 85, 86, 87];
-        let expected_object = stream_per_track::Object::new(
+        let expected_object = track_stream::Object::new(
             expected_group_id,
             expected_object_id,
             object_status,
@@ -1711,7 +1703,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -1736,13 +1728,9 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let track_stream_object = stream_per_track::Object::new(
-                    group_id,
-                    object_id,
-                    object_status,
-                    object_payload,
-                )
-                .unwrap();
+                let track_stream_object =
+                    track_stream::Object::new(group_id, object_id, object_status, object_payload)
+                        .unwrap();
 
                 let object_cache = Object::Track(track_stream_object.clone());
 
@@ -1755,7 +1743,7 @@ mod success {
         let expected_object_id = 0;
         let expected_group_id = 5;
         let expected_object_payload = vec![60, 61, 62, 63];
-        let expected_object = stream_per_track::Object::new(
+        let expected_object = track_stream::Object::new(
             expected_group_id,
             expected_object_id,
             object_status,
@@ -1787,7 +1775,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Subgroup(
-            stream_per_subgroup::Header::new(
+            subgroup_stream::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id, // Group ID is fixed
@@ -1819,8 +1807,7 @@ mod success {
                 let object_id = i as u64;
 
                 let subgroup_stream_object =
-                    stream_per_subgroup::Object::new(object_id, object_status, object_payload)
-                        .unwrap();
+                    subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
 
                 let object_cache = Object::Subgroup(subgroup_stream_object.clone());
 
@@ -1832,7 +1819,7 @@ mod success {
 
         let expected_object_id = 0;
         let expected_object_payload = vec![0, 1, 2, 3];
-        let expected_object = stream_per_subgroup::Object::new(
+        let expected_object = subgroup_stream::Object::new(
             expected_object_id,
             object_status,
             expected_object_payload,
@@ -1933,7 +1920,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Track(
-            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread
@@ -1958,13 +1945,9 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let track_stream_object = stream_per_track::Object::new(
-                    group_id,
-                    object_id,
-                    object_status,
-                    object_payload,
-                )
-                .unwrap();
+                let track_stream_object =
+                    track_stream::Object::new(group_id, object_id, object_status, object_payload)
+                        .unwrap();
 
                 let object_cache = Object::Track(track_stream_object.clone());
 
@@ -2006,7 +1989,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = Header::Subgroup(
-            stream_per_subgroup::Header::new(
+            subgroup_stream::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id, // Group ID is fixed
@@ -2038,8 +2021,7 @@ mod success {
                 let object_id = i as u64;
 
                 let subgroup_stream_object =
-                    stream_per_subgroup::Object::new(object_id, object_status, object_payload)
-                        .unwrap();
+                    subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
 
                 let object_cache = Object::Subgroup(subgroup_stream_object.clone());
 
@@ -2077,7 +2059,7 @@ mod success {
         let track_alias = 3;
         let publisher_priority = 6;
         let header = Header::Track(
-            stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
+            track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap(),
         );
 
         // start object cache storage thread

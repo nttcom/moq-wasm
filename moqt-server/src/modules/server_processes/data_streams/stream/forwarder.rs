@@ -13,9 +13,7 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::subscribe::FilterType,
-        data_streams::{
-            object_status::ObjectStatus, stream_per_subgroup, stream_per_track, DataStreams,
-        },
+        data_streams::{object_status::ObjectStatus, subgroup_stream, track_stream, DataStreams},
     },
     models::{subscriptions::Subscription, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -347,12 +345,12 @@ impl StreamObjectForwarder {
         Ok(message_buf)
     }
 
-    fn packetize_track_header(&self, header: &stream_per_track::Header) -> BytesMut {
+    fn packetize_track_header(&self, header: &track_stream::Header) -> BytesMut {
         let mut buf = BytesMut::new();
         let downstream_subscribe_id = self.downstream_subscribe_id;
         let downstream_track_alias = self.downstream_subscription.get_track_alias();
 
-        let header = stream_per_track::Header::new(
+        let header = track_stream::Header::new(
             downstream_subscribe_id,
             downstream_track_alias,
             header.publisher_priority(),
@@ -372,14 +370,14 @@ impl StreamObjectForwarder {
 
     fn packetize_subgroup_header(
         &self,
-        header: &stream_per_subgroup::Header,
+        header: &subgroup_stream::Header,
         subgroup_group_id: &mut Option<u64>,
     ) -> BytesMut {
         let mut buf = BytesMut::new();
         let downstream_subscribe_id = self.downstream_subscribe_id;
         let downstream_track_alias = self.downstream_subscription.get_track_alias();
 
-        let header = stream_per_subgroup::Header::new(
+        let header = subgroup_stream::Header::new(
             downstream_subscribe_id,
             downstream_track_alias,
             header.group_id(),

@@ -6,7 +6,7 @@ use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
 use moqt_core::{
     data_stream_type::DataStreamType,
-    messages::data_streams::{stream_per_subgroup, stream_per_track::Header, DataStreams},
+    messages::data_streams::{subgroup_stream, track_stream::Header, DataStreams},
     variable_integer::read_variable_integer,
 };
 use std::{io::Cursor, sync::Arc};
@@ -22,7 +22,7 @@ pub enum StreamHeaderProcessResult {
 #[derive(Debug, PartialEq)]
 pub enum StreamHeader {
     Track(Header),
-    Subgroup(stream_per_subgroup::Header),
+    Subgroup(subgroup_stream::Header),
 }
 
 fn read_data_stream_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataStreamType> {
@@ -83,7 +83,7 @@ pub async fn try_read_header(
             Header::depacketize(&mut read_cur).map(StreamHeader::Track)
         }
         DataStreamType::StreamHeaderSubgroup => {
-            stream_per_subgroup::Header::depacketize(&mut read_cur).map(StreamHeader::Subgroup)
+            subgroup_stream::Header::depacketize(&mut read_cur).map(StreamHeader::Subgroup)
         }
         unknown => {
             return StreamHeaderProcessResult::Failure(
@@ -120,7 +120,7 @@ mod tests {
         use bytes::BytesMut;
         use moqt_core::{
             data_stream_type::DataStreamType,
-            messages::data_streams::{stream_per_subgroup, stream_per_track::Header, DataStreams},
+            messages::data_streams::{subgroup_stream, track_stream::Header, DataStreams},
             variable_integer::write_variable_integer,
         };
         use std::{io::Cursor, sync::Arc};
@@ -184,7 +184,7 @@ mod tests {
             let mut buf_without_type = BytesMut::with_capacity(bytes_array.len());
             buf_without_type.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf_without_type[..]);
-            let header = stream_per_subgroup::Header::depacketize(&mut read_cur).unwrap();
+            let header = subgroup_stream::Header::depacketize(&mut read_cur).unwrap();
 
             assert_eq!(
                 result,

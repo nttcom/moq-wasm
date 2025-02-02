@@ -2,7 +2,7 @@ use crate::constants::TerminationErrorCode;
 use bytes::{Buf, BytesMut};
 use moqt_core::{
     data_stream_type::DataStreamType,
-    messages::data_streams::{stream_per_subgroup, stream_per_track, DataStreams},
+    messages::data_streams::{subgroup_stream, track_stream, DataStreams},
 };
 use std::io::Cursor;
 
@@ -15,8 +15,8 @@ pub enum StreamObjectProcessResult {
 
 #[derive(Debug, PartialEq)]
 pub enum StreamObject {
-    Track(stream_per_track::Object),
-    Subgroup(stream_per_subgroup::Object),
+    Track(track_stream::Object),
+    Subgroup(subgroup_stream::Object),
 }
 
 pub async fn try_read_object(
@@ -34,10 +34,10 @@ pub async fn try_read_object(
     let mut read_cur = Cursor::new(&buf[..]);
     let result = match data_stream_type {
         DataStreamType::StreamHeaderTrack => {
-            stream_per_track::Object::depacketize(&mut read_cur).map(StreamObject::Track)
+            track_stream::Object::depacketize(&mut read_cur).map(StreamObject::Track)
         }
         DataStreamType::StreamHeaderSubgroup => {
-            stream_per_subgroup::Object::depacketize(&mut read_cur).map(StreamObject::Subgroup)
+            subgroup_stream::Object::depacketize(&mut read_cur).map(StreamObject::Subgroup)
         }
         unknown => {
             return StreamObjectProcessResult::Failure(
@@ -70,7 +70,7 @@ mod tests {
         use bytes::BytesMut;
         use moqt_core::{
             data_stream_type::DataStreamType,
-            messages::data_streams::{stream_per_subgroup, stream_per_track, DataStreams},
+            messages::data_streams::{subgroup_stream, track_stream, DataStreams},
         };
         use std::io::Cursor;
 
@@ -90,7 +90,7 @@ mod tests {
             let result = try_read_object(&mut buf, data_stream_type).await;
 
             let mut read_cur = Cursor::new(&buf_clone[..]);
-            let object = stream_per_track::Object::depacketize(&mut read_cur).unwrap();
+            let object = track_stream::Object::depacketize(&mut read_cur).unwrap();
 
             assert_eq!(
                 result,
@@ -113,7 +113,7 @@ mod tests {
             let result = try_read_object(&mut buf, data_stream_type).await;
 
             let mut read_cur = Cursor::new(&buf_clone[..]);
-            let object = stream_per_subgroup::Object::depacketize(&mut read_cur).unwrap();
+            let object = subgroup_stream::Object::depacketize(&mut read_cur).unwrap();
 
             assert_eq!(
                 result,

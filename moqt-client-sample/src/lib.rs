@@ -26,7 +26,7 @@ use moqt_core::{
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     messages::{
-        data_streams::{datagram, stream_per_subgroup, stream_per_track, DataStreams},
+        data_streams::{datagram, subgroup_stream, track_stream, DataStreams},
         moqt_payload::MOQTPayload,
     },
     models::subscriptions::{
@@ -782,8 +782,7 @@ impl MOQTClient {
         let stream_writers = self.stream_writers.borrow();
         if let Some(writer) = stream_writers.get(&subscribe_id) {
             let track_stream_header_message =
-                stream_per_track::Header::new(subscribe_id, track_alias, publisher_priority)
-                    .unwrap();
+                track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap();
             let mut track_stream_header_message_buf = BytesMut::new();
             let _ = track_stream_header_message.packetize(&mut track_stream_header_message_buf);
 
@@ -823,7 +822,7 @@ impl MOQTClient {
         let stream_writers = self.stream_writers.borrow();
         if let Some(writer) = stream_writers.get(&subscribe_id) {
             let track_stream_object =
-                stream_per_track::Object::new(group_id, object_id, None, object_payload).unwrap();
+                track_stream::Object::new(group_id, object_id, None, object_payload).unwrap();
             let mut track_stream_object_buf = BytesMut::new();
             let _ = track_stream_object.packetize(&mut track_stream_object_buf);
 
@@ -859,7 +858,7 @@ impl MOQTClient {
     ) -> Result<JsValue, JsValue> {
         let stream_writers = self.stream_writers.borrow();
         if let Some(writer) = stream_writers.get(&subscribe_id) {
-            let subgroup_stream_header_message = stream_per_subgroup::Header::new(
+            let subgroup_stream_header_message = subgroup_stream::Header::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -896,7 +895,7 @@ impl MOQTClient {
         let stream_writers = self.stream_writers.borrow();
         if let Some(writer) = stream_writers.get(&subscribe_id) {
             let subgroup_stream_object =
-                stream_per_subgroup::Object::new(object_id, None, object_payload).unwrap();
+                subgroup_stream::Object::new(object_id, None, object_payload).unwrap();
             let mut subgroup_stream_object_buf = BytesMut::new();
             let _ = subgroup_stream_object.packetize(&mut subgroup_stream_object_buf);
 
@@ -1380,7 +1379,7 @@ async fn object_header_handler(
 
             match data_stream_type {
                 DataStreamType::StreamHeaderTrack => {
-                    let track_stream_header = stream_per_track::Header::depacketize(&mut read_cur)?;
+                    let track_stream_header = track_stream::Header::depacketize(&mut read_cur)?;
                     buf.advance(read_cur.position() as usize);
 
                     log(
@@ -1398,7 +1397,7 @@ async fn object_header_handler(
                 }
                 DataStreamType::StreamHeaderSubgroup => {
                     let subgroup_stream_header =
-                        stream_per_subgroup::Header::depacketize(&mut read_cur)?;
+                        subgroup_stream::Header::depacketize(&mut read_cur)?;
                     buf.advance(read_cur.position() as usize);
 
                     log(
@@ -1484,7 +1483,7 @@ async fn track_stream_object_handler(
     buf: &mut BytesMut,
 ) -> Result<()> {
     let mut read_cur = Cursor::new(&buf[..]);
-    let track_stream_object = match stream_per_track::Object::depacketize(&mut read_cur) {
+    let track_stream_object = match track_stream::Object::depacketize(&mut read_cur) {
         Ok(v) => {
             log(std::format!("object_id: {:#?}", v.object_id()).as_str());
             buf.advance(read_cur.position() as usize);
@@ -1514,7 +1513,7 @@ async fn subgroup_stream_object_handler(
     buf: &mut BytesMut,
 ) -> Result<()> {
     let mut read_cur = Cursor::new(&buf[..]);
-    let subgroup_stream_object = match stream_per_subgroup::Object::depacketize(&mut read_cur) {
+    let subgroup_stream_object = match subgroup_stream::Object::depacketize(&mut read_cur) {
         Ok(v) => {
             log(std::format!("object_id: {:#?}", v.object_id()).as_str());
             buf.advance(read_cur.position() as usize);
