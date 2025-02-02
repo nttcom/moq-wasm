@@ -29,7 +29,7 @@ Supported version: draft-ietf-moq-transport-06
   - [x] SUBSCRIBE_NAMESPACE_OK
   - [x] SUBSCRIBE_NAMESPACE_ERROR
 - [ ] Data Streams
-  - [x] Object Datagram Message
+  - [x] Datagram
   - [x] Track Stream
   - [ ] Subgroup Stream
 - [ ] Features

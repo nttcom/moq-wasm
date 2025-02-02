@@ -11,7 +11,7 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::subscribe::FilterType,
-        data_streams::{object_datagram::ObjectDatagram, object_status::ObjectStatus, DataStreams},
+        data_streams::{datagram, object_status::ObjectStatus, DataStreams},
     },
     models::{subscriptions::Subscription, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -195,7 +195,7 @@ impl ObjectDatagramForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         cache_id: Option<usize>,
-    ) -> Result<Option<(usize, ObjectDatagram)>> {
+    ) -> Result<Option<(usize, datagram::Object)>> {
         let cache = match cache_id {
             // Try to get the first object according to Filter Type
             None => self.try_get_first_object(object_cache_storage).await?,
@@ -255,7 +255,7 @@ impl ObjectDatagramForwarder {
             .await
     }
 
-    async fn packetize(&mut self, object_datagram: &ObjectDatagram) -> Result<BytesMut> {
+    async fn packetize(&mut self, object_datagram: &datagram::Object) -> Result<BytesMut> {
         let mut buf = BytesMut::new();
         object_datagram.packetize(&mut buf);
 
@@ -277,7 +277,7 @@ impl ObjectDatagramForwarder {
         Ok(())
     }
 
-    fn is_subscription_ended(&self, object_datagram: &ObjectDatagram) -> bool {
+    fn is_subscription_ended(&self, object_datagram: &datagram::Object) -> bool {
         let group_id = object_datagram.group_id();
         let object_id = object_datagram.object_id();
 
@@ -288,7 +288,7 @@ impl ObjectDatagramForwarder {
     //   A relay MAY treat receipt of EndOfGroup, EndOfSubgroup, GroupDoesNotExist, or
     //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
     //   has not arrived, as further objects on the stream would be a protocol violation.
-    fn is_data_stream_ended(&self, object_datagram: &ObjectDatagram) -> bool {
+    fn is_data_stream_ended(&self, object_datagram: &datagram::Object) -> bool {
         matches!(
             object_datagram.object_status(),
             Some(ObjectStatus::EndOfTrackAndGroup)

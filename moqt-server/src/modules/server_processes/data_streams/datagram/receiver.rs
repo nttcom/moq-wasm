@@ -13,7 +13,7 @@ use anyhow::Result;
 use bytes::BytesMut;
 use moqt_core::{
     constants::TerminationErrorCode, data_stream_type::DataStreamType,
-    messages::data_streams::object_datagram::ObjectDatagram, models::tracks::ForwardingPreference,
+    messages::data_streams::datagram, models::tracks::ForwardingPreference,
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
 use std::sync::Arc;
@@ -95,7 +95,7 @@ impl ObjectDatagramReceiver {
         buf.extend_from_slice(&read_bytes);
     }
 
-    async fn read_object_from_buf(&self) -> Result<Option<ObjectDatagram>, TerminationError> {
+    async fn read_object_from_buf(&self) -> Result<Option<datagram::Object>, TerminationError> {
         let result = self.try_read_object_from_buf().await;
 
         match result {
@@ -182,7 +182,7 @@ impl ObjectDatagramReceiver {
 
     async fn store_object(
         &self,
-        datagram_object: ObjectDatagram,
+        datagram_object: datagram::Object,
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
         object_cache_storage: &mut ObjectCacheStorageWrapper,

@@ -1,4 +1,4 @@
-pub mod object_datagram;
+pub mod datagram;
 pub mod object_status;
 pub mod object_stream_subgroup;
 pub mod object_stream_track;

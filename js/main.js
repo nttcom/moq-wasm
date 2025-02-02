@@ -74,9 +74,9 @@ init().then(async () => {
       console.log({ subscribeNamespaceResponse })
     })
 
-    client.onObjectDatagram(async (objectDatagram) => {
-      console.log({ objectDatagram })
-      describeReceivedObject(objectDatagram.object_payload)
+    client.onDatagramObject(async (datagramObject) => {
+      console.log({ datagramObject })
+      describeReceivedObject(datagramObject.object_payload)
     })
 
     client.onStreamHeaderTrack(async (streamHeaderTrack) => {
@@ -172,7 +172,7 @@ init().then(async () => {
       // encode the text to the object array
       const objectPayloadArray = new TextEncoder().encode(objectPayloadString)
 
-      await client.sendObjectDatagram(
+      await client.sendDatagramObject(
         BigInt(subscribeId),
         BigInt(trackAlias),
         mutableGroupId,

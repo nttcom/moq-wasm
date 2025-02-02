@@ -1,8 +1,7 @@
 use anyhow::{bail, Result};
 use moqt_core::messages::data_streams::{
-    object_datagram::ObjectDatagram, object_stream_subgroup::ObjectStreamSubgroup,
-    object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
-    stream_header_track::StreamHeaderTrack,
+    datagram, object_stream_subgroup::ObjectStreamSubgroup, object_stream_track::ObjectStreamTrack,
+    stream_header_subgroup::StreamHeaderSubgroup, stream_header_track::StreamHeaderTrack,
 };
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::{mpsc, oneshot};
@@ -18,7 +17,7 @@ pub(crate) enum Header {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Object {
-    Datagram(ObjectDatagram),
+    Datagram(datagram::Object),
     Track(ObjectStreamTrack),
     Subgroup(ObjectStreamSubgroup),
 }
@@ -709,7 +708,7 @@ mod success {
     use tokio::sync::mpsc;
 
     use moqt_core::messages::data_streams::{
-        object_datagram::ObjectDatagram, object_stream_subgroup::ObjectStreamSubgroup,
+        datagram, object_stream_subgroup::ObjectStreamSubgroup,
         object_stream_track::ObjectStreamTrack, stream_header_subgroup::StreamHeaderSubgroup,
         stream_header_track::StreamHeaderTrack,
     };
@@ -856,7 +855,7 @@ mod success {
         let object_payload = vec![1, 2, 3, 4];
         let duration = 1000;
         let object_cache = Object::Datagram(
-            ObjectDatagram::new(
+            datagram::Object::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -886,7 +885,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn get_absolute_object_datagram() {
+    async fn get_absolute_datagram_object() {
         let session_id = 0;
         let subscribe_id = 1;
         let cache_key = CacheKey::new(session_id, subscribe_id);
@@ -910,7 +909,7 @@ mod success {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let datagram = ObjectDatagram::new(
+            let datagram_object = datagram::Object::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -921,7 +920,7 @@ mod success {
             )
             .unwrap();
 
-            let object_cache = Object::Datagram(datagram.clone());
+            let object_cache = Object::Datagram(datagram_object.clone());
 
             let _ = object_cache_storage
                 .set_object(&cache_key, object_cache, duration)
@@ -930,7 +929,7 @@ mod success {
 
         let object_id = 5;
         let expected_object_payload = vec![5, 6, 7, 8];
-        let expected_datagram = ObjectDatagram::new(
+        let expected_object = datagram::Object::new(
             subscribe_id,
             track_alias,
             group_id,
@@ -952,7 +951,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_datagram);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1101,7 +1100,7 @@ mod success {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let datagram = ObjectDatagram::new(
+            let datagram_object = datagram::Object::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -1112,7 +1111,7 @@ mod success {
             )
             .unwrap();
 
-            let object_cache = Object::Datagram(datagram.clone());
+            let object_cache = Object::Datagram(datagram_object.clone());
 
             let _ = object_cache_storage
                 .set_object(&cache_key, object_cache, duration)
@@ -1122,7 +1121,7 @@ mod success {
         let cache_id = 2;
         let expected_object_id = 3;
         let expected_object_payload = vec![3, 4, 5, 6];
-        let expected_datagram = ObjectDatagram::new(
+        let expected_object = datagram::Object::new(
             subscribe_id,
             track_alias,
             group_id,
@@ -1144,7 +1143,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_datagram);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1276,7 +1275,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn get_latest_object_datagram() {
+    async fn get_latest_datagram_object() {
         let session_id = 0;
         let subscribe_id = 1;
         let cache_key = CacheKey::new(session_id, subscribe_id);
@@ -1300,7 +1299,7 @@ mod success {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let datagram = ObjectDatagram::new(
+            let datagram_object = datagram::Object::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -1311,7 +1310,7 @@ mod success {
             )
             .unwrap();
 
-            let object_cache = Object::Datagram(datagram.clone());
+            let object_cache = Object::Datagram(datagram_object.clone());
 
             let _ = object_cache_storage
                 .set_object(&cache_key, object_cache, duration)
@@ -1320,7 +1319,7 @@ mod success {
 
         let expected_object_id = 5;
         let expected_object_payload = vec![5, 6, 7, 8];
-        let expected_datagram = ObjectDatagram::new(
+        let expected_object = datagram::Object::new(
             subscribe_id,
             track_alias,
             group_id,
@@ -1340,7 +1339,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_datagram);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1466,7 +1465,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn get_latest_group_ascending_datagram() {
+    async fn get_latest_group_ascending_datagram_object() {
         let session_id = 0;
         let subscribe_id = 1;
         let cache_key = CacheKey::new(session_id, subscribe_id);
@@ -1498,7 +1497,7 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let datagram = ObjectDatagram::new(
+                let datagram_object = datagram::Object::new(
                     subscribe_id,
                     track_alias,
                     group_id,
@@ -1509,7 +1508,7 @@ mod success {
                 )
                 .unwrap();
 
-                let object_cache = Object::Datagram(datagram.clone());
+                let object_cache = Object::Datagram(datagram_object.clone());
 
                 let _ = object_cache_storage
                     .set_object(&cache_key, object_cache, duration)
@@ -1520,7 +1519,7 @@ mod success {
         let expected_object_id = 0;
         let expected_group_id = 3;
         let expected_object_payload = vec![21, 22, 23, 24];
-        let expected_datagram = ObjectDatagram::new(
+        let expected_object = datagram::Object::new(
             subscribe_id,
             track_alias,
             expected_group_id,
@@ -1540,11 +1539,11 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_datagram);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
-    async fn get_latest_group_descending_datagram() {
+    async fn get_latest_group_descending_datagram_object() {
         let session_id = 0;
         let subscribe_id = 1;
         let cache_key = CacheKey::new(session_id, subscribe_id);
@@ -1576,7 +1575,7 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let datagram = ObjectDatagram::new(
+                let datagram_object = datagram::Object::new(
                     subscribe_id,
                     track_alias,
                     group_id,
@@ -1587,7 +1586,7 @@ mod success {
                 )
                 .unwrap();
 
-                let object_cache = Object::Datagram(datagram.clone());
+                let object_cache = Object::Datagram(datagram_object.clone());
 
                 let _ = object_cache_storage
                     .set_object(&cache_key, object_cache, duration)
@@ -1598,7 +1597,7 @@ mod success {
         let expected_object_id = 0;
         let expected_group_id = 2;
         let expected_object_payload = vec![14, 15, 16, 17];
-        let expected_datagram = ObjectDatagram::new(
+        let expected_object = datagram::Object::new(
             subscribe_id,
             track_alias,
             expected_group_id,
@@ -1618,7 +1617,7 @@ mod success {
             _ => panic!("object cache not matched"),
         };
 
-        assert_eq!(result_object, expected_datagram);
+        assert_eq!(result_object, expected_object);
     }
 
     #[tokio::test]
@@ -1834,7 +1833,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn get_largest_group_id_and_object_id_datagram() {
+    async fn get_largest_group_id_and_object_id_datagram_object() {
         let session_id = 0;
         let subscribe_id = 1;
         let cache_key = CacheKey::new(session_id, subscribe_id);
@@ -1866,7 +1865,7 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let datagram = ObjectDatagram::new(
+                let datagram_object = datagram::Object::new(
                     subscribe_id,
                     track_alias,
                     group_id,
@@ -1877,7 +1876,7 @@ mod success {
                 )
                 .unwrap();
 
-                let object_cache = Object::Datagram(datagram.clone());
+                let object_cache = Object::Datagram(datagram_object.clone());
 
                 let _ = object_cache_storage
                     .set_object(&cache_key, object_cache, duration)

@@ -5,7 +5,7 @@ use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
 use moqt_core::{
     data_stream_type::DataStreamType,
-    messages::data_streams::{object_datagram::ObjectDatagram, DataStreams},
+    messages::data_streams::{datagram, DataStreams},
     variable_integer::read_variable_integer,
 };
 use std::io::Cursor;
@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 
 #[derive(Debug, PartialEq)]
 pub enum ObjectDatagramProcessResult {
-    Success(ObjectDatagram),
+    Success(datagram::Object),
     Continue,
     Failure(TerminationErrorCode, String),
 }
@@ -70,7 +70,7 @@ pub(crate) async fn try_read_object(
     };
 
     let result = match data_stream_type {
-        DataStreamType::ObjectDatagram => ObjectDatagram::depacketize(&mut read_cur),
+        DataStreamType::ObjectDatagram => datagram::Object::depacketize(&mut read_cur),
         _ => {
             return ObjectDatagramProcessResult::Failure(
                 TerminationErrorCode::ProtocolViolation,
@@ -103,7 +103,7 @@ mod tests {
         use bytes::BytesMut;
         use moqt_core::{
             data_stream_type::DataStreamType,
-            messages::data_streams::{object_datagram::ObjectDatagram, DataStreams},
+            messages::data_streams::{datagram, DataStreams},
             variable_integer::write_variable_integer,
         };
         use std::{io::Cursor, sync::Arc};
@@ -137,9 +137,12 @@ mod tests {
             let mut buf_without_type = BytesMut::with_capacity(bytes_array.len());
             buf_without_type.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf_without_type[..]);
-            let object = ObjectDatagram::depacketize(&mut read_cur).unwrap();
+            let datagram_object = datagram::Object::depacketize(&mut read_cur).unwrap();
 
-            assert_eq!(result, ObjectDatagramProcessResult::Success(object));
+            assert_eq!(
+                result,
+                ObjectDatagramProcessResult::Success(datagram_object)
+            );
         }
 
         #[tokio::test]
