@@ -7,7 +7,6 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
 use serde::Serialize;
-use std::any::Any;
 
 /// Implementation of header message on QUIC Stream per Subgroup.
 /// Object messages are sent following this message.
@@ -90,10 +89,6 @@ impl DataStreams for Header {
         buf.extend(self.publisher_priority.to_be_bytes());
 
         tracing::trace!("Packetized Subgroup Stream Header message.");
-    }
-    /// Method to enable downcasting from MOQTPayload to StreamHeaderSubgroup
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
@@ -199,10 +194,6 @@ impl DataStreams for Object {
         buf.extend(&self.object_payload);
 
         tracing::trace!("Packetized Subgroup Stream Object message.");
-    }
-    /// Method to enable downcasting from MOQTPayload to Object of stream per subgroup
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 

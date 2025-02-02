@@ -6,7 +6,6 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
 use serde::Serialize;
-use std::any::Any;
 
 use super::object_status::ObjectStatus;
 
@@ -67,10 +66,6 @@ impl DataStreams for Header {
         buf.extend(self.publisher_priority.to_be_bytes());
 
         tracing::trace!("Packetized Track Stream Header message.");
-    }
-    /// Method to enable downcasting from MOQTPayload to StreamHeaderTrack
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
@@ -186,10 +181,6 @@ impl DataStreams for Object {
         buf.extend(&self.object_payload);
 
         tracing::trace!("Packetized Track Stream Object message.");
-    }
-    /// Method to enable downcasting from MOQTPayload to Object of stream per track
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 

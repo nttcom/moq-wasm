@@ -6,7 +6,6 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
 use serde::Serialize;
-use std::any::Any;
 
 /// Implementation of object message per QUIC Datagram.
 /// Type of Data Streams: OBJECT_DATAGRAM (0x1)
@@ -156,10 +155,6 @@ impl DataStreams for Object {
         buf.extend(&self.object_payload);
 
         tracing::trace!("Packetized Datagram Object message.");
-    }
-    /// Method to enable downcasting from MOQTPayload to ObjectDatagram
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
