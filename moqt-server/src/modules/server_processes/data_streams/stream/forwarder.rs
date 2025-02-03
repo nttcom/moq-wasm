@@ -1,7 +1,7 @@
 use super::uni_stream::UniSendStream;
 use crate::modules::{
     buffer_manager::BufferCommand,
-    message_handlers::{object_stream::StreamObject, stream_header::StreamHeader},
+    message_handlers::{stream_header::StreamHeader, stream_object::StreamObject},
     moqt_client::MOQTClient,
     object_cache_storage::{self, CacheKey, ObjectCacheStorageWrapper},
     pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
@@ -13,10 +13,7 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::subscribe::FilterType,
-        data_streams::{
-            object_status::ObjectStatus, stream_header_subgroup::StreamHeaderSubgroup,
-            stream_header_track::StreamHeaderTrack, DataStreams,
-        },
+        data_streams::{object_status::ObjectStatus, subgroup_stream, track_stream, DataStreams},
     },
     models::{subscriptions::Subscription, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -26,7 +23,7 @@ use std::{sync::Arc, thread, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{self};
 
-pub(crate) struct ObjectStreamForwarder {
+pub(crate) struct StreamObjectForwarder {
     stream: UniSendStream,
     senders: Arc<Senders>,
     downstream_subscribe_id: u64,
@@ -36,7 +33,7 @@ pub(crate) struct ObjectStreamForwarder {
     sleep_time: Duration,
 }
 
-impl ObjectStreamForwarder {
+impl StreamObjectForwarder {
     pub(crate) async fn init(
         stream: UniSendStream,
         downstream_subscribe_id: u64,
@@ -62,7 +59,7 @@ impl ObjectStreamForwarder {
 
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 
-        let object_stream_forwarder = ObjectStreamForwarder {
+        let stream_object_forwarder = StreamObjectForwarder {
             stream,
             senders,
             downstream_subscribe_id,
@@ -72,7 +69,7 @@ impl ObjectStreamForwarder {
             sleep_time,
         };
 
-        Ok(object_stream_forwarder)
+        Ok(stream_object_forwarder)
     }
 
     pub(crate) async fn start(&mut self) -> Result<()> {
@@ -109,7 +106,7 @@ impl ObjectStreamForwarder {
             })
             .await?;
 
-        tracing::info!("ObjectStreamForwarder finished");
+        tracing::info!("StreamObjectForwarder finished");
 
         Ok(())
     }
@@ -348,12 +345,12 @@ impl ObjectStreamForwarder {
         Ok(message_buf)
     }
 
-    fn packetize_track_header(&self, header: &StreamHeaderTrack) -> BytesMut {
+    fn packetize_track_header(&self, header: &track_stream::Header) -> BytesMut {
         let mut buf = BytesMut::new();
         let downstream_subscribe_id = self.downstream_subscribe_id;
         let downstream_track_alias = self.downstream_subscription.get_track_alias();
 
-        let header = StreamHeaderTrack::new(
+        let header = track_stream::Header::new(
             downstream_subscribe_id,
             downstream_track_alias,
             header.publisher_priority(),
@@ -373,14 +370,14 @@ impl ObjectStreamForwarder {
 
     fn packetize_subgroup_header(
         &self,
-        header: &StreamHeaderSubgroup,
+        header: &subgroup_stream::Header,
         subgroup_group_id: &mut Option<u64>,
     ) -> BytesMut {
         let mut buf = BytesMut::new();
         let downstream_subscribe_id = self.downstream_subscribe_id;
         let downstream_track_alias = self.downstream_subscription.get_track_alias();
 
-        let header = StreamHeaderSubgroup::new(
+        let header = subgroup_stream::Header::new(
             downstream_subscribe_id,
             downstream_track_alias,
             header.group_id(),
@@ -431,13 +428,13 @@ impl ObjectStreamForwarder {
         subgroup_group_id: &Option<u64>,
     ) -> bool {
         let (group_id, object_id) = match stream_object {
-            StreamObject::Track(object_stream_track) => (
-                object_stream_track.group_id(),
-                object_stream_track.object_id(),
+            StreamObject::Track(track_stream_object) => (
+                track_stream_object.group_id(),
+                track_stream_object.object_id(),
             ),
-            StreamObject::Subgroup(object_stream_subgroup) => (
+            StreamObject::Subgroup(subgroup_stream_object) => (
                 subgroup_group_id.unwrap(),
-                object_stream_subgroup.object_id(),
+                subgroup_stream_object.object_id(),
             ),
         };
 
@@ -450,15 +447,15 @@ impl ObjectStreamForwarder {
     //   has not arrived, as further objects on the stream would be a protocol violation.
     fn is_data_stream_ended(&self, stream_object: &StreamObject) -> bool {
         match stream_object {
-            StreamObject::Track(object_stream_track) => {
+            StreamObject::Track(track_stream_object) => {
                 matches!(
-                    object_stream_track.object_status(),
+                    track_stream_object.object_status(),
                     Some(ObjectStatus::EndOfTrackAndGroup)
                 )
             }
-            StreamObject::Subgroup(object_stream_subgroup) => {
+            StreamObject::Subgroup(subgroup_stream_object) => {
                 matches!(
-                    object_stream_subgroup.object_status(),
+                    subgroup_stream_object.object_status(),
                     Some(ObjectStatus::EndOfSubgroup)
                         | Some(ObjectStatus::EndOfGroup)
                         | Some(ObjectStatus::EndOfTrackAndGroup)

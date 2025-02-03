@@ -6,10 +6,11 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use bytes::BytesMut;
 use serde::Serialize;
-use std::any::Any;
 
+/// Implementation of object message per QUIC Datagram.
+/// Type of Data Streams: OBJECT_DATAGRAM (0x1)
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ObjectDatagram {
+pub struct Object {
     subscribe_id: u64,
     track_alias: u64,
     group_id: u64,
@@ -20,7 +21,7 @@ pub struct ObjectDatagram {
     object_payload: Vec<u8>,
 }
 
-impl ObjectDatagram {
+impl Object {
     pub fn new(
         subscribe_id: u64,
         track_alias: u64,
@@ -44,7 +45,7 @@ impl ObjectDatagram {
             }
         }
 
-        Ok(ObjectDatagram {
+        Ok(Object {
             subscribe_id,
             track_alias,
             group_id,
@@ -85,7 +86,7 @@ impl ObjectDatagram {
     }
 }
 
-impl DataStreams for ObjectDatagram {
+impl DataStreams for Object {
     fn depacketize(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<Self>
     where
         Self: Sized,
@@ -125,9 +126,9 @@ impl DataStreams for ObjectDatagram {
             vec![]
         };
 
-        tracing::trace!("Depacketized Object Datagram message.");
+        tracing::trace!("Depacketized Datagram Object message.");
 
-        Ok(ObjectDatagram {
+        Ok(Object {
             subscribe_id,
             track_alias,
             group_id,
@@ -153,25 +154,19 @@ impl DataStreams for ObjectDatagram {
         }
         buf.extend(&self.object_payload);
 
-        tracing::trace!("Packetized Object Datagram message.");
-    }
-    /// Method to enable downcasting from MOQTPayload to ObjectDatagram
-    fn as_any(&self) -> &dyn Any {
-        self
+        tracing::trace!("Packetized Datagram Object message.");
     }
 }
 
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::messages::data_streams::{
-            object_datagram::ObjectDatagram, object_status::ObjectStatus, DataStreams,
-        };
+        use crate::messages::data_streams::{datagram, object_status::ObjectStatus, DataStreams};
         use bytes::BytesMut;
         use std::io::Cursor;
 
         #[test]
-        fn packetize_object_datagram_normal() {
+        fn packetize_datagram_object_normal() {
             let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
@@ -180,7 +175,7 @@ mod tests {
             let object_status = None;
             let object_payload = vec![0, 1, 2];
 
-            let object_datagram = ObjectDatagram::new(
+            let datagram_object = datagram::Object::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -192,7 +187,7 @@ mod tests {
             .unwrap();
 
             let mut buf = BytesMut::new();
-            object_datagram.packetize(&mut buf);
+            datagram_object.packetize(&mut buf);
 
             let expected_bytes_array = [
                 0, // Subscribe ID (i)
@@ -208,7 +203,7 @@ mod tests {
         }
 
         #[test]
-        fn packetize_object_datagram_normal_and_empty_payload() {
+        fn packetize_datagram_object_normal_and_empty_payload() {
             let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
@@ -217,7 +212,7 @@ mod tests {
             let object_status = Some(ObjectStatus::Normal);
             let object_payload = vec![];
 
-            let object_datagram = ObjectDatagram::new(
+            let datagram_object = datagram::Object::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -229,7 +224,7 @@ mod tests {
             .unwrap();
 
             let mut buf = BytesMut::new();
-            object_datagram.packetize(&mut buf);
+            datagram_object.packetize(&mut buf);
 
             let expected_bytes_array = [
                 0, // Subscribe ID (i)
@@ -245,7 +240,7 @@ mod tests {
         }
 
         #[test]
-        fn packetize_object_datagram_not_normal() {
+        fn packetize_datagram_object_not_normal() {
             let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
@@ -254,7 +249,7 @@ mod tests {
             let object_status = Some(ObjectStatus::EndOfGroup);
             let object_payload = vec![];
 
-            let object_datagram = ObjectDatagram::new(
+            let datagram_object = datagram::Object::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -266,7 +261,7 @@ mod tests {
             .unwrap();
 
             let mut buf = BytesMut::new();
-            object_datagram.packetize(&mut buf);
+            datagram_object.packetize(&mut buf);
 
             let expected_bytes_array = [
                 0, // Subscribe ID (i)
@@ -282,7 +277,7 @@ mod tests {
         }
 
         #[test]
-        fn depacketize_object_datagram_normal() {
+        fn depacketize_datagram_object_normal() {
             let bytes_array = [
                 0, // Subscribe ID (i)
                 1, // Track Alias (i)
@@ -295,7 +290,8 @@ mod tests {
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf[..]);
-            let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur).unwrap();
+            let depacketized_datagram_object =
+                datagram::Object::depacketize(&mut read_cur).unwrap();
 
             let subscribe_id = 0;
             let track_alias = 1;
@@ -305,7 +301,7 @@ mod tests {
             let object_status = None;
             let object_payload = vec![0, 1, 2];
 
-            let expected_object_datagram = ObjectDatagram::new(
+            let expected_datagram_object = datagram::Object::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -316,11 +312,11 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(depacketized_object_datagram, expected_object_datagram);
+            assert_eq!(depacketized_datagram_object, expected_datagram_object);
         }
 
         #[test]
-        fn depacketize_object_datagram_normal_and_empty_payload() {
+        fn depacketize_datagram_object_normal_and_empty_payload() {
             let bytes_array = [
                 0, // Subscribe ID (i)
                 1, // Track Alias (i)
@@ -333,7 +329,8 @@ mod tests {
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf[..]);
-            let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur).unwrap();
+            let depacketized_datagram_object =
+                datagram::Object::depacketize(&mut read_cur).unwrap();
 
             let subscribe_id = 0;
             let track_alias = 1;
@@ -343,7 +340,7 @@ mod tests {
             let object_status = Some(ObjectStatus::Normal);
             let object_payload = vec![];
 
-            let expected_object_datagram = ObjectDatagram::new(
+            let expected_datagram_object = datagram::Object::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -354,11 +351,11 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(depacketized_object_datagram, expected_object_datagram);
+            assert_eq!(depacketized_datagram_object, expected_datagram_object);
         }
 
         #[test]
-        fn depacketize_object_datagram_not_normal() {
+        fn depacketize_datagram_object_not_normal() {
             let bytes_array = [
                 0, // Subscribe ID (i)
                 1, // Track Alias (i)
@@ -371,7 +368,8 @@ mod tests {
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf[..]);
-            let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur).unwrap();
+            let depacketized_datagram_object =
+                datagram::Object::depacketize(&mut read_cur).unwrap();
 
             let subscribe_id = 0;
             let track_alias = 1;
@@ -381,7 +379,7 @@ mod tests {
             let object_status = Some(ObjectStatus::DoesNotExist);
             let object_payload = vec![];
 
-            let expected_object_datagram = ObjectDatagram::new(
+            let expected_datagram_object = datagram::Object::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -392,7 +390,7 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(depacketized_object_datagram, expected_object_datagram);
+            assert_eq!(depacketized_datagram_object, expected_datagram_object);
         }
     }
 
@@ -400,12 +398,10 @@ mod tests {
         use bytes::BytesMut;
         use std::io::Cursor;
 
-        use crate::messages::data_streams::object_datagram::{
-            DataStreams, ObjectDatagram, ObjectStatus,
-        };
+        use crate::messages::data_streams::{datagram, object_status::ObjectStatus, DataStreams};
 
         #[test]
-        fn packetize_object_datagram_not_normal_and_not_empty_payload() {
+        fn packetize_datagram_object_not_normal_and_not_empty_payload() {
             let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
@@ -414,7 +410,7 @@ mod tests {
             let object_status = Some(ObjectStatus::EndOfTrackAndGroup);
             let object_payload = vec![0, 1, 2];
 
-            let object_datagram = ObjectDatagram::new(
+            let datagram_object = datagram::Object::new(
                 subscribe_id,
                 track_alias,
                 group_id,
@@ -424,11 +420,11 @@ mod tests {
                 object_payload,
             );
 
-            assert!(object_datagram.is_err());
+            assert!(datagram_object.is_err());
         }
 
         #[test]
-        fn depacketize_object_datagram_wrong_object_status() {
+        fn depacketize_datagram_object_wrong_object_status() {
             let bytes_array = [
                 0, // Subscribe ID (i)
                 1, // Track Alias (i)
@@ -441,9 +437,9 @@ mod tests {
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf[..]);
-            let depacketized_object_datagram = ObjectDatagram::depacketize(&mut read_cur);
+            let depacketized_datagram_object = datagram::Object::depacketize(&mut read_cur);
 
-            assert!(depacketized_object_datagram.is_err());
+            assert!(depacketized_datagram_object.is_err());
         }
     }
 }

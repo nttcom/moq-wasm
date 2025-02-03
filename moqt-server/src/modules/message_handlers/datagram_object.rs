@@ -5,7 +5,7 @@ use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
 use moqt_core::{
     data_stream_type::DataStreamType,
-    messages::data_streams::{object_datagram::ObjectDatagram, DataStreams},
+    messages::data_streams::{datagram, DataStreams},
     variable_integer::read_variable_integer,
 };
 use std::io::Cursor;
@@ -13,8 +13,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[derive(Debug, PartialEq)]
-pub enum ObjectDatagramProcessResult {
-    Success(ObjectDatagram),
+pub enum DatagramObjectProcessResult {
+    Success(datagram::Object),
     Continue,
     Failure(TerminationErrorCode, String),
 }
@@ -34,13 +34,13 @@ fn read_data_stream_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataSt
 pub(crate) async fn try_read_object(
     buf: &mut BytesMut,
     client: Arc<Mutex<MOQTClient>>,
-) -> ObjectDatagramProcessResult {
+) -> DatagramObjectProcessResult {
     let payload_length = buf.len();
     tracing::trace!("try to read datagram object {}", payload_length);
 
     // Check if the data is exist
     if payload_length == 0 {
-        return ObjectDatagramProcessResult::Continue;
+        return DatagramObjectProcessResult::Continue;
     }
 
     // check subscription and judge if it is invalid timing
@@ -48,7 +48,7 @@ pub(crate) async fn try_read_object(
     if client_status != MOQTClientStatus::SetUp {
         let message = String::from("Invalid timing");
         tracing::error!(message);
-        return ObjectDatagramProcessResult::Failure(
+        return DatagramObjectProcessResult::Failure(
             TerminationErrorCode::ProtocolViolation,
             message,
         );
@@ -62,7 +62,7 @@ pub(crate) async fn try_read_object(
         Err(err) => {
             buf.advance(read_cur.position() as usize);
 
-            return ObjectDatagramProcessResult::Failure(
+            return DatagramObjectProcessResult::Failure(
                 TerminationErrorCode::ProtocolViolation,
                 err.to_string(),
             );
@@ -70,9 +70,9 @@ pub(crate) async fn try_read_object(
     };
 
     let result = match data_stream_type {
-        DataStreamType::ObjectDatagram => ObjectDatagram::depacketize(&mut read_cur),
+        DataStreamType::ObjectDatagram => datagram::Object::depacketize(&mut read_cur),
         _ => {
-            return ObjectDatagramProcessResult::Failure(
+            return DatagramObjectProcessResult::Failure(
                 TerminationErrorCode::ProtocolViolation,
                 format!("Invalid message type: {:?}", data_stream_type),
             );
@@ -81,13 +81,13 @@ pub(crate) async fn try_read_object(
     match result {
         Ok(object) => {
             buf.advance(read_cur.position() as usize);
-            ObjectDatagramProcessResult::Success(object)
+            DatagramObjectProcessResult::Success(object)
         }
         Err(err) => {
             tracing::warn!("{:#?}", err);
             // Reset the cursor position because data for an object has not yet arrived
             read_cur.set_position(0);
-            ObjectDatagramProcessResult::Continue
+            DatagramObjectProcessResult::Continue
         }
     }
 }
@@ -96,14 +96,14 @@ pub(crate) async fn try_read_object(
 mod tests {
     mod success {
         use crate::modules::{
-            message_handlers::object_datagram::{try_read_object, ObjectDatagramProcessResult},
+            message_handlers::datagram_object::{try_read_object, DatagramObjectProcessResult},
             moqt_client::{MOQTClient, MOQTClientStatus},
             server_processes::senders,
         };
         use bytes::BytesMut;
         use moqt_core::{
             data_stream_type::DataStreamType,
-            messages::data_streams::{object_datagram::ObjectDatagram, DataStreams},
+            messages::data_streams::{datagram, DataStreams},
             variable_integer::write_variable_integer,
         };
         use std::{io::Cursor, sync::Arc};
@@ -137,9 +137,12 @@ mod tests {
             let mut buf_without_type = BytesMut::with_capacity(bytes_array.len());
             buf_without_type.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf_without_type[..]);
-            let object = ObjectDatagram::depacketize(&mut read_cur).unwrap();
+            let datagram_object = datagram::Object::depacketize(&mut read_cur).unwrap();
 
-            assert_eq!(result, ObjectDatagramProcessResult::Success(object));
+            assert_eq!(
+                result,
+                DatagramObjectProcessResult::Success(datagram_object)
+            );
         }
 
         #[tokio::test]
@@ -167,7 +170,7 @@ mod tests {
 
             let result = try_read_object(&mut buf, client).await;
 
-            assert_eq!(result, ObjectDatagramProcessResult::Continue);
+            assert_eq!(result, DatagramObjectProcessResult::Continue);
         }
 
         #[tokio::test]
@@ -191,7 +194,7 @@ mod tests {
 
             let result = try_read_object(&mut buf, client).await;
 
-            assert_eq!(result, ObjectDatagramProcessResult::Continue);
+            assert_eq!(result, DatagramObjectProcessResult::Continue);
         }
     }
 }

@@ -2,15 +2,12 @@ use crate::constants::TerminationErrorCode;
 use bytes::{Buf, BytesMut};
 use moqt_core::{
     data_stream_type::DataStreamType,
-    messages::data_streams::{
-        object_stream_subgroup::ObjectStreamSubgroup, object_stream_track::ObjectStreamTrack,
-        DataStreams,
-    },
+    messages::data_streams::{subgroup_stream, track_stream, DataStreams},
 };
 use std::io::Cursor;
 
 #[derive(Debug, PartialEq)]
-pub enum ObjectStreamProcessResult {
+pub enum StreamObjectProcessResult {
     Success(StreamObject),
     Continue,
     Failure(TerminationErrorCode, String),
@@ -18,32 +15,32 @@ pub enum ObjectStreamProcessResult {
 
 #[derive(Debug, PartialEq)]
 pub enum StreamObject {
-    Track(ObjectStreamTrack),
-    Subgroup(ObjectStreamSubgroup),
+    Track(track_stream::Object),
+    Subgroup(subgroup_stream::Object),
 }
 
 pub async fn try_read_object(
     buf: &mut BytesMut,
     data_stream_type: DataStreamType,
-) -> ObjectStreamProcessResult {
+) -> StreamObjectProcessResult {
     let payload_length = buf.len();
-    tracing::trace!("object_stream_handler! {}", payload_length);
+    tracing::trace!("stream_object_handler! {}", payload_length);
 
     // Check if the data is exist
     if payload_length == 0 {
-        return ObjectStreamProcessResult::Continue;
+        return StreamObjectProcessResult::Continue;
     }
 
     let mut read_cur = Cursor::new(&buf[..]);
     let result = match data_stream_type {
         DataStreamType::StreamHeaderTrack => {
-            ObjectStreamTrack::depacketize(&mut read_cur).map(StreamObject::Track)
+            track_stream::Object::depacketize(&mut read_cur).map(StreamObject::Track)
         }
         DataStreamType::StreamHeaderSubgroup => {
-            ObjectStreamSubgroup::depacketize(&mut read_cur).map(StreamObject::Subgroup)
+            subgroup_stream::Object::depacketize(&mut read_cur).map(StreamObject::Subgroup)
         }
         unknown => {
-            return ObjectStreamProcessResult::Failure(
+            return StreamObjectProcessResult::Failure(
                 TerminationErrorCode::ProtocolViolation,
                 format!("Unknown message type: {:?}", unknown),
             );
@@ -53,13 +50,13 @@ pub async fn try_read_object(
     match result {
         Ok(stream_object) => {
             buf.advance(read_cur.position() as usize);
-            ObjectStreamProcessResult::Success(stream_object)
+            StreamObjectProcessResult::Success(stream_object)
         }
         Err(err) => {
             tracing::warn!("{:#?}", err);
             // Reset the cursor position because data for an object has not yet arrived
             read_cur.set_position(0);
-            ObjectStreamProcessResult::Continue
+            StreamObjectProcessResult::Continue
         }
     }
 }
@@ -67,16 +64,13 @@ pub async fn try_read_object(
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::message_handlers::object_stream::{
-            try_read_object, ObjectStreamProcessResult, StreamObject,
+        use crate::modules::message_handlers::stream_object::{
+            try_read_object, StreamObject, StreamObjectProcessResult,
         };
         use bytes::BytesMut;
         use moqt_core::{
             data_stream_type::DataStreamType,
-            messages::data_streams::{
-                object_stream_subgroup::ObjectStreamSubgroup,
-                object_stream_track::ObjectStreamTrack, DataStreams,
-            },
+            messages::data_streams::{subgroup_stream, track_stream, DataStreams},
         };
         use std::io::Cursor;
 
@@ -96,11 +90,11 @@ mod tests {
             let result = try_read_object(&mut buf, data_stream_type).await;
 
             let mut read_cur = Cursor::new(&buf_clone[..]);
-            let object = ObjectStreamTrack::depacketize(&mut read_cur).unwrap();
+            let object = track_stream::Object::depacketize(&mut read_cur).unwrap();
 
             assert_eq!(
                 result,
-                ObjectStreamProcessResult::Success(StreamObject::Track(object))
+                StreamObjectProcessResult::Success(StreamObject::Track(object))
             );
         }
 
@@ -119,11 +113,11 @@ mod tests {
             let result = try_read_object(&mut buf, data_stream_type).await;
 
             let mut read_cur = Cursor::new(&buf_clone[..]);
-            let object = ObjectStreamSubgroup::depacketize(&mut read_cur).unwrap();
+            let object = subgroup_stream::Object::depacketize(&mut read_cur).unwrap();
 
             assert_eq!(
                 result,
-                ObjectStreamProcessResult::Success(StreamObject::Subgroup(object))
+                StreamObjectProcessResult::Success(StreamObject::Subgroup(object))
             );
         }
 
@@ -141,7 +135,7 @@ mod tests {
 
             let result = try_read_object(&mut buf, data_stream_type).await;
 
-            assert_eq!(result, ObjectStreamProcessResult::Continue);
+            assert_eq!(result, StreamObjectProcessResult::Continue);
         }
 
         #[tokio::test]
@@ -157,7 +151,7 @@ mod tests {
 
             let result = try_read_object(&mut buf, data_stream_type).await;
 
-            assert_eq!(result, ObjectStreamProcessResult::Continue);
+            assert_eq!(result, StreamObjectProcessResult::Continue);
         }
 
         #[tokio::test]
@@ -172,7 +166,7 @@ mod tests {
 
             let result = try_read_object(&mut buf, data_stream_type).await;
 
-            assert_eq!(result, ObjectStreamProcessResult::Continue);
+            assert_eq!(result, StreamObjectProcessResult::Continue);
         }
 
         #[tokio::test]
@@ -186,7 +180,7 @@ mod tests {
 
             let result = try_read_object(&mut buf, data_stream_type).await;
 
-            assert_eq!(result, ObjectStreamProcessResult::Continue);
+            assert_eq!(result, StreamObjectProcessResult::Continue);
         }
     }
 }

@@ -3,10 +3,10 @@ use super::{
         bi_stream::BiStream, handler::handle_control_stream, sender::send_control_stream,
     },
     data_streams::{
-        datagram::{forwarder::ObjectDatagramForwarder, receiver::ObjectDatagramReceiver},
+        datagram::{forwarder::DatagramObjectForwarder, receiver::DatagramObjectReceiver},
         stream::{
-            forwarder::ObjectStreamForwarder,
-            receiver::ObjectStreamReceiver,
+            forwarder::StreamObjectForwarder,
+            receiver::StreamObjectReceiver,
             uni_stream::{UniRecvStream, UniSendStream},
         },
     },
@@ -92,7 +92,7 @@ async fn spawn_control_stream_threads(
     Ok(())
 }
 
-async fn spawn_object_stream_receiver_thread(
+async fn spawn_stream_object_receiver_thread(
     client: Arc<Mutex<MOQTClient>>,
     recv_stream: RecvStream,
 ) -> Result<()> {
@@ -107,11 +107,11 @@ async fn spawn_object_stream_receiver_thread(
         async move {
             let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
             let senders = client.lock().await.senders();
-            let mut object_stream_receiver = ObjectStreamReceiver::init(stream, client)
+            let mut stream_object_receiver = StreamObjectReceiver::init(stream, client)
                 .instrument(session_span.clone())
                 .await;
 
-            match object_stream_receiver
+            match stream_object_receiver
                 .start()
                 .instrument(session_span.clone())
                 .await
@@ -127,7 +127,7 @@ async fn spawn_object_stream_receiver_thread(
                 }
             }
 
-            let _ = object_stream_receiver
+            let _ = stream_object_receiver
                 .finish()
                 .instrument(session_span)
                 .await;
@@ -137,7 +137,7 @@ async fn spawn_object_stream_receiver_thread(
     Ok(())
 }
 
-async fn spawn_object_stream_forwarder_thread(
+async fn spawn_stream_object_forwarder_thread(
     client: Arc<Mutex<MOQTClient>>,
     send_stream: SendStream,
     subscribe_id: u64,
@@ -158,13 +158,13 @@ async fn spawn_object_stream_forwarder_thread(
             let stream = UniSendStream::new(stable_id, stream_id, send_stream);
             let senders = client.lock().await.senders();
 
-            let mut object_stream_forwarder =
-                ObjectStreamForwarder::init(stream, subscribe_id, client, data_stream_type)
+            let mut stream_object_forwarder =
+                StreamObjectForwarder::init(stream, subscribe_id, client, data_stream_type)
                     .instrument(session_span.clone())
                     .await
                     .unwrap();
 
-            match object_stream_forwarder
+            match stream_object_forwarder
                 .start()
                 .instrument(session_span.clone())
                 .await
@@ -172,7 +172,7 @@ async fn spawn_object_stream_forwarder_thread(
                 Ok(_) => {}
                 Err(e) => {
                     let code = TerminationErrorCode::InternalError;
-                    let reason = format!("ObjectStreamForwarder: {:?}", e);
+                    let reason = format!("StreamObjectForwarder: {:?}", e);
 
                     tracing::error!(reason);
 
@@ -183,7 +183,7 @@ async fn spawn_object_stream_forwarder_thread(
                 }
             }
 
-            let _ = object_stream_forwarder
+            let _ = stream_object_forwarder
                 .finish()
                 .instrument(session_span)
                 .await;
@@ -193,7 +193,7 @@ async fn spawn_object_stream_forwarder_thread(
     Ok(())
 }
 
-async fn spawn_object_datagram_receiver_thread(
+async fn spawn_datagram_object_receiver_thread(
     client: Arc<Mutex<MOQTClient>>,
     datagram: Datagram,
 ) -> Result<()> {
@@ -207,11 +207,11 @@ async fn spawn_object_datagram_receiver_thread(
     tokio::spawn(
         async move {
             let senders = client.lock().await.senders();
-            let mut object_datagram_receiver = ObjectDatagramReceiver::init(client)
+            let mut datagram_object_receiver = DatagramObjectReceiver::init(client)
                 .instrument(session_span.clone())
                 .await;
 
-            match object_datagram_receiver
+            match datagram_object_receiver
                 .receive_object(datagram)
                 .instrument(session_span)
                 .await
@@ -232,7 +232,7 @@ async fn spawn_object_datagram_receiver_thread(
     Ok(())
 }
 
-async fn spawn_object_datagram_forwarder_thread(
+async fn spawn_datagram_object_forwarder_thread(
     client: Arc<Mutex<MOQTClient>>,
     session: Arc<Connection>,
     subscribe_id: u64,
@@ -246,13 +246,13 @@ async fn spawn_object_datagram_forwarder_thread(
     tokio::spawn(
         async move {
             let senders = client.lock().await.senders();
-            let mut object_datagram_forwarder =
-                ObjectDatagramForwarder::init(session, subscribe_id, client)
+            let mut datagram_object_forwarder =
+                DatagramObjectForwarder::init(session, subscribe_id, client)
                     .instrument(session_span.clone())
                     .await
                     .unwrap();
 
-            match object_datagram_forwarder
+            match datagram_object_forwarder
                 .start()
                 .instrument(session_span.clone())
                 .await
@@ -260,7 +260,7 @@ async fn spawn_object_datagram_forwarder_thread(
                 Ok(_) => {}
                 Err(e) => {
                     let code = TerminationErrorCode::InternalError;
-                    let reason = format!("ObjectDatagramForwarder: {:?}", e);
+                    let reason = format!("DatagramObjectForwarder: {:?}", e);
 
                     tracing::error!(reason);
 
@@ -271,7 +271,7 @@ async fn spawn_object_datagram_forwarder_thread(
                 }
             }
 
-            let _ = object_datagram_forwarder
+            let _ = datagram_object_forwarder
                 .finish()
                 .instrument(session_span)
                 .await;
@@ -297,22 +297,22 @@ pub(crate) async fn select_spawn_thread(
         },
         stream = session.accept_uni() => {
             let recv_stream = stream?;
-            spawn_object_stream_receiver_thread(client.clone(), recv_stream).await?;
+            spawn_stream_object_receiver_thread(client.clone(), recv_stream).await?;
         },
         datagram = session.receive_datagram() => {
             let datagram = datagram?;
-            spawn_object_datagram_receiver_thread(client.clone(), datagram).await?;
+            spawn_datagram_object_receiver_thread(client.clone(), datagram).await?;
         },
         // Waiting for requests to open a new data stream thread
         Some((subscribe_id, data_stream_type)) = open_downstream_stream_or_datagram_rx.recv() => {
             match data_stream_type {
                 DataStreamType::StreamHeaderTrack | DataStreamType::StreamHeaderSubgroup => {
                     let send_stream = session.open_uni().await?.await?;
-                    spawn_object_stream_forwarder_thread(client.clone(), send_stream, subscribe_id, data_stream_type).await?;
+                    spawn_stream_object_forwarder_thread(client.clone(), send_stream, subscribe_id, data_stream_type).await?;
                 }
                 DataStreamType::ObjectDatagram => {
                     let session = session.clone();
-                    spawn_object_datagram_forwarder_thread(client.clone(), session, subscribe_id).await?;
+                    spawn_datagram_object_forwarder_thread(client.clone(), session, subscribe_id).await?;
 
                 }
             }

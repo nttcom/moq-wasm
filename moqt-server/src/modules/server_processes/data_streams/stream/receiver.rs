@@ -1,5 +1,5 @@
 use self::{
-    object_cache_storage::CacheKey, object_stream::StreamObject, stream_header::StreamHeader,
+    object_cache_storage::CacheKey, stream_header::StreamHeader, stream_object::StreamObject,
 };
 
 use super::uni_stream::UniRecvStream;
@@ -7,8 +7,8 @@ use crate::{
     modules::{
         buffer_manager::{request_buffer, BufferCommand},
         message_handlers::{
-            object_stream::{self, ObjectStreamProcessResult},
             stream_header::{self, StreamHeaderProcessResult},
+            stream_object::{self, StreamObjectProcessResult},
         },
         moqt_client::MOQTClient,
         object_cache_storage::{self, ObjectCacheStorageWrapper},
@@ -30,7 +30,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{self};
 
-pub(crate) struct ObjectStreamReceiver {
+pub(crate) struct StreamObjectReceiver {
     stream: UniRecvStream,
     buf: Arc<Mutex<BytesMut>>,
     senders: Arc<Senders>,
@@ -41,7 +41,7 @@ pub(crate) struct ObjectStreamReceiver {
     upstream_subscription: Option<Subscription>,
 }
 
-impl ObjectStreamReceiver {
+impl StreamObjectReceiver {
     pub(crate) async fn init(stream: UniRecvStream, client: Arc<Mutex<MOQTClient>>) -> Self {
         let senders = client.lock().await.senders();
         let stable_id = stream.stable_id();
@@ -50,7 +50,7 @@ impl ObjectStreamReceiver {
         // TODO: Set the accurate duration
         let duration = 100000;
 
-        ObjectStreamReceiver {
+        StreamObjectReceiver {
             stream,
             buf,
             senders,
@@ -107,7 +107,7 @@ impl ObjectStreamReceiver {
             })
             .await?;
 
-        tracing::debug!("ObjectStreamReceiver finished");
+        tracing::debug!("StreamObjectReceiver finished");
 
         Ok(())
     }
@@ -439,20 +439,20 @@ impl ObjectStreamReceiver {
         let result = self.try_read_object_from_buf().await;
 
         match result {
-            ObjectStreamProcessResult::Success(stream_object) => Ok(Some(stream_object)),
-            ObjectStreamProcessResult::Continue => Ok(None),
-            ObjectStreamProcessResult::Failure(code, reason) => {
-                let msg = std::format!("object_stream_read failure: {:?}", reason);
+            StreamObjectProcessResult::Success(stream_object) => Ok(Some(stream_object)),
+            StreamObjectProcessResult::Continue => Ok(None),
+            StreamObjectProcessResult::Failure(code, reason) => {
+                let msg = std::format!("stream_object_read failure: {:?}", reason);
                 Err((code, msg))
             }
         }
     }
 
-    async fn try_read_object_from_buf(&self) -> ObjectStreamProcessResult {
+    async fn try_read_object_from_buf(&self) -> StreamObjectProcessResult {
         let mut buf = self.buf.lock().await;
         let data_stream_type = self.data_stream_type.unwrap();
 
-        object_stream::try_read_object(&mut buf, data_stream_type).await
+        stream_object::try_read_object(&mut buf, data_stream_type).await
     }
 
     async fn store_object(
@@ -490,13 +490,13 @@ impl ObjectStreamReceiver {
         subgroup_group_id: &Option<u64>,
     ) -> bool {
         let (group_id, object_id) = match object {
-            StreamObject::Track(object_stream_track) => (
-                object_stream_track.group_id(),
-                object_stream_track.object_id(),
+            StreamObject::Track(track_stream_object) => (
+                track_stream_object.group_id(),
+                track_stream_object.object_id(),
             ),
-            StreamObject::Subgroup(object_stream_subgroup) => (
+            StreamObject::Subgroup(subgroup_stream_object) => (
                 subgroup_group_id.unwrap(),
-                object_stream_subgroup.object_id(),
+                subgroup_stream_object.object_id(),
             ),
         };
 
@@ -513,15 +513,15 @@ impl ObjectStreamReceiver {
     // TODO: Add handling for FIN message
     fn is_data_stream_ended(&self, stream_object: &StreamObject) -> bool {
         match stream_object {
-            StreamObject::Track(object_stream_track) => {
+            StreamObject::Track(track_stream_object) => {
                 matches!(
-                    object_stream_track.object_status(),
+                    track_stream_object.object_status(),
                     Some(ObjectStatus::EndOfTrackAndGroup)
                 )
             }
-            StreamObject::Subgroup(object_stream_subgroup) => {
+            StreamObject::Subgroup(subgroup_stream_object) => {
                 matches!(
-                    object_stream_subgroup.object_status(),
+                    subgroup_stream_object.object_status(),
                     Some(ObjectStatus::EndOfSubgroup)
                         | Some(ObjectStatus::EndOfGroup)
                         | Some(ObjectStatus::EndOfTrackAndGroup)
