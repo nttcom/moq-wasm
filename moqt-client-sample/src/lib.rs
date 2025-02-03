@@ -1652,7 +1652,7 @@ impl SubscriptionNode {
                 }
             }
 
-            match producer.is_subscribe_id_valid(subscribe_message.subscribe_id()) {
+            match producer.is_subscribe_id_unique(subscribe_message.subscribe_id()) {
                 true => {}
                 false => {
                     let error_code = SubscribeErrorCode::InvalidRange;
@@ -1660,7 +1660,15 @@ impl SubscriptionNode {
                 }
             }
 
-            match producer.is_track_alias_valid(subscribe_message.track_alias()) {
+            match producer.is_subscribe_id_less_than_max(subscribe_message.subscribe_id()) {
+                true => {}
+                false => {
+                    let error_code = SubscribeErrorCode::InvalidRange;
+                    return Err(anyhow::anyhow!(u8::from(error_code)));
+                }
+            }
+
+            match producer.is_track_alias_unique(subscribe_message.track_alias()) {
                 true => {}
                 false => {
                     let error_code = SubscribeErrorCode::RetryTrackAlias;

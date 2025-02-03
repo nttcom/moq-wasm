@@ -175,26 +175,25 @@ impl SubscriptionNodeRegistry for Producer {
         Ok((end_group, end_object))
     }
 
-    fn is_subscribe_id_valid(&self, subscribe_id: SubscribeId) -> bool {
-        let is_less_than_max_subscribe_id = subscribe_id < self.max_subscriber_id;
-        let is_unique = !self.subscriptions.contains_key(&subscribe_id);
-
-        is_less_than_max_subscribe_id && is_unique
+    fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool {
+        !self.subscriptions.contains_key(&subscribe_id)
     }
 
-    fn is_track_alias_valid(&self, track_alias: TrackAlias) -> bool {
-        let is_unique = !self
+    fn is_subscribe_id_less_than_max(&self, subscribe_id: SubscribeId) -> bool {
+        subscribe_id < self.max_subscriber_id
+    }
+
+    fn is_track_alias_unique(&self, track_alias: TrackAlias) -> bool {
+        !self
             .subscriptions
             .values()
-            .any(|subscription| subscription.get_track_alias() == track_alias);
-
-        is_unique
+            .any(|subscription| subscription.get_track_alias() == track_alias)
     }
 
     fn create_valid_track_alias(&self) -> Result<TrackAlias> {
         let mut track_alias = 0;
 
-        while !self.is_track_alias_valid(track_alias) {
+        while !self.is_track_alias_unique(track_alias) {
             track_alias += 1;
         }
 
@@ -735,7 +734,7 @@ mod success {
     }
 
     #[test]
-    fn is_subscribe_id_valid() {
+    fn is_subscribe_id_unique() {
         let subscribe_id = 0;
         let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
@@ -755,14 +754,51 @@ mod success {
 
         let result = variables
             .producer
-            .is_subscribe_id_valid(variables.subscribe_id);
+            .is_subscribe_id_unique(variables.subscribe_id + 1);
+
+        assert!(result);
+
+        let result = variables
+            .producer
+            .is_subscribe_id_unique(variables.subscribe_id);
 
         assert!(!result);
     }
 
     #[test]
-    fn is_track_alias_valid() {
-        let track_alias = 100;
+    fn is_subscribe_id_less_than_max() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let result = variables
+            .producer
+            .is_subscribe_id_less_than_max(variables.subscribe_id);
+
+        assert!(result);
+
+        let result = variables
+            .producer
+            .is_subscribe_id_less_than_max(variables.subscribe_id + 10);
+
+        assert!(!result);
+    }
+
+    #[test]
+    fn is_track_alias_unique() {
         let mut variables = test_helper_fn::common_subscription_variable(0);
 
         let _ = variables.producer.set_subscription(
@@ -779,9 +815,17 @@ mod success {
             variables.end_object,
         );
 
-        let result = variables.producer.is_track_alias_valid(track_alias);
+        let result = variables
+            .producer
+            .is_track_alias_unique(variables.track_alias + 1);
 
         assert!(result);
+
+        let result = variables
+            .producer
+            .is_track_alias_unique(variables.track_alias);
+
+        assert!(!result);
     }
 
     #[test]

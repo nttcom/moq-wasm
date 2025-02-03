@@ -53,8 +53,9 @@ pub trait SubscriptionNodeRegistry {
     fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
     fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
 
-    fn is_subscribe_id_valid(&self, subscribe_id: SubscribeId) -> bool;
-    fn is_track_alias_valid(&self, track_alias: TrackAlias) -> bool;
+    fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool;
+    fn is_subscribe_id_less_than_max(&self, subscribe_id: SubscribeId) -> bool;
+    fn is_track_alias_unique(&self, track_alias: TrackAlias) -> bool;
     fn create_valid_track_alias(&self) -> Result<TrackAlias>;
     fn create_latest_subscribe_id_and_track_alias(&self) -> Result<(SubscribeId, TrackAlias)>;
 
