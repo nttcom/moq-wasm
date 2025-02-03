@@ -35,21 +35,31 @@ pub(crate) async fn subscribe_handler(
 
     // TODO: validate Unauthorized
 
+    let downstream_subscribe_id = subscribe_message.subscribe_id();
+    let downstream_session_id = client.id();
     if !pubsub_relation_manager_repository
-        .is_valid_downstream_subscribe_id(subscribe_message.subscribe_id(), client.id())
+        .is_downstream_subscribe_id_unique(downstream_subscribe_id, downstream_session_id)
         .await?
+        || !pubsub_relation_manager_repository
+            .is_downstream_subscribe_id_less_than_max(
+                downstream_subscribe_id,
+                downstream_session_id,
+            )
+            .await?
     {
         // TODO: return TerminationErrorCode
         bail!("TooManySubscribers");
     }
+
+    let downstream_track_alias = subscribe_message.track_alias();
     if !pubsub_relation_manager_repository
-        .is_valid_downstream_track_alias(subscribe_message.track_alias(), client.id())
+        .is_downstream_track_alias_unique(downstream_track_alias, downstream_session_id)
         .await?
     {
         // TODO: create accurate track alias
         let reason_phrase = "Invalid Track Alias".to_string();
         let subscribe_error = SubscribeError::new(
-            subscribe_message.subscribe_id(),
+            downstream_subscribe_id,
             SubscribeErrorCode::RetryTrackAlias,
             reason_phrase,
             100, // track alias
@@ -61,7 +71,7 @@ pub(crate) async fn subscribe_handler(
 
     // TODO: validate Invalid Range
 
-    // If the track exists, return ther track as it is
+    // If the track already exists, return the track as it is
     if pubsub_relation_manager_repository
         .is_track_existing(
             subscribe_message.track_namespace().to_vec(),
