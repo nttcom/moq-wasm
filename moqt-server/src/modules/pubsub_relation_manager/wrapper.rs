@@ -130,13 +130,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             Err(err) => bail!(err),
         }
     }
-    async fn is_valid_downstream_subscribe_id(
+    async fn is_downstream_subscribe_id_unique(
         &self,
         subscribe_id: u64,
         downstream_session_id: usize,
     ) -> Result<bool> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<bool>>();
-        let cmd = PubSubRelationCommand::IsValidDownstreamSubscribeId {
+        let cmd = PubSubRelationCommand::IsDownstreamSubscribeIdUnique {
             subscribe_id,
             downstream_session_id,
             resp: resp_tx,
@@ -146,17 +146,37 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         let result = resp_rx.await.unwrap();
 
         match result {
-            Ok(is_valid) => Ok(is_valid),
+            Ok(is_unique) => Ok(is_unique),
             Err(err) => bail!(err),
         }
     }
-    async fn is_valid_downstream_track_alias(
+    async fn is_downstream_subscribe_id_less_than_max(
+        &self,
+        subscribe_id: u64,
+        downstream_session_id: usize,
+    ) -> Result<bool> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<bool>>();
+        let cmd = PubSubRelationCommand::IsDownstreamSubscribeIdLessThanMax {
+            subscribe_id,
+            downstream_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(is_less) => Ok(is_less),
+            Err(err) => bail!(err),
+        }
+    }
+    async fn is_downstream_track_alias_unique(
         &self,
         track_alias: u64,
         downstream_session_id: usize,
     ) -> Result<bool> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<bool>>();
-        let cmd = PubSubRelationCommand::IsValidDownstreamTrackAlias {
+        let cmd = PubSubRelationCommand::IsDownstreamTrackAliasUnique {
             track_alias,
             downstream_session_id,
             resp: resp_tx,
@@ -166,7 +186,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         let result = resp_rx.await.unwrap();
 
         match result {
-            Ok(is_valid) => Ok(is_valid),
+            Ok(is_unique) => Ok(is_unique),
             Err(err) => bail!(err),
         }
     }
@@ -881,7 +901,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn is_valid_downstream_subscribe_id_valid() {
+    async fn is_downstream_subscribe_id_unique_true() {
         let max_subscribe_id = 10;
         let subscribe_id = 1;
         let downstream_session_id = 1;
@@ -896,61 +916,15 @@ mod success {
             .await;
 
         let result = pubsub_relation_manager
-            .is_valid_downstream_subscribe_id(subscribe_id, downstream_session_id)
+            .is_downstream_subscribe_id_unique(subscribe_id, downstream_session_id)
             .await;
 
-        let is_valid = result.unwrap();
-        assert!(is_valid);
+        let is_unique = result.unwrap();
+        assert!(is_unique);
     }
 
     #[tokio::test]
-    async fn is_valid_downstream_subscribe_id_invalid() {
-        let max_subscribe_id = 10;
-        let subscribe_id = 11;
-        let downstream_session_id = 1;
-
-        // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
-        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
-
-        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
-        let _ = pubsub_relation_manager
-            .setup_subscriber(max_subscribe_id, downstream_session_id)
-            .await;
-
-        let result = pubsub_relation_manager
-            .is_valid_downstream_subscribe_id(subscribe_id, downstream_session_id)
-            .await;
-
-        let is_valid = result.unwrap();
-        assert!(!is_valid);
-    }
-
-    #[tokio::test]
-    async fn is_valid_downstream_track_alias_valid() {
-        let max_subscribe_id = 10;
-        let track_alias = 1;
-        let downstream_session_id = 1;
-
-        // Start track management thread
-        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
-        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
-
-        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
-        let _ = pubsub_relation_manager
-            .setup_subscriber(max_subscribe_id, downstream_session_id)
-            .await;
-
-        let result = pubsub_relation_manager
-            .is_valid_downstream_track_alias(track_alias, downstream_session_id)
-            .await;
-
-        let is_valid = result.unwrap();
-        assert!(is_valid);
-    }
-
-    #[tokio::test]
-    async fn is_valid_downstream_track_alias_invalid() {
+    async fn is_downstream_subscribe_id_unique_false() {
         let max_subscribe_id = 10;
         let downstream_session_id = 1;
         let subscribe_id = 0;
@@ -991,12 +965,130 @@ mod success {
             .await;
 
         let result = pubsub_relation_manager
-            .is_valid_downstream_track_alias(track_alias, downstream_session_id)
+            .is_downstream_subscribe_id_unique(subscribe_id, downstream_session_id)
+            .await;
+
+        let is_unique = result.unwrap();
+        assert!(!is_unique);
+    }
+
+    #[tokio::test]
+    async fn is_downstream_subscribe_id_less_than_max_true() {
+        let max_subscribe_id = 10;
+        let subscribe_id = 1;
+        let downstream_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+
+        let result = pubsub_relation_manager
+            .is_downstream_subscribe_id_less_than_max(subscribe_id, downstream_session_id)
+            .await;
+
+        let is_less = result.unwrap();
+        assert!(is_less);
+    }
+
+    #[tokio::test]
+    async fn is_downstream_subscribe_id_less_than_max_false() {
+        let max_subscribe_id = 10;
+        let subscribe_id = 11;
+        let downstream_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+
+        let result = pubsub_relation_manager
+            .is_downstream_subscribe_id_less_than_max(subscribe_id, downstream_session_id)
+            .await;
+
+        let is_less = result.unwrap();
+        assert!(!is_less);
+    }
+
+    #[tokio::test]
+    async fn is_downstream_track_alias_unique_true() {
+        let max_subscribe_id = 10;
+        let track_alias = 1;
+        let downstream_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+
+        let result = pubsub_relation_manager
+            .is_downstream_track_alias_unique(track_alias, downstream_session_id)
+            .await;
+
+        let is_unique = result.unwrap();
+        assert!(is_unique);
+    }
+
+    #[tokio::test]
+    async fn is_unique_downstream_track_alias_false() {
+        let max_subscribe_id = 10;
+        let downstream_session_id = 1;
+        let subscribe_id = 0;
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_downstream_subscription(
+                downstream_session_id,
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+
+        let result = pubsub_relation_manager
+            .is_downstream_track_alias_unique(track_alias, downstream_session_id)
             .await;
         assert!(result.is_ok());
 
-        let is_valid = result.unwrap();
-        assert!(!is_valid);
+        let is_unique = result.unwrap();
+        assert!(!is_unique);
     }
 
     #[tokio::test]
@@ -2899,7 +2991,7 @@ mod failure {
     }
 
     #[tokio::test]
-    async fn is_valid_downstream_subscribe_id_subscriber_not_found() {
+    async fn is_downstream_subscribe_id_subscriber_unique_not_found() {
         let max_subscribe_id = 10;
         let downstream_session_id = 1;
         let downstream_subscribe_id = 0;
@@ -2915,7 +3007,7 @@ mod failure {
             .await;
 
         let result = pubsub_relation_manager
-            .is_valid_downstream_subscribe_id(
+            .is_downstream_subscribe_id_unique(
                 downstream_subscribe_id,
                 invalid_downstream_session_id,
             )
@@ -2925,7 +3017,33 @@ mod failure {
     }
 
     #[tokio::test]
-    async fn is_valid_downstream_track_alias_subscriber_not_found() {
+    async fn is_downstream_subscribe_id_subscriber_less_than_max_not_found() {
+        let max_subscribe_id = 10;
+        let downstream_session_id = 1;
+        let downstream_subscribe_id = 0;
+        let invalid_downstream_session_id = 2;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+
+        let result = pubsub_relation_manager
+            .is_downstream_subscribe_id_less_than_max(
+                downstream_subscribe_id,
+                invalid_downstream_session_id,
+            )
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn is_downstream_track_alias_unique_subscriber_not_found() {
         let max_subscribe_id = 10;
         let downstream_session_id = 1;
         let downstream_track_alias = 0;
@@ -2941,7 +3059,7 @@ mod failure {
             .await;
 
         let result = pubsub_relation_manager
-            .is_valid_downstream_track_alias(downstream_track_alias, invalid_downstream_session_id)
+            .is_downstream_track_alias_unique(downstream_track_alias, invalid_downstream_session_id)
             .await;
 
         assert!(result.is_err());
