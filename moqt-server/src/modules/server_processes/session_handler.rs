@@ -27,8 +27,7 @@ pub(crate) struct SessionHandler {
     session: Arc<Connection>,
     client: Arc<Mutex<MOQTClient>>,
     close_session_rx: mpsc::Receiver<(u64, String)>,
-    open_downstream_stream_or_datagram_rx:
-        mpsc::Receiver<(u64, DataStreamType, Option<SubgroupStreamId>)>,
+    start_forwarder_rx: mpsc::Receiver<(u64, DataStreamType, Option<SubgroupStreamId>)>,
 }
 
 impl SessionHandler {
@@ -62,13 +61,13 @@ impl SessionHandler {
         );
 
         // For opening a new data stream
-        let (open_downstream_stream_or_datagram_tx, open_downstream_stream_or_datagram_rx) =
+        let (start_forwarder_tx, start_forwarder_rx) =
             mpsc::channel::<(u64, DataStreamType, Option<SubgroupStreamId>)>(32);
         senders
-            .open_downstream_stream_or_datagram_txes()
+            .start_forwarder_txes()
             .lock()
             .await
-            .insert(stable_id, open_downstream_stream_or_datagram_tx);
+            .insert(stable_id, start_forwarder_tx);
 
         let client = Arc::new(Mutex::new(MOQTClient::new(stable_id, senders)));
         let session = Arc::new(session);
@@ -77,7 +76,7 @@ impl SessionHandler {
             session,
             client,
             close_session_rx,
-            open_downstream_stream_or_datagram_rx,
+            start_forwarder_rx,
         };
 
         Ok(session_handler)
@@ -90,7 +89,7 @@ impl SessionHandler {
             match select_spawn_thread(
                 &self.client,
                 self.session.clone(),
-                &mut self.open_downstream_stream_or_datagram_rx,
+                &mut self.start_forwarder_rx,
                 &mut self.close_session_rx,
                 &mut is_control_stream_opened,
             )
