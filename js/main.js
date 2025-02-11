@@ -4,9 +4,11 @@ import init, { MOQTClient } from './pkg/moqt_client_sample'
 init().then(async () => {
   console.log('init wasm-pack')
 
-  let headerSend = false
+  let trackHeaderSent = false
+  const subgroupHeaderSent = new Set()
   let objectId = 0n
   let mutableGroupId = 0n
+  let mutableSubgroupId = 0n
 
   const connectBtn = document.getElementById('connectBtn')
   connectBtn.addEventListener('click', async () => {
@@ -99,6 +101,7 @@ init().then(async () => {
 
     const objectIdElement = document.getElementById('objectId')
     const mutableGroupIdElement = document.getElementById('mutableGroupId')
+    const mutableSubgroupIdElement = document.getElementById('mutableSubgroupId')
 
     const sendSetupBtn = document.getElementById('sendSetupBtn')
     sendSetupBtn.addEventListener('click', async () => {
@@ -195,9 +198,9 @@ init().then(async () => {
       const objectPayloadArray = new TextEncoder().encode(objectPayloadString)
 
       // send header if it is the first time
-      if (!headerSend) {
+      if (!trackHeaderSent) {
         await client.sendTrackStreamHeaderMessage(BigInt(subscribeId), BigInt(trackAlias), publisherPriority)
-        headerSend = true
+        trackHeaderSent = true
       }
 
       await client.sendTrackStreamObject(BigInt(subscribeId), mutableGroupId, objectId++, objectPayloadArray)
@@ -208,38 +211,44 @@ init().then(async () => {
     sendSubgroupObjectBtn.addEventListener('click', async () => {
       console.log('send subgroup stream object btn clicked')
       const subscribeId = form['object-subscribe-id'].value
-      const groupId = form['subgroup-group-id'].value
-      const subgroupId = form['subgroup-id'].value
       const trackAlias = form['object-track-alias'].value
       const publisherPriority = form['publisher-priority'].value
       const objectPayloadString = form['object-payload'].value
 
       // encode the text to the object array
       const objectPayloadArray = new TextEncoder().encode(objectPayloadString)
+      const key = `${mutableGroupId}:${mutableSubgroupId}`
 
       // send header if it is the first time
-      if (!headerSend) {
+      if (!subgroupHeaderSent.has(key)) {
         await client.sendSubgroupStreamHeaderMessage(
           BigInt(subscribeId),
           BigInt(trackAlias),
-          BigInt(groupId),
-          BigInt(subgroupId),
+          mutableGroupId,
+          mutableSubgroupId,
           publisherPriority
         )
-        headerSend = true
+        subgroupHeaderSent.add(key)
       }
 
-      await client.sendSubgroupStreamObject(subscribeId, objectId++, objectPayloadArray)
+      await client.sendSubgroupStreamObject(
+        subscribeId,
+        mutableGroupId,
+        mutableSubgroupId,
+        objectId++,
+        objectPayloadArray
+      )
       objectIdElement.textContent = objectId
     })
 
     const ascendMutableGroupId = document.getElementById('ascendMutableGroupIdBtn')
     ascendMutableGroupId.addEventListener('click', async () => {
       mutableGroupId++
+      mutableSubgroupId = 0n
       objectId = 0n
       console.log('ascend mutableGroupId', mutableGroupId)
-
       mutableGroupIdElement.textContent = mutableGroupId
+      mutableSubgroupIdElement.textContent = mutableSubgroupId
       objectIdElement.textContent = objectId
     })
 
@@ -249,9 +258,32 @@ init().then(async () => {
         return
       }
       mutableGroupId--
+      mutableSubgroupId = 0n
       objectId = 0n
       console.log('descend mutableGroupId', mutableGroupId)
       mutableGroupIdElement.textContent = mutableGroupId
+      mutableSubgroupIdElement.textContent = mutableSubgroupId
+      objectIdElement.textContent = objectId
+    })
+
+    const ascendMutableSubgroupId = document.getElementById('ascendMutableSubgroupIdBtn')
+    ascendMutableSubgroupId.addEventListener('click', async () => {
+      mutableSubgroupId++
+      objectId = 0n
+      console.log('ascend mutableSubgroupId', mutableSubgroupId)
+      mutableSubgroupIdElement.textContent = mutableSubgroupId
+      objectIdElement.textContent = objectId
+    })
+
+    const descendMutableSubroupId = document.getElementById('descendMutableSubgroupIdBtn')
+    descendMutableSubroupId.addEventListener('click', async () => {
+      if (mutableSubgroupId === 0n) {
+        return
+      }
+      mutableSubgroupId--
+      objectId = 0n
+      console.log('descend mutableSubgroupId', mutableSubgroupId)
+      mutableSubgroupIdElement.textContent = mutableSubgroupId
       objectIdElement.textContent = objectId
     })
 

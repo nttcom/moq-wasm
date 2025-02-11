@@ -87,9 +87,15 @@
           <label>Track Alias: <input type="text" name="object-track-alias" id="" value="0" /> </label>
           <br />
           <div id="subgroupHeaderContents" style="display: none;">
-            <label>Group ID: <input type="text" name="subgroup-group-id" id="" value="0" /> </label>
+            Group ID: <p id="mutableGroupId">0</p>
             <br />
-            <label>Subgroup ID: <input type="text" name="subgroup-id" id="" value="0" /> </label>
+            <button type="button" id="descendMutableGroupIdBtn">&lt;</button>
+            <button type="button" id="ascendMutableGroupIdBtn">&gt;</button>
+            <br />
+            Subgroup ID: <p id="mutableSubgroupId">0</p>
+            <br />
+            <button type="button" id="descendMutableSubgroupIdBtn">&lt;</button>
+            <button type="button" id="ascendMutableSubgroupIdBtn">&gt;</button>
             <br />
           </div>
           <label>Publisher Priority: <input type="text" name="publisher-priority" id="" value="0" /> </label>

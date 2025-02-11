@@ -68,6 +68,15 @@ fn main() {
 }
 
 #[cfg(web_sys_unstable_apis)]
+type SubscribeId = u64;
+#[cfg(web_sys_unstable_apis)]
+type GroupId = u64;
+#[cfg(web_sys_unstable_apis)]
+type SubgroupId = u64;
+#[cfg(web_sys_unstable_apis)]
+type WriterKey = (SubscribeId, Option<(GroupId, SubgroupId)>);
+
+#[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 pub struct MOQTClient {
     pub id: u64,
@@ -76,7 +85,7 @@ pub struct MOQTClient {
     transport: Rc<RefCell<Option<web_sys::WebTransport>>>,
     control_stream_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
     datagram_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
-    stream_writers: Rc<RefCell<HashMap<u64, web_sys::WritableStreamDefaultWriter>>>,
+    stream_writers: Rc<RefCell<HashMap<WriterKey, web_sys::WritableStreamDefaultWriter>>>,
     callbacks: Rc<RefCell<MOQTCallbacks>>,
 }
 
@@ -557,7 +566,7 @@ impl MOQTClient {
                                 .get_writer()?;
                             *self.datagram_writer.borrow_mut() = Some(datagram_writer);
                         }
-                        "track" | "subgroup" => {
+                        "track" => {
                             let send_uni_stream = web_sys::WritableStream::from(
                                 JsFuture::from(
                                     self.transport
@@ -570,9 +579,13 @@ impl MOQTClient {
                             );
                             let send_uni_stream_writer = send_uni_stream.get_writer()?;
 
+                            let writer_key = (subscribe_id, None);
                             self.stream_writers
                                 .borrow_mut()
-                                .insert(subscribe_id, send_uni_stream_writer);
+                                .insert(writer_key, send_uni_stream_writer);
+                        }
+                        "subgroup" => {
+                            // Writer will be generated when sending in a new Subgroup Stream
                         }
                         _ => {}
                     }
@@ -780,7 +793,8 @@ impl MOQTClient {
         publisher_priority: u8,
     ) -> Result<JsValue, JsValue> {
         let stream_writers = self.stream_writers.borrow();
-        if let Some(writer) = stream_writers.get(&subscribe_id) {
+        let writer_key = (subscribe_id, None);
+        if let Some(writer) = stream_writers.get(&writer_key) {
             let track_stream_header_message =
                 track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap();
             let mut track_stream_header_message_buf = BytesMut::new();
@@ -820,7 +834,8 @@ impl MOQTClient {
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
         let stream_writers = self.stream_writers.borrow();
-        if let Some(writer) = stream_writers.get(&subscribe_id) {
+        let writer_key = (subscribe_id, None);
+        if let Some(writer) = stream_writers.get(&writer_key) {
             let track_stream_object =
                 track_stream::Object::new(group_id, object_id, None, object_payload).unwrap();
             let mut track_stream_object_buf = BytesMut::new();
@@ -856,44 +871,59 @@ impl MOQTClient {
         subgroup_id: u64,
         publisher_priority: u8,
     ) -> Result<JsValue, JsValue> {
-        let stream_writers = self.stream_writers.borrow();
-        if let Some(writer) = stream_writers.get(&subscribe_id) {
-            let subgroup_stream_header_message = subgroup_stream::Header::new(
-                subscribe_id,
-                track_alias,
-                group_id,
-                subgroup_id,
-                publisher_priority,
-            )
-            .unwrap();
-            let mut subgroup_stream_header_message_buf = BytesMut::new();
-            let _ =
-                subgroup_stream_header_message.packetize(&mut subgroup_stream_header_message_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(DataStreamType::StreamHeaderSubgroup) as u64,
-            ));
-            buf.extend(subgroup_stream_header_message_buf);
-
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-            JsFuture::from(writer.write_with_chunk(&buffer)).await
-        } else {
-            return Err(JsValue::from_str("stream_writer is None"));
+        let mut stream_writers = self.stream_writers.borrow_mut();
+        let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
+        if stream_writers.get(&writer_key).is_none() {
+            let send_uni_stream = web_sys::WritableStream::from(
+                JsFuture::from(
+                    self.transport
+                        .borrow()
+                        .as_ref()
+                        .unwrap()
+                        .create_unidirectional_stream(),
+                )
+                .await?,
+            );
+            let send_uni_stream_writer = send_uni_stream.get_writer()?;
+            stream_writers.insert(writer_key, send_uni_stream_writer);
         }
+
+        let writer = stream_writers.get(&writer_key).unwrap();
+        let subgroup_stream_header_message = subgroup_stream::Header::new(
+            subscribe_id,
+            track_alias,
+            group_id,
+            subgroup_id,
+            publisher_priority,
+        )
+        .unwrap();
+        let mut subgroup_stream_header_message_buf = BytesMut::new();
+        let _ = subgroup_stream_header_message.packetize(&mut subgroup_stream_header_message_buf);
+
+        let mut buf = Vec::new();
+        // Message Type
+        buf.extend(write_variable_integer(
+            u8::from(DataStreamType::StreamHeaderSubgroup) as u64,
+        ));
+        buf.extend(subgroup_stream_header_message_buf);
+
+        let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+        buffer.copy_from(&buf);
+        JsFuture::from(writer.write_with_chunk(&buffer)).await
     }
 
     #[wasm_bindgen(js_name = sendSubgroupStreamObject)]
     pub async fn send_subgroup_stream_object(
         &self,
         subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
         object_id: u64,
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
         let stream_writers = self.stream_writers.borrow();
-        if let Some(writer) = stream_writers.get(&subscribe_id) {
+        let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
+        if let Some(writer) = stream_writers.get(&writer_key) {
             let subgroup_stream_object =
                 subgroup_stream::Object::new(object_id, None, object_payload).unwrap();
             let mut subgroup_stream_object_buf = BytesMut::new();

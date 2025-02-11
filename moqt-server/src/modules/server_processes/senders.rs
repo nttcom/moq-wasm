@@ -1,6 +1,6 @@
 use crate::{
     modules::{
-        buffer_manager::BufferCommand, object_cache_storage::ObjectCacheStorageCommand,
+        buffer_manager::BufferCommand, object_cache_storage::commands::ObjectCacheStorageCommand,
         pubsub_relation_manager::commands::PubSubRelationCommand,
         send_stream_dispatcher::SendStreamDispatchCommand,
     },

@@ -30,7 +30,7 @@ pub(crate) async fn handle_control_stream(
     let mut send_stream_dispatcher = SendStreamDispatcher::new(senders.send_stream_tx().clone());
 
     let mut object_cache_storage =
-        crate::modules::object_cache_storage::ObjectCacheStorageWrapper::new(
+        crate::modules::object_cache_storage::wrapper::ObjectCacheStorageWrapper::new(
             senders.object_cache_tx().clone(),
         );
 
