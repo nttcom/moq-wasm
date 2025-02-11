@@ -319,12 +319,21 @@ async fn open_new_subscription(
                 .send((downstream_subscribe_id, data_stream_type, None))
                 .await;
         }
+
+        // If SUBSCRIBE message does not handle past objects, it is only necessary to open forwarders for subgroups of the current group
         ForwardingPreference::Subgroup => {
             let data_stream_type = DataStreamType::StreamHeaderSubgroup;
             let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
             let group_id = object_cache_storage
                 .get_largest_group_id(&cache_key)
                 .await?;
+
+            let start_group = subscribe_message.start_group();
+            if start_group.is_some() && start_group.unwrap() > group_id {
+                // If the start_group is larger than the largest group_id, there is no need to open forwarders
+                // because these will be opend by the receivers in the future
+                return Ok(());
+            }
 
             let subgroup_ids = object_cache_storage
                 .get_all_subgroup_ids(&cache_key, group_id)
