@@ -67,9 +67,13 @@ fn main() {
     utils::set_panic_hook();
 }
 
+#[cfg(web_sys_unstable_apis)]
 type SubscribeId = u64;
+#[cfg(web_sys_unstable_apis)]
 type GroupId = u64;
+#[cfg(web_sys_unstable_apis)]
 type SubgroupId = u64;
+#[cfg(web_sys_unstable_apis)]
 type WriterKey = (SubscribeId, Option<(GroupId, SubgroupId)>);
 
 #[cfg(web_sys_unstable_apis)]

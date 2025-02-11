@@ -7,7 +7,10 @@ use crate::{
             stream_object::{self, StreamObject, StreamObjectProcessResult},
         },
         moqt_client::MOQTClient,
-        object_cache_storage::{CacheKey, ObjectCacheStorageWrapper, SubgroupStreamId},
+        object_cache_storage::{
+            cache::{CacheKey, SubgroupStreamId},
+            wrapper::ObjectCacheStorageWrapper,
+        },
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         server_processes::senders::Senders,
     },

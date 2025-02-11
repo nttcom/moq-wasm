@@ -8,7 +8,9 @@ pub use modules::config::MOQTConfig;
 use modules::{
     buffer_manager::{buffer_manager, BufferCommand},
     logging::init_logging,
-    object_cache_storage::{object_cache_storage, ObjectCacheStorageCommand, SubgroupStreamId},
+    object_cache_storage::{
+        cache::SubgroupStreamId, commands::ObjectCacheStorageCommand, storage::object_cache_storage,
+    },
     pubsub_relation_manager::{commands::PubSubRelationCommand, manager::pubsub_relation_manager},
     send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
     server_processes::{

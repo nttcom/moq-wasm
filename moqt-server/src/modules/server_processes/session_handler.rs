@@ -3,7 +3,7 @@ use crate::{
     modules::{
         buffer_manager::BufferCommand,
         moqt_client::MOQTClient,
-        object_cache_storage::ObjectCacheStorageWrapper,
+        object_cache_storage::wrapper::ObjectCacheStorageWrapper,
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         send_stream_dispatcher::SendStreamDispatchCommand,
         server_processes::{

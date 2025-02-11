@@ -1,7 +1,7 @@
 use crate::modules::{
     buffer_manager::BufferCommand,
     moqt_client::MOQTClient,
-    object_cache_storage::{CacheKey, ObjectCacheStorageWrapper},
+    object_cache_storage::{cache::CacheKey, wrapper::ObjectCacheStorageWrapper},
     pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
     server_processes::senders::Senders,
 };

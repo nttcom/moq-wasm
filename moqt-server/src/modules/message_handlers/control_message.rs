@@ -18,7 +18,7 @@ use crate::modules::{
         },
     },
     moqt_client::MOQTClientStatus,
-    object_cache_storage::ObjectCacheStorageWrapper,
+    object_cache_storage::wrapper::ObjectCacheStorageWrapper,
 };
 use crate::SenderToOpenSubscription;
 use anyhow::{bail, Result};
@@ -352,7 +352,8 @@ pub(crate) mod test_helper_fn {
         message_handlers::control_message::{control_message_handler, MessageProcessResult},
         moqt_client::{MOQTClient, MOQTClientStatus},
         object_cache_storage::{
-            object_cache_storage, ObjectCacheStorageCommand, ObjectCacheStorageWrapper,
+            commands::ObjectCacheStorageCommand, storage::object_cache_storage,
+            wrapper::ObjectCacheStorageWrapper,
         },
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,

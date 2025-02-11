@@ -3,7 +3,7 @@ use crate::{
         buffer_manager::request_buffer,
         message_handlers::datagram_object::{self, DatagramObjectProcessResult},
         moqt_client::MOQTClient,
-        object_cache_storage::{self, ObjectCacheStorageWrapper},
+        object_cache_storage::{cache::CacheKey, wrapper::ObjectCacheStorageWrapper},
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         server_processes::senders::Senders,
     },
@@ -20,8 +20,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{self};
 use wtransport::datagram::Datagram;
-
-use self::object_cache_storage::CacheKey;
 
 pub(crate) struct DatagramObjectReceiver {
     buf: Arc<Mutex<BytesMut>>,

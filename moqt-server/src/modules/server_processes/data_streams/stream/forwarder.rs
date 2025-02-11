@@ -4,7 +4,7 @@ use crate::{
         buffer_manager::BufferCommand,
         message_handlers::{stream_header::StreamHeader, stream_object::StreamObject},
         moqt_client::MOQTClient,
-        object_cache_storage::{CacheKey, ObjectCacheStorageWrapper},
+        object_cache_storage::{cache::CacheKey, wrapper::ObjectCacheStorageWrapper},
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         server_processes::senders::Senders,
     },

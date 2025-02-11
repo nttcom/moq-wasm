@@ -1,8 +1,7 @@
-use self::object_cache_storage::CacheKey;
 use crate::{
     modules::{
         moqt_client::MOQTClient,
-        object_cache_storage::{self, ObjectCacheStorageWrapper},
+        object_cache_storage::{cache::CacheKey, wrapper::ObjectCacheStorageWrapper},
     },
     SenderToOpenSubscription,
 };
@@ -548,8 +547,8 @@ mod success {
         modules::{
             moqt_client::MOQTClient,
             object_cache_storage::{
-                object_cache_storage, CacheKey, ObjectCacheStorageCommand,
-                ObjectCacheStorageWrapper,
+                cache::CacheKey, commands::ObjectCacheStorageCommand,
+                storage::object_cache_storage, wrapper::ObjectCacheStorageWrapper,
             },
             pubsub_relation_manager::{
                 commands::PubSubRelationCommand,
@@ -1038,7 +1037,8 @@ mod failure {
     use crate::modules::{
         moqt_client::MOQTClient,
         object_cache_storage::{
-            object_cache_storage, ObjectCacheStorageCommand, ObjectCacheStorageWrapper,
+            commands::ObjectCacheStorageCommand, storage::object_cache_storage,
+            wrapper::ObjectCacheStorageWrapper,
         },
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
