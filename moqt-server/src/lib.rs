@@ -8,7 +8,9 @@ pub use modules::config::MOQTConfig;
 use modules::{
     buffer_manager::{buffer_manager, BufferCommand},
     logging::init_logging,
-    object_cache_storage::{object_cache_storage, ObjectCacheStorageCommand},
+    object_cache_storage::{
+        cache::SubgroupStreamId, commands::ObjectCacheStorageCommand, storage::object_cache_storage,
+    },
     pubsub_relation_manager::{commands::PubSubRelationCommand, manager::pubsub_relation_manager},
     send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
     server_processes::{
@@ -23,7 +25,8 @@ use moqt_core::{
 };
 
 type SubscribeId = u64;
-pub(crate) type SenderToOpenSubscription = Sender<(SubscribeId, DataStreamType)>;
+pub(crate) type SenderToOpenSubscription =
+    Sender<(SubscribeId, DataStreamType, Option<SubgroupStreamId>)>;
 pub(crate) type TerminationError = (TerminationErrorCode, String);
 
 pub struct MOQTServer {

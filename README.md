@@ -28,10 +28,10 @@ Supported version: draft-ietf-moq-transport-06
   - [ ] TRACK_STATUS
   - [x] SUBSCRIBE_NAMESPACE_OK
   - [x] SUBSCRIBE_NAMESPACE_ERROR
-- [ ] Data Streams
+- [x] Data Streams
   - [x] Datagram
   - [x] Track Stream
-  - [ ] Subgroup Stream
+  - [x] Subgroup Stream
 - [ ] Features
   - [x] Manage Publisher / Subscriber
   - [x] Forword Messages

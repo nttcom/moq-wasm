@@ -11,7 +11,10 @@ use super::{
         },
     },
 };
-use crate::modules::{moqt_client::MOQTClient, send_stream_dispatcher::SendStreamDispatchCommand};
+use crate::{
+    modules::{moqt_client::MOQTClient, send_stream_dispatcher::SendStreamDispatchCommand},
+    SubgroupStreamId,
+};
 use anyhow::{bail, Result};
 use moqt_core::{
     constants::{StreamDirection, TerminationErrorCode},
@@ -142,6 +145,7 @@ async fn spawn_stream_object_forwarder_thread(
     send_stream: SendStream,
     subscribe_id: u64,
     data_stream_type: DataStreamType,
+    subgroup_stream_id: Option<SubgroupStreamId>,
 ) -> Result<()> {
     let stable_id = client.lock().await.id();
     let session_span = tracing::info_span!("Session", stable_id);
@@ -158,11 +162,16 @@ async fn spawn_stream_object_forwarder_thread(
             let stream = UniSendStream::new(stable_id, stream_id, send_stream);
             let senders = client.lock().await.senders();
 
-            let mut stream_object_forwarder =
-                StreamObjectForwarder::init(stream, subscribe_id, client, data_stream_type)
-                    .instrument(session_span.clone())
-                    .await
-                    .unwrap();
+            let mut stream_object_forwarder = StreamObjectForwarder::init(
+                stream,
+                subscribe_id,
+                client,
+                data_stream_type,
+                subgroup_stream_id,
+            )
+            .instrument(session_span.clone())
+            .await
+            .unwrap();
 
             match stream_object_forwarder
                 .start()
@@ -285,7 +294,11 @@ async fn spawn_datagram_object_forwarder_thread(
 pub(crate) async fn select_spawn_thread(
     client: &Arc<Mutex<MOQTClient>>,
     session: Arc<Connection>,
-    open_downstream_stream_or_datagram_rx: &mut mpsc::Receiver<(u64, DataStreamType)>,
+    open_downstream_stream_or_datagram_rx: &mut mpsc::Receiver<(
+        u64,
+        DataStreamType,
+        Option<SubgroupStreamId>,
+    )>,
     close_session_rx: &mut mpsc::Receiver<(u64, String)>,
     is_control_stream_opened: &mut bool, // TODO: separate it from arguments
 ) -> Result<()> {
@@ -304,11 +317,11 @@ pub(crate) async fn select_spawn_thread(
             spawn_datagram_object_receiver_thread(client.clone(), datagram).await?;
         },
         // Waiting for requests to open a new data stream thread
-        Some((subscribe_id, data_stream_type)) = open_downstream_stream_or_datagram_rx.recv() => {
+        Some((subscribe_id, data_stream_type, subgroup_stream_id)) = open_downstream_stream_or_datagram_rx.recv() => {
             match data_stream_type {
                 DataStreamType::StreamHeaderTrack | DataStreamType::StreamHeaderSubgroup => {
                     let send_stream = session.open_uni().await?.await?;
-                    spawn_stream_object_forwarder_thread(client.clone(), send_stream, subscribe_id, data_stream_type).await?;
+                    spawn_stream_object_forwarder_thread(client.clone(), send_stream, subscribe_id, data_stream_type, subgroup_stream_id).await?;
                 }
                 DataStreamType::ObjectDatagram => {
                     let session = session.clone();

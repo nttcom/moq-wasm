@@ -1,14 +1,17 @@
 use super::senders::{SenderToOtherConnectionThread, SendersToManagementThread};
-use crate::modules::{
-    buffer_manager::BufferCommand,
-    moqt_client::MOQTClient,
-    object_cache_storage::ObjectCacheStorageWrapper,
-    pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
-    send_stream_dispatcher::SendStreamDispatchCommand,
-    server_processes::{
-        senders::{SenderToSelf, Senders},
-        thread_starters::select_spawn_thread,
+use crate::{
+    modules::{
+        buffer_manager::BufferCommand,
+        moqt_client::MOQTClient,
+        object_cache_storage::wrapper::ObjectCacheStorageWrapper,
+        pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
+        send_stream_dispatcher::SendStreamDispatchCommand,
+        server_processes::{
+            senders::{SenderToSelf, Senders},
+            thread_starters::select_spawn_thread,
+        },
     },
+    SubgroupStreamId,
 };
 use anyhow::Result;
 use moqt_core::{
@@ -24,7 +27,8 @@ pub(crate) struct SessionHandler {
     session: Arc<Connection>,
     client: Arc<Mutex<MOQTClient>>,
     close_session_rx: mpsc::Receiver<(u64, String)>,
-    open_downstream_stream_or_datagram_rx: mpsc::Receiver<(u64, DataStreamType)>,
+    open_downstream_stream_or_datagram_rx:
+        mpsc::Receiver<(u64, DataStreamType, Option<SubgroupStreamId>)>,
 }
 
 impl SessionHandler {
@@ -59,7 +63,7 @@ impl SessionHandler {
 
         // For opening a new data stream
         let (open_downstream_stream_or_datagram_tx, open_downstream_stream_or_datagram_rx) =
-            mpsc::channel::<(u64, DataStreamType)>(32);
+            mpsc::channel::<(u64, DataStreamType, Option<SubgroupStreamId>)>(32);
         senders
             .open_downstream_stream_or_datagram_txes()
             .lock()
