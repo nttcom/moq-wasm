@@ -1,11 +1,14 @@
 use super::uni_stream::UniSendStream;
-use crate::modules::{
-    buffer_manager::BufferCommand,
-    message_handlers::{stream_header::StreamHeader, stream_object::StreamObject},
-    moqt_client::MOQTClient,
-    object_cache_storage::{self, CacheKey, ObjectCacheStorageWrapper},
-    pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
-    server_processes::senders::Senders,
+use crate::{
+    modules::{
+        buffer_manager::BufferCommand,
+        message_handlers::{stream_header::StreamHeader, stream_object::StreamObject},
+        moqt_client::MOQTClient,
+        object_cache_storage::{CacheKey, ObjectCacheStorageWrapper},
+        pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
+        server_processes::senders::Senders,
+    },
+    SubgroupStreamId,
 };
 use anyhow::{bail, Result};
 use bytes::BytesMut;
@@ -30,6 +33,7 @@ pub(crate) struct StreamObjectForwarder {
     downstream_subscription: Subscription,
     data_stream_type: DataStreamType,
     cache_key: CacheKey,
+    subgroup_stream_id: Option<SubgroupStreamId>,
     sleep_time: Duration,
 }
 
@@ -39,6 +43,7 @@ impl StreamObjectForwarder {
         downstream_subscribe_id: u64,
         client: Arc<Mutex<MOQTClient>>,
         data_stream_type: DataStreamType,
+        subgroup_stream_id: Option<SubgroupStreamId>,
     ) -> Result<Self> {
         let senders = client.lock().await.senders();
         let sleep_time = Duration::from_millis(10);
@@ -66,6 +71,7 @@ impl StreamObjectForwarder {
             downstream_subscription,
             data_stream_type,
             cache_key,
+            subgroup_stream_id,
             sleep_time,
         };
 
@@ -76,8 +82,6 @@ impl StreamObjectForwarder {
         let mut object_cache_storage =
             ObjectCacheStorageWrapper::new(self.senders.object_cache_tx().clone());
 
-        let mut subgroup_group_id: Option<u64> = None;
-
         let upstream_forwarding_preference = self.get_upstream_forwarding_preference().await?;
         self.validate_forwarding_preference(&upstream_forwarding_preference)
             .await?;
@@ -86,11 +90,9 @@ impl StreamObjectForwarder {
         self.set_forwarding_preference(downstream_forwarding_preference)
             .await?;
 
-        self.forward_header(&mut object_cache_storage, &mut subgroup_group_id)
-            .await?;
+        self.forward_header(&mut object_cache_storage).await?;
 
-        self.forward_objects(&mut object_cache_storage, &subgroup_group_id)
-            .await?;
+        self.forward_objects(&mut object_cache_storage).await?;
 
         Ok(())
     }
@@ -185,13 +187,10 @@ impl StreamObjectForwarder {
     async fn forward_header(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-        subgroup_group_id: &mut Option<u64>,
     ) -> Result<()> {
         let stream_header = self.get_header(object_cache_storage).await?;
 
-        let message_buf = self
-            .packetize_header(&stream_header, subgroup_group_id)
-            .await?;
+        let message_buf = self.packetize_header(&stream_header).await?;
 
         self.send(message_buf).await?;
 
@@ -202,15 +201,28 @@ impl StreamObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<StreamHeader> {
-        let header_cache = object_cache_storage.get_header(&self.cache_key).await;
+        match self.data_stream_type {
+            DataStreamType::StreamHeaderTrack => {
+                let track_stream_header = object_cache_storage
+                    .get_track_stream_header(&self.cache_key)
+                    .await?;
 
-        match header_cache {
-            Ok(object_cache_storage::Header::Track(header)) => Ok(StreamHeader::Track(header)),
-            Ok(object_cache_storage::Header::Subgroup(header)) => {
-                Ok(StreamHeader::Subgroup(header))
+                let header = StreamHeader::Track(track_stream_header);
+
+                Ok(header)
+            }
+            DataStreamType::StreamHeaderSubgroup => {
+                let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
+                let subgroup_stream_header = object_cache_storage
+                    .get_subgroup_stream_header(&self.cache_key, group_id, subgroup_id)
+                    .await?;
+
+                let header = StreamHeader::Subgroup(subgroup_stream_header);
+
+                Ok(header)
             }
             _ => {
-                let msg = "header cache not matched";
+                let msg = "data stream type is not StreamHeader";
                 bail!(msg)
             }
         }
@@ -219,14 +231,13 @@ impl StreamObjectForwarder {
     async fn forward_objects(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-        subgroup_group_id: &Option<u64>,
     ) -> Result<()> {
         let mut object_cache_id = None;
         let mut is_end = false;
 
         while !is_end {
             (object_cache_id, is_end) = self
-                .forward_object(object_cache_storage, object_cache_id, subgroup_group_id)
+                .forward_object(object_cache_storage, object_cache_id)
                 .await?;
         }
 
@@ -237,7 +248,6 @@ impl StreamObjectForwarder {
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         cache_id: Option<usize>,
-        subgroup_group_id: &Option<u64>,
     ) -> Result<(Option<usize>, bool)> {
         // Do loop until get an object from the cache storage
         loop {
@@ -254,7 +264,7 @@ impl StreamObjectForwarder {
             let message_buf = self.packetize_object(&stream_object).await?;
             self.send(message_buf).await?;
 
-            let is_end = self.is_subscription_ended(&stream_object, subgroup_group_id)
+            let is_end = self.is_subscription_ended(&stream_object)
                 || self.is_data_stream_ended(&stream_object);
 
             return Ok((Some(cache_id), is_end));
@@ -266,29 +276,13 @@ impl StreamObjectForwarder {
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         cache_id: Option<usize>,
     ) -> Result<Option<(usize, StreamObject)>> {
-        let cache = match cache_id {
+        match cache_id {
             // Try to get the first object according to Filter Type
-            None => self.try_get_first_object(object_cache_storage).await?,
+            None => self.try_get_first_object(object_cache_storage).await,
             Some(cache_id) => {
                 // Try to get the subsequent object with cache_id
                 self.try_get_subsequent_object(object_cache_storage, cache_id)
-                    .await?
-            }
-        };
-
-        match cache {
-            None => Ok(None),
-            Some((cache_id, object_cache_storage::Object::Track(object))) => {
-                let object = StreamObject::Track(object);
-                Ok(Some((cache_id, object)))
-            }
-            Some((cache_id, object_cache_storage::Object::Subgroup(object))) => {
-                let object = StreamObject::Subgroup(object);
-                Ok(Some((cache_id, object)))
-            }
-            _ => {
-                let msg = "object cache not matched";
-                bail!(msg)
+                    .await
             }
         }
     }
@@ -296,21 +290,67 @@ impl StreamObjectForwarder {
     async fn try_get_first_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<Option<(usize, object_cache_storage::Object)>> {
+    ) -> Result<Option<(usize, StreamObject)>> {
+        let stream_object_with_cache_id = match self.data_stream_type {
+            DataStreamType::StreamHeaderTrack => {
+                let track_stream_object_with_cache_id = self
+                    .try_get_first_track_stream_object(object_cache_storage)
+                    .await?;
+
+                if track_stream_object_with_cache_id.is_none() {
+                    None
+                } else {
+                    let (cache_id, object) = track_stream_object_with_cache_id.unwrap();
+                    let stream_object = StreamObject::Track(object);
+
+                    Some((cache_id, stream_object))
+                }
+            }
+            DataStreamType::StreamHeaderSubgroup => {
+                let subgroup_stream_object_with_cache_id = self
+                    .try_get_first_subgroup_stream_object(object_cache_storage)
+                    .await?;
+
+                if subgroup_stream_object_with_cache_id.is_none() {
+                    None
+                } else {
+                    let (cache_id, object) = subgroup_stream_object_with_cache_id.unwrap();
+                    let stream_object = StreamObject::Subgroup(object);
+
+                    Some((cache_id, stream_object))
+                }
+            }
+            _ => {
+                let msg = "data stream type is not StreamHeader";
+                bail!(msg)
+            }
+        };
+
+        Ok(stream_object_with_cache_id)
+    }
+
+    async fn try_get_first_track_stream_object(
+        &self,
+        object_cache_storage: &mut ObjectCacheStorageWrapper,
+    ) -> Result<Option<(usize, track_stream::Object)>> {
         let filter_type = self.downstream_subscription.get_filter_type();
 
         match filter_type {
-            FilterType::LatestGroup => object_cache_storage.get_latest_group(&self.cache_key).await,
+            FilterType::LatestGroup => {
+                object_cache_storage
+                    .get_latest_track_stream_group(&self.cache_key)
+                    .await
+            }
             FilterType::LatestObject => {
                 object_cache_storage
-                    .get_latest_object(&self.cache_key)
+                    .get_latest_track_stream_object(&self.cache_key)
                     .await
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
                 let (start_group, start_object) = self.downstream_subscription.get_absolute_start();
 
                 object_cache_storage
-                    .get_absolute_object(
+                    .get_absolute_track_stream_object(
                         &self.cache_key,
                         start_group.unwrap(),
                         start_object.unwrap(),
@@ -320,26 +360,107 @@ impl StreamObjectForwarder {
         }
     }
 
+    async fn try_get_first_subgroup_stream_object(
+        &self,
+        object_cache_storage: &mut ObjectCacheStorageWrapper,
+    ) -> Result<Option<(usize, subgroup_stream::Object)>> {
+        let filter_type = self.downstream_subscription.get_filter_type();
+        let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
+
+        match filter_type {
+            FilterType::LatestGroup => {
+                // Try to obtain the first object in the subgroup stream specified by the arguments.
+                // This operation is the same on the first stream and on subsequent streams.
+                object_cache_storage
+                    .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
+                    .await
+            }
+            // Currently not supported
+            FilterType::LatestObject => {
+                // Try to obtain the first object in the subgroup stream specified by the arguments.
+                // TODO: If it's on the first subgroup stream, it should get the latest object.
+                //       To distinguish the first stream, we need to modify downstream subscription.
+                //       (e.g. Implementation of FilterType::AbsoluteStart | FilterType::AbsoluteRange)
+                object_cache_storage
+                    .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
+                    .await
+            }
+            FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
+                let (start_group, start_object) = self.downstream_subscription.get_absolute_start();
+                let start_group = start_group.unwrap();
+                let start_object = start_object.unwrap();
+
+                if group_id == start_group {
+                    object_cache_storage
+                        .get_absolute_subgroup_stream_object(
+                            &self.cache_key,
+                            group_id,
+                            subgroup_id,
+                            start_object,
+                        )
+                        .await
+                } else {
+                    object_cache_storage
+                        .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
+                        .await
+                }
+            }
+        }
+    }
+
     async fn try_get_subsequent_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,
-    ) -> Result<Option<(usize, object_cache_storage::Object)>> {
-        object_cache_storage
-            .get_next_object(&self.cache_key, object_cache_id)
-            .await
+    ) -> Result<Option<(usize, StreamObject)>> {
+        let stream_object_with_cache_id = match self.data_stream_type {
+            DataStreamType::StreamHeaderTrack => {
+                let track_stream_object_with_cache_id = object_cache_storage
+                    .get_next_track_stream_object(&self.cache_key, object_cache_id)
+                    .await?;
+
+                if track_stream_object_with_cache_id.is_none() {
+                    None
+                } else {
+                    let (cache_id, object) = track_stream_object_with_cache_id.unwrap();
+                    let stream_object = StreamObject::Track(object);
+
+                    Some((cache_id, stream_object))
+                }
+            }
+            DataStreamType::StreamHeaderSubgroup => {
+                let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
+                let subgroup_stream_object_with_cache_id = object_cache_storage
+                    .get_next_subgroup_stream_object(
+                        &self.cache_key,
+                        group_id,
+                        subgroup_id,
+                        object_cache_id,
+                    )
+                    .await?;
+
+                if subgroup_stream_object_with_cache_id.is_none() {
+                    None
+                } else {
+                    let (cache_id, object) = subgroup_stream_object_with_cache_id.unwrap();
+                    let stream_object = StreamObject::Subgroup(object);
+
+                    Some((cache_id, stream_object))
+                }
+            }
+            _ => {
+                let msg = "data stream type is not StreamHeader";
+                bail!(msg)
+            }
+        };
+
+        Ok(stream_object_with_cache_id)
     }
 
-    async fn packetize_header(
-        &mut self,
-        stream_header: &StreamHeader,
-        subgroup_group_id: &mut Option<u64>,
-    ) -> Result<BytesMut> {
+    async fn packetize_header(&mut self, stream_header: &StreamHeader) -> Result<BytesMut> {
         let message_buf = match stream_header {
             StreamHeader::Track(header) => self.packetize_track_header(header),
-            StreamHeader::Subgroup(header) => {
-                self.packetize_subgroup_header(header, subgroup_group_id)
-            }
+            StreamHeader::Subgroup(header) => self.packetize_subgroup_header(header),
         };
 
         Ok(message_buf)
@@ -368,11 +489,7 @@ impl StreamObjectForwarder {
         message_buf
     }
 
-    fn packetize_subgroup_header(
-        &self,
-        header: &subgroup_stream::Header,
-        subgroup_group_id: &mut Option<u64>,
-    ) -> BytesMut {
+    fn packetize_subgroup_header(&self, header: &subgroup_stream::Header) -> BytesMut {
         let mut buf = BytesMut::new();
         let downstream_subscribe_id = self.downstream_subscribe_id;
         let downstream_track_alias = self.downstream_subscription.get_track_alias();
@@ -385,8 +502,6 @@ impl StreamObjectForwarder {
             header.publisher_priority(),
         )
         .unwrap();
-
-        *subgroup_group_id = Some(header.group_id());
 
         header.packetize(&mut buf);
 
@@ -422,18 +537,14 @@ impl StreamObjectForwarder {
         Ok(())
     }
 
-    fn is_subscription_ended(
-        &self,
-        stream_object: &StreamObject,
-        subgroup_group_id: &Option<u64>,
-    ) -> bool {
+    fn is_subscription_ended(&self, stream_object: &StreamObject) -> bool {
         let (group_id, object_id) = match stream_object {
             StreamObject::Track(track_stream_object) => (
                 track_stream_object.group_id(),
                 track_stream_object.object_id(),
             ),
             StreamObject::Subgroup(subgroup_stream_object) => (
-                subgroup_group_id.unwrap(),
+                self.subgroup_stream_id.unwrap().0,
                 subgroup_stream_object.object_id(),
             ),
         };

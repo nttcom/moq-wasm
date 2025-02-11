@@ -1,7 +1,7 @@
 use crate::modules::{
     buffer_manager::BufferCommand,
     moqt_client::MOQTClient,
-    object_cache_storage::{self, CacheKey, ObjectCacheStorageWrapper},
+    object_cache_storage::{CacheKey, ObjectCacheStorageWrapper},
     pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
     server_processes::senders::Senders,
 };
@@ -208,34 +208,32 @@ impl DatagramObjectForwarder {
 
         match cache {
             None => Ok(None),
-            Some((cache_id, object_cache_storage::Object::Datagram(object))) => {
-                Ok(Some((cache_id, object)))
-            }
-            _ => {
-                let msg = "object cache not matched";
-                bail!(msg)
-            }
+            Some(object_with_cache_id) => Ok(Some(object_with_cache_id)),
         }
     }
 
     async fn try_get_first_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<Option<(usize, object_cache_storage::Object)>> {
+    ) -> Result<Option<(usize, datagram::Object)>> {
         let filter_type = self.downstream_subscription.get_filter_type();
 
         match filter_type {
-            FilterType::LatestGroup => object_cache_storage.get_latest_group(&self.cache_key).await,
+            FilterType::LatestGroup => {
+                object_cache_storage
+                    .get_latest_datagram_group(&self.cache_key)
+                    .await
+            }
             FilterType::LatestObject => {
                 object_cache_storage
-                    .get_latest_object(&self.cache_key)
+                    .get_latest_datagram_object(&self.cache_key)
                     .await
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
                 let (start_group, start_object) = self.downstream_subscription.get_absolute_start();
 
                 object_cache_storage
-                    .get_absolute_object(
+                    .get_absolute_datagram_object(
                         &self.cache_key,
                         start_group.unwrap(),
                         start_object.unwrap(),
@@ -249,9 +247,9 @@ impl DatagramObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,
-    ) -> Result<Option<(usize, object_cache_storage::Object)>> {
+    ) -> Result<Option<(usize, datagram::Object)>> {
         object_cache_storage
-            .get_next_object(&self.cache_key, object_cache_id)
+            .get_next_datagram_object(&self.cache_key, object_cache_id)
             .await
     }
 

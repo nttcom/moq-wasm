@@ -123,9 +123,11 @@ impl DatagramObjectReceiver {
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<bool, TerminationError> {
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
-        match object_cache_storage.get_header(&cache_key).await {
-            Ok(object_cache_storage::Header::Datagram) => Ok(false),
-            Err(_) => Ok(true),
+        match object_cache_storage.exist_datagram_cache(&cache_key).await {
+            Ok(exist) => {
+                let is_first_object = !exist;
+                Ok(is_first_object)
+            }
             _ => {
                 let msg = "Unexpected header cache is already set".to_string();
                 let code = TerminationErrorCode::InternalError;
@@ -166,10 +168,7 @@ impl DatagramObjectReceiver {
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<(), TerminationError> {
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
-        match object_cache_storage
-            .set_subscription(&cache_key, object_cache_storage::Header::Datagram)
-            .await
-        {
+        match object_cache_storage.create_datagram_cache(&cache_key).await {
             Ok(_) => Ok(()),
             Err(err) => {
                 let msg = format!("Fail to create cache storage: {:?}", err);
@@ -187,11 +186,9 @@ impl DatagramObjectReceiver {
         upstream_subscribe_id: u64,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<(), TerminationError> {
-        let object_cache = object_cache_storage::Object::Datagram(datagram_object);
-
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
         match object_cache_storage
-            .set_object(&cache_key, object_cache, self.duration)
+            .set_datagram_object(&cache_key, datagram_object, self.duration)
             .await
         {
             Ok(_) => Ok(()),
@@ -258,7 +255,7 @@ impl DatagramObjectReceiver {
             .clone();
 
         open_subscription_tx
-            .send((downstream_subscribe_id, data_stream_type))
+            .send((downstream_subscribe_id, data_stream_type, None))
             .await?;
 
         Ok(())
