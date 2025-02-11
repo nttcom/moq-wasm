@@ -294,11 +294,7 @@ async fn spawn_datagram_object_forwarder_thread(
 pub(crate) async fn select_spawn_thread(
     client: &Arc<Mutex<MOQTClient>>,
     session: Arc<Connection>,
-    open_downstream_stream_or_datagram_rx: &mut mpsc::Receiver<(
-        u64,
-        DataStreamType,
-        Option<SubgroupStreamId>,
-    )>,
+    start_forwarder_rx: &mut mpsc::Receiver<(u64, DataStreamType, Option<SubgroupStreamId>)>,
     close_session_rx: &mut mpsc::Receiver<(u64, String)>,
     is_control_stream_opened: &mut bool, // TODO: separate it from arguments
 ) -> Result<()> {
@@ -317,7 +313,7 @@ pub(crate) async fn select_spawn_thread(
             spawn_datagram_object_receiver_thread(client.clone(), datagram).await?;
         },
         // Waiting for requests to open a new data stream thread
-        Some((subscribe_id, data_stream_type, subgroup_stream_id)) = open_downstream_stream_or_datagram_rx.recv() => {
+        Some((subscribe_id, data_stream_type, subgroup_stream_id)) = start_forwarder_rx.recv() => {
             match data_stream_type {
                 DataStreamType::StreamHeaderTrack | DataStreamType::StreamHeaderSubgroup => {
                     let send_stream = session.open_uni().await?.await?;

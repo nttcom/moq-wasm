@@ -84,13 +84,12 @@ impl MOQTServer {
             mpsc::channel::<ObjectCacheStorageCommand>(1024);
         tokio::spawn(async move { object_cache_storage(&mut object_cache_rx).await });
 
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         for id in 0.. {
             let sender_to_other_connection_thread =
-                SenderToOtherConnectionThread::new(open_downstream_stream_or_datagram_txes.clone());
+                SenderToOtherConnectionThread::new(start_forwarder_txes.clone());
             let senders_to_management_thread = SendersToManagementThread::new(
                 buffer_tx.clone(),
                 pubsub_relation_tx.clone(),
