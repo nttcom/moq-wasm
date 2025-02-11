@@ -100,7 +100,8 @@ init().then(async () => {
     })
 
     const objectIdElement = document.getElementById('objectId')
-    const mutableGroupIdElement = document.getElementById('mutableGroupId')
+    const mutableDatagramAndTrackGroupIdElement = document.getElementById('mutableDatagramAndTrackGroupId')
+    const mutableSubgroupGroupIdElement = document.getElementById('mutableSubgroupGroupId')
     const mutableSubgroupIdElement = document.getElementById('mutableSubgroupId')
 
     const sendSetupBtn = document.getElementById('sendSetupBtn')
@@ -241,19 +242,40 @@ init().then(async () => {
       objectIdElement.textContent = objectId
     })
 
-    const ascendMutableGroupId = document.getElementById('ascendMutableGroupIdBtn')
-    ascendMutableGroupId.addEventListener('click', async () => {
+    const ascendMutableDatagramAndTrackGroupId = document.getElementById('ascendMutableDatagramAndTrackGroupIdBtn')
+    ascendMutableDatagramAndTrackGroupId.addEventListener('click', async () => {
+      mutableGroupId++
+      objectId = 0n
+      console.log('ascend mutableGroupId', mutableGroupId)
+      mutableDatagramAndTrackGroupIdElement.textContent = mutableGroupId
+      objectIdElement.textContent = objectId
+    })
+
+    const descendMutableDatagramAndTrackGroupId = document.getElementById('descendMutableDatagramAndTrackGroupIdBtn')
+    descendMutableDatagramAndTrackGroupId.addEventListener('click', async () => {
+      if (mutableGroupId === 0n) {
+        return
+      }
+      mutableGroupId--
+      objectId = 0n
+      console.log('descend mutableGroupId', mutableGroupId)
+      mutableDatagramAndTrackGroupIdElement.textContent = mutableGroupId
+      objectIdElement.textContent = objectId
+    })
+
+    const ascendMutableSubgroupGroupId = document.getElementById('ascendMutableSubgroupGroupIdBtn')
+    ascendMutableSubgroupGroupId.addEventListener('click', async () => {
       mutableGroupId++
       mutableSubgroupId = 0n
       objectId = 0n
       console.log('ascend mutableGroupId', mutableGroupId)
-      mutableGroupIdElement.textContent = mutableGroupId
+      mutableSubgroupGroupIdElement.textContent = mutableGroupId
       mutableSubgroupIdElement.textContent = mutableSubgroupId
       objectIdElement.textContent = objectId
     })
 
-    const descendMutableGroupId = document.getElementById('descendMutableGroupIdBtn')
-    descendMutableGroupId.addEventListener('click', async () => {
+    const descendMutableSubgroupGroupId = document.getElementById('descendMutableSubgroupGroupIdBtn')
+    descendMutableSubgroupGroupId.addEventListener('click', async () => {
       if (mutableGroupId === 0n) {
         return
       }
@@ -261,7 +283,7 @@ init().then(async () => {
       mutableSubgroupId = 0n
       objectId = 0n
       console.log('descend mutableGroupId', mutableGroupId)
-      mutableGroupIdElement.textContent = mutableGroupId
+      mutableSubgroupGroupIdElement.textContent = mutableGroupId
       mutableSubgroupIdElement.textContent = mutableSubgroupId
       objectIdElement.textContent = objectId
     })
@@ -292,7 +314,7 @@ init().then(async () => {
 
   const forwardingPreference = document.querySelectorAll('input[name="forwarding-preference"]')
   const subgroupHeaderContents = document.getElementById('subgroupHeaderContents')
-  const notSubgroupObjectContents = document.getElementById('notSubgroupObjectContents')
+  const datagramAndTrackObjectContents = document.getElementById('datagramAndTrackObjectContents')
   const sendDatagramObject = document.getElementById('sendDatagramObject')
   const sendTrackObject = document.getElementById('sendTrackObject')
   const sendSubgroupObject = document.getElementById('sendSubgroupObject')
@@ -303,7 +325,7 @@ init().then(async () => {
   forwardingPreference.forEach((elem) => {
     elem.addEventListener('change', async () => {
       if (elem.value === 'datagram') {
-        notSubgroupObjectContents.style.display = 'block'
+        datagramAndTrackObjectContents.style.display = 'block'
         subgroupHeaderContents.style.display = 'none'
         sendDatagramObject.style.display = 'block'
         sendTrackObject.style.display = 'none'
@@ -311,7 +333,7 @@ init().then(async () => {
         headerField.style.display = 'none'
         objectField.style.display = 'none'
       } else if (elem.value === 'track') {
-        notSubgroupObjectContents.style.display = 'block'
+        datagramAndTrackObjectContents.style.display = 'block'
         subgroupHeaderContents.style.display = 'none'
         sendDatagramObject.style.display = 'none'
         sendTrackObject.style.display = 'block'
@@ -319,7 +341,7 @@ init().then(async () => {
         headerField.style.display = 'block'
         objectField.style.display = 'block'
       } else if (elem.value === 'subgroup') {
-        notSubgroupObjectContents.style.display = 'none'
+        datagramAndTrackObjectContents.style.display = 'none'
         subgroupHeaderContents.style.display = 'block'
         sendDatagramObject.style.display = 'none'
         sendTrackObject.style.display = 'none'
