@@ -55,7 +55,7 @@ pub(crate) async fn handle_control_stream(
                 &mut buf,
                 UnderlayType::WebTransport,
                 &mut client,
-                senders.open_downstream_stream_or_datagram_txes().clone(),
+                senders.start_forwarder_txes().clone(),
                 &mut pubsub_relation_manager,
                 &mut send_stream_dispatcher,
                 &mut object_cache_storage,

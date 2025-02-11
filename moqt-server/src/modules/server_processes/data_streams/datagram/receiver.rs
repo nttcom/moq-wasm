@@ -242,17 +242,17 @@ impl DatagramObjectReceiver {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
     ) -> Result<()> {
-        let open_subscription_txes = self.senders.open_downstream_stream_or_datagram_txes();
+        let start_forwarder_txes = self.senders.start_forwarder_txes();
         let data_stream_type = DataStreamType::ObjectDatagram;
 
-        let open_subscription_tx = open_subscription_txes
+        let start_forwarder_tx = start_forwarder_txes
             .lock()
             .await
             .get(&downstream_session_id)
             .unwrap()
             .clone();
 
-        open_subscription_tx
+        start_forwarder_tx
             .send((downstream_subscribe_id, data_stream_type, None))
             .await?;
 

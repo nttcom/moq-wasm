@@ -30,7 +30,7 @@ pub(crate) async fn subscribe_handler(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    open_downstream_stream_or_datagram_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
 ) -> Result<Option<SubscribeError>> {
     tracing::trace!("subscribe_handler start.");
 
@@ -148,10 +148,10 @@ pub(crate) async fn subscribe_handler(
             .await?;
 
         if subscribe_ok_message.content_exists() {
-            open_new_subscription(
+            start_new_forwarder(
                 pubsub_relation_manager_repository,
                 object_cache_storage,
-                open_downstream_stream_or_datagram_txes,
+                start_forwarder_txes,
                 client,
                 subscribe_message,
             )
@@ -269,10 +269,10 @@ pub(crate) async fn subscribe_handler(
     }
 }
 
-async fn open_new_subscription(
+async fn start_new_forwarder(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    open_downstream_stream_or_datagram_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     client: &MOQTClient,
     subscribe_message: Subscribe,
 ) -> Result<()> {
@@ -298,7 +298,7 @@ async fn open_new_subscription(
         .await?
         .unwrap();
 
-    let open_downstream_stream_or_datagram_tx = open_downstream_stream_or_datagram_txes
+    let start_forwarder_tx = start_forwarder_txes
         .lock()
         .await
         .get(&downstream_session_id)
@@ -309,13 +309,13 @@ async fn open_new_subscription(
     match forwarding_preference {
         ForwardingPreference::Datagram => {
             let data_stream_type = DataStreamType::ObjectDatagram;
-            let _ = open_downstream_stream_or_datagram_tx
+            let _ = start_forwarder_tx
                 .send((downstream_subscribe_id, data_stream_type, None))
                 .await;
         }
         ForwardingPreference::Track => {
             let data_stream_type = DataStreamType::StreamHeaderTrack;
-            let _ = open_downstream_stream_or_datagram_tx
+            let _ = start_forwarder_tx
                 .send((downstream_subscribe_id, data_stream_type, None))
                 .await;
         }
@@ -341,7 +341,7 @@ async fn open_new_subscription(
 
             for subgroup_id in subgroup_ids {
                 let subgroup_stream_id = Some((group_id, subgroup_id));
-                let _ = open_downstream_stream_or_datagram_tx
+                let _ = start_forwarder_tx
                     .send((
                         downstream_subscribe_id,
                         data_stream_type,
@@ -672,10 +672,9 @@ mod success {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
@@ -684,7 +683,7 @@ mod success {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -816,10 +815,9 @@ mod success {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
@@ -828,7 +826,7 @@ mod success {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -992,19 +990,18 @@ mod success {
                 .await;
         }
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
-        let (open_downstream_stream_or_datagram_tx, mut open_downstream_stream_or_datagram_rx) =
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (start_forwarder_tx, mut start_forwarder_rx) =
             mpsc::channel::<(u64, DataStreamType, Option<SubgroupStreamId>)>(32);
-        open_downstream_stream_or_datagram_txes
+        start_forwarder_txes
             .lock()
             .await
-            .insert(downstream_session_id, open_downstream_stream_or_datagram_tx);
+            .insert(downstream_session_id, start_forwarder_tx);
 
         tokio::spawn(async move {
-            let _ = open_downstream_stream_or_datagram_rx.recv().await;
+            let _ = start_forwarder_rx.recv().await;
         });
 
         // Execute subscribe_handler and get result
@@ -1014,7 +1011,7 @@ mod success {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -1172,10 +1169,9 @@ mod failure {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
@@ -1184,7 +1180,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -1265,10 +1261,9 @@ mod failure {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
@@ -1277,7 +1272,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -1366,10 +1361,9 @@ mod failure {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
@@ -1378,7 +1372,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -1481,10 +1475,9 @@ mod failure {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let _ = subscribe_handler(
@@ -1493,7 +1486,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes.clone(),
+            start_forwarder_txes.clone(),
         )
         .await;
 
@@ -1503,7 +1496,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -1599,10 +1592,9 @@ mod failure {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let _ = subscribe_handler(
@@ -1611,7 +1603,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes.clone(),
+            start_forwarder_txes.clone(),
         )
         .await;
 
@@ -1621,7 +1613,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 

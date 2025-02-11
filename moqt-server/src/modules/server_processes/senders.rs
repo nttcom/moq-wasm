@@ -22,17 +22,15 @@ impl SenderToSelf {
 
 #[derive(Debug)]
 pub(crate) struct SenderToOtherConnectionThread {
-    open_downstream_stream_or_datagram_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
 }
 
 impl SenderToOtherConnectionThread {
     pub(crate) fn new(
-        open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        >,
+        start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     ) -> Self {
         SenderToOtherConnectionThread {
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         }
     }
 }
@@ -81,12 +79,10 @@ impl Senders {
         }
     }
 
-    pub(crate) fn open_downstream_stream_or_datagram_txes(
+    pub(crate) fn start_forwarder_txes(
         &self,
     ) -> &Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> {
-        &self
-            .sender_to_other_connection_thread
-            .open_downstream_stream_or_datagram_txes
+        &self.sender_to_other_connection_thread.start_forwarder_txes
     }
 
     pub(crate) fn close_session_tx(&self) -> &mpsc::Sender<(u64, String)> {
@@ -120,9 +116,9 @@ pub(crate) mod test_helper_fn {
         let (close_session_tx, _) = tokio::sync::mpsc::channel(1);
         let sender_to_self = SenderToSelf::new(close_session_tx);
 
-        let open_downstream_stream_or_datagram_txes = Arc::new(Mutex::new(HashMap::new()));
+        let start_forwarder_txes = Arc::new(Mutex::new(HashMap::new()));
         let sender_to_other_connection_thread =
-            super::SenderToOtherConnectionThread::new(open_downstream_stream_or_datagram_txes);
+            super::SenderToOtherConnectionThread::new(start_forwarder_txes);
 
         let (buffer_tx, _) = tokio::sync::mpsc::channel(1);
         let (pubsub_relation_tx, _) = tokio::sync::mpsc::channel(1);
