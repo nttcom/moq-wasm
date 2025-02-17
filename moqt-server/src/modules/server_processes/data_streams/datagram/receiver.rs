@@ -45,13 +45,21 @@ impl DatagramObjectReceiver {
         }
     }
 
-    pub(crate) async fn receive_object(
-        &mut self,
-        datagram: Datagram,
-    ) -> Result<(), TerminationError> {
+    pub(crate) async fn start(&mut self, datagram: Datagram) -> Result<(), TerminationError> {
         let mut object_cache_storage =
             ObjectCacheStorageWrapper::new(self.senders.object_cache_tx().clone());
 
+        self.receive_object(datagram, &mut object_cache_storage)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn receive_object(
+        &mut self,
+        datagram: Datagram,
+        object_cache_storage: &mut ObjectCacheStorageWrapper,
+    ) -> Result<(), TerminationError> {
         let payload = datagram.payload();
         let read_bytes = BytesMut::from(&payload[..]);
         self.add_to_buf(read_bytes).await;
@@ -67,21 +75,21 @@ impl DatagramObjectReceiver {
         let subscribe_id = object.subscribe_id();
 
         if self
-            .is_first_object(session_id, subscribe_id, &mut object_cache_storage)
+            .is_first_object(session_id, subscribe_id, object_cache_storage)
             .await?
         {
             self.set_upstream_forwarding_preference(session_id, subscribe_id)
                 .await?;
 
-            self.create_cache_storage(session_id, subscribe_id, &mut object_cache_storage)
+            self.create_cache_storage(session_id, subscribe_id, object_cache_storage)
                 .await?;
 
-            self.store_object(object, session_id, subscribe_id, &mut object_cache_storage)
+            self.store_object(object, session_id, subscribe_id, object_cache_storage)
                 .await?;
 
             self.create_forwarders(session_id, subscribe_id).await?;
         } else {
-            self.store_object(object, session_id, subscribe_id, &mut object_cache_storage)
+            self.store_object(object, session_id, subscribe_id, object_cache_storage)
                 .await?;
         }
 
