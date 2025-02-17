@@ -72,8 +72,8 @@ init().then(async () => {
       console.log({ subscribeResponse })
     })
 
-    client.onSubscribeNamespaceResponse(async (subscribeNamespaceResponse) => {
-      console.log({ subscribeNamespaceResponse })
+    client.onSubscribeAnnouncesResponse(async (subscribeAnnouncesResponse) => {
+      console.log({ subscribeAnnouncesResponse })
     })
 
     client.onDatagramObject(async (datagramObject) => {
@@ -123,13 +123,13 @@ init().then(async () => {
       await client.sendAnnounceMessage(trackNamespace, authInfo)
     })
 
-    const sendSubscribeNamespaceBtn = document.getElementById('sendSubscribeNamespaceBtn')
-    sendSubscribeNamespaceBtn.addEventListener('click', async () => {
-      console.log('send subscribe namespace btn clicked')
+    const sendSubscribeAnnouncesBtn = document.getElementById('sendSubscribeAnnouncesBtn')
+    sendSubscribeAnnouncesBtn.addEventListener('click', async () => {
+      console.log('send subscribe announces btn clicked')
       const trackNamespacePrefix = form['track-namespace-prefix'].value.split('/')
       const authInfo = form['auth-info'].value
 
-      await client.sendSubscribeNamespaceMessage(trackNamespacePrefix, authInfo)
+      await client.sendSubscribeAnnouncesMessage(trackNamespacePrefix, authInfo)
     })
 
     const sendSubscribeBtn = document.getElementById('sendSubscribeBtn')

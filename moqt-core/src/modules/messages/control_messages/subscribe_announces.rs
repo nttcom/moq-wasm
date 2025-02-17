@@ -12,19 +12,19 @@ use serde::Serialize;
 use std::any::Any;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
-pub struct SubscribeNamespace {
+pub struct SubscribeAnnounces {
     track_namespace_prefix: Vec<String>,
     number_of_parameters: u64,
     parameters: Vec<VersionSpecificParameter>,
 }
 
-impl SubscribeNamespace {
+impl SubscribeAnnounces {
     pub fn new(
         track_namespace_prefix: Vec<String>,
         parameters: Vec<VersionSpecificParameter>,
     ) -> Self {
         let number_of_parameters = parameters.len() as u64;
-        SubscribeNamespace {
+        SubscribeAnnounces {
             track_namespace_prefix,
             number_of_parameters,
             parameters,
@@ -40,7 +40,7 @@ impl SubscribeNamespace {
     }
 }
 
-impl MOQTPayload for SubscribeNamespace {
+impl MOQTPayload for SubscribeAnnounces {
     fn depacketize(buf: &mut BytesMut) -> Result<Self> {
         let track_namespace_prefix_tuple_length =
             u8::try_from(read_variable_integer_from_buffer(buf)?)
@@ -65,7 +65,7 @@ impl MOQTPayload for SubscribeNamespace {
             }
         }
 
-        Ok(SubscribeNamespace {
+        Ok(SubscribeAnnounces {
             track_namespace_prefix: track_namespace_prefix_tuple,
             number_of_parameters,
             parameters,
@@ -87,7 +87,7 @@ impl MOQTPayload for SubscribeNamespace {
             parameter.packetize(buf);
         }
     }
-    /// Method to enable downcasting from MOQTPayload to SubscribeNamespace
+    /// Method to enable downcasting from MOQTPayload to SubscribeAnnounces
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -98,7 +98,7 @@ mod tests {
     mod success {
         use crate::messages::{
             control_messages::{
-                subscribe_namespace::SubscribeNamespace,
+                subscribe_announces::SubscribeAnnounces,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
             moqt_payload::MOQTPayload,
@@ -112,10 +112,10 @@ mod tests {
                 AuthorizationInfo::new("test".to_string()),
             );
             let parameters = vec![version_specific_parameter];
-            let subscribe_namespace =
-                SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
+            let subscribe_announces =
+                SubscribeAnnounces::new(track_namespace_prefix.clone(), parameters);
             let mut buf = BytesMut::new();
-            subscribe_namespace.packetize(&mut buf);
+            subscribe_announces.packetize(&mut buf);
 
             let expected_bytes_array = [
                 2, // Track Namespace Prefix(tuple): Number of elements
@@ -146,17 +146,17 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let subscribe_namespace = SubscribeNamespace::depacketize(&mut buf).unwrap();
+            let subscribe_announces = SubscribeAnnounces::depacketize(&mut buf).unwrap();
 
             let track_namespace_prefix = Vec::from(["test".to_string(), "test".to_string()]);
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
             let parameters = vec![version_specific_parameter];
-            let expected_subscribe_namespace =
-                SubscribeNamespace::new(track_namespace_prefix, parameters);
+            let expected_subscribe_announces =
+                SubscribeAnnounces::new(track_namespace_prefix, parameters);
 
-            assert_eq!(subscribe_namespace, expected_subscribe_namespace);
+            assert_eq!(subscribe_announces, expected_subscribe_announces);
         }
     }
 }
