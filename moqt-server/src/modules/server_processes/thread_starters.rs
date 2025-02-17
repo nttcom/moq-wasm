@@ -221,7 +221,7 @@ async fn spawn_datagram_object_receiver_thread(
                 .await;
 
             match datagram_object_receiver
-                .receive_object(datagram)
+                .start(datagram)
                 .instrument(session_span)
                 .await
             {
