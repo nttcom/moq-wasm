@@ -4,8 +4,8 @@ use moqt_core::{
     messages::{
         control_messages::{
             announce::Announce, announce_ok::AnnounceOk, subscribe::Subscribe,
-            subscribe_error::SubscribeError, subscribe_namespace::SubscribeNamespace,
-            subscribe_namespace_ok::SubscribeNamespaceOk, subscribe_ok::SubscribeOk,
+            subscribe_error::SubscribeError, subscribe_announces::SubscribeAnnounces,
+            subscribe_announces_ok::SubscribeAnnouncesOk, subscribe_ok::SubscribeOk,
         },
         moqt_payload::MOQTPayload,
     },
@@ -58,27 +58,27 @@ pub(crate) async fn send_control_stream(
             tracing::info!("Relayed Message Type: {:?}", ControlMessageType::AnnounceOk);
         } else if message
             .as_any()
-            .downcast_ref::<SubscribeNamespace>()
+            .downcast_ref::<SubscribeAnnounces>()
             .is_some()
         {
             message_buf.extend(write_variable_integer(u8::from(
-                ControlMessageType::SubscribeNamespace,
+                ControlMessageType::SubscribeAnnounces,
             ) as u64));
             tracing::info!(
                 "Relayed Message Type: {:?}",
-                ControlMessageType::SubscribeNamespace
+                ControlMessageType::SubscribeAnnounces
             );
         } else if message
             .as_any()
-            .downcast_ref::<SubscribeNamespaceOk>()
+            .downcast_ref::<SubscribeAnnouncesOk>()
             .is_some()
         {
             message_buf.extend(write_variable_integer(u8::from(
-                ControlMessageType::SubscribeNamespaceOk,
+                ControlMessageType::SubscribeAnnouncesOk,
             ) as u64));
             tracing::info!(
                 "Relayed Message Type: {:?}",
-                ControlMessageType::SubscribeNamespaceOk
+                ControlMessageType::SubscribeAnnouncesOk
             );
         } else {
             tracing::warn!("Unsupported message type for bi-directional stream");

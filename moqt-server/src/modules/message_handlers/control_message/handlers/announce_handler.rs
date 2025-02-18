@@ -79,7 +79,7 @@ pub(crate) async fn announce_handler(
                 )
                 .await;
 
-            // If subscribers already sent SUBSCRIBE_NAMESPACE, send ANNOUNCE message to them
+            // If subscribers already sent SUBSCRIBE_ANNOUNCES, send ANNOUNCE message to them
             match forward_announce_to_subscribers(
                 pubsub_relation_manager_repository,
                 send_stream_dispatcher_repository,

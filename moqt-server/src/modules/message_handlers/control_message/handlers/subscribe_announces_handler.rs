@@ -4,9 +4,9 @@ use moqt_core::{
     constants::StreamDirection,
     messages::{
         control_messages::{
-            announce::Announce, subscribe_namespace::SubscribeNamespace,
-            subscribe_namespace_error::SubscribeNamespaceError,
-            subscribe_namespace_ok::SubscribeNamespaceOk,
+            announce::Announce, subscribe_announces::SubscribeAnnounces,
+            subscribe_announces_error::SubscribeAnnouncesError,
+            subscribe_announces_ok::SubscribeAnnouncesOk,
         },
         moqt_payload::MOQTPayload,
     },
@@ -16,21 +16,21 @@ use moqt_core::{
 
 use crate::modules::moqt_client::MOQTClient;
 
-pub(crate) async fn subscribe_namespace_handler(
-    subscribe_namespace_message: SubscribeNamespace,
+pub(crate) async fn subscribe_announces_handler(
+    subscribe_announces_message: SubscribeAnnounces,
     client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
-) -> Result<Option<SubscribeNamespaceError>> {
-    tracing::trace!("subscribe_namespace_handler start.");
+) -> Result<Option<SubscribeAnnouncesError>> {
+    tracing::trace!("subscribe_announces_handler start.");
     tracing::debug!(
-        "subscribe_namespace_message: {:#?}",
-        subscribe_namespace_message
+        "subscribe_announces_message: {:#?}",
+        subscribe_announces_message
     );
 
     // TODO: auth
 
-    let track_namespace_prefix = subscribe_namespace_message.track_namespace_prefix().clone();
+    let track_namespace_prefix = subscribe_announces_message.track_namespace_prefix().clone();
 
     // Record the subscribed Track Namespace Prefix
     let set_result = pubsub_relation_manager_repository
@@ -40,20 +40,20 @@ pub(crate) async fn subscribe_namespace_handler(
     match set_result {
         Ok(_) => {
             tracing::info!(
-                "subscribe_namespaced track_namespace_prefix: {:#?}",
+                "subscribe_announcesd track_namespace_prefix: {:#?}",
                 track_namespace_prefix.clone()
             );
-            tracing::trace!("subscribe_namespace_handler complete.");
+            tracing::trace!("subscribe_announces_handler complete.");
 
-            // Send SubscribeNamespaceOk message
-            let subscribe_namespace_ok_message: Box<dyn MOQTPayload> =
-                Box::new(SubscribeNamespaceOk::new(track_namespace_prefix.clone()));
+            // Send SubscribeAnnouncesOk message
+            let subscribe_announces_ok_message: Box<dyn MOQTPayload> =
+                Box::new(SubscribeAnnouncesOk::new(track_namespace_prefix.clone()));
 
             // TODO: Unify the method to send a message to the opposite client itself
             let _ = send_stream_dispatcher_repository
                 .transfer_message_to_send_stream_thread(
                     client.id(),
-                    subscribe_namespace_ok_message,
+                    subscribe_announces_ok_message,
                     StreamDirection::Bi,
                 )
                 .await;
@@ -69,7 +69,7 @@ pub(crate) async fn subscribe_namespace_handler(
                 // TODO: auth parameter
                 let announce_message: Box<dyn MOQTPayload> = Box::new(Announce::new(
                     namespace,
-                    subscribe_namespace_message.parameters().clone(),
+                    subscribe_announces_message.parameters().clone(),
                 ));
 
                 let _ = send_stream_dispatcher_repository
@@ -87,12 +87,12 @@ pub(crate) async fn subscribe_namespace_handler(
         // TODO: Separate namespace prefix overlap error
         Err(err) => {
             let msg = std::format!(
-                "subscribe_namespace_handler: set namespace prefix err: {:?}",
+                "subscribe_announces_handler: set namespace prefix err: {:?}",
                 err.to_string()
             );
             tracing::error!(msg);
 
-            Ok(Some(SubscribeNamespaceError::new(
+            Ok(Some(SubscribeAnnouncesError::new(
                 track_namespace_prefix,
                 1,
                 msg,
@@ -103,7 +103,7 @@ pub(crate) async fn subscribe_namespace_handler(
 
 #[cfg(test)]
 mod success {
-    use super::subscribe_namespace_handler;
+    use super::subscribe_announces_handler;
     use crate::modules::{
         moqt_client::MOQTClient,
         pubsub_relation_manager::{
@@ -120,7 +120,7 @@ mod success {
         constants::StreamDirection,
         messages::{
             control_messages::{
-                subscribe_namespace::SubscribeNamespace,
+                subscribe_announces::SubscribeAnnounces,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
             moqt_payload::MOQTPayload,
@@ -132,7 +132,7 @@ mod success {
 
     #[tokio::test]
     async fn normal_case() {
-        // Generate SUBSCRIBE_NAMESPACE message
+        // Generate SUBSCRIBE_ANNOUNCES message
         let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string(), "ccc".to_string()]);
         let track_namespace_prefix = Vec::from(["aaa".to_string(), "bbb".to_string()]);
 
@@ -140,10 +140,10 @@ mod success {
         let parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(parameter_value));
         let parameters = vec![parameter];
-        let subscribe_namespace_message =
-            SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
+        let subscribe_announces_message =
+            SubscribeAnnounces::new(track_namespace_prefix.clone(), parameters);
         let mut buf = BytesMut::new();
-        subscribe_namespace_message.packetize(&mut buf);
+        subscribe_announces_message.packetize(&mut buf);
 
         // Generate client
         let upstream_session_id = 0;
@@ -186,9 +186,9 @@ mod success {
             })
             .await;
 
-        // Execute subscribe_namespace_handler and get result
-        let result = subscribe_namespace_handler(
-            subscribe_namespace_message,
+        // Execute subscribe_announces_handler and get result
+        let result = subscribe_announces_handler(
+            subscribe_announces_message,
             &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
@@ -202,7 +202,7 @@ mod success {
 
 #[cfg(test)]
 mod failure {
-    use super::subscribe_namespace_handler;
+    use super::subscribe_announces_handler;
     use crate::modules::{
         moqt_client::MOQTClient,
         pubsub_relation_manager::{
@@ -219,7 +219,7 @@ mod failure {
         constants::StreamDirection,
         messages::{
             control_messages::{
-                subscribe_namespace::SubscribeNamespace,
+                subscribe_announces::SubscribeAnnounces,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
             moqt_payload::MOQTPayload,
@@ -231,7 +231,7 @@ mod failure {
 
     #[tokio::test]
     async fn same_prefix() {
-        // Generate SUBSCRIBE_NAMESPACE message
+        // Generate SUBSCRIBE_ANNOUNCES message
         let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string(), "ccc".to_string()]);
         let track_namespace_prefix = Vec::from(["aaa".to_string(), "bbb".to_string()]);
 
@@ -239,10 +239,10 @@ mod failure {
         let parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(parameter_value));
         let parameters = vec![parameter];
-        let subscribe_namespace_message =
-            SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
+        let subscribe_announces_message =
+            SubscribeAnnounces::new(track_namespace_prefix.clone(), parameters);
         let mut buf = BytesMut::new();
-        subscribe_namespace_message.packetize(&mut buf);
+        subscribe_announces_message.packetize(&mut buf);
 
         // Generate client
         let upstream_session_id = 0;
@@ -289,9 +289,9 @@ mod failure {
             })
             .await;
 
-        // Execute subscribe_namespace_handler and get result
-        let result = subscribe_namespace_handler(
-            subscribe_namespace_message,
+        // Execute subscribe_announces_handler and get result
+        let result = subscribe_announces_handler(
+            subscribe_announces_message,
             &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
@@ -299,12 +299,12 @@ mod failure {
         .await;
 
         match result {
-            Ok(Some(subscribe_namespace_error)) => {
+            Ok(Some(subscribe_announces_error)) => {
                 assert_eq!(
-                    *subscribe_namespace_error.track_namespace_prefix(),
+                    *subscribe_announces_error.track_namespace_prefix(),
                     track_namespace_prefix
                 );
-                assert_eq!(subscribe_namespace_error.error_code(), 1);
+                assert_eq!(subscribe_announces_error.error_code(), 1);
             }
             _ => panic!("Unexpected result: {:?}", result),
         }
@@ -312,7 +312,7 @@ mod failure {
 
     #[tokio::test]
     async fn prefix_overlap_longer() {
-        // Generate SUBSCRIBE_NAMESPACE message
+        // Generate SUBSCRIBE_ANNOUNCES message
         let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string(), "ccc".to_string()]);
         let track_namespace_prefix = Vec::from(["aaa".to_string(), "bbb".to_string()]);
         let exists_track_namespace_prefix = Vec::from(["aaa".to_string()]);
@@ -321,10 +321,10 @@ mod failure {
         let parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(parameter_value));
         let parameters = vec![parameter];
-        let subscribe_namespace_message =
-            SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
+        let subscribe_announces_message =
+            SubscribeAnnounces::new(track_namespace_prefix.clone(), parameters);
         let mut buf = BytesMut::new();
-        subscribe_namespace_message.packetize(&mut buf);
+        subscribe_announces_message.packetize(&mut buf);
 
         // Generate client
         let upstream_session_id = 0;
@@ -374,9 +374,9 @@ mod failure {
             })
             .await;
 
-        // Execute subscribe_namespace_handler and get result
-        let result = subscribe_namespace_handler(
-            subscribe_namespace_message,
+        // Execute subscribe_announces_handler and get result
+        let result = subscribe_announces_handler(
+            subscribe_announces_message,
             &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
@@ -384,12 +384,12 @@ mod failure {
         .await;
 
         match result {
-            Ok(Some(subscribe_namespace_error)) => {
+            Ok(Some(subscribe_announces_error)) => {
                 assert_eq!(
-                    *subscribe_namespace_error.track_namespace_prefix(),
+                    *subscribe_announces_error.track_namespace_prefix(),
                     track_namespace_prefix
                 );
-                assert_eq!(subscribe_namespace_error.error_code(), 1);
+                assert_eq!(subscribe_announces_error.error_code(), 1);
             }
             _ => panic!("Unexpected result: {:?}", result),
         }
@@ -397,7 +397,7 @@ mod failure {
 
     #[tokio::test]
     async fn prefix_overlap_shorter() {
-        // Generate SUBSCRIBE_NAMESPACE message
+        // Generate SUBSCRIBE_ANNOUNCES message
         let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string(), "ccc".to_string()]);
         let track_namespace_prefix = Vec::from(["aaa".to_string(), "bbb".to_string()]);
         let exists_track_namespace_prefix =
@@ -407,10 +407,10 @@ mod failure {
         let parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(parameter_value));
         let parameters = vec![parameter];
-        let subscribe_namespace_message =
-            SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
+        let subscribe_announces_message =
+            SubscribeAnnounces::new(track_namespace_prefix.clone(), parameters);
         let mut buf = BytesMut::new();
-        subscribe_namespace_message.packetize(&mut buf);
+        subscribe_announces_message.packetize(&mut buf);
 
         // Generate client
         let upstream_session_id = 0;
@@ -460,9 +460,9 @@ mod failure {
             })
             .await;
 
-        // Execute subscribe_namespace_handler and get result
-        let result = subscribe_namespace_handler(
-            subscribe_namespace_message,
+        // Execute subscribe_announces_handler and get result
+        let result = subscribe_announces_handler(
+            subscribe_announces_message,
             &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
@@ -470,12 +470,12 @@ mod failure {
         .await;
 
         match result {
-            Ok(Some(subscribe_namespace_error)) => {
+            Ok(Some(subscribe_announces_error)) => {
                 assert_eq!(
-                    *subscribe_namespace_error.track_namespace_prefix(),
+                    *subscribe_announces_error.track_namespace_prefix(),
                     track_namespace_prefix
                 );
-                assert_eq!(subscribe_namespace_error.error_code(), 1);
+                assert_eq!(subscribe_announces_error.error_code(), 1);
             }
             _ => panic!("Unexpected result: {:?}", result),
         }
@@ -483,7 +483,7 @@ mod failure {
 
     #[tokio::test]
     async fn forward_fail() {
-        // Generate SUBSCRIBE_NAMESPACE message
+        // Generate SUBSCRIBE_ANNOUNCES message
         let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string(), "ccc".to_string()]);
         let track_namespace_prefix = Vec::from(["aaa".to_string(), "bbb".to_string()]);
 
@@ -491,10 +491,10 @@ mod failure {
         let parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(parameter_value));
         let parameters = vec![parameter];
-        let subscribe_namespace_message =
-            SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
+        let subscribe_announces_message =
+            SubscribeAnnounces::new(track_namespace_prefix.clone(), parameters);
         let mut buf = BytesMut::new();
-        subscribe_namespace_message.packetize(&mut buf);
+        subscribe_announces_message.packetize(&mut buf);
 
         // Generate client
         let upstream_session_id = 0;
@@ -528,9 +528,9 @@ mod failure {
         let mut send_stream_dispatcher: SendStreamDispatcher =
             SendStreamDispatcher::new(send_stream_tx.clone());
 
-        // Execute subscribe_namespace_handler and get result
-        let result = subscribe_namespace_handler(
-            subscribe_namespace_message,
+        // Execute subscribe_announces_handler and get result
+        let result = subscribe_announces_handler(
+            subscribe_announces_message,
             &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
@@ -543,7 +543,7 @@ mod failure {
 
     #[tokio::test]
     async fn namespace_not_found() {
-        // Generate SUBSCRIBE_NAMESPACE message
+        // Generate SUBSCRIBE_ANNOUNCES message
         let track_namespace = Vec::from(["aaa".to_string(), "bbb".to_string(), "ccc".to_string()]);
         let track_namespace_prefix = Vec::from(["ddd".to_string(), "eee".to_string()]);
 
@@ -551,10 +551,10 @@ mod failure {
         let parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(parameter_value));
         let parameters = vec![parameter];
-        let subscribe_namespace_message =
-            SubscribeNamespace::new(track_namespace_prefix.clone(), parameters);
+        let subscribe_announces_message =
+            SubscribeAnnounces::new(track_namespace_prefix.clone(), parameters);
         let mut buf = BytesMut::new();
-        subscribe_namespace_message.packetize(&mut buf);
+        subscribe_announces_message.packetize(&mut buf);
 
         // Generate client
         let upstream_session_id = 0;
@@ -597,9 +597,9 @@ mod failure {
             })
             .await;
 
-        // Execute subscribe_namespace_handler and get result
-        let result = subscribe_namespace_handler(
-            subscribe_namespace_message,
+        // Execute subscribe_announces_handler and get result
+        let result = subscribe_announces_handler(
+            subscribe_announces_message,
             &client,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
