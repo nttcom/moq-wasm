@@ -22,6 +22,7 @@ use tracing::{self};
 use wtransport::datagram::Datagram;
 
 pub(crate) struct DatagramObjectReceiver {
+    datagram: Datagram,
     buf: Arc<Mutex<BytesMut>>,
     senders: Arc<Senders>,
     client: Arc<Mutex<MOQTClient>>,
@@ -29,7 +30,7 @@ pub(crate) struct DatagramObjectReceiver {
 }
 
 impl DatagramObjectReceiver {
-    pub(crate) async fn init(client: Arc<Mutex<MOQTClient>>) -> Self {
+    pub(crate) async fn init(datagram: Datagram, client: Arc<Mutex<MOQTClient>>) -> Self {
         let senders = client.lock().await.senders();
         let stable_id = client.lock().await.id();
         let stream_id = 0; // stream_id of datagram does not exist (TODO: delete buffer manager)
@@ -38,6 +39,7 @@ impl DatagramObjectReceiver {
         let duration = 100000;
 
         DatagramObjectReceiver {
+            datagram,
             buf,
             senders,
             client,
@@ -45,22 +47,20 @@ impl DatagramObjectReceiver {
         }
     }
 
-    pub(crate) async fn start(&mut self, datagram: Datagram) -> Result<(), TerminationError> {
+    pub(crate) async fn start(&mut self) -> Result<(), TerminationError> {
         let mut object_cache_storage =
             ObjectCacheStorageWrapper::new(self.senders.object_cache_tx().clone());
 
-        self.receive_object(datagram, &mut object_cache_storage)
-            .await?;
+        self.receive_object(&mut object_cache_storage).await?;
 
         Ok(())
     }
 
     async fn receive_object(
         &mut self,
-        datagram: Datagram,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<(), TerminationError> {
-        let payload = datagram.payload();
+        let payload = self.datagram.payload();
         let read_bytes = BytesMut::from(&payload[..]);
         self.add_to_buf(read_bytes).await;
 

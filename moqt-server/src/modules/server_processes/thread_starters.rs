@@ -216,12 +216,12 @@ async fn spawn_datagram_object_receiver_thread(
     tokio::spawn(
         async move {
             let senders = client.lock().await.senders();
-            let mut datagram_object_receiver = DatagramObjectReceiver::init(client)
+            let mut datagram_object_receiver = DatagramObjectReceiver::init(datagram, client)
                 .instrument(session_span.clone())
                 .await;
 
             match datagram_object_receiver
-                .start(datagram)
+                .start()
                 .instrument(session_span)
                 .await
             {
