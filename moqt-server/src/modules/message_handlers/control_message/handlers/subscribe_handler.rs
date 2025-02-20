@@ -1,4 +1,10 @@
-use crate::{modules::moqt_client::MOQTClient, SenderToOpenSubscription};
+use crate::{
+    modules::{
+        moqt_client::MOQTClient,
+        object_cache_storage::{cache::CacheKey, wrapper::ObjectCacheStorageWrapper},
+    },
+    SenderToOpenSubscription,
+};
 use anyhow::{bail, Result};
 use moqt_core::{
     constants::StreamDirection,
@@ -11,13 +17,12 @@ use moqt_core::{
         },
         moqt_payload::MOQTPayload,
     },
+    models::tracks::ForwardingPreference,
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     SendStreamDispatcherRepository,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
-
-use crate::modules::object_cache_storage::{CacheHeader, ObjectCacheStorageWrapper};
 
 pub(crate) async fn subscribe_handler(
     subscribe_message: Subscribe,
@@ -25,7 +30,7 @@ pub(crate) async fn subscribe_handler(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    open_downstream_stream_or_datagram_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
 ) -> Result<Option<SubscribeError>> {
     tracing::trace!("subscribe_handler start.");
 
@@ -33,21 +38,31 @@ pub(crate) async fn subscribe_handler(
 
     // TODO: validate Unauthorized
 
+    let downstream_subscribe_id = subscribe_message.subscribe_id();
+    let downstream_session_id = client.id();
     if !pubsub_relation_manager_repository
-        .is_valid_downstream_subscribe_id(subscribe_message.subscribe_id(), client.id())
+        .is_downstream_subscribe_id_unique(downstream_subscribe_id, downstream_session_id)
         .await?
+        || !pubsub_relation_manager_repository
+            .is_downstream_subscribe_id_less_than_max(
+                downstream_subscribe_id,
+                downstream_session_id,
+            )
+            .await?
     {
         // TODO: return TerminationErrorCode
         bail!("TooManySubscribers");
     }
+
+    let downstream_track_alias = subscribe_message.track_alias();
     if !pubsub_relation_manager_repository
-        .is_valid_downstream_track_alias(subscribe_message.track_alias(), client.id())
+        .is_downstream_track_alias_unique(downstream_track_alias, downstream_session_id)
         .await?
     {
         // TODO: create accurate track alias
         let reason_phrase = "Invalid Track Alias".to_string();
         let subscribe_error = SubscribeError::new(
-            subscribe_message.subscribe_id(),
+            downstream_subscribe_id,
             SubscribeErrorCode::RetryTrackAlias,
             reason_phrase,
             100, // track alias
@@ -59,7 +74,7 @@ pub(crate) async fn subscribe_handler(
 
     // TODO: validate Invalid Range
 
-    // If the track exists, return ther track as it is
+    // If the track already exists, return the track as it is
     if pubsub_relation_manager_repository
         .is_track_existing(
             subscribe_message.track_namespace().to_vec(),
@@ -133,10 +148,10 @@ pub(crate) async fn subscribe_handler(
             .await?;
 
         if subscribe_ok_message.content_exists() {
-            open_new_subscription(
+            start_new_forwarder(
                 pubsub_relation_manager_repository,
                 object_cache_storage,
-                open_downstream_stream_or_datagram_txes,
+                start_forwarder_txes,
                 client,
                 subscribe_message,
             )
@@ -254,10 +269,10 @@ pub(crate) async fn subscribe_handler(
     }
 }
 
-async fn open_new_subscription(
+async fn start_new_forwarder(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    open_downstream_stream_or_datagram_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     client: &MOQTClient,
     subscribe_message: Subscribe,
 ) -> Result<()> {
@@ -278,26 +293,64 @@ async fn open_new_subscription(
         .await?
         .unwrap();
 
-    let stream_header_type = match object_cache_storage
-        .get_header(upstream_session_id, upstream_subscribe_id)
-        .await
-    {
-        Ok(CacheHeader::Datagram) => DataStreamType::ObjectDatagram,
-        Ok(CacheHeader::Track(_)) => DataStreamType::StreamHeaderTrack,
-        Ok(CacheHeader::Subgroup(_)) => DataStreamType::StreamHeaderSubgroup,
-        Err(_) => bail!("CacheHeader not found"),
-    };
+    let upstream_subscription = pubsub_relation_manager_repository
+        .get_upstream_subscription_by_ids(upstream_session_id, upstream_subscribe_id)
+        .await?
+        .unwrap();
 
-    let open_downstream_stream_or_datagram_tx = open_downstream_stream_or_datagram_txes
+    let start_forwarder_tx = start_forwarder_txes
         .lock()
         .await
         .get(&downstream_session_id)
         .unwrap()
         .clone();
 
-    let _ = open_downstream_stream_or_datagram_tx
-        .send((downstream_subscribe_id, stream_header_type))
-        .await;
+    let forwarding_preference = upstream_subscription.get_forwarding_preference().unwrap();
+    match forwarding_preference {
+        ForwardingPreference::Datagram => {
+            let data_stream_type = DataStreamType::ObjectDatagram;
+            let _ = start_forwarder_tx
+                .send((downstream_subscribe_id, data_stream_type, None))
+                .await;
+        }
+        ForwardingPreference::Track => {
+            let data_stream_type = DataStreamType::StreamHeaderTrack;
+            let _ = start_forwarder_tx
+                .send((downstream_subscribe_id, data_stream_type, None))
+                .await;
+        }
+
+        // If SUBSCRIBE message does not handle past objects, it is only necessary to open forwarders for subgroups of the current group
+        ForwardingPreference::Subgroup => {
+            let data_stream_type = DataStreamType::StreamHeaderSubgroup;
+            let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
+            let group_id = object_cache_storage
+                .get_largest_group_id(&cache_key)
+                .await?;
+
+            let start_group = subscribe_message.start_group();
+            if start_group.is_some() && start_group.unwrap() > group_id {
+                // If the start_group is larger than the largest group_id, there is no need to open forwarders
+                // because these will be opend by the receivers in the future
+                return Ok(());
+            }
+
+            let subgroup_ids = object_cache_storage
+                .get_all_subgroup_ids(&cache_key, group_id)
+                .await?;
+
+            for subgroup_id in subgroup_ids {
+                let subgroup_stream_id = Some((group_id, subgroup_id));
+                let _ = start_forwarder_tx
+                    .send((
+                        downstream_subscribe_id,
+                        data_stream_type,
+                        subgroup_stream_id,
+                    ))
+                    .await;
+            }
+        }
+    }
 
     Ok(())
 }
@@ -321,25 +374,15 @@ async fn generate_subscribe_ok_message(
         .await?
         .unwrap();
 
-    let largest_group_id = match object_cache_storage
-        .get_largest_group_id(upstream_session_id, upstream_subscribe_id)
-        .await
-    {
+    let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
+    let largest_group_id = match object_cache_storage.get_largest_group_id(&cache_key).await {
         Ok(group_id) => Some(group_id),
         Err(_) => None,
     };
 
-    // The largest object_id is None if the largest_group_id is None
-    let largest_object_id = if let Some(group_id) = largest_group_id {
-        match object_cache_storage
-            .get_largest_object_id(upstream_session_id, upstream_subscribe_id, group_id)
-            .await
-        {
-            Ok(object_id) => Some(object_id),
-            Err(_) => None,
-        }
-    } else {
-        None
+    let largest_object_id = match object_cache_storage.get_largest_object_id(&cache_key).await {
+        Ok(object_id) => Some(object_id),
+        Err(_) => None,
     };
 
     // TODO: check cache duration
@@ -508,23 +551,27 @@ async fn set_downstream_and_upstream_subscription(
 #[cfg(test)]
 mod success {
     use super::subscribe_handler;
-    use crate::modules::{
-        moqt_client::MOQTClient,
-        object_cache_storage::{
-            object_cache_storage, CacheHeader, CacheObject, ObjectCacheStorageCommand,
-            ObjectCacheStorageWrapper,
-        },
-        pubsub_relation_manager::{
-            commands::PubSubRelationCommand,
-            manager::pubsub_relation_manager,
-            wrapper::{test_helper_fn, PubSubRelationManagerWrapper},
-        },
-        send_stream_dispatcher::{
-            send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-        },
-        server_processes::senders,
-    };
     use crate::SenderToOpenSubscription;
+    use crate::{
+        modules::{
+            moqt_client::MOQTClient,
+            object_cache_storage::{
+                cache::CacheKey, commands::ObjectCacheStorageCommand,
+                storage::object_cache_storage, wrapper::ObjectCacheStorageWrapper,
+            },
+            pubsub_relation_manager::{
+                commands::PubSubRelationCommand,
+                manager::pubsub_relation_manager,
+                wrapper::{test_helper_fn, PubSubRelationManagerWrapper},
+            },
+            send_stream_dispatcher::{
+                send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
+            },
+            server_processes::senders,
+        },
+        SubgroupStreamId,
+    };
+    use moqt_core::models::tracks::ForwardingPreference;
     use moqt_core::{
         constants::StreamDirection,
         data_stream_type::DataStreamType,
@@ -533,8 +580,7 @@ mod success {
                 subscribe::{FilterType, GroupOrder, Subscribe},
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
-            data_streams::object_stream_track::ObjectStreamTrack,
-            data_streams::stream_header_track::StreamHeaderTrack,
+            data_streams::track_stream,
             moqt_payload::MOQTPayload,
         },
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -626,10 +672,9 @@ mod success {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
@@ -638,7 +683,7 @@ mod success {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -770,10 +815,9 @@ mod success {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
@@ -782,7 +826,7 @@ mod success {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -878,6 +922,14 @@ mod success {
             )
             .await
             .unwrap();
+        let forwarding_preference = ForwardingPreference::Track;
+        let _ = pubsub_relation_manager
+            .set_upstream_forwarding_preference(
+                upstream_session_id,
+                upstream_subscribe_id,
+                forwarding_preference,
+            )
+            .await;
 
         let _ = pubsub_relation_manager
             .setup_subscriber(max_subscribe_id, downstream_session_id)
@@ -917,41 +969,39 @@ mod success {
         let duration = 1000;
         let publisher_priority = 0;
 
-        let header = CacheHeader::Track(
-            StreamHeaderTrack::new(subscribe_id, track_alias, publisher_priority).unwrap(),
-        );
+        let track_header =
+            track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap();
 
+        let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
         let _ = object_cache_storage
-            .set_subscription(upstream_session_id, subscribe_id, header.clone())
+            .create_track_stream_cache(&cache_key, track_header)
             .await;
 
         for i in 0..10 {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let track =
-                ObjectStreamTrack::new(group_id, object_id, object_status, object_payload).unwrap();
-
-            let cache_object = CacheObject::Track(track.clone());
+            let track_object =
+                track_stream::Object::new(group_id, object_id, object_status, object_payload)
+                    .unwrap();
 
             let _ = object_cache_storage
-                .set_object(upstream_session_id, subscribe_id, cache_object, duration)
+                .set_track_stream_object(&cache_key, track_object, duration)
                 .await;
         }
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
-        let (open_downstream_stream_or_datagram_tx, mut open_downstream_stream_or_datagram_rx) =
-            mpsc::channel::<(u64, DataStreamType)>(32);
-        open_downstream_stream_or_datagram_txes
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (start_forwarder_tx, mut start_forwarder_rx) =
+            mpsc::channel::<(u64, DataStreamType, Option<SubgroupStreamId>)>(32);
+        start_forwarder_txes
             .lock()
             .await
-            .insert(downstream_session_id, open_downstream_stream_or_datagram_tx);
+            .insert(downstream_session_id, start_forwarder_tx);
 
         tokio::spawn(async move {
-            let _ = open_downstream_stream_or_datagram_rx.recv().await;
+            let _ = start_forwarder_rx.recv().await;
         });
 
         // Execute subscribe_handler and get result
@@ -961,7 +1011,7 @@ mod success {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -993,7 +1043,8 @@ mod failure {
     use crate::modules::{
         moqt_client::MOQTClient,
         object_cache_storage::{
-            object_cache_storage, ObjectCacheStorageCommand, ObjectCacheStorageWrapper,
+            commands::ObjectCacheStorageCommand, storage::object_cache_storage,
+            wrapper::ObjectCacheStorageWrapper,
         },
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
@@ -1118,10 +1169,9 @@ mod failure {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
@@ -1130,7 +1180,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -1211,10 +1261,9 @@ mod failure {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
@@ -1223,7 +1272,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -1312,10 +1361,9 @@ mod failure {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let result = subscribe_handler(
@@ -1324,7 +1372,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -1427,10 +1475,9 @@ mod failure {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let _ = subscribe_handler(
@@ -1439,7 +1486,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes.clone(),
+            start_forwarder_txes.clone(),
         )
         .await;
 
@@ -1449,7 +1496,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 
@@ -1545,10 +1592,9 @@ mod failure {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute subscribe_handler and get result
         let _ = subscribe_handler(
@@ -1557,7 +1603,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes.clone(),
+            start_forwarder_txes.clone(),
         )
         .await;
 
@@ -1567,7 +1613,7 @@ mod failure {
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
         )
         .await;
 

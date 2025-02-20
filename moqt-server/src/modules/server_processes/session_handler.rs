@@ -1,14 +1,17 @@
 use super::senders::{SenderToOtherConnectionThread, SendersToManagementThread};
-use crate::modules::{
-    buffer_manager::BufferCommand,
-    moqt_client::MOQTClient,
-    object_cache_storage::ObjectCacheStorageWrapper,
-    pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
-    send_stream_dispatcher::SendStreamDispatchCommand,
-    server_processes::{
-        senders::{SenderToSelf, Senders},
-        thread_starters::select_spawn_thread,
+use crate::{
+    modules::{
+        buffer_manager::BufferCommand,
+        moqt_client::MOQTClient,
+        object_cache_storage::wrapper::ObjectCacheStorageWrapper,
+        pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
+        send_stream_dispatcher::SendStreamDispatchCommand,
+        server_processes::{
+            senders::{SenderToSelf, Senders},
+            thread_starters::select_spawn_thread,
+        },
     },
+    SubgroupStreamId,
 };
 use anyhow::Result;
 use moqt_core::{
@@ -24,30 +27,11 @@ pub(crate) struct SessionHandler {
     session: Arc<Connection>,
     client: Arc<Mutex<MOQTClient>>,
     close_session_rx: mpsc::Receiver<(u64, String)>,
-    open_downstream_stream_or_datagram_rx: mpsc::Receiver<(u64, DataStreamType)>,
+    start_forwarder_rx: mpsc::Receiver<(u64, DataStreamType, Option<SubgroupStreamId>)>,
 }
 
 impl SessionHandler {
-    pub(crate) async fn start(
-        senders_to_other_connection_thread: SenderToOtherConnectionThread,
-        senders_to_management_thread: SendersToManagementThread,
-        incoming_session: IncomingSession,
-    ) -> Result<()> {
-        let mut session_handler = Self::init(
-            senders_to_other_connection_thread,
-            senders_to_management_thread,
-            incoming_session,
-        )
-        .await?;
-
-        session_handler.main_loop().await?;
-
-        session_handler.terminate().await?;
-
-        Ok(())
-    }
-
-    async fn init(
+    pub(crate) async fn init(
         senders_to_other_connection_thread: SenderToOtherConnectionThread,
         senders_to_management_thread: SendersToManagementThread,
         incoming_session: IncomingSession,
@@ -77,13 +61,13 @@ impl SessionHandler {
         );
 
         // For opening a new data stream
-        let (open_downstream_stream_or_datagram_tx, open_downstream_stream_or_datagram_rx) =
-            mpsc::channel::<(u64, DataStreamType)>(32);
+        let (start_forwarder_tx, start_forwarder_rx) =
+            mpsc::channel::<(u64, DataStreamType, Option<SubgroupStreamId>)>(32);
         senders
-            .open_downstream_stream_or_datagram_txes()
+            .start_forwarder_txes()
             .lock()
             .await
-            .insert(stable_id, open_downstream_stream_or_datagram_tx);
+            .insert(stable_id, start_forwarder_tx);
 
         let client = Arc::new(Mutex::new(MOQTClient::new(stable_id, senders)));
         let session = Arc::new(session);
@@ -92,20 +76,20 @@ impl SessionHandler {
             session,
             client,
             close_session_rx,
-            open_downstream_stream_or_datagram_rx,
+            start_forwarder_rx,
         };
 
         Ok(session_handler)
     }
 
-    async fn main_loop(&mut self) -> Result<()> {
+    pub(crate) async fn start(&mut self) -> Result<()> {
         let mut is_control_stream_opened = false;
 
         loop {
             match select_spawn_thread(
                 &self.client,
                 self.session.clone(),
-                &mut self.open_downstream_stream_or_datagram_rx,
+                &mut self.start_forwarder_rx,
                 &mut self.close_session_rx,
                 &mut is_control_stream_opened,
             )
@@ -122,7 +106,7 @@ impl SessionHandler {
         Ok(())
     }
 
-    async fn terminate(&mut self) -> Result<()> {
+    pub(crate) async fn finish(&mut self) -> Result<()> {
         let senders = self.client.lock().await.senders();
         let stable_id = self.client.lock().await.id();
 
@@ -154,7 +138,7 @@ impl SessionHandler {
             })
             .await?;
 
-        tracing::info!("session terminated");
+        tracing::info!("SessionHandler finished");
 
         Ok(())
     }

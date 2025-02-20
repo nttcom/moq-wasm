@@ -39,12 +39,17 @@ pub(crate) enum PubSubRelationCommand {
         downstream_session_id: usize,
         resp: oneshot::Sender<Result<()>>,
     },
-    IsValidDownstreamSubscribeId {
+    IsDownstreamSubscribeIdUnique {
         subscribe_id: u64,
         downstream_session_id: usize,
         resp: oneshot::Sender<Result<bool>>,
     },
-    IsValidDownstreamTrackAlias {
+    IsDownstreamSubscribeIdLessThanMax {
+        subscribe_id: u64,
+        downstream_session_id: usize,
+        resp: oneshot::Sender<Result<bool>>,
+    },
+    IsDownstreamTrackAliasUnique {
         track_alias: u64,
         downstream_session_id: usize,
         resp: oneshot::Sender<Result<bool>>,

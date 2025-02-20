@@ -33,12 +33,17 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         max_subscribe_id: u64,
         downstream_session_id: usize,
     ) -> Result<()>;
-    async fn is_valid_downstream_subscribe_id(
+    async fn is_downstream_subscribe_id_unique(
         &self,
         subscribe_id: u64,
         downstream_session_id: usize,
     ) -> Result<bool>;
-    async fn is_valid_downstream_track_alias(
+    async fn is_downstream_subscribe_id_less_than_max(
+        &self,
+        subscribe_id: u64,
+        downstream_session_id: usize,
+    ) -> Result<bool>;
+    async fn is_downstream_track_alias_unique(
         &self,
         track_alias: u64,
         downstream_session_id: usize,
