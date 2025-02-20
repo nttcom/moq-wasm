@@ -4,11 +4,13 @@ use tokio::sync::{mpsc, mpsc::Sender, Mutex};
 use tracing::{self, Instrument};
 use wtransport::{Endpoint, Identity, ServerConfig};
 mod modules;
-pub use modules::moqt_config::MOQTConfig;
+pub use modules::config::MOQTConfig;
 use modules::{
     buffer_manager::{buffer_manager, BufferCommand},
-    logging,
-    object_cache_storage::{object_cache_storage, ObjectCacheStorageCommand},
+    logging::init_logging,
+    object_cache_storage::{
+        cache::SubgroupStreamId, commands::ObjectCacheStorageCommand, storage::object_cache_storage,
+    },
     pubsub_relation_manager::{commands::PubSubRelationCommand, manager::pubsub_relation_manager},
     send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
     server_processes::{
@@ -23,7 +25,8 @@ use moqt_core::{
 };
 
 type SubscribeId = u64;
-pub(crate) type SenderToOpenSubscription = Sender<(SubscribeId, DataStreamType)>;
+pub(crate) type SenderToOpenSubscription =
+    Sender<(SubscribeId, DataStreamType, Option<SubgroupStreamId>)>;
 pub(crate) type TerminationError = (TerminationErrorCode, String);
 
 pub struct MOQTServer {
@@ -47,7 +50,7 @@ impl MOQTServer {
         }
     }
     pub async fn start(&self) -> Result<()> {
-        logging::init_logging(self.log_level.to_string());
+        init_logging(self.log_level.to_string());
 
         if self.underlay != UnderlayType::WebTransport {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
@@ -81,13 +84,12 @@ impl MOQTServer {
             mpsc::channel::<ObjectCacheStorageCommand>(1024);
         tokio::spawn(async move { object_cache_storage(&mut object_cache_rx).await });
 
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         for id in 0.. {
             let sender_to_other_connection_thread =
-                SenderToOtherConnectionThread::new(open_downstream_stream_or_datagram_txes.clone());
+                SenderToOtherConnectionThread::new(start_forwarder_txes.clone());
             let senders_to_management_thread = SendersToManagementThread::new(
                 buffer_tx.clone(),
                 pubsub_relation_tx.clone(),
@@ -100,15 +102,27 @@ impl MOQTServer {
 
             // Create a thread for each session
             tokio::spawn(async move {
-                let result = SessionHandler::start(
+                let mut session_handler = SessionHandler::init(
                     sender_to_other_connection_thread,
                     senders_to_management_thread,
                     incoming_session,
                 )
-                .instrument(session_span)
-                .await;
+                .instrument(session_span.clone())
+                .await
+                .unwrap();
 
-                tracing::error!("{:?}", result);
+                match session_handler
+                    .start()
+                    .instrument(session_span.clone())
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::error!("{:#?}", err);
+                    }
+                }
+
+                let _ = session_handler.finish().instrument(session_span).await;
             });
         }
 

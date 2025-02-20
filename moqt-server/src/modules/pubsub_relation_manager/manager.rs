@@ -177,7 +177,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 producers.insert(downstream_session_id, Producer::new(max_subscribe_id));
                 resp.send(Ok(())).unwrap();
             }
-            IsValidDownstreamSubscribeId {
+            IsDownstreamSubscribeIdUnique {
                 subscribe_id,
                 downstream_session_id,
                 resp,
@@ -193,10 +193,29 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
 
-                let is_valid = producer.is_subscribe_id_valid(subscribe_id);
+                let is_valid = producer.is_subscribe_id_unique(subscribe_id);
                 resp.send(Ok(is_valid)).unwrap();
             }
-            IsValidDownstreamTrackAlias {
+            IsDownstreamSubscribeIdLessThanMax {
+                subscribe_id,
+                downstream_session_id,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let is_valid = producer.is_subscribe_id_less_than_max(subscribe_id);
+                resp.send(Ok(is_valid)).unwrap();
+            }
+            IsDownstreamTrackAliasUnique {
                 track_alias,
                 downstream_session_id,
                 resp,
@@ -212,8 +231,8 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
 
-                let is_valid = producer.is_track_alias_valid(track_alias);
-                resp.send(Ok(is_valid)).unwrap();
+                let is_unique = producer.is_track_alias_unique(track_alias);
+                resp.send(Ok(is_unique)).unwrap();
             }
             GetUpstreamSessionId {
                 track_namespace,

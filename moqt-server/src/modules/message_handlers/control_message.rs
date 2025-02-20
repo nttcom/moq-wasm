@@ -18,7 +18,7 @@ use crate::modules::{
         },
     },
     moqt_client::MOQTClientStatus,
-    object_cache_storage::ObjectCacheStorageWrapper,
+    object_cache_storage::wrapper::ObjectCacheStorageWrapper,
 };
 use crate::SenderToOpenSubscription;
 use anyhow::{bail, Result};
@@ -64,7 +64,7 @@ pub async fn control_message_handler(
     read_buf: &mut BytesMut,
     underlay_type: UnderlayType,
     client: &mut MOQTClient,
-    open_downstream_stream_or_datagram_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
+    start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
@@ -143,7 +143,7 @@ pub async fn control_message_handler(
                 pubsub_relation_manager_repository,
                 send_stream_dispatcher_repository,
                 object_cache_storage,
-                open_downstream_stream_or_datagram_txes,
+                start_forwarder_txes,
             )
             .await
             {
@@ -353,7 +353,8 @@ pub(crate) mod test_helper_fn {
         message_handlers::control_message::{control_message_handler, MessageProcessResult},
         moqt_client::{MOQTClient, MOQTClientStatus},
         object_cache_storage::{
-            object_cache_storage, ObjectCacheStorageCommand, ObjectCacheStorageWrapper,
+            commands::ObjectCacheStorageCommand, storage::object_cache_storage,
+            wrapper::ObjectCacheStorageWrapper,
         },
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
@@ -406,17 +407,16 @@ pub(crate) mod test_helper_fn {
 
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
-        // Prepare open subscription sender
-        let open_downstream_stream_or_datagram_txes: Arc<
-            Mutex<HashMap<usize, SenderToOpenSubscription>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        // Prepare sender fot starting forwarder
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         // Execute control_message_handler and get result
         control_message_handler(
             &mut buf,
             UnderlayType::WebTransport,
             &mut client,
-            open_downstream_stream_or_datagram_txes,
+            start_forwarder_txes,
             &mut pubsub_relation_manager,
             &mut send_stream_dispatcher,
             &mut object_cache_storage,

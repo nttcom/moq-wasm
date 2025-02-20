@@ -107,6 +107,14 @@ impl Subscription {
     pub fn get_group_order(&self) -> GroupOrder {
         self.group_order
     }
+
+    pub fn is_end(&self, group_id: u64, object_id: u64) -> bool {
+        if self.filter_type != FilterType::AbsoluteRange {
+            return false;
+        }
+
+        group_id == self.end_group.unwrap() && object_id == self.end_object.unwrap()
+    }
 }
 
 #[cfg(test)]
