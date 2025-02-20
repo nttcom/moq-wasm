@@ -1,10 +1,10 @@
 mod utils;
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 use anyhow::Result;
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 use bytes::{Buf, BufMut, BytesMut};
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 use moqt_core::{
     control_message_type::ControlMessageType,
     data_stream_type::DataStreamType,
@@ -38,13 +38,16 @@ use moqt_core::{
     },
 };
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 use std::{cell::RefCell, collections::HashMap, io::Cursor, rc::Rc};
 use wasm_bindgen::prelude::*;
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 use wasm_bindgen_futures::JsFuture;
-#[cfg(web_sys_unstable_apis)]
-use web_sys::ReadableStreamDefaultReader;
+#[cfg(feature = "web_sys_unstable_apis")]
+use web_sys::{
+    ReadableStream, ReadableStreamDefaultReader, WebTransport, WebTransportBidirectionalStream,
+    WritableStream, WritableStreamDefaultWriter,
+};
 
 #[wasm_bindgen]
 extern "C" {
@@ -54,7 +57,7 @@ extern "C" {
     fn log(s: &str);
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 macro_rules! console_log {
     // Note that this is using the `log` function imported above during
     // `bare_bones`
@@ -67,29 +70,29 @@ fn main() {
     utils::set_panic_hook();
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 type SubscribeId = u64;
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 type GroupId = u64;
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 type SubgroupId = u64;
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 type WriterKey = (SubscribeId, Option<(GroupId, SubgroupId)>);
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 #[wasm_bindgen]
 pub struct MOQTClient {
     pub id: u64,
     url: String,
     subscription_node: Rc<RefCell<SubscriptionNode>>,
-    transport: Rc<RefCell<Option<web_sys::WebTransport>>>,
-    control_stream_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
-    datagram_writer: Rc<RefCell<Option<web_sys::WritableStreamDefaultWriter>>>,
-    stream_writers: Rc<RefCell<HashMap<WriterKey, web_sys::WritableStreamDefaultWriter>>>,
+    transport: Rc<RefCell<Option<WebTransport>>>,
+    control_stream_writer: Rc<RefCell<Option<WritableStreamDefaultWriter>>>,
+    datagram_writer: Rc<RefCell<Option<WritableStreamDefaultWriter>>>,
+    stream_writers: Rc<RefCell<HashMap<WriterKey, WritableStreamDefaultWriter>>>,
     callbacks: Rc<RefCell<MOQTCallbacks>>,
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 #[wasm_bindgen]
 impl MOQTClient {
     #[wasm_bindgen(constructor)]
@@ -567,7 +570,7 @@ impl MOQTClient {
                             *self.datagram_writer.borrow_mut() = Some(datagram_writer);
                         }
                         "track" => {
-                            let send_uni_stream = web_sys::WritableStream::from(
+                            let send_uni_stream = WritableStream::from(
                                 JsFuture::from(
                                     self.transport
                                         .borrow()
@@ -874,7 +877,7 @@ impl MOQTClient {
         let mut stream_writers = self.stream_writers.borrow_mut();
         let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
         if stream_writers.get(&writer_key).is_none() {
-            let send_uni_stream = web_sys::WritableStream::from(
+            let send_uni_stream = WritableStream::from(
                 JsFuture::from(
                     self.transport
                         .borrow()
@@ -951,7 +954,7 @@ impl MOQTClient {
     }
 
     pub async fn start(&self) -> Result<JsValue, JsValue> {
-        let transport = web_sys::WebTransport::new(self.url.as_str());
+        let transport = WebTransport::new(self.url.as_str());
         match &transport {
             Ok(v) => console_log!("{:#?}", v),
             Err(e) => {
@@ -966,13 +969,13 @@ impl MOQTClient {
         JsFuture::from(transport.ready()).await?;
 
         // All control messages are sent on same bidirectional stream which is called "control stream"
-        let control_stream = web_sys::WebTransportBidirectionalStream::from(
+        let control_stream = WebTransportBidirectionalStream::from(
             JsFuture::from(transport.create_bidirectional_stream()).await?,
         );
 
         let control_stream_readable = control_stream.readable();
         let control_stream_reader =
-            web_sys::ReadableStreamDefaultReader::new(&control_stream_readable.into())?;
+            ReadableStreamDefaultReader::new(&control_stream_readable.into())?;
 
         let control_stream_writable = control_stream.writable();
         let control_stream_writer = control_stream_writable.get_writer()?;
@@ -992,7 +995,7 @@ impl MOQTClient {
 
         // // For receiving object messages as datagrams
         let datagram_reader_readable = transport.datagrams().readable();
-        let datagram_reader = web_sys::ReadableStreamDefaultReader::new(&datagram_reader_readable)?;
+        let datagram_reader = ReadableStreamDefaultReader::new(&datagram_reader_readable)?;
         let callbacks = self.callbacks.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let _ = datagram_read_thread(callbacks, &datagram_reader).await;
@@ -1001,7 +1004,7 @@ impl MOQTClient {
         // For receiving object messages as streams
         let incoming_uni_stream = transport.incoming_unidirectional_streams();
         let incoming_uni_stream_reader =
-            web_sys::ReadableStreamDefaultReader::new(&&incoming_uni_stream.into())?;
+            ReadableStreamDefaultReader::new(&&incoming_uni_stream.into())?;
         let callbacks = self.callbacks.clone();
         *self.stream_writers.borrow_mut() = HashMap::new();
 
@@ -1017,7 +1020,7 @@ impl MOQTClient {
     }
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn receive_unidirectional_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
@@ -1037,11 +1040,11 @@ async fn receive_unidirectional_thread(
             break;
         }
 
-        let ret_value = web_sys::ReadableStream::from(ret_value);
+        let ret_value = ReadableStream::from(ret_value);
 
         let callbacks = callbacks.clone();
 
-        let reader = web_sys::ReadableStreamDefaultReader::new(&ret_value)?;
+        let reader = ReadableStreamDefaultReader::new(&ret_value)?;
         wasm_bindgen_futures::spawn_local(async move {
             let _ = uni_directional_stream_read_thread(callbacks, &reader).await;
         });
@@ -1050,7 +1053,7 @@ async fn receive_unidirectional_thread(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn bi_directional_stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     subscription_node: Rc<RefCell<SubscriptionNode>>,
@@ -1095,7 +1098,7 @@ async fn bi_directional_stream_read_thread(
 }
 
 // TODO: Separate handler to control message handler and object message handler
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn control_message_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     subscription_node: Rc<RefCell<SubscriptionNode>>,
@@ -1284,7 +1287,7 @@ async fn control_message_handler(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn datagram_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
@@ -1321,7 +1324,7 @@ async fn datagram_read_thread(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn uni_directional_stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
@@ -1393,7 +1396,7 @@ async fn uni_directional_stream_read_thread(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn object_header_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     buf: &mut BytesMut,
@@ -1460,7 +1463,7 @@ async fn object_header_handler(
     Ok(data_stream_type)
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut BytesMut) -> Result<()> {
     let mut read_cur = Cursor::new(&buf[..]);
     let header_type_value = read_variable_integer(&mut read_cur);
@@ -1507,7 +1510,7 @@ async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut Bytes
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn track_stream_object_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     buf: &mut BytesMut,
@@ -1537,7 +1540,7 @@ async fn track_stream_object_handler(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn subgroup_stream_object_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     buf: &mut BytesMut,
@@ -1567,13 +1570,13 @@ async fn subgroup_stream_object_handler(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 struct SubscriptionNode {
     consumer: Option<Consumer>,
     producer: Option<Producer>,
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 impl SubscriptionNode {
     fn new() -> Self {
         SubscriptionNode {
@@ -1755,7 +1758,7 @@ impl SubscriptionNode {
 
 // Due to the lifetime issue of `spawn_local`, it needs to be kept separate from MOQTClient.
 // The callback is passed from JavaScript.
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 struct MOQTCallbacks {
     setup_callback: Option<js_sys::Function>,
     announce_callback: Option<js_sys::Function>,
@@ -1770,7 +1773,7 @@ struct MOQTCallbacks {
     subgroup_stream_object_callback: Option<js_sys::Function>,
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 impl MOQTCallbacks {
     fn new() -> Self {
         MOQTCallbacks {
