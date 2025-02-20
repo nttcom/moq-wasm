@@ -10,7 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["console_error_panic_hook"]
-
+web_sys_unstable_apis = []
 [dependencies]
 bytes = "1.5.0"
 console_error_panic_hook = { version = "0.1.7", optional = true }
@@ -22,6 +22,8 @@ wasm-bindgen-futures = "0.4.37"
 moqt-core = {path = "../moqt-core"}
 futures = "0.3.29"
 anyhow = "1.0.75"
+
+
 
 [dependencies.web-sys]
 version = "0.3.64"
@@ -36,6 +38,8 @@ features = [
   'ReadableStream',
   'WritableStream',
 ]
+
+
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(web_sys_unstable_apis)'] }

@@ -1,10 +1,10 @@
 mod utils;
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 use anyhow::Result;
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 use bytes::{Buf, BufMut, BytesMut};
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 use moqt_core::{
     control_message_type::ControlMessageType,
     data_stream_type::DataStreamType,
@@ -38,12 +38,12 @@ use moqt_core::{
     },
 };
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 use std::{cell::RefCell, collections::HashMap, io::Cursor, rc::Rc};
 use wasm_bindgen::prelude::*;
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 use wasm_bindgen_futures::JsFuture;
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 use web_sys::ReadableStreamDefaultReader;
 
 #[wasm_bindgen]
@@ -54,7 +54,7 @@ extern "C" {
     fn log(s: &str);
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 macro_rules! console_log {
     // Note that this is using the `log` function imported above during
     // `bare_bones`
@@ -67,16 +67,16 @@ fn main() {
     utils::set_panic_hook();
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 type SubscribeId = u64;
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 type GroupId = u64;
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 type SubgroupId = u64;
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 type WriterKey = (SubscribeId, Option<(GroupId, SubgroupId)>);
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 #[wasm_bindgen]
 pub struct MOQTClient {
     pub id: u64,
@@ -89,7 +89,7 @@ pub struct MOQTClient {
     callbacks: Rc<RefCell<MOQTCallbacks>>,
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 #[wasm_bindgen]
 impl MOQTClient {
     #[wasm_bindgen(constructor)]
@@ -1017,7 +1017,7 @@ impl MOQTClient {
     }
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn receive_unidirectional_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
@@ -1050,7 +1050,7 @@ async fn receive_unidirectional_thread(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn bi_directional_stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     subscription_node: Rc<RefCell<SubscriptionNode>>,
@@ -1095,7 +1095,7 @@ async fn bi_directional_stream_read_thread(
 }
 
 // TODO: Separate handler to control message handler and object message handler
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn control_message_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     subscription_node: Rc<RefCell<SubscriptionNode>>,
@@ -1284,7 +1284,7 @@ async fn control_message_handler(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn datagram_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
@@ -1321,7 +1321,7 @@ async fn datagram_read_thread(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn uni_directional_stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
@@ -1393,7 +1393,7 @@ async fn uni_directional_stream_read_thread(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn object_header_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     buf: &mut BytesMut,
@@ -1460,7 +1460,7 @@ async fn object_header_handler(
     Ok(data_stream_type)
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut BytesMut) -> Result<()> {
     let mut read_cur = Cursor::new(&buf[..]);
     let header_type_value = read_variable_integer(&mut read_cur);
@@ -1507,7 +1507,7 @@ async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut Bytes
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn track_stream_object_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     buf: &mut BytesMut,
@@ -1537,7 +1537,7 @@ async fn track_stream_object_handler(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 async fn subgroup_stream_object_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     buf: &mut BytesMut,
@@ -1567,13 +1567,13 @@ async fn subgroup_stream_object_handler(
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 struct SubscriptionNode {
     consumer: Option<Consumer>,
     producer: Option<Producer>,
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 impl SubscriptionNode {
     fn new() -> Self {
         SubscriptionNode {
@@ -1755,7 +1755,7 @@ impl SubscriptionNode {
 
 // Due to the lifetime issue of `spawn_local`, it needs to be kept separate from MOQTClient.
 // The callback is passed from JavaScript.
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 struct MOQTCallbacks {
     setup_callback: Option<js_sys::Function>,
     announce_callback: Option<js_sys::Function>,
@@ -1770,7 +1770,7 @@ struct MOQTCallbacks {
     subgroup_stream_object_callback: Option<js_sys::Function>,
 }
 
-#[cfg(web_sys_unstable_apis)]
+#[cfg(feature = "web_sys_unstable_apis")]
 impl MOQTCallbacks {
     fn new() -> Self {
         MOQTCallbacks {
