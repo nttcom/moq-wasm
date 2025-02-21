@@ -31,6 +31,7 @@ use moqt_core::{
     variable_integer::{read_variable_integer, write_variable_integer},
     SendStreamDispatcherRepository,
 };
+use server_processes::unsubscribe_message::process_unsubscribe_message;
 use std::{collections::HashMap, io::Cursor, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -202,24 +203,24 @@ pub async fn control_message_handler(
             }
         }
         ControlMessageType::UnSubscribe => {
-            let unsubscribe_message = UnAnnounce::depacketize(&mut payload_buf);
-
-            if let Err(err) = unsubscribe_message {
-                tracing::error!("{:#?}", err);
-                return MessageProcessResult::Failure(
-                    TerminationErrorCode::InternalError,
-                    err.to_string(),
-                );
-            }
-
-            // TODO: Not implemented yet
-            let _unsubscribe_result = unannounce_handler(
-                unsubscribe_message.unwrap(),
-                client,
+            match process_unsubscribe_message(
+                &mut payload_buf,
                 pubsub_relation_manager_repository,
-            );
-
-            return MessageProcessResult::Success(BytesMut::with_capacity(0));
+                send_stream_dispatcher_repository,
+                client,
+            )
+            .await
+            {
+                Ok(_) => {
+                    return MessageProcessResult::SuccessWithoutResponse;
+                }
+                Err(err) => {
+                    return MessageProcessResult::Failure(
+                        TerminationErrorCode::InternalError,
+                        err.to_string(),
+                    );
+                }
+            }
         }
         ControlMessageType::Announce => {
             match process_announce_message(

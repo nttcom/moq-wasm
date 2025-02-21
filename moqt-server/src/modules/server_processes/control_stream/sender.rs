@@ -6,6 +6,7 @@ use moqt_core::{
             announce::Announce, announce_ok::AnnounceOk, subscribe::Subscribe,
             subscribe_error::SubscribeError, subscribe_namespace::SubscribeNamespace,
             subscribe_namespace_ok::SubscribeNamespaceOk, subscribe_ok::SubscribeOk,
+            unsubscribe::Unsubscribe,
         },
         moqt_payload::MOQTPayload,
     },
@@ -80,6 +81,14 @@ pub(crate) async fn send_control_stream(
                 "Relayed Message Type: {:?}",
                 ControlMessageType::SubscribeNamespaceOk
             );
+        } else if message.as_any().downcast_ref::<Unsubscribe>().is_some() {
+            message_buf.extend(write_variable_integer(
+                u8::from(ControlMessageType::UnSubscribe) as u64,
+            ));
+            tracing::info!(
+                "Relayed Message Type: {:?}",
+                ControlMessageType::UnSubscribe
+            )
         } else {
             tracing::warn!("Unsupported message type for bi-directional stream");
             continue;
