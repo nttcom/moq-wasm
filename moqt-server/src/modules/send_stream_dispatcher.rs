@@ -153,3 +153,16 @@ impl SendStreamDispatcherRepository for SendStreamDispatcher {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod success {
+    use super::*;
+    use tokio::sync::mpsc::channel;
+
+    #[tokio::test]
+    async fn get_tx() {
+        let (tx, _) = channel(1);
+        let dispatcher = SendStreamDispatcher::new(tx);
+        let _ = dispatcher.get_tx();
+    }
+}
