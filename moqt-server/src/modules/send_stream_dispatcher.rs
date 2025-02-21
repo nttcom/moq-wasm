@@ -92,6 +92,7 @@ pub(crate) async fn send_stream_dispatcher(rx: &mut mpsc::Receiver<SendStreamDis
     tracing::trace!("send_stream_dispatcher end");
 }
 
+#[derive(Clone)]
 pub(crate) struct SendStreamDispatcher {
     tx: mpsc::Sender<SendStreamDispatchCommand>,
 }
@@ -99,6 +100,10 @@ pub(crate) struct SendStreamDispatcher {
 impl SendStreamDispatcher {
     pub fn new(tx: mpsc::Sender<SendStreamDispatchCommand>) -> Self {
         Self { tx }
+    }
+
+    pub fn get_tx(&self) -> mpsc::Sender<SendStreamDispatchCommand> {
+        self.tx.clone()
     }
 }
 

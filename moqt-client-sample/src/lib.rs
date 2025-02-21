@@ -134,6 +134,13 @@ impl MOQTClient {
         self.callbacks.borrow_mut().set_subscribe_callback(callback);
     }
 
+    #[wasm_bindgen(js_name = onUnsubscribe)]
+    pub fn set_unsubscribe_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_unsubscribe_callback(callback)
+    }
+
     #[wasm_bindgen(js_name = onSubscribeResponse)]
     pub fn set_subscribe_response_callback(&mut self, callback: js_sys::Function) {
         self.callbacks
@@ -1766,6 +1773,7 @@ struct MOQTCallbacks {
     subscribe_callback: Option<js_sys::Function>,
     subscribe_response_callback: Option<js_sys::Function>,
     subscribe_namespace_response_callback: Option<js_sys::Function>,
+    unsubscribe_callback: Option<js_sys::Function>,
     datagram_object_callback: Option<js_sys::Function>,
     track_stream_header_callback: Option<js_sys::Function>,
     track_stream_object_callback: Option<js_sys::Function>,
@@ -1783,6 +1791,7 @@ impl MOQTCallbacks {
             subscribe_callback: None,
             subscribe_response_callback: None,
             subscribe_namespace_response_callback: None,
+            unsubscribe_callback: None,
             datagram_object_callback: None,
             track_stream_header_callback: None,
             track_stream_object_callback: None,
@@ -1837,6 +1846,10 @@ impl MOQTCallbacks {
 
     pub fn set_subscribe_namespace_response_callback(&mut self, callback: js_sys::Function) {
         self.subscribe_namespace_response_callback = Some(callback);
+    }
+
+    pub fn set_unsubscribe_callback(&mut self, callback: js_sys::Function) {
+        self.unsubscribe_callback = Some(callback);
     }
 
     pub fn datagram_object_callback(&self) -> Option<js_sys::Function> {
