@@ -102,6 +102,8 @@ impl SendStreamDispatcher {
         Self { tx }
     }
 
+    // Used for testing in unsubscribe_handler
+    #[allow(dead_code)]
     pub fn get_tx(&self) -> mpsc::Sender<SendStreamDispatchCommand> {
         self.tx.clone()
     }
@@ -151,18 +153,5 @@ impl SendStreamDispatcherRepository for SendStreamDispatcher {
         let message_arc = Arc::new(message);
         let _ = sender.send(message_arc).await;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod success {
-    use super::*;
-    use tokio::sync::mpsc::channel;
-
-    #[tokio::test]
-    async fn get_tx() {
-        let (tx, _) = channel(1);
-        let dispatcher = SendStreamDispatcher::new(tx);
-        let _ = dispatcher.get_tx();
     }
 }
