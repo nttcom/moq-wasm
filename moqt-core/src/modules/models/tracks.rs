@@ -1,7 +1,6 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForwardingPreference {
     Datagram,
-    Track,
     Subgroup,
 }
 
