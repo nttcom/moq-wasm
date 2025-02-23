@@ -13,6 +13,7 @@ use crate::modules::pubsub_relation_manager::commands::{
 };
 
 // Wrapper to encapsulate channel-related operations
+#[derive(Clone)]
 pub(crate) struct PubSubRelationManagerWrapper {
     tx: mpsc::Sender<PubSubRelationCommand>,
 }

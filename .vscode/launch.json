@@ -4,15 +4,11 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Debug executable 'moqt-server-sample'",
+      "name": "Debug executable 'moqt-server'",
       "cargo": {
-        "args": [
-          "build",
-          "--bin=moqt-server-sample",
-          "--package=moqt-server-sample"
-        ],
+        "args": ["build", "--bin=moqt-server", "--package=moqt-server"],
         "filter": {
-          "name": "moqt-server-sample",
+          "name": "moqt-server",
           "kind": "bin"
         }
       },

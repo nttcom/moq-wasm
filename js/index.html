@@ -18,10 +18,14 @@
         <br />
         <div>
           <h2>Forwarding Preference</h2>
-            <label><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram </label>
-            <label><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" checked />Subgroup </label>
-            <br />
-            *You must select at first
+          <label
+            ><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram
+          </label>
+          <label
+            ><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" checked/>Subgroup
+          </label>
+          <br />
+          *You must select at first
           <h2>Message</h2>
           <label>AuthInfo: <input type="text" name="auth-info" id="" value="secret" /> </label>
           <br />
@@ -41,7 +45,7 @@
           <label>Track Namespace: <input type="text" name="announce-track-namespace" id="" value="vc/aa" /> </label>
           <br />
           <button type="button" id="sendAnnounceBtn">Send</button>
-          
+
           <h3>SUBSCRIBE_NAMESPACE</h3>
           <label>Track Namespace Prefix: <input type="text" name="track-namespace-prefix" id="" value="vc" /> </label>
           <br />
@@ -71,11 +75,18 @@
           <label><input type="radio" name="filter-type" id="" value="3" />Absolute Start </label>
           <label><input type="radio" name="filter-type" id="" value="4" />Absolute Range</label>
           <br />
-          Start Group: <input type="text" name="start-group" id="" value="0" />  Start Object: <input type="text" name="start-object" id="" value="0" />
+          Start Group: <input type="text" name="start-group" id="" value="0" /> Start Object:
+          <input type="text" name="start-object" id="" value="0" />
           <br />
-          End Group: <input type="text" name="end-group" id="" value="10000" />  End Object: <input type="text" name="end-object" id="" value="10000" />
+          End Group: <input type="text" name="end-group" id="" value="10000" /> End Object:
+          <input type="text" name="end-object" id="" value="10000" />
           <br />
           <button type="button" id="sendSubscribeBtn">Send</button>
+
+          <h3>UNSUBSCRIBE</h3>
+          <label>SUBSCRIBE_ID: <input type="text" name="unsubscribe-subscribe-id" id="" value="0" /> </label>
+          <br />
+          <button type="button" id="sendUnsubscribeBtn">Send</button>
 
           <h3>OBJECT</h3>
           <div id="headerField" style="display: blocked;">
@@ -86,12 +97,14 @@
           <label>Track Alias: <input type="text" name="object-track-alias" id="" value="0" /> </label>
           <br />
           <div id="subgroupHeaderContents" style="display: blocked;">
-            Group ID: <p id="subgroupGroupId">0</p>
+            Group ID:
+            <p id="subgroupGroupId">0</p>
             <br />
             <button type="button" id="descendSubgroupGroupIdBtn">&lt;</button>
             <button type="button" id="ascendSubgroupGroupIdBtn">&gt;</button>
             <br />
-            Subgroup ID: <p id="subgroupId">0</p>
+            Subgroup ID: 
+            <p id="subgroupId">0</p>
             <br />
             <button type="button" id="descendSubgroupIdBtn">&lt;</button>
             <button type="button" id="ascendSubgroupIdBtn">&gt;</button>
@@ -103,18 +116,19 @@
             <h4>Object</h4>
           </div>
           <div id="datagramObjectContents" style="display: none;">
-            Group ID: <p id="datagramGroupId">0</p>
+            Group ID: 
+            <p id="datagramGroupId">0</p>
             <br />
             <button type="button" id="descendDatagramGroupIdBtn">&lt;</button>
             <button type="button" id="ascendDatagramGroupIdBtn">&gt;</button>
             <br />
             <br />
           </div>
-          Object ID: <p id="objectId">0</p>
+          Object ID:
+          <p id="objectId">0</p>
           <br />
           <br />
-          <label>Payload: 
-            <br /><textarea name="payload" id="object-payload" rows="5" cols="33">test</textarea> </label>
+          <label>Payload: <br /><textarea name="payload" id="object-payload" rows="5" cols="33">test</textarea></label>
           <br />
           <div id="sendDatagramObject" style="display: none;">
             <button type="button" id="sendDatagramObjectBtn">Send</button>
@@ -134,7 +148,7 @@
     <script type="module" src="/main.js"></script>
   </body>
   <style>
-    p{
+    p {
       display: inline;
     }
   </style>

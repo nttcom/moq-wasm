@@ -75,6 +75,10 @@ init().then(async () => {
       console.log({ subscribeNamespaceResponse })
     })
 
+    client.onUnsubscribe(async (unsubscribeMessage) => {
+      console.log({ unsubscribeMessage })
+    })
+
     client.onDatagramObject(async (datagramObject) => {
       console.log({ datagramObject })
       describeReceivedObject(datagramObject.object_payload)
@@ -153,6 +157,13 @@ init().then(async () => {
         BigInt(endObject),
         authInfo
       )
+    })
+
+    const sendUnsubscribeBtn = document.getElementById('sendUnsubscribeBtn')
+    sendUnsubscribeBtn.addEventListener('click', async () => {
+      console.log('send unsubscribe btn clicked')
+      const subscribeId = form['unsubscribe-subscribe-id'].value
+      await client.sendUnsubscribeMessage(subscribeId)
     })
 
     const sendDatagramObjectBtn = document.getElementById('sendDatagramObjectBtn')
