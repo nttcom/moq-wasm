@@ -3,8 +3,8 @@ use crate::{
     modules::{
         buffer_manager::{request_buffer, BufferCommand},
         message_handlers::{
-            stream_header::{self, SubgroupStreamHeaderProcessResult},
-            stream_object::{self, SubgroupStreamObjectProcessResult},
+            subgroup_stream_header::{self, SubgroupStreamHeaderProcessResult},
+            subgroup_stream_object::{self, SubgroupStreamObjectProcessResult},
         },
         moqt_client::MOQTClient,
         object_cache_storage::{
@@ -172,7 +172,7 @@ impl SubgroupStreamObjectReceiver {
         let mut process_buf = self.buf.lock().await;
         let client = self.client.clone();
 
-        stream_header::try_read_header(&mut process_buf, client).await
+        subgroup_stream_header::try_read_header(&mut process_buf, client).await
     }
 
     async fn set_upstream_forwarding_preference(
@@ -383,7 +383,7 @@ impl SubgroupStreamObjectReceiver {
     async fn try_read_object_from_buf(&self) -> SubgroupStreamObjectProcessResult {
         let mut buf = self.buf.lock().await;
 
-        stream_object::try_read_object(&mut buf).await
+        subgroup_stream_object::try_read_object(&mut buf).await
     }
 
     async fn store_object(

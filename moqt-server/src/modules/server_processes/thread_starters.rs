@@ -4,7 +4,7 @@ use super::{
     },
     data_streams::{
         datagram::{forwarder::DatagramObjectForwarder, receiver::DatagramObjectReceiver},
-        stream::{
+        subgroup_stream::{
             forwarder::SubgroupStreamObjectForwarder,
             receiver::SubgroupStreamObjectReceiver,
             uni_stream::{UniRecvStream, UniSendStream},

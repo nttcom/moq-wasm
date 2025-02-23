@@ -97,7 +97,9 @@ pub async fn try_read_header(
 mod tests {
     mod success {
         use crate::modules::{
-            message_handlers::stream_header::{try_read_header, SubgroupStreamHeaderProcessResult},
+            message_handlers::subgroup_stream_header::{
+                try_read_header, SubgroupStreamHeaderProcessResult,
+            },
             moqt_client::{MOQTClient, MOQTClientStatus},
             server_processes::senders,
         };

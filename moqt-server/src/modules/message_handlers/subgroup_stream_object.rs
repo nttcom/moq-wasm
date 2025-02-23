@@ -36,7 +36,7 @@ pub async fn try_read_object(buf: &mut BytesMut) -> SubgroupStreamObjectProcessR
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::message_handlers::stream_object::{
+        use crate::modules::message_handlers::subgroup_stream_object::{
             try_read_object, SubgroupStreamObjectProcessResult,
         };
         use bytes::BytesMut;
