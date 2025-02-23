@@ -2541,7 +2541,7 @@ mod success {
         let start_object = Some(0);
         let end_group = None;
         let end_object = None;
-        let forwarding_preference = ForwardingPreference::Track;
+        let forwarding_preference = ForwardingPreference::Subgroup;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -2606,7 +2606,7 @@ mod success {
         let start_object = Some(0);
         let end_group = None;
         let end_object = None;
-        let forwarding_preference = ForwardingPreference::Track;
+        let forwarding_preference = ForwardingPreference::Subgroup;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);

@@ -6,7 +6,7 @@ use anyhow::{bail, Result};
 use bytes::{Buf, BytesMut};
 use moqt_core::{
     data_stream_type::DataStreamType,
-    messages::data_streams::{subgroup_stream, track_stream::Header, DataStreams},
+    messages::data_streams::{subgroup_stream, DataStreams},
     variable_integer::read_variable_integer,
 };
 use std::{io::Cursor, sync::Arc};
@@ -21,7 +21,6 @@ pub enum StreamHeaderProcessResult {
 
 #[derive(Debug, PartialEq)]
 pub enum StreamHeader {
-    Track(Header),
     Subgroup(subgroup_stream::Header),
 }
 
@@ -79,9 +78,6 @@ pub async fn try_read_header(
     tracing::info!("Received data stream type: {:?}", data_stream_type);
 
     let result = match data_stream_type {
-        DataStreamType::StreamHeaderTrack => {
-            Header::depacketize(&mut read_cur).map(StreamHeader::Track)
-        }
         DataStreamType::StreamHeaderSubgroup => {
             subgroup_stream::Header::depacketize(&mut read_cur).map(StreamHeader::Subgroup)
         }
@@ -120,43 +116,11 @@ mod tests {
         use bytes::BytesMut;
         use moqt_core::{
             data_stream_type::DataStreamType,
-            messages::data_streams::{subgroup_stream, track_stream::Header, DataStreams},
+            messages::data_streams::{subgroup_stream, DataStreams},
             variable_integer::write_variable_integer,
         };
         use std::{io::Cursor, sync::Arc};
         use tokio::sync::Mutex;
-
-        #[tokio::test]
-        async fn track_stream_header_success() {
-            let data_stream_type = DataStreamType::StreamHeaderTrack;
-            let bytes_array = [
-                0, // Subscribe ID (i)
-                1, // Track Alias (i)
-                2, // Subscriber Priority (8)
-            ];
-            let mut buf = BytesMut::with_capacity(bytes_array.len() + 8);
-            buf.extend(write_variable_integer(data_stream_type as u64));
-            buf.extend_from_slice(&bytes_array);
-
-            let senders_mock = senders::test_helper_fn::create_senders_mock();
-            let upstream_session_id = 0;
-
-            let mut client = MOQTClient::new(upstream_session_id, senders_mock);
-            client.update_status(MOQTClientStatus::SetUp);
-            let client = Arc::new(Mutex::new(client));
-
-            let result = try_read_header(&mut buf, client).await;
-
-            let mut buf_without_type = BytesMut::with_capacity(bytes_array.len());
-            buf_without_type.extend_from_slice(&bytes_array);
-            let mut read_cur = Cursor::new(&buf_without_type[..]);
-            let header = Header::depacketize(&mut read_cur).unwrap();
-
-            assert_eq!(
-                result,
-                StreamHeaderProcessResult::Success(StreamHeader::Track(header))
-            );
-        }
 
         #[tokio::test]
         async fn subgroup_stream_header_success() {
@@ -190,29 +154,6 @@ mod tests {
                 result,
                 StreamHeaderProcessResult::Success(StreamHeader::Subgroup(header))
             );
-        }
-
-        #[tokio::test]
-        async fn track_stream_header_continue_incomplete_message() {
-            let data_stream_type = DataStreamType::StreamHeaderTrack;
-            let bytes_array = [
-                0, // Group ID (i)
-                1, // Object ID (i)
-            ];
-            let mut buf = BytesMut::with_capacity(bytes_array.len() + 8);
-            buf.extend(write_variable_integer(data_stream_type as u64));
-            buf.extend_from_slice(&bytes_array);
-
-            let senders_mock = senders::test_helper_fn::create_senders_mock();
-            let upstream_session_id = 0;
-
-            let mut client = MOQTClient::new(upstream_session_id, senders_mock);
-            client.update_status(MOQTClientStatus::SetUp);
-            let client = Arc::new(Mutex::new(client));
-
-            let result = try_read_header(&mut buf, client).await;
-
-            assert_eq!(result, StreamHeaderProcessResult::Continue);
         }
 
         #[tokio::test]

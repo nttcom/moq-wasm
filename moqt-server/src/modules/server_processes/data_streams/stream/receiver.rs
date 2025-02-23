@@ -189,7 +189,6 @@ impl StreamObjectReceiver {
         stream_header: &StreamHeader,
     ) -> Result<(), TerminationError> {
         let subscribe_id = match stream_header {
-            StreamHeader::Track(header) => header.subscribe_id(),
             StreamHeader::Subgroup(header) => header.subscribe_id(),
         };
 
@@ -203,7 +202,6 @@ impl StreamObjectReceiver {
         stream_header: &StreamHeader,
     ) -> Result<(), TerminationError> {
         let data_stream_type = match stream_header {
-            StreamHeader::Track(_) => DataStreamType::StreamHeaderTrack,
             StreamHeader::Subgroup(_) => DataStreamType::StreamHeaderSubgroup,
         };
 
@@ -219,7 +217,6 @@ impl StreamObjectReceiver {
         data_stream_type: DataStreamType,
     ) -> Result<(), TerminationError> {
         let forwarding_preference = match data_stream_type {
-            DataStreamType::StreamHeaderTrack => ForwardingPreference::Track,
             DataStreamType::StreamHeaderSubgroup => ForwardingPreference::Subgroup,
             _ => {
                 let msg = "data_stream_type not matched".to_string();
@@ -291,11 +288,6 @@ impl StreamObjectReceiver {
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 
         let result = match stream_header {
-            StreamHeader::Track(track_header) => {
-                object_cache_storage
-                    .create_track_stream_cache(&cache_key, track_header)
-                    .await
-            }
             StreamHeader::Subgroup(subgroup_header) => {
                 let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
                 object_cache_storage
@@ -463,10 +455,6 @@ impl StreamObjectReceiver {
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 
         match data_stream_type {
-            DataStreamType::StreamHeaderTrack => {
-                self.store_track_stream_object(stream_object, &cache_key, object_cache_storage)
-                    .await?;
-            }
             DataStreamType::StreamHeaderSubgroup => {
                 self.store_subgroup_stream_object(stream_object, &cache_key, object_cache_storage)
                     .await?;
@@ -482,38 +470,6 @@ impl StreamObjectReceiver {
         Ok(())
     }
 
-    async fn store_track_stream_object(
-        &self,
-        stream_object: &StreamObject,
-        cache_key: &CacheKey,
-        object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<(), TerminationError> {
-        let track_stream_object = match stream_object {
-            StreamObject::Track(object) => object,
-            _ => {
-                let msg = "StreamObject is not Track".to_string();
-                let code = TerminationErrorCode::InternalError;
-
-                return Err((code, msg));
-            }
-        };
-        match object_cache_storage
-            .set_track_stream_object(cache_key, track_stream_object.clone(), self.duration)
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                let msg = format!(
-                    "Fail to store track stream object to cache storage: {:?}",
-                    err
-                );
-                let code = TerminationErrorCode::InternalError;
-
-                Err((code, msg))
-            }
-        }
-    }
-
     async fn store_subgroup_stream_object(
         &self,
         stream_object: &StreamObject,
@@ -521,15 +477,8 @@ impl StreamObjectReceiver {
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<(), TerminationError> {
         let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
-        let subgroup_stream_object = match stream_object {
-            StreamObject::Subgroup(object) => object,
-            _ => {
-                let msg = "StreamObject is not Subgroup".to_string();
-                let code = TerminationErrorCode::InternalError;
+        let StreamObject::Subgroup(subgroup_stream_object) = stream_object;
 
-                return Err((code, msg));
-            }
-        };
         match object_cache_storage
             .set_subgroup_stream_object(
                 cache_key,
@@ -555,10 +504,6 @@ impl StreamObjectReceiver {
 
     fn is_subscription_ended(&self, object: &StreamObject) -> bool {
         let (group_id, object_id) = match object {
-            StreamObject::Track(track_stream_object) => (
-                track_stream_object.group_id(),
-                track_stream_object.object_id(),
-            ),
             StreamObject::Subgroup(subgroup_stream_object) => {
                 let (subgroup_group_id, _) = self.subgroup_stream_id.unwrap();
                 (subgroup_group_id, subgroup_stream_object.object_id())
@@ -578,12 +523,6 @@ impl StreamObjectReceiver {
     // TODO: Add handling for FIN message
     fn is_data_stream_ended(&self, stream_object: &StreamObject) -> bool {
         match stream_object {
-            StreamObject::Track(track_stream_object) => {
-                matches!(
-                    track_stream_object.object_status(),
-                    Some(ObjectStatus::EndOfTrackAndGroup)
-                )
-            }
             StreamObject::Subgroup(subgroup_stream_object) => {
                 matches!(
                     subgroup_stream_object.object_status(),
