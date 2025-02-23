@@ -26,7 +26,7 @@ use moqt_core::{
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     messages::{
-        data_streams::{datagram, subgroup_stream, track_stream, DataStreams},
+        data_streams::{datagram, subgroup_stream, DataStreams},
         moqt_payload::MOQTPayload,
     },
     models::subscriptions::{
@@ -149,20 +149,6 @@ impl MOQTClient {
         self.callbacks
             .borrow_mut()
             .set_datagram_object_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onTrackStreamHeader)]
-    pub fn set_track_stream_header_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_track_stream_header_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onTrackStreamObject)]
-    pub fn set_track_stream_object_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_track_stream_object_callback(callback);
     }
 
     #[wasm_bindgen(js_name = onSubgroupStreamHeader)]
@@ -785,83 +771,6 @@ impl MOQTClient {
         }
     }
 
-    #[wasm_bindgen(js_name = sendTrackStreamHeaderMessage)]
-    pub async fn send_track_stream_header_message(
-        &self,
-        subscribe_id: u64,
-        track_alias: u64,
-        publisher_priority: u8,
-    ) -> Result<JsValue, JsValue> {
-        let stream_writers = self.stream_writers.borrow();
-        let writer_key = (subscribe_id, None);
-        if let Some(writer) = stream_writers.get(&writer_key) {
-            let track_stream_header_message =
-                track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap();
-            let mut track_stream_header_message_buf = BytesMut::new();
-            let _ = track_stream_header_message.packetize(&mut track_stream_header_message_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(DataStreamType::StreamHeaderTrack) as u64,
-            ));
-            buf.extend(track_stream_header_message_buf);
-
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
-                    log(std::format!(
-                        "sent: track_stream_header: {:#x?}",
-                        track_stream_header_message
-                    )
-                    .as_str());
-                    Ok(ok)
-                }
-                Err(e) => Err(e),
-            }
-        } else {
-            return Err(JsValue::from_str("stream_writer is None"));
-        }
-    }
-
-    #[wasm_bindgen(js_name = sendTrackStreamObject)]
-    pub async fn send_track_stream_object(
-        &self,
-        subscribe_id: u64,
-        group_id: u64,
-        object_id: u64,
-        object_payload: Vec<u8>,
-    ) -> Result<JsValue, JsValue> {
-        let stream_writers = self.stream_writers.borrow();
-        let writer_key = (subscribe_id, None);
-        if let Some(writer) = stream_writers.get(&writer_key) {
-            let track_stream_object =
-                track_stream::Object::new(group_id, object_id, None, object_payload).unwrap();
-            let mut track_stream_object_buf = BytesMut::new();
-            let _ = track_stream_object.packetize(&mut track_stream_object_buf);
-
-            let mut buf = Vec::new();
-            // Message Payload and Payload Length
-            buf.extend(track_stream_object_buf);
-
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
-                    log(std::format!("sent: object id: {:#?}", object_id).as_str());
-                    Ok(ok)
-                }
-                Err(e) => {
-                    log(std::format!("err: {:?}", e).as_str());
-                    Err(e)
-                }
-            }
-        } else {
-            return Err(JsValue::from_str("stream_writer is None"));
-        }
-    }
-
     #[wasm_bindgen(js_name = sendSubgroupStreamHeaderMessage)]
     pub async fn send_subgroup_stream_header_message(
         &self,
@@ -1369,14 +1278,6 @@ async fn uni_directional_stream_read_thread(
                         log(std::format!("{}", msg).as_str());
                         return Err(js_sys::Error::new(&msg).into());
                     }
-                    DataStreamType::StreamHeaderTrack => {
-                        if let Err(e) =
-                            track_stream_object_handler(callbacks.clone(), &mut buf).await
-                        {
-                            log(std::format!("error: {:#?}", e).as_str());
-                            break;
-                        }
-                    }
                     DataStreamType::StreamHeaderSubgroup => {
                         if let Err(e) =
                             subgroup_stream_object_handler(callbacks.clone(), &mut buf).await
@@ -1408,23 +1309,6 @@ async fn object_header_handler(
             log(std::format!("data_stream_type_value: {:#x?}", data_stream_type).as_str());
 
             match data_stream_type {
-                DataStreamType::StreamHeaderTrack => {
-                    let track_stream_header = track_stream::Header::depacketize(&mut read_cur)?;
-                    buf.advance(read_cur.position() as usize);
-
-                    log(
-                        std::format!("recv: track_stream_header: {:#x?}", track_stream_header)
-                            .as_str(),
-                    );
-
-                    if let Some(callback) = callbacks.borrow().track_stream_header_callback() {
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from("called2"))
-                            .unwrap();
-                        let v = serde_wasm_bindgen::to_value(&track_stream_header).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
-                    }
-                }
                 DataStreamType::StreamHeaderSubgroup => {
                     let subgroup_stream_header =
                         subgroup_stream::Header::depacketize(&mut read_cur)?;
@@ -1502,36 +1386,6 @@ async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut Bytes
             log("data_stream_type_value is None");
             return Err(e);
         }
-    }
-
-    Ok(())
-}
-
-#[cfg(web_sys_unstable_apis)]
-async fn track_stream_object_handler(
-    callbacks: Rc<RefCell<MOQTCallbacks>>,
-    buf: &mut BytesMut,
-) -> Result<()> {
-    let mut read_cur = Cursor::new(&buf[..]);
-    let track_stream_object = match track_stream::Object::depacketize(&mut read_cur) {
-        Ok(v) => {
-            log(std::format!("object_id: {:#?}", v.object_id()).as_str());
-            buf.advance(read_cur.position() as usize);
-            v
-        }
-        Err(e) => {
-            read_cur.set_position(0);
-            log(std::format!("retry because: {:#?}", e).as_str());
-            return Err(e);
-        }
-    };
-
-    if let Some(callback) = callbacks.borrow().track_stream_object_callback() {
-        callback
-            .call1(&JsValue::null(), &JsValue::from("called2"))
-            .unwrap();
-        let v = serde_wasm_bindgen::to_value(&track_stream_object).unwrap();
-        callback.call1(&JsValue::null(), &(v)).unwrap();
     }
 
     Ok(())
@@ -1764,8 +1618,6 @@ struct MOQTCallbacks {
     subscribe_response_callback: Option<js_sys::Function>,
     subscribe_namespace_response_callback: Option<js_sys::Function>,
     datagram_object_callback: Option<js_sys::Function>,
-    track_stream_header_callback: Option<js_sys::Function>,
-    track_stream_object_callback: Option<js_sys::Function>,
     subgroup_stream_header_callback: Option<js_sys::Function>,
     subgroup_stream_object_callback: Option<js_sys::Function>,
 }
@@ -1781,8 +1633,6 @@ impl MOQTCallbacks {
             subscribe_response_callback: None,
             subscribe_namespace_response_callback: None,
             datagram_object_callback: None,
-            track_stream_header_callback: None,
-            track_stream_object_callback: None,
             subgroup_stream_header_callback: None,
             subgroup_stream_object_callback: None,
         }
@@ -1842,22 +1692,6 @@ impl MOQTCallbacks {
 
     pub fn set_datagram_object_callback(&mut self, callback: js_sys::Function) {
         self.datagram_object_callback = Some(callback);
-    }
-
-    pub fn track_stream_header_callback(&self) -> Option<js_sys::Function> {
-        self.track_stream_header_callback.clone()
-    }
-
-    pub fn set_track_stream_header_callback(&mut self, callback: js_sys::Function) {
-        self.track_stream_header_callback = Some(callback);
-    }
-
-    pub fn track_stream_object_callback(&self) -> Option<js_sys::Function> {
-        self.track_stream_object_callback.clone()
-    }
-
-    pub fn set_track_stream_object_callback(&mut self, callback: js_sys::Function) {
-        self.track_stream_object_callback = Some(callback);
     }
 
     pub fn subgroup_stream_header_callback(&self) -> Option<js_sys::Function> {

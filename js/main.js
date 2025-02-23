@@ -4,7 +4,6 @@ import init, { MOQTClient } from './pkg/moqt_client_sample'
 init().then(async () => {
   console.log('init wasm-pack')
 
-  let trackHeaderSent = false
   const subgroupHeaderSent = new Set()
   let objectId = 0n
   let mutableGroupId = 0n
@@ -81,15 +80,6 @@ init().then(async () => {
       describeReceivedObject(datagramObject.object_payload)
     })
 
-    client.onTrackStreamHeader(async (trackStreamHeader) => {
-      console.log({ trackStreamHeader })
-    })
-
-    client.onTrackStreamObject(async (trackStreamObject) => {
-      console.log({ trackStreamObject })
-      describeReceivedObject(trackStreamObject.object_payload)
-    })
-
     client.onSubgroupStreamHeader(async (subgroupStreamHeader) => {
       console.log({ subgroupStreamHeader })
     })
@@ -100,7 +90,7 @@ init().then(async () => {
     })
 
     const objectIdElement = document.getElementById('objectId')
-    const mutableDatagramAndTrackGroupIdElement = document.getElementById('mutableDatagramAndTrackGroupId')
+    const mutableDatagramGroupIdElement = document.getElementById('mutableDatagramGroupId')
     const mutableSubgroupGroupIdElement = document.getElementById('mutableSubgroupGroupId')
     const mutableSubgroupIdElement = document.getElementById('mutableSubgroupId')
 
@@ -187,27 +177,6 @@ init().then(async () => {
       objectIdElement.textContent = objectId
     })
 
-    const sendTrackObjectBtn = document.getElementById('sendTrackObjectBtn')
-    sendTrackObjectBtn.addEventListener('click', async () => {
-      console.log('send track stream object btn clicked')
-      const subscribeId = form['object-subscribe-id'].value
-      const trackAlias = form['object-track-alias'].value
-      const publisherPriority = form['publisher-priority'].value
-      const objectPayloadString = form['object-payload'].value
-
-      // encode the text to the object array
-      const objectPayloadArray = new TextEncoder().encode(objectPayloadString)
-
-      // send header if it is the first time
-      if (!trackHeaderSent) {
-        await client.sendTrackStreamHeaderMessage(BigInt(subscribeId), BigInt(trackAlias), publisherPriority)
-        trackHeaderSent = true
-      }
-
-      await client.sendTrackStreamObject(BigInt(subscribeId), mutableGroupId, objectId++, objectPayloadArray)
-      objectIdElement.textContent = objectId
-    })
-
     const sendSubgroupObjectBtn = document.getElementById('sendSubgroupObjectBtn')
     sendSubgroupObjectBtn.addEventListener('click', async () => {
       console.log('send subgroup stream object btn clicked')
@@ -242,24 +211,24 @@ init().then(async () => {
       objectIdElement.textContent = objectId
     })
 
-    const ascendMutableDatagramAndTrackGroupId = document.getElementById('ascendMutableDatagramAndTrackGroupIdBtn')
-    ascendMutableDatagramAndTrackGroupId.addEventListener('click', async () => {
+    const ascendMutableDatagramGroupId = document.getElementById('ascendMutableDatagramGroupIdBtn')
+    ascendMutableDatagramGroupId.addEventListener('click', async () => {
       mutableGroupId++
       objectId = 0n
       console.log('ascend mutableGroupId', mutableGroupId)
-      mutableDatagramAndTrackGroupIdElement.textContent = mutableGroupId
+      mutableDatagramGroupIdElement.textContent = mutableGroupId
       objectIdElement.textContent = objectId
     })
 
-    const descendMutableDatagramAndTrackGroupId = document.getElementById('descendMutableDatagramAndTrackGroupIdBtn')
-    descendMutableDatagramAndTrackGroupId.addEventListener('click', async () => {
+    const descendMutableDatagramGroupId = document.getElementById('descendMutableDatagramGroupIdBtn')
+    descendMutableDatagramGroupId.addEventListener('click', async () => {
       if (mutableGroupId === 0n) {
         return
       }
       mutableGroupId--
       objectId = 0n
       console.log('descend mutableGroupId', mutableGroupId)
-      mutableDatagramAndTrackGroupIdElement.textContent = mutableGroupId
+      mutableDatagramGroupIdElement.textContent = mutableGroupId
       objectIdElement.textContent = objectId
     })
 
@@ -314,9 +283,8 @@ init().then(async () => {
 
   const forwardingPreference = document.querySelectorAll('input[name="forwarding-preference"]')
   const subgroupHeaderContents = document.getElementById('subgroupHeaderContents')
-  const datagramAndTrackObjectContents = document.getElementById('datagramAndTrackObjectContents')
+  const datagramObjectContents = document.getElementById('datagramObjectContents')
   const sendDatagramObject = document.getElementById('sendDatagramObject')
-  const sendTrackObject = document.getElementById('sendTrackObject')
   const sendSubgroupObject = document.getElementById('sendSubgroupObject')
   const headerField = document.getElementById('headerField')
   const objectField = document.getElementById('objectField')
@@ -325,26 +293,16 @@ init().then(async () => {
   forwardingPreference.forEach((elem) => {
     elem.addEventListener('change', async () => {
       if (elem.value === 'datagram') {
-        datagramAndTrackObjectContents.style.display = 'block'
+        datagramObjectContents.style.display = 'block'
         subgroupHeaderContents.style.display = 'none'
         sendDatagramObject.style.display = 'block'
-        sendTrackObject.style.display = 'none'
         sendSubgroupObject.style.display = 'none'
         headerField.style.display = 'none'
         objectField.style.display = 'none'
-      } else if (elem.value === 'track') {
-        datagramAndTrackObjectContents.style.display = 'block'
-        subgroupHeaderContents.style.display = 'none'
-        sendDatagramObject.style.display = 'none'
-        sendTrackObject.style.display = 'block'
-        sendSubgroupObject.style.display = 'none'
-        headerField.style.display = 'block'
-        objectField.style.display = 'block'
       } else if (elem.value === 'subgroup') {
-        datagramAndTrackObjectContents.style.display = 'none'
+        datagramObjectContents.style.display = 'none'
         subgroupHeaderContents.style.display = 'block'
         sendDatagramObject.style.display = 'none'
-        sendTrackObject.style.display = 'none'
         sendSubgroupObject.style.display = 'block'
         headerField.style.display = 'block'
         objectField.style.display = 'block'
