@@ -3,8 +3,8 @@ use crate::{
     modules::{
         buffer_manager::{request_buffer, BufferCommand},
         message_handlers::{
-            stream_header::{self, StreamHeader, StreamHeaderProcessResult},
-            stream_object::{self, StreamObject, StreamObjectProcessResult},
+            stream_header::{self, SubgroupStreamHeaderProcessResult},
+            stream_object::{self, SubgroupStreamObjectProcessResult},
         },
         moqt_client::MOQTClient,
         object_cache_storage::{
@@ -21,7 +21,7 @@ use bytes::BytesMut;
 use moqt_core::{
     constants::TerminationErrorCode,
     data_stream_type::DataStreamType,
-    messages::data_streams::object_status::ObjectStatus,
+    messages::data_streams::{object_status::ObjectStatus, subgroup_stream},
     models::{subscriptions::Subscription, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
@@ -29,19 +29,18 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{self};
 
-pub(crate) struct StreamObjectReceiver {
+pub(crate) struct SubgroupStreamObjectReceiver {
     stream: UniRecvStream,
     buf: Arc<Mutex<BytesMut>>,
     senders: Arc<Senders>,
     client: Arc<Mutex<MOQTClient>>,
     duration: u64,
     subscribe_id: Option<u64>,
-    data_stream_type: Option<DataStreamType>,
     upstream_subscription: Option<Subscription>,
     subgroup_stream_id: Option<SubgroupStreamId>,
 }
 
-impl StreamObjectReceiver {
+impl SubgroupStreamObjectReceiver {
     pub(crate) async fn init(stream: UniRecvStream, client: Arc<Mutex<MOQTClient>>) -> Self {
         let senders = client.lock().await.senders();
         let stable_id = stream.stable_id();
@@ -50,14 +49,13 @@ impl StreamObjectReceiver {
         // TODO: Set the accurate duration
         let duration = 100000;
 
-        StreamObjectReceiver {
+        SubgroupStreamObjectReceiver {
             stream,
             buf,
             senders,
             client,
             duration,
             subscribe_id: None,
-            data_stream_type: None,
             upstream_subscription: None,
             subgroup_stream_id: None,
         }
@@ -99,7 +97,7 @@ impl StreamObjectReceiver {
             })
             .await?;
 
-        tracing::debug!("StreamObjectReceiver finished");
+        tracing::debug!("SubgroupStreamObjectReceiver finished");
 
         Ok(())
     }
@@ -141,20 +139,15 @@ impl StreamObjectReceiver {
             }
         };
 
-        self.set_subscribe_id(&header).await?;
-        self.set_data_stream_type(&header).await?;
+        let subscribe_id = header.subscribe_id();
+        self.subscribe_id = Some(subscribe_id);
 
-        let subscribe_id = self.subscribe_id.unwrap();
-        let data_stream_type = self.data_stream_type.unwrap();
+        self.subgroup_stream_id = Some((header.group_id(), header.subgroup_id()));
 
-        self.set_upstream_forwarding_preference(session_id, subscribe_id, data_stream_type)
+        self.set_upstream_forwarding_preference(session_id, subscribe_id)
             .await?;
         self.set_upstream_subscription(session_id, subscribe_id)
             .await?;
-
-        if let StreamHeader::Subgroup(header) = &header {
-            self.subgroup_stream_id = Some((header.group_id(), header.subgroup_id()));
-        }
 
         self.create_cache_storage(session_id, subscribe_id, header, object_cache_storage)
             .await?;
@@ -164,67 +157,34 @@ impl StreamObjectReceiver {
         Ok(())
     }
 
-    async fn read_header_from_buf(&self) -> Result<Option<StreamHeader>, TerminationError> {
+    async fn read_header_from_buf(
+        &self,
+    ) -> Result<Option<subgroup_stream::Header>, TerminationError> {
         let result = self.try_read_header_from_buf().await;
 
         match result {
-            StreamHeaderProcessResult::Success(stream_header) => Ok(Some(stream_header)),
-            StreamHeaderProcessResult::Continue => Ok(None),
-            StreamHeaderProcessResult::Failure(code, reason) => {
+            SubgroupStreamHeaderProcessResult::Success(stream_header) => Ok(Some(stream_header)),
+            SubgroupStreamHeaderProcessResult::Continue => Ok(None),
+            SubgroupStreamHeaderProcessResult::Failure(code, reason) => {
                 let msg = std::format!("stream_header_read failure: {:?}", reason);
                 Err((code, msg))
             }
         }
     }
 
-    async fn try_read_header_from_buf(&self) -> StreamHeaderProcessResult {
+    async fn try_read_header_from_buf(&self) -> SubgroupStreamHeaderProcessResult {
         let mut process_buf = self.buf.lock().await;
         let client = self.client.clone();
 
         stream_header::try_read_header(&mut process_buf, client).await
     }
 
-    async fn set_subscribe_id(
-        &mut self,
-        stream_header: &StreamHeader,
-    ) -> Result<(), TerminationError> {
-        let subscribe_id = match stream_header {
-            StreamHeader::Subgroup(header) => header.subscribe_id(),
-        };
-
-        self.subscribe_id = Some(subscribe_id);
-
-        Ok(())
-    }
-
-    async fn set_data_stream_type(
-        &mut self,
-        stream_header: &StreamHeader,
-    ) -> Result<(), TerminationError> {
-        let data_stream_type = match stream_header {
-            StreamHeader::Subgroup(_) => DataStreamType::StreamHeaderSubgroup,
-        };
-
-        self.data_stream_type = Some(data_stream_type);
-
-        Ok(())
-    }
-
     async fn set_upstream_forwarding_preference(
         &self,
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
-        data_stream_type: DataStreamType,
     ) -> Result<(), TerminationError> {
-        let forwarding_preference = match data_stream_type {
-            DataStreamType::StreamHeaderSubgroup => ForwardingPreference::Subgroup,
-            _ => {
-                let msg = "data_stream_type not matched".to_string();
-                let code = TerminationErrorCode::InternalError;
-
-                return Err((code, msg));
-            }
-        };
+        let forwarding_preference = ForwardingPreference::Subgroup;
 
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
@@ -282,25 +242,15 @@ impl StreamObjectReceiver {
         &self,
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
-        stream_header: StreamHeader,
+        stream_header: subgroup_stream::Header,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<(), TerminationError> {
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 
-        let result = match stream_header {
-            StreamHeader::Subgroup(subgroup_header) => {
-                let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
-                object_cache_storage
-                    .create_subgroup_stream_cache(
-                        &cache_key,
-                        group_id,
-                        subgroup_id,
-                        subgroup_header,
-                    )
-                    .await
-            }
-        };
-
+        let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
+        let result = object_cache_storage
+            .create_subgroup_stream_cache(&cache_key, group_id, subgroup_id, stream_header)
+            .await;
         match result {
             Ok(_) => Ok(()),
             Err(err) => {
@@ -356,7 +306,7 @@ impl StreamObjectReceiver {
         downstream_subscribe_id: u64,
     ) -> Result<()> {
         let start_forwarder_txes = self.senders.start_forwarder_txes();
-        let data_stream_type = self.data_stream_type.unwrap();
+        let data_stream_type = DataStreamType::StreamHeaderSubgroup;
 
         let start_forwarder_tx = start_forwarder_txes
             .lock()
@@ -424,67 +374,39 @@ impl StreamObjectReceiver {
         Ok(Some(is_end))
     }
 
-    async fn read_object_from_buf(&self) -> Result<Option<StreamObject>, TerminationError> {
+    async fn read_object_from_buf(
+        &self,
+    ) -> Result<Option<subgroup_stream::Object>, TerminationError> {
         let result = self.try_read_object_from_buf().await;
 
         match result {
-            StreamObjectProcessResult::Success(stream_object) => Ok(Some(stream_object)),
-            StreamObjectProcessResult::Continue => Ok(None),
-            StreamObjectProcessResult::Failure(code, reason) => {
-                let msg = std::format!("stream_object_read failure: {:?}", reason);
-                Err((code, msg))
-            }
+            SubgroupStreamObjectProcessResult::Success(stream_object) => Ok(Some(stream_object)),
+            SubgroupStreamObjectProcessResult::Continue => Ok(None),
         }
     }
 
-    async fn try_read_object_from_buf(&self) -> StreamObjectProcessResult {
+    async fn try_read_object_from_buf(&self) -> SubgroupStreamObjectProcessResult {
         let mut buf = self.buf.lock().await;
-        let data_stream_type = self.data_stream_type.unwrap();
 
-        stream_object::try_read_object(&mut buf, data_stream_type).await
+        stream_object::try_read_object(&mut buf).await
     }
 
     async fn store_object(
         &self,
-        stream_object: &StreamObject,
+        stream_object: &subgroup_stream::Object,
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<(), TerminationError> {
-        let data_stream_type = self.data_stream_type.unwrap();
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
-
-        match data_stream_type {
-            DataStreamType::StreamHeaderSubgroup => {
-                self.store_subgroup_stream_object(stream_object, &cache_key, object_cache_storage)
-                    .await?;
-            }
-            _ => {
-                let msg = "data_stream_type not matched".to_string();
-                let code = TerminationErrorCode::InternalError;
-
-                return Err((code, msg));
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn store_subgroup_stream_object(
-        &self,
-        stream_object: &StreamObject,
-        cache_key: &CacheKey,
-        object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<(), TerminationError> {
         let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
-        let StreamObject::Subgroup(subgroup_stream_object) = stream_object;
 
         match object_cache_storage
             .set_subgroup_stream_object(
-                cache_key,
+                &cache_key,
                 group_id,
                 subgroup_id,
-                subgroup_stream_object.clone(),
+                stream_object.clone(),
                 self.duration,
             )
             .await
@@ -502,13 +424,9 @@ impl StreamObjectReceiver {
         }
     }
 
-    fn is_subscription_ended(&self, object: &StreamObject) -> bool {
-        let (group_id, object_id) = match object {
-            StreamObject::Subgroup(subgroup_stream_object) => {
-                let (subgroup_group_id, _) = self.subgroup_stream_id.unwrap();
-                (subgroup_group_id, subgroup_stream_object.object_id())
-            }
-        };
+    fn is_subscription_ended(&self, object: &subgroup_stream::Object) -> bool {
+        let (group_id, _) = self.subgroup_stream_id.unwrap();
+        let object_id = object.object_id();
 
         self.upstream_subscription
             .as_ref()
@@ -521,16 +439,12 @@ impl StreamObjectReceiver {
     //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
     //   has not arrived, as further objects on the stream would be a protocol violation.
     // TODO: Add handling for FIN message
-    fn is_data_stream_ended(&self, stream_object: &StreamObject) -> bool {
-        match stream_object {
-            StreamObject::Subgroup(subgroup_stream_object) => {
-                matches!(
-                    subgroup_stream_object.object_status(),
-                    Some(ObjectStatus::EndOfSubgroup)
-                        | Some(ObjectStatus::EndOfGroup)
-                        | Some(ObjectStatus::EndOfTrackAndGroup)
-                )
-            }
-        }
+    fn is_data_stream_ended(&self, stream_object: &subgroup_stream::Object) -> bool {
+        matches!(
+            stream_object.object_status(),
+            Some(ObjectStatus::EndOfSubgroup)
+                | Some(ObjectStatus::EndOfGroup)
+                | Some(ObjectStatus::EndOfTrackAndGroup)
+        )
     }
 }

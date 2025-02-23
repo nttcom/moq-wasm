@@ -2,7 +2,6 @@ use super::uni_stream::UniSendStream;
 use crate::{
     modules::{
         buffer_manager::BufferCommand,
-        message_handlers::{stream_header::StreamHeader, stream_object::StreamObject},
         moqt_client::MOQTClient,
         object_cache_storage::{cache::CacheKey, wrapper::ObjectCacheStorageWrapper},
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
@@ -26,7 +25,7 @@ use std::{sync::Arc, thread, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{self};
 
-pub(crate) struct StreamObjectForwarder {
+pub(crate) struct SubgroupStreamObjectForwarder {
     stream: UniSendStream,
     senders: Arc<Senders>,
     downstream_subscribe_id: u64,
@@ -36,7 +35,7 @@ pub(crate) struct StreamObjectForwarder {
     sleep_time: Duration,
 }
 
-impl StreamObjectForwarder {
+impl SubgroupStreamObjectForwarder {
     pub(crate) async fn init(
         stream: UniSendStream,
         downstream_subscribe_id: u64,
@@ -62,7 +61,7 @@ impl StreamObjectForwarder {
 
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 
-        let stream_object_forwarder = StreamObjectForwarder {
+        let stream_object_forwarder = SubgroupStreamObjectForwarder {
             stream,
             senders,
             downstream_subscribe_id,
@@ -105,7 +104,7 @@ impl StreamObjectForwarder {
             })
             .await?;
 
-        tracing::info!("StreamObjectForwarder finished");
+        tracing::info!("SubgroupStreamObjectForwarder finished");
 
         Ok(())
     }
@@ -172,15 +171,13 @@ impl StreamObjectForwarder {
     async fn get_header(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<StreamHeader> {
+    ) -> Result<subgroup_stream::Header> {
         let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
         let subgroup_stream_header = object_cache_storage
             .get_subgroup_stream_header(&self.cache_key, group_id, subgroup_id)
             .await?;
 
-        let header = StreamHeader::Subgroup(subgroup_stream_header);
-
-        Ok(header)
+        Ok(subgroup_stream_header)
     }
 
     async fn forward_objects(
@@ -230,7 +227,7 @@ impl StreamObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         cache_id: Option<usize>,
-    ) -> Result<Option<(usize, StreamObject)>> {
+    ) -> Result<Option<(usize, subgroup_stream::Object)>> {
         match cache_id {
             // Try to get the first object according to Filter Type
             None => self.try_get_first_object(object_cache_storage).await,
@@ -243,25 +240,6 @@ impl StreamObjectForwarder {
     }
 
     async fn try_get_first_object(
-        &self,
-        object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<Option<(usize, StreamObject)>> {
-        let subgroup_stream_object_with_cache_id = self
-            .try_get_first_subgroup_stream_object(object_cache_storage)
-            .await?;
-
-        if subgroup_stream_object_with_cache_id.is_none() {
-            Ok(None)
-        } else {
-            let (cache_id, object) = subgroup_stream_object_with_cache_id.unwrap();
-            let stream_object = StreamObject::Subgroup(object);
-
-            let stream_object_with_cache_id = Some((cache_id, stream_object));
-            Ok(stream_object_with_cache_id)
-        }
-    }
-
-    async fn try_get_first_subgroup_stream_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<(usize, subgroup_stream::Object)>> {
@@ -313,37 +291,19 @@ impl StreamObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,
-    ) -> Result<Option<(usize, StreamObject)>> {
+    ) -> Result<Option<(usize, subgroup_stream::Object)>> {
         let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
-        let subgroup_stream_object_with_cache_id = object_cache_storage
+        object_cache_storage
             .get_next_subgroup_stream_object(
                 &self.cache_key,
                 group_id,
                 subgroup_id,
                 object_cache_id,
             )
-            .await?;
-
-        if subgroup_stream_object_with_cache_id.is_none() {
-            Ok(None)
-        } else {
-            let (cache_id, object) = subgroup_stream_object_with_cache_id.unwrap();
-            let stream_object = StreamObject::Subgroup(object);
-
-            let stream_object_with_cache_id = Some((cache_id, stream_object));
-            Ok(stream_object_with_cache_id)
-        }
+            .await
     }
 
-    async fn packetize_header(&mut self, stream_header: &StreamHeader) -> Result<BytesMut> {
-        let message_buf = match stream_header {
-            StreamHeader::Subgroup(header) => self.packetize_subgroup_header(header),
-        };
-
-        Ok(message_buf)
-    }
-
-    fn packetize_subgroup_header(&self, header: &subgroup_stream::Header) -> BytesMut {
+    async fn packetize_header(&self, header: &subgroup_stream::Header) -> Result<BytesMut> {
         let mut buf = BytesMut::new();
         let downstream_subscribe_id = self.downstream_subscribe_id;
         let downstream_track_alias = self.downstream_subscription.get_track_alias();
@@ -365,15 +325,15 @@ impl StreamObjectForwarder {
         ));
         message_buf.extend(buf);
 
-        message_buf
+        Ok(message_buf)
     }
 
-    async fn packetize_object(&mut self, stream_object: &StreamObject) -> Result<BytesMut> {
+    async fn packetize_object(
+        &mut self,
+        stream_object: &subgroup_stream::Object,
+    ) -> Result<BytesMut> {
         let mut buf = BytesMut::new();
-
-        match stream_object {
-            StreamObject::Subgroup(subgroup_object) => subgroup_object.packetize(&mut buf),
-        }
+        stream_object.packetize(&mut buf);
 
         let mut message_buf = BytesMut::with_capacity(buf.len());
         message_buf.extend(buf);
@@ -390,13 +350,9 @@ impl StreamObjectForwarder {
         Ok(())
     }
 
-    fn is_subscription_ended(&self, stream_object: &StreamObject) -> bool {
-        let (group_id, object_id) = match stream_object {
-            StreamObject::Subgroup(subgroup_stream_object) => (
-                self.subgroup_stream_id.unwrap().0,
-                subgroup_stream_object.object_id(),
-            ),
-        };
+    fn is_subscription_ended(&self, stream_object: &subgroup_stream::Object) -> bool {
+        let group_id = self.subgroup_stream_id.unwrap().0;
+        let object_id = stream_object.object_id();
 
         self.downstream_subscription.is_end(group_id, object_id)
     }
@@ -405,16 +361,12 @@ impl StreamObjectForwarder {
     //   A relay MAY treat receipt of EndOfGroup, EndOfSubgroup, GroupDoesNotExist, or
     //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
     //   has not arrived, as further objects on the stream would be a protocol violation.
-    fn is_data_stream_ended(&self, stream_object: &StreamObject) -> bool {
-        match stream_object {
-            StreamObject::Subgroup(subgroup_stream_object) => {
-                matches!(
-                    subgroup_stream_object.object_status(),
-                    Some(ObjectStatus::EndOfSubgroup)
-                        | Some(ObjectStatus::EndOfGroup)
-                        | Some(ObjectStatus::EndOfTrackAndGroup)
-                )
-            }
-        }
+    fn is_data_stream_ended(&self, stream_object: &subgroup_stream::Object) -> bool {
+        matches!(
+            stream_object.object_status(),
+            Some(ObjectStatus::EndOfSubgroup)
+                | Some(ObjectStatus::EndOfGroup)
+                | Some(ObjectStatus::EndOfTrackAndGroup)
+        )
     }
 }

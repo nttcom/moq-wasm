@@ -1,58 +1,34 @@
-use crate::constants::TerminationErrorCode;
 use bytes::{Buf, BytesMut};
-use moqt_core::{
-    data_stream_type::DataStreamType,
-    messages::data_streams::{subgroup_stream, DataStreams},
-};
+use moqt_core::messages::data_streams::{subgroup_stream, DataStreams};
 use std::io::Cursor;
 
 #[derive(Debug, PartialEq)]
-pub enum StreamObjectProcessResult {
-    Success(StreamObject),
+pub enum SubgroupStreamObjectProcessResult {
+    Success(subgroup_stream::Object),
     Continue,
-    Failure(TerminationErrorCode, String),
 }
 
-#[derive(Debug, PartialEq)]
-pub enum StreamObject {
-    Subgroup(subgroup_stream::Object),
-}
-
-pub async fn try_read_object(
-    buf: &mut BytesMut,
-    data_stream_type: DataStreamType,
-) -> StreamObjectProcessResult {
+pub async fn try_read_object(buf: &mut BytesMut) -> SubgroupStreamObjectProcessResult {
     let payload_length = buf.len();
     tracing::trace!("stream_object_handler! {}", payload_length);
 
     // Check if the data is exist
     if payload_length == 0 {
-        return StreamObjectProcessResult::Continue;
+        return SubgroupStreamObjectProcessResult::Continue;
     }
 
     let mut read_cur = Cursor::new(&buf[..]);
-    let result = match data_stream_type {
-        DataStreamType::StreamHeaderSubgroup => {
-            subgroup_stream::Object::depacketize(&mut read_cur).map(StreamObject::Subgroup)
-        }
-        unknown => {
-            return StreamObjectProcessResult::Failure(
-                TerminationErrorCode::ProtocolViolation,
-                format!("Unknown message type: {:?}", unknown),
-            );
-        }
-    };
 
-    match result {
+    match subgroup_stream::Object::depacketize(&mut read_cur) {
         Ok(stream_object) => {
             buf.advance(read_cur.position() as usize);
-            StreamObjectProcessResult::Success(stream_object)
+            SubgroupStreamObjectProcessResult::Success(stream_object)
         }
         Err(err) => {
             tracing::warn!("{:#?}", err);
             // Reset the cursor position because data for an object has not yet arrived
             read_cur.set_position(0);
-            StreamObjectProcessResult::Continue
+            SubgroupStreamObjectProcessResult::Continue
         }
     }
 }
@@ -61,18 +37,14 @@ pub async fn try_read_object(
 mod tests {
     mod success {
         use crate::modules::message_handlers::stream_object::{
-            try_read_object, StreamObject, StreamObjectProcessResult,
+            try_read_object, SubgroupStreamObjectProcessResult,
         };
         use bytes::BytesMut;
-        use moqt_core::{
-            data_stream_type::DataStreamType,
-            messages::data_streams::{subgroup_stream, DataStreams},
-        };
+        use moqt_core::messages::data_streams::{subgroup_stream, DataStreams};
         use std::io::Cursor;
 
         #[tokio::test]
         async fn stream_object_subgroup_success() {
-            let data_stream_type = DataStreamType::StreamHeaderSubgroup;
             let bytes_array = [
                 0, // Object ID (i)
                 3, // Object Payload Length (i)
@@ -82,20 +54,16 @@ mod tests {
             buf.extend_from_slice(&bytes_array);
             let buf_clone = buf.clone();
 
-            let result = try_read_object(&mut buf, data_stream_type).await;
+            let result = try_read_object(&mut buf).await;
 
             let mut read_cur = Cursor::new(&buf_clone[..]);
             let object = subgroup_stream::Object::depacketize(&mut read_cur).unwrap();
 
-            assert_eq!(
-                result,
-                StreamObjectProcessResult::Success(StreamObject::Subgroup(object))
-            );
+            assert_eq!(result, SubgroupStreamObjectProcessResult::Success(object));
         }
 
         #[tokio::test]
         async fn stream_object_subgroup_continue_insufficient_payload() {
-            let data_stream_type = DataStreamType::StreamHeaderSubgroup;
             let bytes_array = [
                 0,  // Object ID (i)
                 50, // Object Payload Length (i)
@@ -104,23 +72,22 @@ mod tests {
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
 
-            let result = try_read_object(&mut buf, data_stream_type).await;
+            let result = try_read_object(&mut buf).await;
 
-            assert_eq!(result, StreamObjectProcessResult::Continue);
+            assert_eq!(result, SubgroupStreamObjectProcessResult::Continue);
         }
 
         #[tokio::test]
         async fn stream_object_subgroup_continue_incomplete_message() {
-            let data_stream_type = DataStreamType::StreamHeaderSubgroup;
             let bytes_array = [
                 0, // Object ID (i)
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
 
-            let result = try_read_object(&mut buf, data_stream_type).await;
+            let result = try_read_object(&mut buf).await;
 
-            assert_eq!(result, StreamObjectProcessResult::Continue);
+            assert_eq!(result, SubgroupStreamObjectProcessResult::Continue);
         }
     }
 }

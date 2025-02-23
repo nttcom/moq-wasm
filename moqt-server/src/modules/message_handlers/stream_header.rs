@@ -13,15 +13,10 @@ use std::{io::Cursor, sync::Arc};
 use tokio::sync::Mutex;
 
 #[derive(Debug, PartialEq)]
-pub enum StreamHeaderProcessResult {
-    Success(StreamHeader),
+pub enum SubgroupStreamHeaderProcessResult {
+    Success(subgroup_stream::Header),
     Continue,
     Failure(TerminationErrorCode, String),
-}
-
-#[derive(Debug, PartialEq)]
-pub enum StreamHeader {
-    Subgroup(subgroup_stream::Header),
 }
 
 fn read_data_stream_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataStreamType> {
@@ -40,13 +35,13 @@ fn read_data_stream_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataSt
 pub async fn try_read_header(
     buf: &mut BytesMut,
     client: Arc<Mutex<MOQTClient>>,
-) -> StreamHeaderProcessResult {
+) -> SubgroupStreamHeaderProcessResult {
     let payload_length = buf.len();
     tracing::trace!("try to read stream header! {}", payload_length);
 
     // Check if the data stream type is exist
     if payload_length == 0 {
-        return StreamHeaderProcessResult::Continue;
+        return SubgroupStreamHeaderProcessResult::Continue;
     }
 
     // check subscription and judge if it is invalid timing
@@ -54,7 +49,7 @@ pub async fn try_read_header(
     if client_status != MOQTClientStatus::SetUp {
         let message = String::from("Invalid timing");
         tracing::error!(message);
-        return StreamHeaderProcessResult::Failure(
+        return SubgroupStreamHeaderProcessResult::Failure(
             TerminationErrorCode::ProtocolViolation,
             message,
         );
@@ -69,7 +64,7 @@ pub async fn try_read_header(
             buf.advance(read_cur.position() as usize);
 
             tracing::error!("data_stream_type is wrong: {:?}", err);
-            return StreamHeaderProcessResult::Failure(
+            return SubgroupStreamHeaderProcessResult::Failure(
                 TerminationErrorCode::ProtocolViolation,
                 err.to_string(),
             );
@@ -77,28 +72,23 @@ pub async fn try_read_header(
     };
     tracing::info!("Received data stream type: {:?}", data_stream_type);
 
-    let result = match data_stream_type {
-        DataStreamType::StreamHeaderSubgroup => {
-            subgroup_stream::Header::depacketize(&mut read_cur).map(StreamHeader::Subgroup)
-        }
-        unknown => {
-            return StreamHeaderProcessResult::Failure(
-                TerminationErrorCode::ProtocolViolation,
-                format!("Unknown message type: {:?}", unknown),
-            );
-        }
-    };
+    if data_stream_type != DataStreamType::StreamHeaderSubgroup {
+        return SubgroupStreamHeaderProcessResult::Failure(
+            TerminationErrorCode::ProtocolViolation,
+            format!("Unknown message type: {:?}", data_stream_type),
+        );
+    }
 
-    match result {
+    match subgroup_stream::Header::depacketize(&mut read_cur) {
         Ok(stream_header) => {
             buf.advance(read_cur.position() as usize);
-            StreamHeaderProcessResult::Success(stream_header)
+            SubgroupStreamHeaderProcessResult::Success(stream_header)
         }
         Err(err) => {
             tracing::warn!("{:#?}", err);
             // Reset the cursor position because data for an object has not yet arrived
             read_cur.set_position(0);
-            StreamHeaderProcessResult::Continue
+            SubgroupStreamHeaderProcessResult::Continue
         }
     }
 }
@@ -107,9 +97,7 @@ pub async fn try_read_header(
 mod tests {
     mod success {
         use crate::modules::{
-            message_handlers::stream_header::{
-                try_read_header, StreamHeader, StreamHeaderProcessResult,
-            },
+            message_handlers::stream_header::{try_read_header, SubgroupStreamHeaderProcessResult},
             moqt_client::{MOQTClient, MOQTClientStatus},
             server_processes::senders,
         };
@@ -150,10 +138,7 @@ mod tests {
             let mut read_cur = Cursor::new(&buf_without_type[..]);
             let header = subgroup_stream::Header::depacketize(&mut read_cur).unwrap();
 
-            assert_eq!(
-                result,
-                StreamHeaderProcessResult::Success(StreamHeader::Subgroup(header))
-            );
+            assert_eq!(result, SubgroupStreamHeaderProcessResult::Success(header));
         }
 
         #[tokio::test]
@@ -175,7 +160,7 @@ mod tests {
 
             let result = try_read_header(&mut buf, client).await;
 
-            assert_eq!(result, StreamHeaderProcessResult::Continue);
+            assert_eq!(result, SubgroupStreamHeaderProcessResult::Continue);
         }
     }
 }
