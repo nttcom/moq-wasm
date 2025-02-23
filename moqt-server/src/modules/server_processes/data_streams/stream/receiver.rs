@@ -72,12 +72,12 @@ impl SubgroupStreamObjectReceiver {
             let read_bytes = self.read_stream().await?;
             self.add_to_buf(read_bytes).await;
 
-            if !self.has_header() {
+            if !self.has_received_header() {
                 self.receive_header(session_id, &mut object_cache_storage)
                     .await?;
 
                 // If the header has not been received, continue to receive the header.
-                if !self.has_header() {
+                if !self.has_received_header() {
                     continue;
                 }
             }
@@ -123,7 +123,7 @@ impl SubgroupStreamObjectReceiver {
         buf.extend_from_slice(&read_buf);
     }
 
-    fn has_header(&self) -> bool {
+    fn has_received_header(&self) -> bool {
         self.upstream_subscription.is_some()
     }
 
