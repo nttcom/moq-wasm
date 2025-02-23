@@ -139,20 +139,16 @@ impl SubgroupStreamObjectReceiver {
             }
         };
 
-        let subscribe_id = header.subscribe_id();
-        self.subscribe_id = Some(subscribe_id);
-
+        self.subscribe_id = Some(header.subscribe_id());
         self.subgroup_stream_id = Some((header.group_id(), header.subgroup_id()));
 
-        self.set_upstream_forwarding_preference(session_id, subscribe_id)
-            .await?;
-        self.set_upstream_subscription(session_id, subscribe_id)
+        self.set_upstream_forwarding_preference(session_id).await?;
+        self.set_upstream_subscription(session_id).await?;
+
+        self.create_cache_storage(session_id, header, object_cache_storage)
             .await?;
 
-        self.create_cache_storage(session_id, subscribe_id, header, object_cache_storage)
-            .await?;
-
-        self.create_forwarders(session_id, subscribe_id).await?;
+        self.create_forwarders(session_id).await?;
 
         Ok(())
     }
@@ -182,9 +178,9 @@ impl SubgroupStreamObjectReceiver {
     async fn set_upstream_forwarding_preference(
         &self,
         upstream_session_id: usize,
-        upstream_subscribe_id: u64,
     ) -> Result<(), TerminationError> {
         let forwarding_preference = ForwardingPreference::Subgroup;
+        let upstream_subscribe_id = self.subscribe_id.unwrap();
 
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
@@ -209,8 +205,9 @@ impl SubgroupStreamObjectReceiver {
     async fn set_upstream_subscription(
         &mut self,
         upstream_session_id: usize,
-        upstream_subscribe_id: u64,
     ) -> Result<(), TerminationError> {
+        let upstream_subscribe_id = self.subscribe_id.unwrap();
+
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
         let upstream_subscription = match pubsub_relation_manager
@@ -241,10 +238,11 @@ impl SubgroupStreamObjectReceiver {
     async fn create_cache_storage(
         &self,
         upstream_session_id: usize,
-        upstream_subscribe_id: u64,
+
         stream_header: subgroup_stream::Header,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<(), TerminationError> {
+        let upstream_subscribe_id = self.subscribe_id.unwrap();
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 
         let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
@@ -262,14 +260,11 @@ impl SubgroupStreamObjectReceiver {
         }
     }
 
-    async fn create_forwarders(
-        &self,
-        upstream_session_id: usize,
-        upstream_subscribe_id: u64,
-    ) -> Result<(), TerminationError> {
+    async fn create_forwarders(&self, upstream_session_id: usize) -> Result<(), TerminationError> {
+        let upstream_subscribe_id = self.subscribe_id.unwrap();
+
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
-
         let subscribers = match pubsub_relation_manager
             .get_related_subscribers(upstream_session_id, upstream_subscribe_id)
             .await
