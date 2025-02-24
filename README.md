@@ -28,9 +28,12 @@ Supported version: draft-ietf-moq-transport-06
   - [ ] TRACK_STATUS
   - [x] SUBSCRIBE_ANNOUNCES_OK
   - [x] SUBSCRIBE_ANNOUNCES_ERROR
+  - [ ] FETCH
+  - [ ] FETCH_OK
+  - [ ] FETCH_ERROR
+  - [ ] FETCH_CANCEL
 - [x] Data Streams
   - [x] Datagram
-  - [x] Track Stream
   - [x] Subgroup Stream
 - [ ] Features
   - [x] Manage Publisher / Subscriber

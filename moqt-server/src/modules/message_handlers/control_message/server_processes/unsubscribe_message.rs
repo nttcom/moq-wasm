@@ -1,31 +1,31 @@
 use crate::modules::{
-    message_handlers::control_message::handlers::subscribe_error_handler::subscribe_error_handler,
+    message_handlers::control_message::handlers::unsubscribe_handler::unsubscribe_handler,
     moqt_client::MOQTClient,
 };
 use anyhow::{bail, Result};
 use bytes::BytesMut;
 use moqt_core::{
-    messages::{control_messages::subscribe_error::SubscribeError, moqt_payload::MOQTPayload},
+    messages::{control_messages::unsubscribe::Unsubscribe, moqt_payload::MOQTPayload},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     SendStreamDispatcherRepository,
 };
 
-pub(crate) async fn process_subscribe_error_message(
+pub(crate) async fn process_unsubscribe_message(
     payload_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
     client: &MOQTClient,
 ) -> Result<()> {
-    let subscribe_error_message = match SubscribeError::depacketize(payload_buf) {
-        Ok(subscribe_error_message) => subscribe_error_message,
+    let unsubscribe_message = match Unsubscribe::depacketize(payload_buf) {
+        Ok(unsubscribe_message) => unsubscribe_message,
         Err(err) => {
             tracing::error!("{:#?}", err);
             bail!(err.to_string());
         }
     };
 
-    subscribe_error_handler(
-        subscribe_error_message,
+    unsubscribe_handler(
+        unsubscribe_message,
         pubsub_relation_manager_repository,
         send_stream_dispatcher_repository,
         client,

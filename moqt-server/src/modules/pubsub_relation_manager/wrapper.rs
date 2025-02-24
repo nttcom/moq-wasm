@@ -13,6 +13,7 @@ use crate::modules::pubsub_relation_manager::commands::{
 };
 
 // Wrapper to encapsulate channel-related operations
+#[derive(Clone)]
 pub(crate) struct PubSubRelationManagerWrapper {
     tx: mpsc::Sender<PubSubRelationCommand>,
 }
@@ -316,6 +317,26 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             track_namespace,
             track_name,
             upstream_session_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(subscribe_id) => Ok(subscribe_id),
+            Err(err) => bail!(err),
+        }
+    }
+    async fn get_upstream_subscribe_id_by_track_alias(
+        &self,
+        upstream_session_id: usize,
+        upstream_track_alias: u64,
+    ) -> Result<Option<u64>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<u64>>>();
+        let cmd = PubSubRelationCommand::GetUpstreamSubscribeIdByTrackAlias {
+            upstream_session_id,
+            upstream_track_alias,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -1524,6 +1545,58 @@ mod success {
     }
 
     #[tokio::test]
+    async fn get_subscribe_id_by_track_alias() {
+        let max_subscribe_id = 10;
+        let upstream_session_id = 1;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let track_alias = 0;
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+
+        let _ = pubsub_relation_manager
+            .setup_publisher(max_subscribe_id, upstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .await;
+        let (expected_upstream_subscribe_id, _) = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
+                track_namespace.clone(),
+                track_name.clone(),
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
+
+        let upstream_subscribe_id = pubsub_relation_manager
+            .get_upstream_subscribe_id_by_track_alias(upstream_session_id, track_alias)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(upstream_subscribe_id, expected_upstream_subscribe_id);
+    }
+
+    #[tokio::test]
     async fn set_downstream_subscription() {
         let max_subscribe_id = 10;
         let downstream_session_id = 1;
@@ -2541,7 +2614,7 @@ mod success {
         let start_object = Some(0);
         let end_group = None;
         let end_object = None;
-        let forwarding_preference = ForwardingPreference::Track;
+        let forwarding_preference = ForwardingPreference::Subgroup;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -2606,7 +2679,7 @@ mod success {
         let start_object = Some(0);
         let end_group = None;
         let end_object = None;
-        let forwarding_preference = ForwardingPreference::Track;
+        let forwarding_preference = ForwardingPreference::Subgroup;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -3099,6 +3172,24 @@ mod failure {
 
         let result = pubsub_relation_manager
             .get_upstream_subscribe_id(track_namespace, track_name, invalid_upstream_session_id)
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_upstream_subscribe_id_by_track_alias_publisher_not_found() {
+        let track_alias = 0;
+        let invalid_upstream_session_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+
+        let result = pubsub_relation_manager
+            .get_upstream_subscribe_id_by_track_alias(invalid_upstream_session_id, track_alias)
             .await;
 
         assert!(result.is_err());

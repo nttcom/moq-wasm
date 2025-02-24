@@ -1,10 +1,8 @@
 pub(crate) mod datagram;
 pub(crate) mod subgroup_stream;
-pub(crate) mod track_stream;
 
 use datagram::DatagramCache;
 use subgroup_stream::SubgroupStreamsCache;
-use track_stream::TrackStreamCache;
 
 pub(crate) type CacheId = usize;
 type GroupId = u64;
@@ -37,6 +35,5 @@ impl CacheKey {
 #[derive(Clone)]
 pub(crate) enum Cache {
     Datagram(DatagramCache),
-    TrackStream(TrackStreamCache),
     SubgroupStream(SubgroupStreamsCache),
 }

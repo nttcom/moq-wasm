@@ -6,3 +6,4 @@ pub(crate) mod subscribe_announces_message;
 pub(crate) mod subscribe_error_message;
 pub(crate) mod subscribe_message;
 pub(crate) mod subscribe_ok_message;
+pub(crate) mod unsubscribe_message;

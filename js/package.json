@@ -4,8 +4,8 @@
   "description": "moq-wasm client",
   "main": "index.js",
   "scripts": {
-    "wasm": "RUSTFLAGS=--cfg=web_sys_unstable_apis wasm-pack build ../moqt-client-sample --target web --out-dir=../js/pkg",
-    "wasm:prod": "RUSTFLAGS=--cfg=web_sys_unstable_apis wasm-pack build ../moqt-client-sample --release --target web --out-dir=../js/pkg",
+    "wasm": "wasm-pack build ../moqt-client-sample --target web --out-dir=../js/pkg --features web_sys_unstable_apis",
+    "wasm:prod": "wasm-pack build ../moqt-client-sample --release --target web --out-dir=../js/pkg --features web_sys_unstable_apis",
     "dev": "npm run wasm && vite",
     "build": "vite build"
   },
