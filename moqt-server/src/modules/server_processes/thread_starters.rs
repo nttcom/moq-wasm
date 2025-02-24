@@ -319,6 +319,9 @@ pub(crate) async fn select_spawn_thread(
                     spawn_datagram_object_forwarder_thread(client.clone(), session, subscribe_id).await?;
 
                 }
+                DataStreamType::FetchHeader => {
+                    unimplemented!();
+                }
             }
         },
         // TODO: Not implemented yet

@@ -5,4 +5,5 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 pub enum DataStreamType {
     ObjectDatagram = 0x1,
     StreamHeaderSubgroup = 0x4,
+    FetchHeader = 0x5,
 }
