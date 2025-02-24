@@ -736,7 +736,6 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendDatagramObject)]
     pub async fn send_datagram_object(
         &self,
-        subscribe_id: u64,
         track_alias: u64,
         group_id: u64,
         object_id: u64,
@@ -745,7 +744,6 @@ impl MOQTClient {
     ) -> Result<JsValue, JsValue> {
         if let Some(writer) = &*self.datagram_writer.borrow() {
             let datagram_object = datagram::Object::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -784,13 +782,17 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendSubgroupStreamHeaderMessage)]
     pub async fn send_subgroup_stream_header_message(
         &self,
-        subscribe_id: u64,
         track_alias: u64,
         group_id: u64,
         subgroup_id: u64,
         publisher_priority: u8,
     ) -> Result<JsValue, JsValue> {
         let mut stream_writers = self.stream_writers.borrow_mut();
+        let subscribe_id = self
+            .subscription_node
+            .borrow()
+            .get_publishing_subscribe_id_by_track_alias(track_alias)
+            .unwrap();
         let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
         if stream_writers.get(&writer_key).is_none() {
             let send_uni_stream = WritableStream::from(
@@ -808,14 +810,9 @@ impl MOQTClient {
         }
 
         let writer = stream_writers.get(&writer_key).unwrap();
-        let subgroup_stream_header_message = subgroup_stream::Header::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let subgroup_stream_header_message =
+            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
         let mut subgroup_stream_header_message_buf = BytesMut::new();
         let _ = subgroup_stream_header_message.packetize(&mut subgroup_stream_header_message_buf);
 
@@ -834,13 +831,18 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendSubgroupStreamObject)]
     pub async fn send_subgroup_stream_object(
         &self,
-        subscribe_id: u64,
+        track_alias: u64,
         group_id: u64,
         subgroup_id: u64,
         object_id: u64,
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
         let stream_writers = self.stream_writers.borrow();
+        let subscribe_id = self
+            .subscription_node
+            .borrow()
+            .get_publishing_subscribe_id_by_track_alias(track_alias)
+            .unwrap();
         let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
         if let Some(writer) = stream_writers.get(&writer_key) {
             let subgroup_stream_object =
@@ -1613,6 +1615,16 @@ impl SubscriptionNode {
     fn activate_as_subscriber(&mut self, subscribe_id: u64) {
         if let Some(consumer) = &mut self.consumer {
             let _ = consumer.activate_subscription(subscribe_id);
+        }
+    }
+
+    fn get_publishing_subscribe_id_by_track_alias(&self, track_alias: u64) -> Option<u64> {
+        if let Some(producer) = &self.producer {
+            producer
+                .get_subscribe_id_by_track_alias(track_alias)
+                .unwrap()
+        } else {
+            None
         }
     }
 }
