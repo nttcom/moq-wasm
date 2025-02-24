@@ -169,7 +169,6 @@ init().then(async () => {
     const sendDatagramObjectBtn = document.getElementById('sendDatagramObjectBtn')
     sendDatagramObjectBtn.addEventListener('click', async () => {
       console.log('send datagram object btn clicked')
-      const subscribeId = form['object-subscribe-id'].value
       const trackAlias = form['object-track-alias'].value
       const publisherPriority = form['publisher-priority'].value
       const objectPayloadString = form['object-payload'].value
@@ -177,21 +176,13 @@ init().then(async () => {
       // encode the text to the object array
       const objectPayloadArray = new TextEncoder().encode(objectPayloadString)
 
-      await client.sendDatagramObject(
-        BigInt(subscribeId),
-        BigInt(trackAlias),
-        groupId,
-        objectId++,
-        publisherPriority,
-        objectPayloadArray
-      )
+      await client.sendDatagramObject(BigInt(trackAlias), groupId, objectId++, publisherPriority, objectPayloadArray)
       objectIdElement.textContent = objectId
     })
 
     const sendSubgroupObjectBtn = document.getElementById('sendSubgroupObjectBtn')
     sendSubgroupObjectBtn.addEventListener('click', async () => {
       console.log('send subgroup stream object btn clicked')
-      const subscribeId = form['object-subscribe-id'].value
       const trackAlias = form['object-track-alias'].value
       const publisherPriority = form['publisher-priority'].value
       const objectPayloadString = form['object-payload'].value
@@ -202,17 +193,11 @@ init().then(async () => {
 
       // send header if it is the first time
       if (!subgroupHeaderSent.has(key)) {
-        await client.sendSubgroupStreamHeaderMessage(
-          BigInt(subscribeId),
-          BigInt(trackAlias),
-          groupId,
-          subgroupId,
-          publisherPriority
-        )
+        await client.sendSubgroupStreamHeaderMessage(BigInt(trackAlias), groupId, subgroupId, publisherPriority)
         subgroupHeaderSent.add(key)
       }
 
-      await client.sendSubgroupStreamObject(subscribeId, groupId, subgroupId, objectId++, objectPayloadArray)
+      await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId++, objectPayloadArray)
       objectIdElement.textContent = objectId
     })
 

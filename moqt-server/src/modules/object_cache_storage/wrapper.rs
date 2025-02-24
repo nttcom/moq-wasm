@@ -443,14 +443,9 @@ mod success {
         let subgroup_id = 4;
         let publisher_priority = 5;
 
-        let subgroup_stream_header = subgroup_stream::Header::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let subgroup_stream_header =
+            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -498,14 +493,9 @@ mod success {
         let subgroup_id = 4;
         let publisher_priority = 5;
         let cache_key = CacheKey::new(session_id, subscribe_id);
-        let header = subgroup_stream::Header::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let header =
+            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -538,7 +528,6 @@ mod success {
         let object_payload = vec![1, 2, 3, 4];
         let duration = 1000;
         let datagram_object = datagram::Object::new(
-            subscribe_id,
             track_alias,
             group_id,
             object_id,
@@ -576,14 +565,9 @@ mod success {
         let object_payload = vec![1, 2, 3, 4];
         let subgroup_stream_object =
             subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
-        let header = subgroup_stream::Header::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let header =
+            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
         let duration = 1000;
 
         // start object cache storage thread
@@ -632,7 +616,6 @@ mod success {
             let object_id = i as u64;
 
             let datagram_object = datagram::Object::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -651,7 +634,6 @@ mod success {
         let expected_cache_id = 5;
         let expected_object_payload = vec![5, 6, 7, 8];
         let expected_object = datagram::Object::new(
-            subscribe_id,
             track_alias,
             group_id,
             object_id,
@@ -683,14 +665,9 @@ mod success {
         let publisher_priority = 6;
         let object_status = None;
         let duration = 1000;
-        let header = subgroup_stream::Header::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let header =
+            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -760,7 +737,6 @@ mod success {
             let object_id = i as u64;
 
             let datagram_object = datagram::Object::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -780,7 +756,6 @@ mod success {
         let expected_cache_id = 3;
         let expected_object_payload = vec![3, 4, 5, 6];
         let expected_object = datagram::Object::new(
-            subscribe_id,
             track_alias,
             group_id,
             expected_object_id,
@@ -812,14 +787,9 @@ mod success {
         let publisher_priority = 6;
         let object_status = None;
         let duration = 1000;
-        let header = subgroup_stream::Header::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let header =
+            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -893,7 +863,6 @@ mod success {
             let object_id = i as u64;
 
             let datagram_object = datagram::Object::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -912,7 +881,6 @@ mod success {
         let expected_cache_id = 5;
         let expected_object_payload = vec![5, 6, 7, 8];
         let expected_object = datagram::Object::new(
-            subscribe_id,
             track_alias,
             group_id,
             expected_object_id,
@@ -964,7 +932,6 @@ mod success {
                 let object_id = i as u64;
 
                 let datagram_object = datagram::Object::new(
-                    subscribe_id,
                     track_alias,
                     group_id,
                     object_id,
@@ -984,7 +951,6 @@ mod success {
         let expected_group_id = 3;
         let expected_object_payload = vec![21, 22, 23, 24];
         let expected_object = datagram::Object::new(
-            subscribe_id,
             track_alias,
             expected_group_id,
             expected_object_id,
@@ -1037,7 +1003,6 @@ mod success {
                 let object_id = i as u64;
 
                 let datagram_object = datagram::Object::new(
-                    subscribe_id,
                     track_alias,
                     group_id,
                     object_id,
@@ -1058,7 +1023,6 @@ mod success {
         let expected_cache_id = 49;
         let expected_object_payload = vec![14, 15, 16, 17];
         let expected_object = datagram::Object::new(
-            subscribe_id,
             track_alias,
             expected_group_id,
             expected_object_id,
@@ -1090,14 +1054,9 @@ mod success {
         let publisher_priority = 6;
         let object_status = None;
         let duration = 1000;
-        let header = subgroup_stream::Header::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let header =
+            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -1167,7 +1126,6 @@ mod success {
             let subgroup_id = i as u64;
 
             let header = subgroup_stream::Header::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 subgroup_id,
@@ -1236,7 +1194,6 @@ mod success {
                 let object_id = i as u64;
 
                 let datagram_object = datagram::Object::new(
-                    subscribe_id,
                     track_alias,
                     group_id,
                     object_id,
@@ -1282,7 +1239,6 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let header = subgroup_stream::Header::new(
-            subscribe_id,
             track_alias,
             group_id, // Group ID is fixed
             subgroup_id,
@@ -1353,14 +1309,9 @@ mod success {
         let subgroup_id = 5;
         let track_alias = 3;
         let publisher_priority = 6;
-        let header = subgroup_stream::Header::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let header =
+            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);

@@ -304,6 +304,26 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
 
                 resp.send(result).unwrap();
             }
+            GetUpstreamSubscribeIdByTrackAlias {
+                upstream_session_id,
+                upstream_track_alias,
+                resp,
+            } => {
+                // Return an error if the publisher does not exist
+                let consumer = match consumers.get(&upstream_session_id) {
+                    Some(consumer) => consumer,
+                    None => {
+                        let msg = "publisher not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let result = consumer.get_subscribe_id_by_track_alias(upstream_track_alias);
+
+                resp.send(result).unwrap();
+            }
             IsTrackExisting {
                 track_namespace,
                 track_name,
