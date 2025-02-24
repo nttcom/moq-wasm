@@ -53,6 +53,7 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         track_namespace: Vec<String>,
         track_name: String,
     ) -> Result<bool>;
+    // TODO: Remove getter methods of subscription not to get subscription directly from other threads
     async fn get_upstream_subscription_by_full_track_name(
         &self,
         track_namespace: Vec<String>,
@@ -74,6 +75,7 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         upstream_subscribe_id: u64,
         upstream_session_id: usize,
     ) -> Result<Option<Vec<(usize, u64)>>>;
+    // TODO: Unify getter methods of subscribe_id
     async fn get_upstream_subscribe_id(
         &self,
         track_namespace: Vec<String>,
