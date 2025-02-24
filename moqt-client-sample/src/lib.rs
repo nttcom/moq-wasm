@@ -1298,6 +1298,9 @@ async fn uni_directional_stream_read_thread(
                             break;
                         }
                     }
+                    DataStreamType::FetchHeader => {
+                        unimplemented!();
+                    }
                 }
             }
         }
