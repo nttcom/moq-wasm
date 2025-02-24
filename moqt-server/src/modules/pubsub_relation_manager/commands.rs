@@ -59,6 +59,7 @@ pub(crate) enum PubSubRelationCommand {
         track_name: String,
         resp: oneshot::Sender<Result<bool>>,
     },
+    // TODO: Remove getter methods of subscription not to get subscription directly from other threads
     GetUpstreamSubscriptionByFullTrackName {
         track_namespace: Vec<String>,
         track_name: String,
@@ -74,6 +75,7 @@ pub(crate) enum PubSubRelationCommand {
         downstream_subscribe_id: u64,
         resp: oneshot::Sender<Result<Option<Subscription>>>,
     },
+    // TODO: Unify getter methods of subscribe_id
     GetUpstreamSessionId {
         track_namespace: Vec<String>,
         resp: oneshot::Sender<Result<Option<usize>>>,
@@ -88,6 +90,11 @@ pub(crate) enum PubSubRelationCommand {
         track_namespace: Vec<String>,
         track_name: String,
         upstream_session_id: usize,
+        resp: oneshot::Sender<Result<Option<u64>>>,
+    },
+    GetUpstreamSubscribeIdByTrackAlias {
+        upstream_session_id: usize,
+        upstream_track_alias: u64,
         resp: oneshot::Sender<Result<Option<u64>>>,
     },
     SetDownstreamSubscription {

@@ -22,10 +22,7 @@
             ><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram
           </label>
           <label
-            ><input type="radio" name="forwarding-preference" id="selectTrack" value="track" checked />Track
-          </label>
-          <label
-            ><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" />Subgroup
+            ><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" checked/>Subgroup
           </label>
           <br />
           *You must select at first
@@ -95,22 +92,20 @@
           <div id="headerField" style="display: blocked">
             <h4>Header</h4>
           </div>
-          <label>Subscribe ID: <input type="text" name="object-subscribe-id" id="" value="0" /> </label>
-          <br />
           <label>Track Alias: <input type="text" name="object-track-alias" id="" value="0" /> </label>
           <br />
-          <div id="subgroupHeaderContents" style="display: none">
+          <div id="subgroupHeaderContents" style="display: blocked;">
             Group ID:
-            <p id="mutableSubgroupGroupId">0</p>
+            <p id="subgroupGroupId">0</p>
             <br />
-            <button type="button" id="descendMutableSubgroupGroupIdBtn">&lt;</button>
-            <button type="button" id="ascendMutableSubgroupGroupIdBtn">&gt;</button>
+            <button type="button" id="descendSubgroupGroupIdBtn">&lt;</button>
+            <button type="button" id="ascendSubgroupGroupIdBtn">&gt;</button>
             <br />
-            Subgroup ID:
-            <p id="mutableSubgroupId">0</p>
+            Subgroup ID: 
+            <p id="subgroupId">0</p>
             <br />
-            <button type="button" id="descendMutableSubgroupIdBtn">&lt;</button>
-            <button type="button" id="ascendMutableSubgroupIdBtn">&gt;</button>
+            <button type="button" id="descendSubgroupIdBtn">&lt;</button>
+            <button type="button" id="ascendSubgroupIdBtn">&gt;</button>
             <br />
           </div>
           <label>Publisher Priority: <input type="text" name="publisher-priority" id="" value="0" /> </label>
@@ -118,12 +113,12 @@
           <div id="objectField" style="display: blocked">
             <h4>Object</h4>
           </div>
-          <div id="datagramAndTrackObjectContents" style="display: blocked">
-            Group ID:
-            <p id="mutableDatagramAndTrackGroupId">0</p>
+          <div id="datagramObjectContents" style="display: none;">
+            Group ID: 
+            <p id="datagramGroupId">0</p>
             <br />
-            <button type="button" id="descendMutableDatagramAndTrackGroupIdBtn">&lt;</button>
-            <button type="button" id="ascendMutableDatagramAndTrackGroupIdBtn">&gt;</button>
+            <button type="button" id="descendDatagramGroupIdBtn">&lt;</button>
+            <button type="button" id="ascendDatagramGroupIdBtn">&gt;</button>
             <br />
             <br />
           </div>
@@ -136,10 +131,7 @@
           <div id="sendDatagramObject" style="display: none">
             <button type="button" id="sendDatagramObjectBtn">Send</button>
           </div>
-          <div id="sendTrackObject" style="display: blocked">
-            <button type="button" id="sendTrackObjectBtn">Send</button>
-          </div>
-          <div id="sendSubgroupObject" style="display: none">
+          <div id="sendSubgroupObject" style="display: blocked;">
             <button type="button" id="sendSubgroupObjectBtn">Send</button>
           </div>
         </div>
