@@ -22,6 +22,10 @@ pub enum ControlMessageType {
     SubscribeNamespaceError = 0x13,
     UnSubscribeNamespace = 0x14,
     MaxSubscribeId = 0x15,
+    Fetch = 0x16,
+    FetchCancel = 0x17,
+    FetchOk = 0x18,
+    FetchError = 0x19,
     ClientSetup = 0x40,
     ServerSetup = 0x41,
 }

@@ -28,6 +28,10 @@ Supported version: draft-ietf-moq-transport-06
   - [ ] TRACK_STATUS
   - [x] SUBSCRIBE_NAMESPACE_OK
   - [x] SUBSCRIBE_NAMESPACE_ERROR
+  - [ ] FETCH
+  - [ ] FETCH_OK
+  - [ ] FETCH_ERROR
+  - [ ] FETCH_CANCEL
 - [x] Data Streams
   - [x] Datagram
   - [x] Subgroup Stream
