@@ -11,9 +11,9 @@ use crate::modules::{
             announce_message::process_announce_message,
             announce_ok_message::process_announce_ok_message,
             client_setup_message::process_client_setup_message,
+            subscribe_announces_message::process_subscribe_announces_message,
             subscribe_error_message::process_subscribe_error_message,
             subscribe_message::process_subscribe_message,
-            subscribe_namespace_message::process_subscribe_namespace_message,
             subscribe_ok_message::process_subscribe_ok_message,
         },
     },
@@ -278,8 +278,8 @@ pub async fn control_message_handler(
                 }
             }
         }
-        ControlMessageType::SubscribeNamespace => {
-            match process_subscribe_namespace_message(
+        ControlMessageType::SubscribeAnnounces => {
+            match process_subscribe_announces_message(
                 &mut payload_buf,
                 client,
                 &mut write_buf,
@@ -289,7 +289,7 @@ pub async fn control_message_handler(
             .await
             {
                 Ok(result) => match result {
-                    Some(_) => ControlMessageType::SubscribeNamespaceError,
+                    Some(_) => ControlMessageType::SubscribeAnnouncesError,
                     None => {
                         return MessageProcessResult::SuccessWithoutResponse;
                     }

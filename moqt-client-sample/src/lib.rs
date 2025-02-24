@@ -16,10 +16,10 @@ use moqt_core::{
         server_setup::ServerSetup,
         setup_parameters::{MaxSubscribeID, Role, RoleCase, SetupParameter},
         subscribe::{FilterType, GroupOrder, Subscribe},
+        subscribe_announces::SubscribeAnnounces,
+        subscribe_announces_error::SubscribeAnnouncesError,
+        subscribe_announces_ok::SubscribeAnnouncesOk,
         subscribe_error::{SubscribeError, SubscribeErrorCode},
-        subscribe_namespace::SubscribeNamespace,
-        subscribe_namespace_error::SubscribeNamespaceError,
-        subscribe_namespace_ok::SubscribeNamespaceOk,
         subscribe_ok::SubscribeOk,
         unannounce::UnAnnounce,
         unsubscribe::Unsubscribe,
@@ -147,11 +147,11 @@ impl MOQTClient {
             .borrow_mut()
             .set_subscribe_response_callback(callback);
     }
-    #[wasm_bindgen(js_name = onSubscribeNamespaceResponse)]
-    pub fn set_subscribe_namespace_response_callback(&mut self, callback: js_sys::Function) {
+    #[wasm_bindgen(js_name = onSubscribeAnnouncesResponse)]
+    pub fn set_subscribe_announces_response_callback(&mut self, callback: js_sys::Function) {
         self.callbacks
             .borrow_mut()
-            .set_subscribe_namespace_response_callback(callback);
+            .set_subscribe_announces_response_callback(callback);
     }
 
     #[wasm_bindgen(js_name = onDatagramObject)]
@@ -595,8 +595,8 @@ impl MOQTClient {
         }
     }
 
-    #[wasm_bindgen(js_name = sendSubscribeNamespaceMessage)]
-    pub async fn send_subscribe_namespace_message(
+    #[wasm_bindgen(js_name = sendSubscribeAnnouncesMessage)]
+    pub async fn send_subscribe_announces_message(
         &self,
         track_namespace_prefix: js_sys::Array,
         auth_info: String,
@@ -615,21 +615,21 @@ impl MOQTClient {
             }
 
             let version_specific_parameters = vec![auth_info];
-            let subscribe_namespace_message =
-                SubscribeNamespace::new(track_namespace_prefix_vec, version_specific_parameters);
-            let mut subscribe_namespace_message_buf = BytesMut::new();
-            subscribe_namespace_message.packetize(&mut subscribe_namespace_message_buf);
+            let subscribe_announces_message =
+                SubscribeAnnounces::new(track_namespace_prefix_vec, version_specific_parameters);
+            let mut subscribe_announces_message_buf = BytesMut::new();
+            subscribe_announces_message.packetize(&mut subscribe_announces_message_buf);
 
             let mut buf = Vec::new();
             // Message Type
             buf.extend(write_variable_integer(
-                u8::from(ControlMessageType::SubscribeNamespace) as u64,
+                u8::from(ControlMessageType::SubscribeAnnounces) as u64,
             ));
             // Message Payload and Payload Length
             buf.extend(write_variable_integer(
-                subscribe_namespace_message_buf.len() as u64,
+                subscribe_announces_message_buf.len() as u64,
             ));
-            buf.extend(subscribe_namespace_message_buf);
+            buf.extend(subscribe_announces_message_buf);
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
@@ -637,8 +637,8 @@ impl MOQTClient {
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(ok) => {
                     log(std::format!(
-                        "sent: subscribe_namespace: {:#x?}",
-                        subscribe_namespace_message
+                        "sent: subscribe_announces: {:#x?}",
+                        subscribe_announces_message
                     )
                     .as_str());
                     Ok(ok)
@@ -1150,42 +1150,42 @@ async fn control_message_handler(
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
-                ControlMessageType::SubscribeNamespaceOk => {
-                    let subscribe_namespace_ok_message =
-                        SubscribeNamespaceOk::depacketize(&mut payload_buf)?;
+                ControlMessageType::SubscribeAnnouncesOk => {
+                    let subscribe_announces_ok_message =
+                        SubscribeAnnouncesOk::depacketize(&mut payload_buf)?;
                     log(std::format!(
-                        "recv: subscribe_namespace_ok_message: {:#x?}",
-                        subscribe_namespace_ok_message
+                        "recv: subscribe_announces_ok_message: {:#x?}",
+                        subscribe_announces_ok_message
                     )
                     .as_str());
 
                     let _ = subscription_node.borrow_mut().set_namespace_prefix(
-                        subscribe_namespace_ok_message
+                        subscribe_announces_ok_message
                             .track_namespace_prefix()
                             .clone(),
                     );
 
                     if let Some(callback) =
-                        callbacks.borrow().subscribe_namespace_response_callback()
+                        callbacks.borrow().subscribe_announces_response_callback()
                     {
                         let v =
-                            serde_wasm_bindgen::to_value(&subscribe_namespace_ok_message).unwrap();
+                            serde_wasm_bindgen::to_value(&subscribe_announces_ok_message).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
-                ControlMessageType::SubscribeNamespaceError => {
-                    let subscribe_namespace_error_message =
-                        SubscribeNamespaceError::depacketize(&mut payload_buf)?;
+                ControlMessageType::SubscribeAnnouncesError => {
+                    let subscribe_announces_error_message =
+                        SubscribeAnnouncesError::depacketize(&mut payload_buf)?;
                     log(std::format!(
-                        "recv: subscribe_namespace_error_message: {:#x?}",
-                        subscribe_namespace_error_message
+                        "recv: subscribe_announces_error_message: {:#x?}",
+                        subscribe_announces_error_message
                     )
                     .as_str());
 
                     if let Some(callback) =
-                        callbacks.borrow().subscribe_namespace_response_callback()
+                        callbacks.borrow().subscribe_announces_response_callback()
                     {
-                        let v = serde_wasm_bindgen::to_value(&subscribe_namespace_error_message)
+                        let v = serde_wasm_bindgen::to_value(&subscribe_announces_error_message)
                             .unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
@@ -1638,7 +1638,7 @@ struct MOQTCallbacks {
     announce_responce_callback: Option<js_sys::Function>,
     subscribe_callback: Option<js_sys::Function>,
     subscribe_response_callback: Option<js_sys::Function>,
-    subscribe_namespace_response_callback: Option<js_sys::Function>,
+    subscribe_announces_response_callback: Option<js_sys::Function>,
     unsubscribe_callback: Option<js_sys::Function>,
     datagram_object_callback: Option<js_sys::Function>,
     subgroup_stream_header_callback: Option<js_sys::Function>,
@@ -1654,7 +1654,7 @@ impl MOQTCallbacks {
             announce_responce_callback: None,
             subscribe_callback: None,
             subscribe_response_callback: None,
-            subscribe_namespace_response_callback: None,
+            subscribe_announces_response_callback: None,
             unsubscribe_callback: None,
             datagram_object_callback: None,
             subgroup_stream_header_callback: None,
@@ -1702,12 +1702,12 @@ impl MOQTCallbacks {
         self.subscribe_response_callback = Some(callback);
     }
 
-    pub fn subscribe_namespace_response_callback(&self) -> Option<js_sys::Function> {
-        self.subscribe_namespace_response_callback.clone()
+    pub fn subscribe_announces_response_callback(&self) -> Option<js_sys::Function> {
+        self.subscribe_announces_response_callback.clone()
     }
 
-    pub fn set_subscribe_namespace_response_callback(&mut self, callback: js_sys::Function) {
-        self.subscribe_namespace_response_callback = Some(callback);
+    pub fn set_subscribe_announces_response_callback(&mut self, callback: js_sys::Function) {
+        self.subscribe_announces_response_callback = Some(callback);
     }
 
     pub fn set_unsubscribe_callback(&mut self, callback: js_sys::Function) {
