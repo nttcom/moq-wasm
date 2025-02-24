@@ -104,6 +104,17 @@ impl SubscriptionNodeRegistry for Consumer {
             .map(|(subscribe_id, _)| *subscribe_id))
     }
 
+    fn get_subscribe_id_by_track_alias(
+        &self,
+        track_alias: TrackAlias,
+    ) -> Result<Option<SubscribeId>> {
+        Ok(self
+            .subscriptions
+            .iter()
+            .find(|(_, subscription)| subscription.get_track_alias() == track_alias)
+            .map(|(subscribe_id, _)| *subscribe_id))
+    }
+
     fn has_track(&self, track_namespace: TrackNamespace, track_name: String) -> bool {
         self.subscriptions.values().any(|subscription| {
             subscription.get_track_namespace_and_name()
@@ -464,6 +475,36 @@ mod success {
         let result_subscribe_id = variables
             .consumer
             .get_subscribe_id(variables.track_namespace, variables.track_name)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result_subscribe_id, expected_subscribe_id);
+    }
+
+    #[test]
+    fn get_subscribe_id_by_track_alias() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.consumer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let expected_subscribe_id = variables.subscribe_id;
+
+        let result_subscribe_id = variables
+            .consumer
+            .get_subscribe_id_by_track_alias(variables.track_alias)
             .unwrap()
             .unwrap();
 

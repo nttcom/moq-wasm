@@ -1,17 +1,12 @@
 use super::cache::{CacheId, CacheKey, SubgroupId};
 use anyhow::Result;
-use moqt_core::messages::data_streams::{datagram, subgroup_stream, track_stream};
+use moqt_core::messages::data_streams::{datagram, subgroup_stream};
 use tokio::sync::oneshot;
 
 #[derive(Debug)]
 pub(crate) enum ObjectCacheStorageCommand {
     CreateDatagramCache {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    CreateTrackStreamCache {
-        cache_key: CacheKey,
-        header: track_stream::Header,
         resp: oneshot::Sender<Result<()>>,
     },
     CreateSubgroupStreamCache {
@@ -25,10 +20,6 @@ pub(crate) enum ObjectCacheStorageCommand {
         cache_key: CacheKey,
         resp: oneshot::Sender<Result<bool>>,
     },
-    GetTrackStreamHeader {
-        cache_key: CacheKey,
-        resp: oneshot::Sender<Result<track_stream::Header>>,
-    },
     GetSubgroupStreamHeader {
         cache_key: CacheKey,
         group_id: u64,
@@ -38,12 +29,6 @@ pub(crate) enum ObjectCacheStorageCommand {
     SetDatagramObject {
         cache_key: CacheKey,
         datagram_object: datagram::Object,
-        duration: u64,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    SetTrackStreamObject {
-        cache_key: CacheKey,
-        track_stream_object: track_stream::Object,
         duration: u64,
         resp: oneshot::Sender<Result<()>>,
     },
@@ -61,12 +46,6 @@ pub(crate) enum ObjectCacheStorageCommand {
         object_id: u64,
         resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
     },
-    GetAbsoluteTrackStreamObject {
-        cache_key: CacheKey,
-        group_id: u64,
-        object_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, track_stream::Object)>>>,
-    },
     GetAbsoluteSubgroupStreamObject {
         cache_key: CacheKey,
         group_id: u64,
@@ -79,11 +58,6 @@ pub(crate) enum ObjectCacheStorageCommand {
         cache_id: CacheId,
         resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
     },
-    GetNextTrackStreamObject {
-        cache_key: CacheKey,
-        cache_id: CacheId,
-        resp: oneshot::Sender<Result<Option<(CacheId, track_stream::Object)>>>,
-    },
     GetNextSubgroupStreamObject {
         cache_key: CacheKey,
         group_id: u64,
@@ -95,17 +69,9 @@ pub(crate) enum ObjectCacheStorageCommand {
         cache_key: CacheKey,
         resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
     },
-    GetLatestTrackStreamObject {
-        cache_key: CacheKey,
-        resp: oneshot::Sender<Result<Option<(CacheId, track_stream::Object)>>>,
-    },
     GetLatestDatagramGroup {
         cache_key: CacheKey,
         resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
-    },
-    GetLatestTrackStreamGroup {
-        cache_key: CacheKey,
-        resp: oneshot::Sender<Result<Option<(CacheId, track_stream::Object)>>>,
     },
     // Since current Forwarder is generated for each Group,
     // LatestGroup is never used for SubgroupCache.

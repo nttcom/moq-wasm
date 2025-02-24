@@ -149,7 +149,6 @@ mod tests {
         async fn datagram_object_continue_insufficient_payload() {
             let data_stream_type = DataStreamType::ObjectDatagram;
             let bytes_array = [
-                0,  // Subscribe ID (i)
                 1,  // Track Alias (i)
                 2,  // Group ID (i)
                 3,  // Object ID (i)

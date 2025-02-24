@@ -313,13 +313,6 @@ async fn start_new_forwarder(
                 .send((downstream_subscribe_id, data_stream_type, None))
                 .await;
         }
-        ForwardingPreference::Track => {
-            let data_stream_type = DataStreamType::StreamHeaderTrack;
-            let _ = start_forwarder_tx
-                .send((downstream_subscribe_id, data_stream_type, None))
-                .await;
-        }
-
         // If SUBSCRIBE message does not handle past objects, it is only necessary to open forwarders for subgroups of the current group
         ForwardingPreference::Subgroup => {
             let data_stream_type = DataStreamType::StreamHeaderSubgroup;
@@ -571,6 +564,7 @@ mod success {
         },
         SubgroupStreamId,
     };
+    use moqt_core::messages::data_streams::subgroup_stream;
     use moqt_core::models::tracks::ForwardingPreference;
     use moqt_core::{
         constants::StreamDirection,
@@ -580,7 +574,6 @@ mod success {
                 subscribe::{FilterType, GroupOrder, Subscribe},
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
-            data_streams::track_stream,
             moqt_payload::MOQTPayload,
         },
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -711,6 +704,7 @@ mod success {
     }
 
     #[tokio::test]
+    // Return SUBSCRIBE_OK immediately but its ContentExists is false
     async fn normal_case_track_exists_and_content_not_exists() {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
@@ -852,6 +846,7 @@ mod success {
     }
 
     #[tokio::test]
+    // Return SUBSCRIBE_OK immediately and its ContentExists is true
     async fn normal_case_track_exists_and_content_exists() {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
@@ -922,7 +917,7 @@ mod success {
             )
             .await
             .unwrap();
-        let forwarding_preference = ForwardingPreference::Track;
+        let forwarding_preference = ForwardingPreference::Subgroup;
         let _ = pubsub_relation_manager
             .set_upstream_forwarding_preference(
                 upstream_session_id,
@@ -965,28 +960,35 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let group_id = 0;
+        let subgroup_id = 0;
         let object_status = None;
         let duration = 1000;
         let publisher_priority = 0;
 
-        let track_header =
-            track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap();
+        let subgroup_header =
+            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
 
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
         let _ = object_cache_storage
-            .create_track_stream_cache(&cache_key, track_header)
+            .create_subgroup_stream_cache(&cache_key, group_id, subgroup_id, subgroup_header)
             .await;
 
         for i in 0..10 {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let track_object =
-                track_stream::Object::new(group_id, object_id, object_status, object_payload)
-                    .unwrap();
+            let subgroup_object =
+                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
 
             let _ = object_cache_storage
-                .set_track_stream_object(&cache_key, track_object, duration)
+                .set_subgroup_stream_object(
+                    &cache_key,
+                    group_id,
+                    subgroup_id,
+                    subgroup_object,
+                    duration,
+                )
                 .await;
         }
 

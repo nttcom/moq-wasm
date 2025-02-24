@@ -11,7 +11,6 @@ use serde::Serialize;
 /// Type of Data Streams: OBJECT_DATAGRAM (0x1)
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Object {
-    subscribe_id: u64,
     track_alias: u64,
     group_id: u64,
     object_id: u64,
@@ -23,7 +22,6 @@ pub struct Object {
 
 impl Object {
     pub fn new(
-        subscribe_id: u64,
         track_alias: u64,
         group_id: u64,
         object_id: u64,
@@ -46,7 +44,6 @@ impl Object {
         }
 
         Ok(Object {
-            subscribe_id,
             track_alias,
             group_id,
             object_id,
@@ -55,10 +52,6 @@ impl Object {
             object_status,
             object_payload,
         })
-    }
-
-    pub fn subscribe_id(&self) -> u64 {
-        self.subscribe_id
     }
 
     pub fn track_alias(&self) -> u64 {
@@ -91,7 +84,6 @@ impl DataStreams for Object {
     where
         Self: Sized,
     {
-        let subscribe_id = read_variable_integer(read_cur).context("subscribe id")?;
         let track_alias = read_variable_integer(read_cur).context("track alias")?;
         let group_id = read_variable_integer(read_cur).context("group id")?;
         let object_id = read_variable_integer(read_cur).context("object id")?;
@@ -129,7 +121,6 @@ impl DataStreams for Object {
         tracing::trace!("Depacketized Datagram Object message.");
 
         Ok(Object {
-            subscribe_id,
             track_alias,
             group_id,
             object_id,
@@ -141,7 +132,6 @@ impl DataStreams for Object {
     }
 
     fn packetize(&self, buf: &mut BytesMut) {
-        buf.extend(write_variable_integer(self.subscribe_id));
         buf.extend(write_variable_integer(self.track_alias));
         buf.extend(write_variable_integer(self.group_id));
         buf.extend(write_variable_integer(self.object_id));
@@ -167,7 +157,6 @@ mod tests {
 
         #[test]
         fn packetize_datagram_object_normal() {
-            let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
@@ -176,7 +165,6 @@ mod tests {
             let object_payload = vec![0, 1, 2];
 
             let datagram_object = datagram::Object::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -190,7 +178,6 @@ mod tests {
             datagram_object.packetize(&mut buf);
 
             let expected_bytes_array = [
-                0, // Subscribe ID (i)
                 1, // Track Alias (i)
                 2, // Group ID (i)
                 3, // Object ID (i)
@@ -204,7 +191,6 @@ mod tests {
 
         #[test]
         fn packetize_datagram_object_normal_and_empty_payload() {
-            let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
@@ -213,7 +199,6 @@ mod tests {
             let object_payload = vec![];
 
             let datagram_object = datagram::Object::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -227,7 +212,6 @@ mod tests {
             datagram_object.packetize(&mut buf);
 
             let expected_bytes_array = [
-                0, // Subscribe ID (i)
                 1, // Track Alias (i)
                 2, // Group ID (i)
                 3, // Object ID (i)
@@ -241,7 +225,6 @@ mod tests {
 
         #[test]
         fn packetize_datagram_object_not_normal() {
-            let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
@@ -250,7 +233,6 @@ mod tests {
             let object_payload = vec![];
 
             let datagram_object = datagram::Object::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -264,7 +246,6 @@ mod tests {
             datagram_object.packetize(&mut buf);
 
             let expected_bytes_array = [
-                0, // Subscribe ID (i)
                 1, // Track Alias (i)
                 2, // Group ID (i)
                 3, // Object ID (i)
@@ -279,7 +260,6 @@ mod tests {
         #[test]
         fn depacketize_datagram_object_normal() {
             let bytes_array = [
-                0, // Subscribe ID (i)
                 1, // Track Alias (i)
                 2, // Group ID (i)
                 3, // Object ID (i)
@@ -293,7 +273,6 @@ mod tests {
             let depacketized_datagram_object =
                 datagram::Object::depacketize(&mut read_cur).unwrap();
 
-            let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
@@ -302,7 +281,6 @@ mod tests {
             let object_payload = vec![0, 1, 2];
 
             let expected_datagram_object = datagram::Object::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -318,7 +296,6 @@ mod tests {
         #[test]
         fn depacketize_datagram_object_normal_and_empty_payload() {
             let bytes_array = [
-                0, // Subscribe ID (i)
                 1, // Track Alias (i)
                 2, // Group ID (i)
                 3, // Object ID (i)
@@ -332,7 +309,6 @@ mod tests {
             let depacketized_datagram_object =
                 datagram::Object::depacketize(&mut read_cur).unwrap();
 
-            let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
@@ -341,7 +317,6 @@ mod tests {
             let object_payload = vec![];
 
             let expected_datagram_object = datagram::Object::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -357,7 +332,6 @@ mod tests {
         #[test]
         fn depacketize_datagram_object_not_normal() {
             let bytes_array = [
-                0, // Subscribe ID (i)
                 1, // Track Alias (i)
                 2, // Group ID (i)
                 3, // Object ID (i)
@@ -371,7 +345,6 @@ mod tests {
             let depacketized_datagram_object =
                 datagram::Object::depacketize(&mut read_cur).unwrap();
 
-            let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
@@ -380,7 +353,6 @@ mod tests {
             let object_payload = vec![];
 
             let expected_datagram_object = datagram::Object::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -402,7 +374,6 @@ mod tests {
 
         #[test]
         fn packetize_datagram_object_not_normal_and_not_empty_payload() {
-            let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
@@ -411,7 +382,6 @@ mod tests {
             let object_payload = vec![0, 1, 2];
 
             let datagram_object = datagram::Object::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 object_id,
@@ -426,7 +396,6 @@ mod tests {
         #[test]
         fn depacketize_datagram_object_wrong_object_status() {
             let bytes_array = [
-                0, // Subscribe ID (i)
                 1, // Track Alias (i)
                 2, // Group ID (i)
                 3, // Object ID (i)

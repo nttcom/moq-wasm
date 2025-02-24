@@ -184,7 +184,7 @@ mod success {
         let start_object = Some(1);
         let end_group = Some(1);
         let end_object = Some(1);
-        let forwarding_preference = Some(ForwardingPreference::Track);
+        let forwarding_preference = Some(ForwardingPreference::Subgroup);
 
         let subscription = Subscription::new(
             track_alias,
@@ -378,7 +378,7 @@ mod success {
     fn set_and_get_forwarding_preference() {
         let variable = test_helper_fn::common_subscription_variable();
 
-        let forwarding_preference = ForwardingPreference::Track;
+        let forwarding_preference = ForwardingPreference::Subgroup;
 
         let mut subscription = Subscription::new(
             variable.track_alias,
