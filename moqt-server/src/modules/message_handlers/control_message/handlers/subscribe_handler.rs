@@ -965,14 +965,9 @@ mod success {
         let duration = 1000;
         let publisher_priority = 0;
 
-        let subgroup_header = subgroup_stream::Header::new(
-            subscribe_id,
-            track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-        )
-        .unwrap();
+        let subgroup_header =
+            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
 
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
         let _ = object_cache_storage

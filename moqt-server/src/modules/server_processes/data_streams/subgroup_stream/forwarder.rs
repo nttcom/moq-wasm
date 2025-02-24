@@ -305,11 +305,9 @@ impl SubgroupStreamObjectForwarder {
 
     async fn packetize_header(&self, header: &subgroup_stream::Header) -> Result<BytesMut> {
         let mut buf = BytesMut::new();
-        let downstream_subscribe_id = self.downstream_subscribe_id;
         let downstream_track_alias = self.downstream_subscription.get_track_alias();
 
         let header = subgroup_stream::Header::new(
-            downstream_subscribe_id,
             downstream_track_alias,
             header.group_id(),
             header.subgroup_id(),

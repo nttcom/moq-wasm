@@ -139,7 +139,10 @@ impl SubgroupStreamObjectReceiver {
             }
         };
 
-        self.subscribe_id = Some(header.subscribe_id());
+        let subscribe_id = self
+            .get_subscribe_id(session_id, header.track_alias())
+            .await?;
+        self.subscribe_id = Some(subscribe_id);
         self.subgroup_stream_id = Some((header.group_id(), header.subgroup_id()));
 
         self.set_upstream_forwarding_preference(session_id).await?;
@@ -173,6 +176,33 @@ impl SubgroupStreamObjectReceiver {
         let client = self.client.clone();
 
         subgroup_stream_header::try_read_header(&mut process_buf, client).await
+    }
+
+    async fn get_subscribe_id(
+        &self,
+        session_id: usize,
+        track_alias: u64,
+    ) -> Result<u64, TerminationError> {
+        let pubsub_relation_manager =
+            PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
+        match pubsub_relation_manager
+            .get_upstream_subscribe_id_by_track_alias(session_id, track_alias)
+            .await
+        {
+            Ok(Some(subscribe_id)) => Ok(subscribe_id),
+            Ok(None) => {
+                let msg = "Subscribe id is not found".to_string();
+                let code = TerminationErrorCode::InternalError;
+
+                Err((code, msg))
+            }
+            Err(err) => {
+                let msg = format!("Fail to get subscribe id: {:?}", err);
+                let code = TerminationErrorCode::InternalError;
+
+                Err((code, msg))
+            }
+        }
     }
 
     async fn set_upstream_forwarding_preference(

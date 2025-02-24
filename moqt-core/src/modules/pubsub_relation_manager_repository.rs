@@ -80,6 +80,11 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         track_name: String,
         upstream_session_id: usize,
     ) -> Result<Option<u64>>;
+    async fn get_upstream_subscribe_id_by_track_alias(
+        &self,
+        upstream_session_id: usize,
+        upstream_track_alias: u64,
+    ) -> Result<Option<u64>>;
     #[allow(clippy::too_many_arguments)]
     async fn set_downstream_subscription(
         &self,

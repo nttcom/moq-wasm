@@ -90,6 +90,11 @@ pub(crate) enum PubSubRelationCommand {
         upstream_session_id: usize,
         resp: oneshot::Sender<Result<Option<u64>>>,
     },
+    GetUpstreamSubscribeIdByTrackAlias {
+        upstream_session_id: usize,
+        upstream_track_alias: u64,
+        resp: oneshot::Sender<Result<Option<u64>>>,
+    },
     SetDownstreamSubscription {
         downstream_session_id: usize,
         subscribe_id: u64,

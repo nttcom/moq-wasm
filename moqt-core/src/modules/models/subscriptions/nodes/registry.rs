@@ -36,6 +36,10 @@ pub trait SubscriptionNodeRegistry {
         track_namespace: TrackNamespace,
         track_name: String,
     ) -> Result<Option<SubscribeId>>;
+    fn get_subscribe_id_by_track_alias(
+        &self,
+        track_alias: TrackAlias,
+    ) -> Result<Option<SubscribeId>>;
     fn has_track(&self, track_namespace: TrackNamespace, track_name: String) -> bool;
     fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool>;
     fn is_requesting(&self, subscribe_id: SubscribeId) -> bool;
