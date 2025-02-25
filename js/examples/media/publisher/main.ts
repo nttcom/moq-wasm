@@ -6,31 +6,36 @@ const getFormElement = (): HTMLFormElement => {
   return document.getElementById('form') as HTMLFormElement
 }
 
-function startGetUserMedia(): void {
-  const constraints = {
-    audio: true,
-    video: true
-  }
-  const stream = getUserMedia(constraints)
+async function setUpStartGetUserMediaButton() {
+  const startGetUserMediaBtn = document.getElementById('startGetUserMediaBtn') as HTMLButtonElement
+  startGetUserMediaBtn.addEventListener('click', async () => {
+    const constraints = {
+      audio: true,
+      video: true
+    }
+    const stream = await getUserMedia(constraints)
+    const video = document.getElementById('video') as HTMLVideoElement
+    video.srcObject = stream
+  })
 }
 
 function setupClientCallbacks(client: MOQTClient): void {
-  client.onSetup(async (serverSetup) => {
+  client.onSetup(async (serverSetup: any) => {
     console.log({ serverSetup })
   })
 
-  client.onAnnounce(async (announceMessage) => {
+  client.onAnnounce(async (announceMessage: any) => {
     console.log({ announceMessage })
     const announcedNamespace = announceMessage.track_namespace
 
     await client.sendAnnounceOkMessage(announcedNamespace)
   })
 
-  client.onAnnounceResponce(async (announceResponceMessage) => {
+  client.onAnnounceResponce(async (announceResponceMessage: any) => {
     console.log({ announceResponceMessage })
   })
 
-  client.onSubscribe(async (subscribeMessage, isSuccess, code) => {
+  client.onSubscribe(async (subscribeMessage: any, isSuccess: any, code: any) => {
     console.log({ subscribeMessage })
     const form = getFormElement()
     const receivedSubscribeId = BigInt(subscribeMessage.subscribe_id)
@@ -109,6 +114,8 @@ function setupButtonClickHandler(client: MOQTClient): void {
 }
 
 init().then(async () => {
+  setUpStartGetUserMediaButton()
+
   const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
   connectBtn.addEventListener('click', async () => {
     const form = getFormElement()
@@ -116,6 +123,7 @@ init().then(async () => {
     const client = new MOQTClient(url)
     setupClientCallbacks(client)
     setupButtonClickHandler(client)
+
     await client.start()
   })
 })
