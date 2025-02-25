@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MOQT Message Test</title>
+  </head>
+  <body>
+    <div id="app">
+      <form name="form">
+        <div>
+          <h2>Connection</h2>
+          <label for="url">URL:</label>
+          <input type="url" name="url" id="url" value="https://localhost:4433" />
+          <button type="button" id="connectBtn">Connect</button>
+          <button type="button" id="closeBtn">Close</button>
+        </div>
+        <br />
+        <div>
+          <h2>Forwarding Preference</h2>
+          <label
+            ><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram
+          </label>
+          <label
+            ><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" checked/>Subgroup
+          </label>
+          <br />
+          *You must select at first
+          <h2>Message</h2>
+          <label>AuthInfo: <input type="text" name="auth-info" id="" value="secret" /> </label>
+          <br />
+          <h3>CLIENT_SETUP</h3>
+          <label>Supported Version: <input type="text" name="versions" id="" value="0xff000006" /></label>
+          <br />
+          Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="1" />
+          <br />
+          Role:
+          <label><input type="radio" name="role" id="" value="1" checked />Publisher</label>
+          <label><input type="radio" name="role" id="" value="2" />Subscriber</label>
+          <label><input type="radio" name="role" id="" value="3" />PubSub</label>
+          <br />
+          <button type="button" id="sendSetupBtn">Send</button>
+
+          <h3>ANNOUNCE</h3>
+          <label>Track Namespace: <input type="text" name="announce-track-namespace" id="" value="vc/aa" /> </label>
+          <br />
+          <button type="button" id="sendAnnounceBtn">Send</button>
+
+          <h3>SUBSCRIBE_ANNOUNCES</h3>
+          <label>Track Namespace Prefix: <input type="text" name="track-namespace-prefix" id="" value="vc" /> </label>
+          <br />
+          <button type="button" id="sendSubscribeAnnouncesBtn">Send</button>
+
+          <h3>SUBSCRIBE</h3>
+          <label>Subscribe ID: <input type="text" name="subscribe-subscribe-id" id="" value="0" /> </label>
+          <br />
+          <label>Track Alias: <input type="text" name="subscribe-track-alias" id="" value="0" /> </label>
+          <br />
+          <label>Track Namespace: <input type="text" name="subscribe-track-namespace" id="" value="vc/aa" /> </label>
+          <br />
+          <label>Track Name: <input type="text" name="track-name" id="" value="vc_track" /> </label>
+          <br />
+          <br />
+          <label>Subscriber Priority: <input type="text" name="subscriber-priority" id="" value="0" /> </label>
+          <br />
+          Group Order:
+          <label><input type="radio" name="group-order" id="" value="0" checked />Original</label>
+          <label><input type="radio" name="group-order" id="" value="1" />Ascending</label>
+          <label><input type="radio" name="group-order" id="" value="2" />Descending</label>
+          <br />
+          <br />
+          Filter Type:
+          <label><input type="radio" name="filter-type" id="" value="1" checked />Latest Group</label>
+          <label><input type="radio" name="filter-type" id="" value="2" />Latest Object</label>
+          <label><input type="radio" name="filter-type" id="" value="3" />Absolute Start </label>
+          <label><input type="radio" name="filter-type" id="" value="4" />Absolute Range</label>
+          <br />
+          Start Group: <input type="text" name="start-group" id="" value="0" /> Start Object:
+          <input type="text" name="start-object" id="" value="0" />
+          <br />
+          End Group: <input type="text" name="end-group" id="" value="10000" /> End Object:
+          <input type="text" name="end-object" id="" value="10000" />
+          <br />
+          <button type="button" id="sendSubscribeBtn">Send</button>
+
+          <h3>UNSUBSCRIBE</h3>
+          <label>SUBSCRIBE_ID: <input type="text" name="unsubscribe-subscribe-id" id="" value="0" /> </label>
+          <br />
+          <button type="button" id="sendUnsubscribeBtn">Send</button>
+
+          <h3>OBJECT</h3>
+          <div id="headerField" style="display: blocked">
+            <h4>Header</h4>
+          </div>
+          <label>Track Alias: <input type="text" name="object-track-alias" id="" value="0" /> </label>
+          <br />
+          <div id="subgroupHeaderContents" style="display: blocked;">
+            Group ID:
+            <p id="subgroupGroupId">0</p>
+            <br />
+            <button type="button" id="descendSubgroupGroupIdBtn">&lt;</button>
+            <button type="button" id="ascendSubgroupGroupIdBtn">&gt;</button>
+            <br />
+            Subgroup ID: 
+            <p id="subgroupId">0</p>
+            <br />
+            <button type="button" id="descendSubgroupIdBtn">&lt;</button>
+            <button type="button" id="ascendSubgroupIdBtn">&gt;</button>
+            <br />
+          </div>
+          <label>Publisher Priority: <input type="text" name="publisher-priority" id="" value="0" /> </label>
+          <br />
+          <div id="objectField" style="display: blocked">
+            <h4>Object</h4>
+          </div>
+          <div id="datagramObjectContents" style="display: none;">
+            Group ID: 
+            <p id="datagramGroupId">0</p>
+            <br />
+            <button type="button" id="descendDatagramGroupIdBtn">&lt;</button>
+            <button type="button" id="ascendDatagramGroupIdBtn">&gt;</button>
+            <br />
+            <br />
+          </div>
+          Object ID:
+          <p id="objectId">0</p>
+          <br />
+          <br />
+          <label>Payload: <br /><textarea name="payload" id="object-payload" rows="5" cols="33">test</textarea></label>
+          <br />
+          <div id="sendDatagramObject" style="display: none">
+            <button type="button" id="sendDatagramObjectBtn">Send</button>
+          </div>
+          <div id="sendSubgroupObject" style="display: blocked;">
+            <button type="button" id="sendSubgroupObjectBtn">Send</button>
+          </div>
+        </div>
+        <br />
+        <div>
+          <h2>Received</h2>
+          <div id="received-text"></div>
+        </div>
+      </form>
+    </div>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+  <style>
+    p {
+      display: inline;
+    }
+  </style>
+</html>
