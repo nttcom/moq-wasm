@@ -1,4 +1,4 @@
-import init, { MOQTClient } from './pkg/moqt_client_sample'
+import init, { MOQTClient } from '../../pkg/moqt_client_sample'
 
 // TODO: impl close
 init().then(async () => {
@@ -102,6 +102,7 @@ init().then(async () => {
     sendSetupBtn.addEventListener('click', async () => {
       console.log('send setup btn clicked')
       const role = Array.from(form['role']).filter((elem) => elem.checked)[0].value
+      console.log(role)
       const versions = form['versions'].value.split(',').map(BigInt)
       const maxSubscribeId = form['max-subscribe-id'].value
 
