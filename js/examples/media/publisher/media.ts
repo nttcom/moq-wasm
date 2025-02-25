@@ -1,4 +1,4 @@
-async function getUserMedia(constraints: MediaStreamConstraints): Promise<MediaStream> {
+export async function getUserMedia(constraints: MediaStreamConstraints): Promise<MediaStream> {
   try {
     const stream = await navigator.mediaDevices.getUserMedia(constraints)
     return stream
