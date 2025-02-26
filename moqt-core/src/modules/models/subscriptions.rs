@@ -1,5 +1,5 @@
 pub mod nodes;
-
+use super::range::Range;
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::tracks::{ForwardingPreference, Track},
@@ -17,10 +17,7 @@ pub struct Subscription {
     priority: u8,
     group_order: GroupOrder,
     filter_type: FilterType,
-    start_group: Option<u64>,
-    start_object: Option<u64>,
-    end_group: Option<u64>,
-    end_object: Option<u64>,
+    requested_range: Range,
     status: Status,
 }
 
@@ -46,15 +43,14 @@ impl Subscription {
             forwarding_preference,
         );
 
+        let requested_range = Range::new(start_group, start_object, end_group, end_object);
+
         Self {
             track,
             priority,
             group_order,
             filter_type,
-            start_group,
-            start_object,
-            end_group,
-            end_object,
+            requested_range,
             status: Status::Requesting,
         }
     }
@@ -80,12 +76,8 @@ impl Subscription {
         self.filter_type
     }
 
-    pub fn get_absolute_start(&self) -> (Option<u64>, Option<u64>) {
-        (self.start_group, self.start_object)
-    }
-
-    pub fn get_absolute_end(&self) -> (Option<u64>, Option<u64>) {
-        (self.end_group, self.end_object)
+    pub fn get_requested_range(&self) -> Range {
+        self.requested_range.clone()
     }
 
     pub fn set_forwarding_preference(&mut self, forwarding_preference: ForwardingPreference) {
@@ -113,7 +105,7 @@ impl Subscription {
             return false;
         }
 
-        group_id == self.end_group.unwrap() && object_id == self.end_object.unwrap()
+        self.requested_range.is_end(group_id, object_id)
     }
 }
 
@@ -208,10 +200,10 @@ mod success {
         assert_eq!(subscription.priority, priority);
         assert_eq!(subscription.group_order, group_order);
         assert_eq!(subscription.filter_type, filter_type);
-        assert_eq!(subscription.start_group, start_group);
-        assert_eq!(subscription.start_object, start_object);
-        assert_eq!(subscription.end_group, end_group);
-        assert_eq!(subscription.end_object, end_object);
+        assert_eq!(subscription.requested_range.start_group(), start_group);
+        assert_eq!(subscription.requested_range.start_object(), start_object);
+        assert_eq!(subscription.requested_range.end_group(), end_group);
+        assert_eq!(subscription.requested_range.end_object(), end_object);
     }
 
     #[test]
