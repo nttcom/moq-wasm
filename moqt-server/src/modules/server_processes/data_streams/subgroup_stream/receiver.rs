@@ -22,7 +22,7 @@ use moqt_core::{
     constants::TerminationErrorCode,
     data_stream_type::DataStreamType,
     messages::data_streams::{object_status::ObjectStatus, subgroup_stream},
-    models::{subscriptions::Subscription, tracks::ForwardingPreference},
+    models::tracks::ForwardingPreference,
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
 use std::sync::Arc;
@@ -36,7 +36,6 @@ pub(crate) struct SubgroupStreamObjectReceiver {
     client: Arc<Mutex<MOQTClient>>,
     duration: u64,
     subscribe_id: Option<u64>,
-    upstream_subscription: Option<Subscription>,
     subgroup_stream_id: Option<SubgroupStreamId>,
 }
 
@@ -56,7 +55,6 @@ impl SubgroupStreamObjectReceiver {
             client,
             duration,
             subscribe_id: None,
-            upstream_subscription: None,
             subgroup_stream_id: None,
         }
     }
@@ -124,7 +122,7 @@ impl SubgroupStreamObjectReceiver {
     }
 
     fn has_received_header(&self) -> bool {
-        self.upstream_subscription.is_some()
+        self.subscribe_id.is_some()
     }
 
     async fn receive_header(
@@ -146,7 +144,8 @@ impl SubgroupStreamObjectReceiver {
         self.subgroup_stream_id = Some((header.group_id(), header.subgroup_id()));
 
         self.set_upstream_forwarding_preference(session_id).await?;
-        self.set_upstream_subscription(session_id).await?;
+
+        // TODO: Get the subscription range
 
         self.create_cache_storage(session_id, header, object_cache_storage)
             .await?;
@@ -230,39 +229,6 @@ impl SubgroupStreamObjectReceiver {
                 Err((code, msg))
             }
         }
-    }
-
-    async fn set_upstream_subscription(
-        &mut self,
-        upstream_session_id: usize,
-    ) -> Result<(), TerminationError> {
-        let upstream_subscribe_id = self.subscribe_id.unwrap();
-
-        let pubsub_relation_manager =
-            PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
-        let upstream_subscription = match pubsub_relation_manager
-            .get_upstream_subscription_by_ids(upstream_session_id, upstream_subscribe_id)
-            .await
-        {
-            Ok(upstream_subscription) => upstream_subscription,
-            Err(err) => {
-                let msg = format!("Fail to get upstream subscription: {:?}", err);
-                let code = TerminationErrorCode::InternalError;
-
-                return Err((code, msg));
-            }
-        };
-
-        if upstream_subscription.is_none() {
-            let msg = "Upstream subscription not found".to_string();
-            let code = TerminationErrorCode::InternalError;
-
-            return Err((code, msg));
-        }
-
-        self.upstream_subscription = upstream_subscription;
-
-        Ok(())
     }
 
     async fn create_cache_storage(
@@ -453,10 +419,7 @@ impl SubgroupStreamObjectReceiver {
         let (group_id, _) = self.subgroup_stream_id.unwrap();
         let object_id = object.object_id();
 
-        self.upstream_subscription
-            .as_ref()
-            .unwrap()
-            .is_end(group_id, object_id)
+        // TODO: Add function to check the end of subscription
     }
 
     // This function is implemented according to the following sentence in draft.

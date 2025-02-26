@@ -25,13 +25,7 @@ pub trait SubscriptionNodeRegistry {
         end_group: Option<u64>,
         end_object: Option<u64>,
     ) -> Result<()>;
-    // TODO: Remove getter methods of subscription not to get subscription directly from other threads
     fn get_subscription(&self, subscribe_id: SubscribeId) -> Result<Option<Subscription>>;
-    fn get_subscription_by_full_track_name(
-        &self,
-        track_namespace: TrackNamespace,
-        track_name: String,
-    ) -> Result<Option<Subscription>>;
     // TODO: Unify getter methods of subscribe_id
     fn get_subscribe_id(
         &self,

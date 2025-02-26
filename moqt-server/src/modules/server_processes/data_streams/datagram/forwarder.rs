@@ -13,7 +13,7 @@ use moqt_core::{
         control_messages::subscribe::FilterType,
         data_streams::{datagram, object_status::ObjectStatus, DataStreams},
     },
-    models::{subscriptions::Subscription, tracks::ForwardingPreference},
+    models::tracks::ForwardingPreference,
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::write_variable_integer,
 };
@@ -26,7 +26,6 @@ pub(crate) struct DatagramObjectForwarder {
     session: Arc<Connection>,
     senders: Arc<Senders>,
     downstream_subscribe_id: u64,
-    downstream_subscription: Subscription,
     cache_key: CacheKey,
     sleep_time: Duration,
 }
@@ -44,10 +43,7 @@ impl DatagramObjectForwarder {
 
         let downstream_session_id = session.stable_id();
 
-        let downstream_subscription = pubsub_relation_manager
-            .get_downstream_subscription_by_ids(downstream_session_id, downstream_subscribe_id)
-            .await?
-            .unwrap();
+        // TODO: Get the subscription range
 
         // Get the information of the original publisher who has the track being requested
         let (upstream_session_id, upstream_subscribe_id) = pubsub_relation_manager
@@ -60,7 +56,6 @@ impl DatagramObjectForwarder {
             session,
             senders,
             downstream_subscribe_id,
-            downstream_subscription,
             cache_key,
             sleep_time,
         };
@@ -216,7 +211,7 @@ impl DatagramObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<(usize, datagram::Object)>> {
-        let filter_type = self.downstream_subscription.get_filter_type();
+        let filter_type = // TODO: Add function to get filter type
 
         match filter_type {
             FilterType::LatestGroup => {
@@ -230,9 +225,7 @@ impl DatagramObjectForwarder {
                     .await
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
-                let requested_range = self.downstream_subscription.get_requested_range();
-                let start_group = requested_range.start_group().unwrap();
-                let start_object = requested_range.start_object().unwrap();
+                let (start_group, start_object) =  // TODO: Add function to get absolute start
 
                 object_cache_storage
                     .get_absolute_datagram_object(&self.cache_key, start_group, start_object)
@@ -277,7 +270,7 @@ impl DatagramObjectForwarder {
         let group_id = datagram_object.group_id();
         let object_id = datagram_object.object_id();
 
-        self.downstream_subscription.is_end(group_id, object_id)
+        // TODO: Add function to check the end of subscription
     }
 
     // This function is implemented according to the following sentence in draft.

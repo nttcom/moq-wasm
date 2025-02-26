@@ -74,21 +74,6 @@ impl SubscriptionNodeRegistry for Consumer {
         Ok(self.subscriptions.get(&subscribe_id).cloned())
     }
 
-    fn get_subscription_by_full_track_name(
-        &self,
-        track_namespace: TrackNamespace,
-        track_name: String,
-    ) -> Result<Option<Subscription>> {
-        Ok(self
-            .subscriptions
-            .values()
-            .find(|subscription| {
-                subscription.get_track_namespace_and_name()
-                    == (track_namespace.clone(), track_name.clone())
-            })
-            .cloned())
-    }
-
     fn get_subscribe_id(
         &self,
         track_namespace: TrackNamespace,
@@ -387,51 +372,6 @@ mod success {
         let subscription = variables_clone
             .consumer
             .get_subscription(variables.clone().subscribe_id)
-            .unwrap();
-
-        let expected_subscription = Some(Subscription::new(
-            variables.track_alias,
-            variables.track_namespace,
-            variables.track_name,
-            variables.subscriber_priority,
-            variables.group_order,
-            variables.filter_type,
-            variables.start_group,
-            variables.start_object,
-            variables.end_group,
-            variables.end_object,
-            None,
-        ));
-
-        assert_eq!(subscription, expected_subscription);
-    }
-
-    #[test]
-    fn get_subscription_by_full_track_name() {
-        let subscribe_id = 0;
-        let variables = test_helper_fn::common_subscription_variable(subscribe_id);
-
-        let mut variables_clone = variables.clone();
-        let _ = variables_clone.consumer.set_subscription(
-            variables_clone.subscribe_id,
-            variables_clone.track_alias,
-            variables_clone.track_namespace,
-            variables_clone.track_name,
-            variables_clone.subscriber_priority,
-            variables_clone.group_order,
-            variables_clone.filter_type,
-            variables_clone.start_group,
-            variables_clone.start_object,
-            variables_clone.end_group,
-            variables_clone.end_object,
-        );
-
-        let subscription = variables_clone
-            .consumer
-            .get_subscription_by_full_track_name(
-                variables.track_namespace.clone(),
-                variables.track_name.clone(),
-            )
             .unwrap();
 
         let expected_subscription = Some(Subscription::new(

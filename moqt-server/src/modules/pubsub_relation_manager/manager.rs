@@ -335,42 +335,6 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 let is_existing = consumer.is_some();
                 resp.send(Ok(is_existing)).unwrap();
             }
-            GetUpstreamSubscriptionByFullTrackName {
-                track_namespace,
-                track_name,
-                resp,
-            } => {
-                let consumer = consumers.iter().find(|(_, consumer)| {
-                    consumer.has_track(track_namespace.clone(), track_name.clone())
-                });
-                let result = consumer
-                    .map(|(_, consumer)| {
-                        consumer.get_subscription_by_full_track_name(track_namespace, track_name)
-                    })
-                    .unwrap();
-
-                resp.send(result).unwrap();
-            }
-            GetUpstreamSubscriptionBySessionIdAndSubscribeId {
-                upstream_session_id,
-                upstream_subscribe_id,
-                resp,
-            } => {
-                let consumer = consumers.get(&upstream_session_id).unwrap();
-                let result = consumer.get_subscription(upstream_subscribe_id);
-
-                resp.send(result).unwrap();
-            }
-            GetDownstreamSubscriptionBySessionIdAndSubscribeId {
-                downstream_session_id,
-                downstream_subscribe_id,
-                resp,
-            } => {
-                let producer = producers.get(&downstream_session_id).unwrap();
-                let result = producer.get_subscription(downstream_subscribe_id);
-
-                resp.send(result).unwrap();
-            }
             SetDownstreamSubscription {
                 downstream_session_id,
                 subscribe_id,
