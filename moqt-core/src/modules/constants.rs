@@ -1,6 +1,6 @@
 use num_enum::IntoPrimitive;
 
-// for draft-ietf-moq-transport-06
+// for draft-ietf-moq-transport-08
 pub const MOQ_TRANSPORT_VERSION: u32 = 0xff000008;
 
 #[derive(Debug, IntoPrimitive, PartialEq, Clone, Copy)]
