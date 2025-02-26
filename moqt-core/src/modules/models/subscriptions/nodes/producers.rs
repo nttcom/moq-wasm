@@ -167,21 +167,27 @@ impl SubscriptionNodeRegistry for Producer {
     }
 
     fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
-        let (start_group, start_object) = self
+        let range = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_absolute_start())
+            .map(|subscription| subscription.get_requested_range())
             .unwrap();
+
+        let start_group = range.start_group();
+        let start_object = range.start_object();
 
         Ok((start_group, start_object))
     }
 
     fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
-        let (end_group, end_object) = self
+        let range = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_absolute_end())
+            .map(|subscription| subscription.get_requested_range())
             .unwrap();
+
+        let end_group = range.end_group();
+        let end_object = range.end_object();
 
         Ok((end_group, end_object))
     }
