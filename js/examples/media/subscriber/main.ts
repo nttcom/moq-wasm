@@ -1,5 +1,18 @@
 import init, { MOQTClient } from '../../../pkg/moqt_client_sample'
 
+const videoDecoderWorker = new Worker('videoDecoder.ts')
+// videoFrameをvideoタグに表示する処理を追加
+const videoElement = document.getElementById('video') as HTMLFormElement
+const generator = new MediaStreamTrackGenerator({ kind: 'video' })
+const writer = generator.writable.getWriter()
+const stream = new MediaStream([generator])
+videoElement.srcObject = stream
+
+videoDecoderWorker.onmessage = async (e: MessageEvent) => {
+  const videoFrame = e.data.frame
+  console.log(e.data)
+  await writer.write(videoFrame)
+}
 const authInfo = 'secret'
 const getFormElement = (): HTMLFormElement => {
   return document.getElementById('form') as HTMLFormElement
@@ -15,7 +28,7 @@ function setupClientCallbacks(client: MOQTClient) {
   })
 
   client.onSubgroupStreamObject(async (subgroupStreamObject: any) => {
-    console.log({ subgroupStreamObject })
+    videoDecoderWorker.postMessage({ subgroupStreamObject })
   })
 }
 
