@@ -1043,9 +1043,6 @@ async fn control_message_handler(
                     );
 
                     if let Some(callback) = callbacks.borrow().setup_callback() {
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from("called2"))
-                            .unwrap();
                         let v = serde_wasm_bindgen::to_value(&server_setup_message).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
@@ -1294,7 +1291,7 @@ async fn uni_directional_stream_read_thread(
                         if let Err(e) =
                             subgroup_stream_object_handler(callbacks.clone(), &mut buf).await
                         {
-                            log(std::format!("error: {:#?}", e).as_str());
+                            // log(std::format!("error: {:#?}", e).as_str());
                             break;
                         }
                     }
@@ -1335,9 +1332,6 @@ async fn object_header_handler(
                     );
 
                     if let Some(callback) = callbacks.borrow().subgroup_stream_header_callback() {
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from("called2"))
-                            .unwrap();
                         let v = serde_wasm_bindgen::to_value(&subgroup_stream_header).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
@@ -1385,9 +1379,6 @@ async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut Bytes
                 };
 
                 if let Some(callback) = callbacks.borrow().datagram_object_callback() {
-                    callback
-                        .call1(&JsValue::null(), &JsValue::from("called2"))
-                        .unwrap();
                     let v = serde_wasm_bindgen::to_value(&datagram_object).unwrap();
                     callback.call1(&JsValue::null(), &(v)).unwrap();
                 }
@@ -1420,15 +1411,12 @@ async fn subgroup_stream_object_handler(
         }
         Err(e) => {
             read_cur.set_position(0);
-            log(std::format!("retry because: {:#?}", e).as_str());
+            // log(std::format!("retry because: {:#?}", e).as_str());
             return Err(e);
         }
     };
 
     if let Some(callback) = callbacks.borrow().subgroup_stream_object_callback() {
-        callback
-            .call1(&JsValue::null(), &JsValue::from("called2"))
-            .unwrap();
         let v = serde_wasm_bindgen::to_value(&subgroup_stream_object).unwrap();
         callback.call1(&JsValue::null(), &(v)).unwrap();
     }
