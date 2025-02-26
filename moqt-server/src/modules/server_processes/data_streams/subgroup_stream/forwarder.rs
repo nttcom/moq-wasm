@@ -265,9 +265,9 @@ impl SubgroupStreamObjectForwarder {
                     .await
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
-                let (start_group, start_object) = self.downstream_subscription.get_absolute_start();
-                let start_group = start_group.unwrap();
-                let start_object = start_object.unwrap();
+                let requested_range = self.downstream_subscription.get_requested_range();
+                let start_group = requested_range.start_group().unwrap();
+                let start_object = requested_range.start_object().unwrap();
 
                 if group_id == start_group {
                     object_cache_storage
