@@ -21,9 +21,12 @@ async function initializeVideoEncoder() {
   return encoder
 }
 
+let videoEncoder: VideoEncoder | undefined
 async function startEncode(videoReadableStream: ReadableStream<VideoFrame>) {
   let frameCounter = 0
-  const videoEncoder = await initializeVideoEncoder()
+  if (!videoEncoder) {
+    videoEncoder = await initializeVideoEncoder()
+  }
   const videoReader = videoReadableStream.getReader()
   while (true) {
     const videoResult = await videoReader.read()

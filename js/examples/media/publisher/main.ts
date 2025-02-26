@@ -113,15 +113,36 @@ function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
         metadata: EncodedVideoChunkMetadata | undefined
       }
 
-      const chunkData = new Uint8Array(chunk.byteLength)
-      chunk.copyTo(chunkData)
+      // `EncodedVideoChunk` のデータを Uint8Array に変換
+      const chunkArray = new Uint8Array(chunk.byteLength)
+      chunk.copyTo(chunkArray)
 
-      const metadataBuffer = metadata ? new TextEncoder().encode(JSON.stringify(metadata)) : new Uint8Array()
+      const chunkData = {
+        type: chunk.type,
+        timestamp: chunk.timestamp,
+        duration: chunk.duration,
+        byteLength: chunk.byteLength,
+        data: Array.from(chunkArray),
+        decoderConfig: {
+          codec: metadata?.decoderConfig?.codec,
+          codedHeight: metadata?.decoderConfig?.codedHeight,
+          codedWidth: metadata?.decoderConfig?.codedWidth,
+          colorSpace: metadata?.decoderConfig?.colorSpace,
+          description: metadata?.decoderConfig?.description,
+          displayAspectHeight: metadata?.decoderConfig?.displayAspectHeight,
+          displayAspectWidth: metadata?.decoderConfig?.displayAspectWidth,
+          hardwareAcceleration: metadata?.decoderConfig?.hardwareAcceleration,
+          optimizeForLatency: metadata?.decoderConfig?.optimizeForLatency
+        },
+        temporalLayer: metadata?.temporalLayerId
+      }
 
-      const combinedBuffer = new Uint8Array(chunkData.length + metadataBuffer.length)
-      combinedBuffer.set(chunkData, 0)
-      combinedBuffer.set(metadataBuffer, chunkData.length)
-      await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId++, combinedBuffer)
+      const encoder = new TextEncoder()
+      const jsonString = JSON.stringify({ chunk: chunkData })
+      const objectPayload = encoder.encode(jsonString)
+
+      // TODO: change groupId When keyframe is created
+      await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId++, objectPayload)
     }
 
     videoEncoderWorker.postMessage({ videoStream: videoStream }, [videoStream])
