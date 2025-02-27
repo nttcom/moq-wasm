@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
-    models::{subscriptions::Subscription, tracks::ForwardingPreference},
+    models::{range::Range, subscriptions::Subscription, tracks::ForwardingPreference},
 };
 
 type SubscribeId = u64;
@@ -25,19 +25,14 @@ pub trait SubscriptionNodeRegistry {
         end_group: Option<u64>,
         end_object: Option<u64>,
     ) -> Result<()>;
-    // TODO: Remove getter methods of subscription not to get subscription directly from other threads
     fn get_subscription(&self, subscribe_id: SubscribeId) -> Result<Option<Subscription>>;
-    fn get_subscription_by_full_track_name(
-        &self,
-        track_namespace: TrackNamespace,
-        track_name: String,
-    ) -> Result<Option<Subscription>>;
     // TODO: Unify getter methods of subscribe_id
     fn get_subscribe_id(
         &self,
         track_namespace: TrackNamespace,
         track_name: String,
     ) -> Result<Option<SubscribeId>>;
+    fn get_track_alias(&self, subscribe_id: SubscribeId) -> Result<Option<TrackAlias>>;
     fn get_subscribe_id_by_track_alias(
         &self,
         track_alias: TrackAlias,
@@ -55,7 +50,8 @@ pub trait SubscriptionNodeRegistry {
         &self,
         subscribe_id: SubscribeId,
     ) -> Result<Option<ForwardingPreference>>;
-    fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<FilterType>;
+    fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<Option<FilterType>>;
+    fn get_requested_range(&self, subscribe_id: SubscribeId) -> Result<Option<Range>>;
     fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
     fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
 

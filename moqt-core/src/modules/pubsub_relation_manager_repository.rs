@@ -1,10 +1,10 @@
-use anyhow::Result;
-use async_trait::async_trait;
-
+use super::models::range::Range;
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
-    models::{subscriptions::Subscription, tracks::ForwardingPreference},
+    models::tracks::ForwardingPreference,
 };
+use anyhow::Result;
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait PubSubRelationManagerRepository: Send + Sync {
@@ -53,22 +53,6 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         track_namespace: Vec<String>,
         track_name: String,
     ) -> Result<bool>;
-    // TODO: Remove getter methods of subscription not to get subscription directly from other threads
-    async fn get_upstream_subscription_by_full_track_name(
-        &self,
-        track_namespace: Vec<String>,
-        track_name: String,
-    ) -> Result<Option<Subscription>>;
-    async fn get_upstream_subscription_by_ids(
-        &self,
-        upstream_session_id: usize,
-        upstream_subscribe_id: u64,
-    ) -> Result<Option<Subscription>>;
-    async fn get_downstream_subscription_by_ids(
-        &self,
-        downstream_session_id: usize,
-        downstream_subscribe_id: u64,
-    ) -> Result<Option<Subscription>>;
     async fn get_upstream_session_id(&self, track_namespace: Vec<String>) -> Result<Option<usize>>;
     async fn get_requesting_downstream_session_ids_and_subscribe_ids(
         &self,
@@ -81,6 +65,11 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         track_namespace: Vec<String>,
         track_name: String,
         upstream_session_id: usize,
+    ) -> Result<Option<u64>>;
+    async fn get_downstream_track_alias(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
     ) -> Result<Option<u64>>;
     async fn get_upstream_subscribe_id_by_track_alias(
         &self,
@@ -187,6 +176,26 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
     ) -> Result<Option<ForwardingPreference>>;
+    async fn get_upstream_filter_type(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Option<FilterType>>;
+    async fn get_downstream_filter_type(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<Option<FilterType>>;
+    async fn get_upstream_requested_range(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Option<Range>>;
+    async fn get_downstream_requested_range(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<Option<Range>>;
     async fn get_related_subscribers(
         &self,
         upstream_session_id: usize,
