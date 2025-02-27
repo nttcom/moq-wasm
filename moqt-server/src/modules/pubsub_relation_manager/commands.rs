@@ -3,7 +3,7 @@ use tokio::sync::oneshot;
 
 use moqt_core::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
-    models::tracks::ForwardingPreference,
+    models::{range::Range, tracks::ForwardingPreference},
 };
 
 #[cfg(test)]
@@ -74,6 +74,11 @@ pub(crate) enum PubSubRelationCommand {
         track_namespace: Vec<String>,
         track_name: String,
         upstream_session_id: usize,
+        resp: oneshot::Sender<Result<Option<u64>>>,
+    },
+    GetDownstreamTrackAlias {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
         resp: oneshot::Sender<Result<Option<u64>>>,
     },
     GetUpstreamSubscribeIdByTrackAlias {
@@ -181,6 +186,26 @@ pub(crate) enum PubSubRelationCommand {
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
         resp: oneshot::Sender<Result<Option<ForwardingPreference>>>,
+    },
+    GetUpstreamFilterType {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<FilterType>>>,
+    },
+    GetDownstreamFilterType {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<FilterType>>>,
+    },
+    GetUpstreamRequestedRange {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<Range>>>,
+    },
+    GetDownstreamRequestedRange {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<Range>>>,
     },
     GetRelatedSubscribers {
         upstream_session_id: usize,
