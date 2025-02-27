@@ -17,7 +17,7 @@ use moqt_core::{
         control_messages::subscribe::FilterType,
         data_streams::{object_status::ObjectStatus, subgroup_stream, DataStreams},
     },
-    models::tracks::ForwardingPreference,
+    models::{range::Range, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::write_variable_integer,
 };
@@ -31,6 +31,8 @@ pub(crate) struct SubgroupStreamObjectForwarder {
     downstream_subscribe_id: u64,
     cache_key: CacheKey,
     subgroup_stream_id: Option<SubgroupStreamId>,
+    filter_type: FilterType,
+    requested_range: Range,
     sleep_time: Duration,
 }
 
@@ -48,7 +50,15 @@ impl SubgroupStreamObjectForwarder {
 
         let downstream_session_id = stream.stable_id();
 
-        // TODO: Get the subscription range
+        let filter_type = pubsub_relation_manager
+            .get_downstream_filter_type(downstream_session_id, downstream_subscribe_id)
+            .await?
+            .unwrap();
+
+        let requested_range = pubsub_relation_manager
+            .get_downstream_requested_range(downstream_session_id, downstream_subscribe_id)
+            .await?
+            .unwrap();
 
         // Get the information of the original publisher who has the track being requested
         let (upstream_session_id, upstream_subscribe_id) = pubsub_relation_manager
@@ -63,6 +73,8 @@ impl SubgroupStreamObjectForwarder {
             downstream_subscribe_id,
             cache_key,
             subgroup_stream_id,
+            filter_type,
+            requested_range,
             sleep_time,
         };
 
@@ -238,10 +250,9 @@ impl SubgroupStreamObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<(usize, subgroup_stream::Object)>> {
-        let filter_type = // TODO: Add function to get filter type
         let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
 
-        match filter_type {
+        match self.filter_type {
             FilterType::LatestGroup => {
                 // Try to obtain the first object in the subgroup stream specified by the arguments.
                 // This operation is the same on the first stream and on subsequent streams.
@@ -260,9 +271,8 @@ impl SubgroupStreamObjectForwarder {
                     .await
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
-                let (start_group, start_object) = // TODO: Add function to get absolute start
-                let start_group = start_group.unwrap();
-                let start_object = start_object.unwrap();
+                let start_group = self.requested_range.start_group().unwrap();
+                let start_object = self.requested_range.start_object().unwrap();
 
                 if group_id == start_group {
                     object_cache_storage
@@ -299,8 +309,15 @@ impl SubgroupStreamObjectForwarder {
     }
 
     async fn packetize_header(&self, header: &subgroup_stream::Header) -> Result<BytesMut> {
-        let mut buf = BytesMut::new();
-        let downstream_track_alias = // TODO: Add function to get downstream track alias
+        let downstream_session_id = self.stream.stable_id();
+        let downstream_subscribe_id = self.downstream_subscribe_id;
+
+        let pubsub_relation_manager =
+            PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
+        let downstream_track_alias = pubsub_relation_manager
+            .get_downstream_track_alias(downstream_session_id, downstream_subscribe_id)
+            .await?
+            .unwrap();
 
         let header = subgroup_stream::Header::new(
             downstream_track_alias,
@@ -310,6 +327,7 @@ impl SubgroupStreamObjectForwarder {
         )
         .unwrap();
 
+        let mut buf = BytesMut::new();
         header.packetize(&mut buf);
 
         let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
@@ -344,10 +362,14 @@ impl SubgroupStreamObjectForwarder {
     }
 
     fn is_subscription_ended(&self, stream_object: &subgroup_stream::Object) -> bool {
+        if self.filter_type != FilterType::AbsoluteRange {
+            return false;
+        }
+
         let group_id = self.subgroup_stream_id.unwrap().0;
         let object_id = stream_object.object_id();
 
-        // TODO: Add function to check the end of subscription
+        self.requested_range.is_end(group_id, object_id)
     }
 
     // This function is implemented according to the following sentence in draft.
