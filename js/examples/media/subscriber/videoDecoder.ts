@@ -12,9 +12,9 @@ async function initializeVideoDecoder() {
     }
   }
   const config = {
-    codec: 'vp8',
-    codedWidth: 640,
-    codedHeight: 480
+    codec: 'av01.0.04M.08',
+    width: 640,
+    height: 480
   }
   const decoder = new VideoDecoder(init)
   decoder.configure(config)

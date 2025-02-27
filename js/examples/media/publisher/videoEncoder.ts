@@ -10,7 +10,7 @@ async function initializeVideoEncoder() {
     }
   }
   const config = {
-    codec: 'vp8',
+    codec: 'av01.0.04M.08',
     width: 640,
     height: 480,
     bitrate: 2_000_000, // 2 Mbps
