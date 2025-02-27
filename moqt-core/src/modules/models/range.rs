@@ -43,6 +43,7 @@ impl Range {
 
     pub fn end_object(&self) -> Option<u64> {
         self.end.as_ref()?;
+
         Some(self.end.as_ref().unwrap().object_id())
     }
 

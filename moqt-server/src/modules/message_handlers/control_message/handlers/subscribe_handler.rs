@@ -293,11 +293,6 @@ async fn start_new_forwarder(
         .await?
         .unwrap();
 
-    let upstream_subscription = pubsub_relation_manager_repository
-        .get_upstream_subscription_by_ids(upstream_session_id, upstream_subscribe_id)
-        .await?
-        .unwrap();
-
     let start_forwarder_tx = start_forwarder_txes
         .lock()
         .await
@@ -305,7 +300,11 @@ async fn start_new_forwarder(
         .unwrap()
         .clone();
 
-    let forwarding_preference = upstream_subscription.get_forwarding_preference().unwrap();
+    let forwarding_preference = pubsub_relation_manager_repository
+        .get_upstream_forwarding_preference(upstream_session_id, upstream_subscribe_id)
+        .await?
+        .unwrap();
+
     match forwarding_preference {
         ForwardingPreference::Datagram => {
             let data_stream_type = DataStreamType::ObjectDatagram;
@@ -325,6 +324,12 @@ async fn start_new_forwarder(
             if start_group.is_some() && start_group.unwrap() > group_id {
                 // If the start_group is larger than the largest group_id, there is no need to open forwarders
                 // because these will be opend by the receivers in the future
+                return Ok(());
+            }
+
+            let end_group = subscribe_message.end_group();
+            if end_group.is_some() && end_group.unwrap() < group_id {
+                // If the end_group is smaller than the largest group_id, there is no need to open forwarders
                 return Ok(());
             }
 
@@ -418,15 +423,6 @@ async fn set_downstream_subscription(
     let downstream_end_group = subscribe_message.end_group();
     let downstream_end_object = subscribe_message.end_object();
 
-    // Get publisher subscription already exists
-    let upstream_subscription = pubsub_relation_manager_repository
-        .get_upstream_subscription_by_full_track_name(
-            downstream_track_namespace.clone(),
-            downstream_track_name.clone(),
-        )
-        .await?
-        .unwrap();
-
     pubsub_relation_manager_repository
         .set_downstream_subscription(
             downstream_client_id,
@@ -445,12 +441,12 @@ async fn set_downstream_subscription(
         .await?;
 
     let upstream_session_id = pubsub_relation_manager_repository
-        .get_upstream_session_id(downstream_track_namespace)
+        .get_upstream_session_id(downstream_track_namespace.clone())
         .await?
         .unwrap();
 
-    let (upstream_track_namespace, upstream_track_name) =
-        upstream_subscription.get_track_namespace_and_name();
+    let upstream_track_namespace = downstream_track_namespace;
+    let upstream_track_name = downstream_track_name;
 
     // Get publisher subscribe id to register pubsub relation
     let upstream_subscribe_id = pubsub_relation_manager_repository
