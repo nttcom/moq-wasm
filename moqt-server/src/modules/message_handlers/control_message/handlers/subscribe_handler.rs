@@ -327,6 +327,12 @@ async fn start_new_forwarder(
                 return Ok(());
             }
 
+            let end_group = subscribe_message.end_group();
+            if end_group.is_some() && end_group.unwrap() < group_id {
+                // If the end_group is smaller than the largest group_id, there is no need to open forwarders
+                return Ok(());
+            }
+
             let subgroup_ids = object_cache_storage
                 .get_all_subgroup_ids(&cache_key, group_id)
                 .await?;
