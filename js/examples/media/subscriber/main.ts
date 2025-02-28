@@ -18,17 +18,24 @@ const getFormElement = (): HTMLFormElement => {
   return document.getElementById('form') as HTMLFormElement
 }
 
-function setupClientCallbacks(client: MOQTClient) {
-  client.onSetup(async (serverSetup: any) => {
-    console.log({ serverSetup })
-  })
-
+function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio', trackAlias: number) {
   client.onSubgroupStreamHeader(async (subgroupStreamHeader: any) => {
     console.log({ subgroupStreamHeader })
   })
 
-  client.onSubgroupStreamObject(async (subgroupStreamObject: any) => {
-    videoDecoderWorker.postMessage({ subgroupStreamObject })
+  client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject: any) => {
+    console.log(subgroupStreamObject)
+    if (type === 'video') {
+      videoDecoderWorker.postMessage({ subgroupStreamObject })
+    } else {
+      console.log('audio')
+    }
+  })
+}
+
+function setupClientCallbacks(client: MOQTClient) {
+  client.onSetup(async (serverSetup: any) => {
+    console.log({ serverSetup })
   })
 }
 
@@ -48,39 +55,36 @@ function sendSetupButtonClickHandler(client: MOQTClient) {
 function sendSubscribeButtonClickHandler(client: MOQTClient) {
   const sendSubscribeBtn = document.getElementById('sendSubscribeBtn') as HTMLButtonElement
   sendSubscribeBtn.addEventListener('click', async () => {
-    const form = getFormElement()
-    const subscribeId = form['subscribe-subscribe-id'].value
-    const trackAlias = form['subscribe-track-alias'].value
-    const trackNamespace = form['subscribe-track-namespace'].value.split('/')
-    const trackName = form['track-name'].value
-    const subscriberPriority = form['subscriber-priority'].value
-    const groupOrder = Number(
-      Array.from(form['group-order'] as NodeListOf<HTMLInputElement>).filter(
-        (elem) => (elem as HTMLInputElement).checked
-      )[0].value
-    )
-    const filterType = Number(
-      Array.from(form['filter-type'] as NodeListOf<HTMLInputElement>).filter(
-        (elem) => (elem as HTMLInputElement).checked
-      )[0].value
-    )
-    const startGroup = form['start-group'].value
-    const startObject = form['start-object'].value
-    const endGroup = form['end-group'].value
-    const endObject = form['end-object'].value
-
+    const trackNamespace = 'video_audio'.split('/')
+    setupClientObjectCallbacks(client, 'video', Number(0))
     await client.sendSubscribeMessage(
-      BigInt(subscribeId),
-      BigInt(trackAlias),
+      BigInt(0),
+      BigInt(0),
       trackNamespace,
-      trackName,
-      subscriberPriority,
-      groupOrder,
-      filterType,
-      BigInt(startGroup),
-      BigInt(startObject),
-      BigInt(endGroup),
-      BigInt(endObject),
+      'video',
+      0, // subscriberPriority
+      0, // groupOrder
+      1, // Latest Group
+      BigInt(0), // startGroup
+      BigInt(0), // startObject
+      BigInt(10000), // endGroup
+      BigInt(10000), // endObject
+      authInfo
+    )
+
+    setupClientObjectCallbacks(client, 'audio', Number(1))
+    await client.sendSubscribeMessage(
+      BigInt(1),
+      BigInt(1),
+      trackNamespace,
+      'audio',
+      0, // subscriberPriority
+      0, // groupOrder
+      1, // Latest Group
+      BigInt(0), // startGroup
+      BigInt(0), // startObject
+      BigInt(10000), // endGroup
+      BigInt(10000), // endObject
       authInfo
     )
   })

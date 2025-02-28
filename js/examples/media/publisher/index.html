@@ -34,16 +34,24 @@
           <button type="button" id="sendSetupBtn">Send</button>
 
           <h3>ANNOUNCE</h3>
-          <label>Track Namespace: <input type="text" name="announce-track-namespace" id="" value="vc/aa" /> </label>
+          <label
+            >Track Namespace: <input type="text" name="announce-track-namespace" id="" value="video_audio" />
+          </label>
           <br />
           <button type="button" id="sendAnnounceBtn">Send</button>
           <h3>OBJECT</h3>
           <div id="headerField" style="display: blocked">
             <h4>Header</h4>
           </div>
-          <label>Track Alias: <input type="text" name="object-track-alias" id="" value="0" /> </label>
+          <label>Video Track Alias: <input type="text" name="video-object-track-alias" id="" value="0" /> </label>
+          <label>Audio Track Alias: <input type="text" name="audio-object-track-alias" id="" value="1" /> </label>
           <br />
-          <label>Publisher Priority: <input type="text" name="publisher-priority" id="" value="0" /> </label>
+          <label
+            >Video Publisher Priority: <input type="text" name="video-publisher-priority" id="" value="0" />
+          </label>
+          <label
+            >Audio Publisher Priority: <input type="text" name="audio-publisher-priority" id="" value="0" />
+          </label>
           <br />
           <div id="objectField" style="display: blocked">
             <h4>Object</h4>
@@ -57,14 +65,10 @@
             <br />
             <br />
           </div>
-          Object ID:
-          <p id="objectId">0</p>
           <br />
-          <br />
-          <button type="button" id="startGetUserMediaBtn">getUserMedia</button>
-          <video id="video" autoplay muted></video>
-          <label>Payload: <br /><textarea name="payload" id="object-payload" rows="5" cols="33">test</textarea></label>
-          <br />
+          <div>
+            <button type="button" id="startGetUserMediaBtn">getUserMedia</button>
+          </div>
           <div id="sendDatagramObject" style="display: none">
             <button type="button" id="sendDatagramObjectBtn">Send</button>
           </div>
@@ -72,6 +76,11 @@
             <button type="button" id="sendSubgroupObjectBtn">Send</button>
           </div>
         </div>
+        <div>
+          <video id="video" autoplay muted inline></video>
+        </div>
+        <br />
+
         <br />
       </form>
     </div>

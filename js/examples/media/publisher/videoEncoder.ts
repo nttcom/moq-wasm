@@ -22,7 +22,7 @@ async function initializeVideoEncoder() {
 }
 
 let videoEncoder: VideoEncoder | undefined
-async function startEncode(videoReadableStream: ReadableStream<VideoFrame>) {
+async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>) {
   let frameCounter = 0
   if (!videoEncoder) {
     videoEncoder = await initializeVideoEncoder()
@@ -51,5 +51,5 @@ self.onmessage = async (event) => {
     console.error('MediaStreamTrack が渡されていません')
     return
   }
-  await startEncode(videoReadableStream)
+  await startVideoEncode(videoReadableStream)
 }

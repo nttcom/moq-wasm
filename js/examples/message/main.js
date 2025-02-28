@@ -88,7 +88,8 @@ init().then(async () => {
       console.log({ subgroupStreamHeader })
     })
 
-    client.onSubgroupStreamObject(async (subgroupStreamObject) => {
+    const trackAlias = form['subscribe-track-alias'].value
+    client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject) => {
       console.log({ subgroupStreamObject })
       describeReceivedObject(subgroupStreamObject.object_payload)
     })
@@ -143,6 +144,19 @@ init().then(async () => {
       const endObject = form['end-object'].value
 
       const authInfo = form['auth-info'].value
+      console.log(
+        subscribeId,
+        trackAlias,
+        trackNamespace,
+        trackName,
+        subscriberPriority,
+        groupOrder,
+        filterType,
+        startGroup,
+        startObject,
+        endGroup,
+        endObject
+      )
 
       await client.sendSubscribeMessage(
         BigInt(subscribeId),
