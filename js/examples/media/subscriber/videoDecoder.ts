@@ -21,13 +21,6 @@ async function initializeVideoDecoder() {
   return decoder
 }
 
-async function startDecode(encodedVideoChunk: EncodedVideoChunk) {
-  if (!videoDecoder) {
-    videoDecoder = await initializeVideoDecoder()
-  }
-  await videoDecoder.decode(encodedVideoChunk)
-}
-
 type SubgroupStreamObject = {
   objectId: number
   objectPayloadLength: number
@@ -36,6 +29,10 @@ type SubgroupStreamObject = {
 }
 
 self.onmessage = async (event) => {
+  if (!videoDecoder) {
+    videoDecoder = await initializeVideoDecoder()
+  }
+
   const subgroupStreamObject: SubgroupStreamObject = {
     objectId: event.data.subgroupStreamObject.object_id,
     objectPayloadLength: event.data.subgroupStreamObject.object_payload_length,
@@ -54,6 +51,7 @@ self.onmessage = async (event) => {
     duration: objectPayload.chunk.duration,
     data: new Uint8Array(objectPayload.chunk.data)
   })
+  console.log(encodedVideoChunk)
 
-  await startDecode(encodedVideoChunk)
+  await videoDecoder.decode(encodedVideoChunk)
 }
