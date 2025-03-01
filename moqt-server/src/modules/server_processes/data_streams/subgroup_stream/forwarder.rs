@@ -29,6 +29,7 @@ pub(crate) struct SubgroupStreamObjectForwarder {
     stream: UniSendStream,
     senders: Arc<Senders>,
     downstream_subscribe_id: u64,
+    downstream_track_alias: u64,
     cache_key: CacheKey,
     subgroup_stream_id: Option<SubgroupStreamId>,
     filter_type: FilterType,
@@ -49,6 +50,11 @@ impl SubgroupStreamObjectForwarder {
             PubSubRelationManagerWrapper::new(senders.pubsub_relation_tx().clone());
 
         let downstream_session_id = stream.stable_id();
+
+        let downstream_track_alias = pubsub_relation_manager
+            .get_downstream_track_alias(downstream_session_id, downstream_subscribe_id)
+            .await?
+            .unwrap();
 
         let filter_type = pubsub_relation_manager
             .get_downstream_filter_type(downstream_session_id, downstream_subscribe_id)
@@ -71,6 +77,7 @@ impl SubgroupStreamObjectForwarder {
             stream,
             senders,
             downstream_subscribe_id,
+            downstream_track_alias,
             cache_key,
             subgroup_stream_id,
             filter_type,
@@ -166,16 +173,17 @@ impl SubgroupStreamObjectForwarder {
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<()> {
-        let stream_header = self.get_header(object_cache_storage).await?;
+        let upstream_header = self.get_upstream_header(object_cache_storage).await?;
 
-        let message_buf = self.packetize_header(&stream_header).await?;
+        let downstream_header = self.generate_downstream_header(&upstream_header).await;
 
+        let message_buf = self.packetize_header(&downstream_header).await?;
         self.send(message_buf).await?;
 
         Ok(())
     }
 
-    async fn get_header(
+    async fn get_upstream_header(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<subgroup_stream::Header> {
@@ -306,6 +314,19 @@ impl SubgroupStreamObjectForwarder {
                 object_cache_id,
             )
             .await
+    }
+
+    async fn generate_downstream_header(
+        &self,
+        upstream_header: &subgroup_stream::Header,
+    ) -> subgroup_stream::Header {
+        subgroup_stream::Header::new(
+            self.downstream_track_alias, // Replace with downstream_track_alias
+            upstream_header.group_id(),
+            upstream_header.subgroup_id(),
+            upstream_header.publisher_priority(),
+        )
+        .unwrap()
     }
 
     async fn packetize_header(&self, header: &subgroup_stream::Header) -> Result<BytesMut> {
