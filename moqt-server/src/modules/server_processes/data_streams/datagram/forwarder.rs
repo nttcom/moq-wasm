@@ -26,6 +26,7 @@ pub(crate) struct DatagramObjectForwarder {
     session: Arc<Connection>,
     senders: Arc<Senders>,
     downstream_subscribe_id: u64,
+    downstream_track_alias: u64,
     cache_key: CacheKey,
     filter_type: FilterType,
     requested_range: Range,
@@ -44,6 +45,11 @@ impl DatagramObjectForwarder {
             PubSubRelationManagerWrapper::new(senders.pubsub_relation_tx().clone());
 
         let downstream_session_id = session.stable_id();
+
+        let downstream_track_alias = pubsub_relation_manager
+            .get_downstream_track_alias(downstream_session_id, downstream_subscribe_id)
+            .await?
+            .unwrap();
 
         let filter_type = pubsub_relation_manager
             .get_downstream_filter_type(downstream_session_id, downstream_subscribe_id)
@@ -66,6 +72,7 @@ impl DatagramObjectForwarder {
             session,
             senders,
             downstream_subscribe_id,
+            downstream_track_alias,
             cache_key,
             filter_type,
             requested_range,
@@ -178,27 +185,31 @@ impl DatagramObjectForwarder {
     ) -> Result<(Option<usize>, bool)> {
         // Do loop until get an object from the cache storage
         loop {
-            let (cache_id, datagram_object) =
-                match self.try_get_object(object_cache_storage, cache_id).await? {
-                    Some((id, object)) => (id, object),
-                    None => {
-                        // If there is no object in the cache storage, sleep for a while and try again
-                        thread::sleep(self.sleep_time);
-                        continue;
-                    }
-                };
+            let (cache_id, upstream_object) = match self
+                .try_get_upstream_object(object_cache_storage, cache_id)
+                .await?
+            {
+                Some((id, object)) => (id, object),
+                None => {
+                    // If there is no object in the cache storage, sleep for a while and try again
+                    thread::sleep(self.sleep_time);
+                    continue;
+                }
+            };
 
-            let message_buf = self.packetize(&datagram_object).await?;
+            let downstream_object = self.generate_downstream_object(&upstream_object);
+
+            let message_buf = self.packetize(&downstream_object).await?;
             self.send(message_buf).await?;
 
-            let is_end = self.is_subscription_ended(&datagram_object)
-                || self.is_data_stream_ended(&datagram_object);
+            let is_end = self.is_subscription_ended(&downstream_object)
+                || self.is_data_stream_ended(&downstream_object);
 
             return Ok((Some(cache_id), is_end));
         }
     }
 
-    async fn try_get_object(
+    async fn try_get_upstream_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         cache_id: Option<usize>,
@@ -253,6 +264,18 @@ impl DatagramObjectForwarder {
         object_cache_storage
             .get_next_datagram_object(&self.cache_key, object_cache_id)
             .await
+    }
+
+    fn generate_downstream_object(&self, upstream_object: &datagram::Object) -> datagram::Object {
+        datagram::Object::new(
+            self.downstream_track_alias, // Replace with downstream_track_alias
+            upstream_object.group_id(),
+            upstream_object.object_id(),
+            upstream_object.publisher_priority(),
+            upstream_object.object_status(),
+            upstream_object.object_payload(),
+        )
+        .unwrap()
     }
 
     async fn packetize(&mut self, datagram_object: &datagram::Object) -> Result<BytesMut> {
