@@ -4,7 +4,10 @@ use tokio::sync::{mpsc, oneshot};
 
 use moqt_core::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
-    models::{range::Range, tracks::ForwardingPreference},
+    models::{
+        range::{Range, Start},
+        tracks::ForwardingPreference,
+    },
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
 
@@ -770,6 +773,50 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         }
     }
 
+    async fn set_downstream_actual_start(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        actual_start: Start,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
+        let cmd = PubSubRelationCommand::SetDownstreamActualStart {
+            downstream_session_id,
+            downstream_subscribe_id,
+            actual_start,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => bail!(err),
+        }
+    }
+
+    async fn get_downstream_actual_start(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<Option<Start>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<Start>>>();
+        let cmd = PubSubRelationCommand::GetDownstreamActualStart {
+            downstream_session_id,
+            downstream_subscribe_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(actual_start) => Ok(actual_start),
+            Err(err) => bail!(err),
+        }
+    }
+
     async fn get_related_subscribers(
         &self,
         upstream_session_id: usize,
@@ -843,6 +890,7 @@ mod success {
         wrapper::PubSubRelationManagerWrapper,
     };
     use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
+    use moqt_core::models::range::Start;
     use moqt_core::models::subscriptions::{
         nodes::registry::SubscriptionNodeRegistry, Subscription,
     };
@@ -2919,6 +2967,64 @@ mod success {
         assert_eq!(result_range.start_object(), start_object);
         assert_eq!(result_range.end_group(), end_group);
         assert_eq!(result_range.end_object(), end_object);
+    }
+
+    #[tokio::test]
+    async fn downstream_actual_start() {
+        let max_subscribe_id = 10;
+        let downstream_session_id = 1;
+        let subscribe_id = 0;
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::LatestObject;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+        let actual_start = Start::new(1, 1);
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_downstream_subscription(
+                downstream_session_id,
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+
+        let result = pubsub_relation_manager
+            .set_downstream_actual_start(downstream_session_id, subscribe_id, actual_start.clone())
+            .await;
+        assert!(result.is_ok());
+
+        // Assert that the actual start is set
+        let (_, producers, _) =
+            test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
+        let producer = producers.get(&downstream_session_id).unwrap();
+        let subscription = producer.get_subscription(subscribe_id).unwrap().unwrap();
+
+        let result_actual_start = subscription.get_actual_start().unwrap();
+
+        assert_eq!(result_actual_start, actual_start);
     }
 
     #[tokio::test]

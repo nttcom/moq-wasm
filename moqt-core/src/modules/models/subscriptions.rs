@@ -1,5 +1,5 @@
 pub mod nodes;
-use super::range::Range;
+use super::range::{Range, Start};
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::tracks::{ForwardingPreference, Track},
@@ -18,6 +18,7 @@ pub struct Subscription {
     group_order: GroupOrder,
     filter_type: FilterType,
     requested_range: Range,
+    actual_start: Option<Start>,
     status: Status,
 }
 
@@ -51,6 +52,7 @@ impl Subscription {
             group_order,
             filter_type,
             requested_range,
+            actual_start: None,
             status: Status::Requesting,
         }
     }
@@ -98,6 +100,14 @@ impl Subscription {
 
     pub fn get_group_order(&self) -> GroupOrder {
         self.group_order
+    }
+
+    pub fn set_actual_start(&mut self, actual_start: Start) {
+        self.actual_start = Some(actual_start);
+    }
+
+    pub fn get_actual_start(&self) -> Option<Start> {
+        self.actual_start.clone()
     }
 }
 
@@ -151,6 +161,7 @@ mod success {
     use crate::{
         messages::control_messages::subscribe::{FilterType, GroupOrder},
         models::{
+            range::Start,
             subscriptions::{test_helper_fn, Subscription},
             tracks::ForwardingPreference,
         },
@@ -383,5 +394,89 @@ mod success {
         let result_forwarding_preference = subscription.get_forwarding_preference().unwrap();
 
         assert_eq!(result_forwarding_preference, forwarding_preference);
+    }
+
+    #[test]
+    fn get_requested_range() {
+        let variable = test_helper_fn::common_subscription_variable();
+
+        let subscription = Subscription::new(
+            variable.track_alias,
+            variable.track_namespace,
+            variable.track_name,
+            variable.subscriber_priority,
+            variable.group_order,
+            variable.filter_type,
+            variable.start_group,
+            variable.start_object,
+            variable.end_group,
+            variable.end_object,
+            None,
+        );
+
+        let result = subscription.get_requested_range();
+
+        assert_eq!(result.start_group(), variable.start_group);
+        assert_eq!(result.start_object(), variable.start_object);
+        assert_eq!(result.end_group(), variable.end_group);
+        assert_eq!(result.end_object(), variable.end_object);
+    }
+
+    #[test]
+    fn set_actual_start() {
+        let variable = test_helper_fn::common_subscription_variable();
+
+        let start_group = 1;
+        let start_object = 1;
+
+        let mut subscription = Subscription::new(
+            variable.track_alias,
+            variable.track_namespace,
+            variable.track_name,
+            variable.subscriber_priority,
+            variable.group_order,
+            variable.filter_type,
+            variable.start_group,
+            variable.start_object,
+            variable.end_group,
+            variable.end_object,
+            None,
+        );
+
+        subscription.set_actual_start(Start::new(start_group, start_object));
+
+        let result = subscription.get_actual_start().unwrap();
+
+        assert_eq!(result.group_id(), start_group);
+        assert_eq!(result.object_id(), start_object);
+    }
+
+    #[test]
+    fn get_actual_start() {
+        let variable = test_helper_fn::common_subscription_variable();
+
+        let start_group = 1;
+        let start_object = 1;
+
+        let mut subscription = Subscription::new(
+            variable.track_alias,
+            variable.track_namespace,
+            variable.track_name,
+            variable.subscriber_priority,
+            variable.group_order,
+            variable.filter_type,
+            variable.start_group,
+            variable.start_object,
+            variable.end_group,
+            variable.end_object,
+            None,
+        );
+
+        subscription.set_actual_start(Start::new(start_group, start_object));
+
+        let result = subscription.get_actual_start().unwrap();
+
+        assert_eq!(result.group_id(), start_group);
+        assert_eq!(result.object_id(), start_object);
     }
 }

@@ -875,6 +875,49 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     .unwrap();
                 resp.send(Ok(range)).unwrap();
             }
+            SetDownstreamActualStart {
+                downstream_session_id,
+                downstream_subscribe_id,
+                actual_start,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get_mut(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+                match producer.set_actual_start(downstream_subscribe_id, actual_start) {
+                    Ok(_) => resp.send(Ok(())).unwrap(),
+                    Err(err) => {
+                        tracing::error!("set_actual_start: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                    }
+                }
+            }
+            GetDownstreamActualStart {
+                downstream_session_id,
+                downstream_subscribe_id,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let actual_start = producer.get_actual_start(downstream_subscribe_id).unwrap();
+                resp.send(Ok(actual_start)).unwrap();
+            }
             GetRelatedSubscribers {
                 upstream_session_id,
                 upstream_subscribe_id,

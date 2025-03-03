@@ -1,14 +1,13 @@
-use anyhow::{bail, Result};
-use std::collections::HashMap;
-
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::{
-        range::Range,
+        range::{Range, Start},
         subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription},
         tracks::ForwardingPreference,
     },
 };
+use anyhow::{bail, Result};
+use std::collections::HashMap;
 
 type SubscribeId = u64;
 type TrackNamespace = Vec<String>;
@@ -173,6 +172,18 @@ impl SubscriptionNodeRegistry for Consumer {
     }
 
     fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
+        unimplemented!("subscribe_id: {}", subscribe_id)
+    }
+
+    fn set_actual_start(&mut self, subscribe_id: SubscribeId, actual_start: Start) -> Result<()> {
+        unimplemented!(
+            "subscribe_id: {}, actual_start: {:?}",
+            subscribe_id,
+            actual_start
+        )
+    }
+
+    fn get_actual_start(&self, subscribe_id: SubscribeId) -> Result<Option<Start>> {
         unimplemented!("subscribe_id: {}", subscribe_id)
     }
 

@@ -1,9 +1,12 @@
-use anyhow::Result;
-
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
-    models::{range::Range, subscriptions::Subscription, tracks::ForwardingPreference},
+    models::{
+        range::{Range, Start},
+        subscriptions::Subscription,
+        tracks::ForwardingPreference,
+    },
 };
+use anyhow::Result;
 
 type SubscribeId = u64;
 type TrackNamespace = Vec<String>;
@@ -54,6 +57,8 @@ pub trait SubscriptionNodeRegistry {
     fn get_requested_range(&self, subscribe_id: SubscribeId) -> Result<Option<Range>>;
     fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
     fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
+    fn set_actual_start(&mut self, subscribe_id: SubscribeId, actual_start: Start) -> Result<()>;
+    fn get_actual_start(&self, subscribe_id: SubscribeId) -> Result<Option<Start>>;
 
     fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool;
     fn is_subscribe_id_less_than_max(&self, subscribe_id: SubscribeId) -> bool;

@@ -1,14 +1,13 @@
-use anyhow::{bail, Result};
-use std::collections::HashMap;
-
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::{
-        range::Range,
+        range::{Range, Start},
         subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription},
         tracks::ForwardingPreference,
     },
 };
+use anyhow::{bail, Result};
+use std::collections::HashMap;
 
 type SubscribeId = u64;
 type TrackNamespace = Vec<String>;
@@ -193,6 +192,25 @@ impl SubscriptionNodeRegistry for Producer {
         Ok((end_group, end_object))
     }
 
+    fn set_actual_start(&mut self, subscribe_id: SubscribeId, actual_start: Start) -> Result<()> {
+        self.subscriptions
+            .get_mut(&subscribe_id)
+            .unwrap()
+            .set_actual_start(actual_start);
+
+        Ok(())
+    }
+
+    fn get_actual_start(&self, subscribe_id: SubscribeId) -> Result<Option<Start>> {
+        let actual_start = self
+            .subscriptions
+            .get(&subscribe_id)
+            .map(|subscription| subscription.get_actual_start())
+            .unwrap();
+
+        Ok(actual_start)
+    }
+
     fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool {
         !self.subscriptions.contains_key(&subscribe_id)
     }
@@ -353,6 +371,7 @@ pub(crate) mod test_helper_fn {
 #[cfg(test)]
 mod success {
     use crate::models::{
+        range::Start,
         subscriptions::{
             nodes::{
                 producers::{test_helper_fn, Producer},
@@ -796,6 +815,68 @@ mod success {
         let expected_result = (variables.end_group, variables.end_object);
 
         assert_eq!(result, expected_result);
+    }
+
+    #[test]
+    fn set_actual_start() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let actual_start = Start::new(0, 0);
+
+        let result = variables
+            .producer
+            .set_actual_start(variables.subscribe_id, actual_start);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn get_actual_start() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let actual_start = Start::new(0, 0);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+            variables.end_object,
+        );
+
+        let _ = variables
+            .producer
+            .set_actual_start(variables.subscribe_id, actual_start.clone());
+
+        let result = variables
+            .producer
+            .get_actual_start(variables.subscribe_id)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result, actual_start);
     }
 
     #[test]

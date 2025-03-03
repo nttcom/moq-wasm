@@ -1,4 +1,4 @@
-use super::models::range::Range;
+use super::models::range::{Range, Start};
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::tracks::ForwardingPreference,
@@ -196,6 +196,17 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
     ) -> Result<Option<Range>>;
+    async fn set_downstream_actual_start(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        actual_start: Start,
+    ) -> Result<()>;
+    async fn get_downstream_actual_start(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<Option<Start>>;
     async fn get_related_subscribers(
         &self,
         upstream_session_id: usize,
