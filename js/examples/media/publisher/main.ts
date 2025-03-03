@@ -41,6 +41,14 @@ async function handleVideoChunkMessage(
   const publisherPriority = form['video-publisher-priority'].value
   // const key = `${groupId}:${subgroupId}`
 
+  if (chunk.type === 'key') {
+    MediaTrackInfo['video'].groupId++
+    MediaTrackInfo['video'].objectId = BigInt(0)
+    MediaTrackInfo['video'].isSendedSubgroupHeader = false
+  } else {
+    MediaTrackInfo['video'].objectId++
+  }
+
   if (!MediaTrackInfo['video'].isSendedSubgroupHeader) {
     await client.sendSubgroupStreamHeaderMessage(
       BigInt(trackAlias),
