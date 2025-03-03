@@ -14,7 +14,8 @@ async function initializeVideoDecoder() {
   const config = {
     codec: 'av01.0.04M.08',
     width: 640,
-    height: 480
+    height: 480,
+    scalabilityMode: 'L1T1'
   }
   const decoder = new VideoDecoder(init)
   decoder.configure(config)

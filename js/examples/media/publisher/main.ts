@@ -60,7 +60,6 @@ async function handleVideoChunkMessage(
     LatestMediaTrackInfo['video'].isSendedSubgroupHeader = true
   }
 
-  LatestMediaTrackInfo['video'].objectId++
   sendVideoObjectMessage(
     trackAlias,
     LatestMediaTrackInfo['video'].groupId,

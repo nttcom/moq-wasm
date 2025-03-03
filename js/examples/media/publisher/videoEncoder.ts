@@ -14,6 +14,7 @@ async function initializeVideoEncoder() {
     width: 640,
     height: 480,
     bitrate: 2_000_000, // 2 Mbps
+    scalabilityMode: 'L1T1',
     framerate: 30
   }
   const encoder = new VideoEncoder(init)
@@ -35,6 +36,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
 
     // Too many frames in flight, encoder is overwhelmed. let's drop this frame.
     if (videoEncoder.encodeQueueSize > 2) {
+      console.error('videoEncoder.encodeQueueSize > 2', videoEncoder.encodeQueueSize)
       videoFrame.close()
     } else {
       frameCounter++

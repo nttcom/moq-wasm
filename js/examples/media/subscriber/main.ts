@@ -19,6 +19,7 @@ videoDecoderWorker.onmessage = async (e: MessageEvent) => {
   const videoFrame = e.data.frame
   console.log(e.data)
   await videoWriter.write(videoFrame)
+  videoFrame.close()
 }
 
 audioDecoderWorker.onmessage = async (e: MessageEvent) => {
