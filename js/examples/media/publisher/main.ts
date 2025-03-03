@@ -15,7 +15,7 @@ function setUpStartGetUserMediaButton() {
   })
 }
 
-const MediaTrackInfo = {
+const LatestMediaTrackInfo = {
   video: {
     objectId: 0n,
     groupId: 0n,
@@ -42,30 +42,30 @@ async function handleVideoChunkMessage(
   // const key = `${groupId}:${subgroupId}`
 
   if (chunk.type === 'key') {
-    MediaTrackInfo['video'].groupId++
-    MediaTrackInfo['video'].objectId = BigInt(0)
-    MediaTrackInfo['video'].isSendedSubgroupHeader = false
+    LatestMediaTrackInfo['video'].groupId++
+    LatestMediaTrackInfo['video'].objectId = BigInt(0)
+    LatestMediaTrackInfo['video'].isSendedSubgroupHeader = false
   } else {
-    MediaTrackInfo['video'].objectId++
+    LatestMediaTrackInfo['video'].objectId++
   }
 
-  if (!MediaTrackInfo['video'].isSendedSubgroupHeader) {
+  if (!LatestMediaTrackInfo['video'].isSendedSubgroupHeader) {
     await client.sendSubgroupStreamHeaderMessage(
       BigInt(trackAlias),
-      MediaTrackInfo['video'].groupId,
-      MediaTrackInfo['video'].subgroupId,
+      LatestMediaTrackInfo['video'].groupId,
+      LatestMediaTrackInfo['video'].subgroupId,
       publisherPriority
     )
     console.log('send subgroup stream header')
-    MediaTrackInfo['video'].isSendedSubgroupHeader = true
+    LatestMediaTrackInfo['video'].isSendedSubgroupHeader = true
   }
 
-  MediaTrackInfo['video'].objectId++
+  LatestMediaTrackInfo['video'].objectId++
   sendVideoObjectMessage(
     trackAlias,
-    MediaTrackInfo['video'].groupId,
-    MediaTrackInfo['video'].subgroupId,
-    MediaTrackInfo['video'].objectId,
+    LatestMediaTrackInfo['video'].groupId,
+    LatestMediaTrackInfo['video'].subgroupId,
+    LatestMediaTrackInfo['video'].objectId,
     chunk,
     metadata,
     client
@@ -83,23 +83,23 @@ async function handleAudioChunkMessage(
   const publisherPriority = form['audio-publisher-priority'].value
   // const key = `${groupId}:${subgroupId}`
 
-  if (!MediaTrackInfo['audio'].isSendedSubgroupHeader) {
+  if (!LatestMediaTrackInfo['audio'].isSendedSubgroupHeader) {
     await client.sendSubgroupStreamHeaderMessage(
       BigInt(trackAlias),
-      MediaTrackInfo['audio'].groupId,
-      MediaTrackInfo['audio'].subgroupId,
+      LatestMediaTrackInfo['audio'].groupId,
+      LatestMediaTrackInfo['audio'].subgroupId,
       publisherPriority
     )
     console.log('send subgroup stream header')
-    MediaTrackInfo['audio'].isSendedSubgroupHeader = true
+    LatestMediaTrackInfo['audio'].isSendedSubgroupHeader = true
   }
 
-  MediaTrackInfo['audio'].objectId++
+  LatestMediaTrackInfo['audio'].objectId++
   sendAudioObjectMessage(
     trackAlias,
-    MediaTrackInfo['audio'].groupId,
-    MediaTrackInfo['audio'].subgroupId,
-    MediaTrackInfo['audio'].objectId,
+    LatestMediaTrackInfo['audio'].groupId,
+    LatestMediaTrackInfo['audio'].subgroupId,
+    LatestMediaTrackInfo['audio'].objectId,
     chunk,
     metadata,
     client
