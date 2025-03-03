@@ -1,5 +1,6 @@
 function sendVideoFrameMessage(frame: VideoFrame): void {
   self.postMessage({ frame })
+  frame.close()
 }
 
 let videoDecoder: VideoDecoder | undefined
