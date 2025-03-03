@@ -82,6 +82,12 @@ pub(crate) enum ObjectCacheStorageCommand {
         subgroup_id: u64,
         resp: oneshot::Sender<Result<Option<(CacheId, subgroup_stream::Object)>>>,
     },
+    GetLatestSubgroupStreamObject {
+        cache_key: CacheKey,
+        group_id: u64,
+        subgroup_id: u64,
+        resp: oneshot::Sender<Result<Option<(CacheId, subgroup_stream::Object)>>>,
+    },
     GetAllSubgroupIds {
         cache_key: CacheKey,
         group_id: u64,
