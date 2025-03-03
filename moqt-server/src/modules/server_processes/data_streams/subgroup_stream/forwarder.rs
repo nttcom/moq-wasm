@@ -34,7 +34,7 @@ pub(crate) struct SubgroupStreamObjectForwarder {
     downstream_subscribe_id: u64,
     downstream_track_alias: u64,
     cache_key: CacheKey,
-    subgroup_stream_id: Option<SubgroupStreamId>,
+    subgroup_stream_id: SubgroupStreamId,
     filter_type: FilterType,
     requested_range: Range,
     sleep_time: Duration,
@@ -45,7 +45,7 @@ impl SubgroupStreamObjectForwarder {
         stream: UniSendStream,
         downstream_subscribe_id: u64,
         client: Arc<Mutex<MOQTClient>>,
-        subgroup_stream_id: Option<SubgroupStreamId>,
+        subgroup_stream_id: SubgroupStreamId,
     ) -> Result<Self> {
         let senders = client.lock().await.senders();
         let sleep_time = Duration::from_millis(10);
@@ -190,7 +190,7 @@ impl SubgroupStreamObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<subgroup_stream::Header> {
-        let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
+        let (group_id, subgroup_id) = self.subgroup_stream_id;
         let subgroup_stream_header = object_cache_storage
             .get_subgroup_stream_header(&self.cache_key, group_id, subgroup_id)
             .await?;
@@ -282,7 +282,7 @@ impl SubgroupStreamObjectForwarder {
                 }
 
                 let (cache_id, stream_object) = object_with_cache_id.unwrap();
-                let group_id = self.subgroup_stream_id.unwrap().0;
+                let group_id = self.subgroup_stream_id.0;
                 let object_id = stream_object.object_id();
                 let actual_start = Start::new(group_id, object_id);
 
@@ -311,7 +311,7 @@ impl SubgroupStreamObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<(usize, subgroup_stream::Object)>> {
-        let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
+        let (group_id, subgroup_id) = self.subgroup_stream_id;
 
         match self.filter_type {
             FilterType::LatestGroup => {
@@ -353,7 +353,7 @@ impl SubgroupStreamObjectForwarder {
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         actual_start: Start,
     ) -> Result<Option<(usize, subgroup_stream::Object)>> {
-        let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
+        let (group_id, subgroup_id) = self.subgroup_stream_id;
 
         if group_id == actual_start.group_id() {
             // If the actual start group id is the same as the group_id of this subgroup stream,
@@ -381,7 +381,7 @@ impl SubgroupStreamObjectForwarder {
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,
     ) -> Result<Option<(usize, subgroup_stream::Object)>> {
-        let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
+        let (group_id, subgroup_id) = self.subgroup_stream_id;
         object_cache_storage
             .get_next_subgroup_stream_object(
                 &self.cache_key,
@@ -463,7 +463,7 @@ impl SubgroupStreamObjectForwarder {
             return false;
         }
 
-        let group_id = self.subgroup_stream_id.unwrap().0;
+        let group_id = self.subgroup_stream_id.0;
         let object_id = stream_object.object_id();
 
         self.requested_range.is_end(group_id, object_id)
