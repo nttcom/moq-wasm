@@ -101,7 +101,7 @@ mod test {
             let expected_bytes_array = [
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
+                0, 0, 0, 255, 0, 0, 8, // Supported Version(i): Value(0xff000008) in 62bit
                 1, // Number of Parameters (i)
                 0, // SETUP Parameters (..): Type(Role)
                 1, // SETUP Parameters (..): Length
@@ -116,7 +116,7 @@ mod test {
             let bytes_array = [
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
+                0, 0, 0, 255, 0, 0, 8, // Supported Version(i): Value(0xff000008) in 62bit
                 1, // Number of Parameters (i)
                 0, // SETUP Parameters (..): Type(Role)
                 1, // SETUP Parameters (..): Length
