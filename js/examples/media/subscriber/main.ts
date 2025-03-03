@@ -69,7 +69,8 @@ function sendSetupButtonClickHandler(client: MOQTClient) {
 function sendSubscribeButtonClickHandler(client: MOQTClient) {
   const sendSubscribeBtn = document.getElementById('sendSubscribeBtn') as HTMLButtonElement
   sendSubscribeBtn.addEventListener('click', async () => {
-    const trackNamespace = 'video_audio'.split('/')
+    const form = getFormElement()
+    const trackNamespace = form['subscribe-track-namespace'].value.split('/')
     setupClientObjectCallbacks(client, 'video', Number(0))
     await client.sendSubscribeMessage(
       BigInt(0),
