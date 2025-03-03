@@ -1,26 +1,27 @@
-function sendVideoFrameMessage(frame: VideoFrame): void {
-  self.postMessage({ frame })
+function sendAudioDataMessage(audioData: AudioData): void {
+  self.postMessage({ audioData })
 }
 
-let videoDecoder: VideoDecoder | undefined
-async function initializeVideoDecoder() {
-  const init: VideoDecoderInit = {
-    output: sendVideoFrameMessage,
+let audioDecoder: AudioDecoder | undefined
+async function initializeAudioDecoder() {
+  const init: AudioDecoderInit = {
+    output: sendAudioDataMessage,
     error: (e: any) => {
       console.log(e.message)
     }
   }
   const config = {
-    codec: 'av01.0.04M.08',
-    width: 640,
-    height: 480
+    codec: 'opus',
+    sampleRate: 48000, // Opusの推奨サンプルレート
+    numberOfChannels: 1, // モノラル
+    bitrate: 64000 // 64kbpsのビットレート
   }
-  const decoder = new VideoDecoder(init)
+  const decoder = new AudioDecoder(init)
   decoder.configure(config)
   return decoder
 }
 
-namespace VideoDecoder {
+namespace AudioDecoder {
   export type SubgroupStreamObject = {
     objectId: number
     objectPayloadLength: number
@@ -30,11 +31,11 @@ namespace VideoDecoder {
 }
 
 self.onmessage = async (event) => {
-  if (!videoDecoder) {
-    videoDecoder = await initializeVideoDecoder()
+  if (!audioDecoder) {
+    audioDecoder = await initializeAudioDecoder()
   }
 
-  const subgroupStreamObject: VideoDecoder.SubgroupStreamObject = {
+  const subgroupStreamObject: AudioDecoder.SubgroupStreamObject = {
     objectId: event.data.subgroupStreamObject.object_id,
     objectPayloadLength: event.data.subgroupStreamObject.object_payload_length,
     objectPayload: event.data.subgroupStreamObject.object_payload,
@@ -46,12 +47,13 @@ self.onmessage = async (event) => {
   const jsonString = decoder.decode(chunkArray)
   const objectPayload = JSON.parse(jsonString)
 
-  const encodedVideoChunk = new EncodedVideoChunk({
+  const encodedAudioChunk = new EncodedAudioChunk({
     type: objectPayload.chunk.type,
     timestamp: objectPayload.chunk.timestamp,
     duration: objectPayload.chunk.duration,
     data: new Uint8Array(objectPayload.chunk.data)
   })
+  console.log(encodedAudioChunk)
 
-  await videoDecoder.decode(encodedVideoChunk)
+  await audioDecoder.decode(encodedAudioChunk)
 }

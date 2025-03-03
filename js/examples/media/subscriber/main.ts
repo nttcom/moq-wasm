@@ -1,18 +1,33 @@
 import init, { MOQTClient } from '../../../pkg/moqt_client_sample'
 
 const videoDecoderWorker = new Worker('videoDecoder.ts')
+const audioDecoderWorker = new Worker('audioDecoder.ts')
 // videoFrameをvideoタグに表示する処理を追加
 const videoElement = document.getElementById('video') as HTMLFormElement
-const generator = new MediaStreamTrackGenerator({ kind: 'video' })
-const writer = generator.writable.getWriter()
-const stream = new MediaStream([generator])
-videoElement.srcObject = stream
+const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
+const videoWriter = videoGenerator.writable.getWriter()
+const videoStream = new MediaStream([videoGenerator])
+videoElement.srcObject = videoStream
+
+const audioElement = document.getElementById('audio') as HTMLFormElement
+const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
+const audioWriter = audioGenerator.writable.getWriter()
+const audioStream = new MediaStream([audioGenerator])
+audioElement.srcObject = audioStream
 
 videoDecoderWorker.onmessage = async (e: MessageEvent) => {
   const videoFrame = e.data.frame
   console.log(e.data)
-  await writer.write(videoFrame)
+  await videoWriter.write(videoFrame)
 }
+
+audioDecoderWorker.onmessage = async (e: MessageEvent) => {
+  const audioData = e.data.audioData
+  console.log(audioData)
+  await audioWriter.write(audioData)
+  audioElement.play()
+}
+
 const authInfo = 'secret'
 const getFormElement = (): HTMLFormElement => {
   return document.getElementById('form') as HTMLFormElement
@@ -24,11 +39,10 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
   })
 
   client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject: any) => {
-    console.log(subgroupStreamObject)
     if (type === 'video') {
       videoDecoderWorker.postMessage({ subgroupStreamObject })
     } else {
-      console.log('audio')
+      audioDecoderWorker.postMessage({ subgroupStreamObject })
     }
   })
 }

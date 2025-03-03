@@ -51,6 +51,7 @@ async function handleVideoChunkMessage(
     console.log('send subgroup stream header')
     MediaTrackInfo['video'].isSendedSubgroupHeader = true
   }
+
   MediaTrackInfo['video'].objectId++
   sendVideoObjectMessage(
     trackAlias,
@@ -63,28 +64,39 @@ async function handleVideoChunkMessage(
   )
 }
 
-// const audioEncoderWorker = new Worker('audioEncoder.ts')
-// async function handleAudioChunkMessage(
-//   chunk: EncodedAudioChunk,
-//   metadata: EncodedAudioChunkMetadata | undefined,
-//   client: MOQTClient
-// ) {
-//   const form = getFormElement()
-//   const trackAlias = form['audio-object-track-alias'].value
-//   const publisherPriority = form['audio-publisher-priority'].value
-//   // const key = `${groupId}:${subgroupId}`
+const audioEncoderWorker = new Worker('audioEncoder.ts')
+async function handleAudioChunkMessage(
+  chunk: EncodedAudioChunk,
+  metadata: EncodedAudioChunkMetadata | undefined,
+  client: MOQTClient
+) {
+  const form = getFormElement()
+  const trackAlias = form['audio-object-track-alias'].value
+  const publisherPriority = form['audio-publisher-priority'].value
+  // const key = `${groupId}:${subgroupId}`
 
-//   let { objectId, groupId, subgroupId, isSendedSubgroupHeader } = MediaTrackInfo['audio']
+  if (!MediaTrackInfo['audio'].isSendedSubgroupHeader) {
+    await client.sendSubgroupStreamHeaderMessage(
+      BigInt(trackAlias),
+      MediaTrackInfo['audio'].groupId,
+      MediaTrackInfo['audio'].subgroupId,
+      publisherPriority
+    )
+    console.log('send subgroup stream header')
+    MediaTrackInfo['audio'].isSendedSubgroupHeader = true
+  }
 
-//   if (!isSendedSubgroupHeader) {
-//     await client.sendSubgroupStreamHeaderMessage(BigInt(trackAlias), groupId, subgroupId, publisherPriority)
-//     console.log('send subgroup stream header')
-//     MediaTrackInfo['audio'].isSendedSubgroupHeader = true
-//   }
-
-//   MediaTrackInfo['audio'].objectId++
-//   sendAudioObjectMessage(trackAlias, groupId, subgroupId, objectId++, chunk, metadata, client)
-// }
+  MediaTrackInfo['audio'].objectId++
+  sendAudioObjectMessage(
+    trackAlias,
+    MediaTrackInfo['audio'].groupId,
+    MediaTrackInfo['audio'].subgroupId,
+    MediaTrackInfo['audio'].objectId,
+    chunk,
+    metadata,
+    client
+  )
+}
 
 const authInfo = 'secret'
 const getFormElement = (): HTMLFormElement => {
@@ -164,22 +176,22 @@ function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
       }
       handleVideoChunkMessage(chunk, metadata, client)
     }
-    // audioEncoderWorker.onmessage = async (e: MessageEvent) => {
-    //   const { chunk, metadata } = e.data as {
-    //     chunk: EncodedAudioChunk
-    //     metadata: EncodedAudioChunkMetadata | undefined
-    //   }
-    //   handleAudioChunkMessage(chunk, metadata, client)
-    // }
+    audioEncoderWorker.onmessage = async (e: MessageEvent) => {
+      const { chunk, metadata } = e.data as {
+        chunk: EncodedAudioChunk
+        metadata: EncodedAudioChunkMetadata | undefined
+      }
+      handleAudioChunkMessage(chunk, metadata, client)
+    }
 
     const [videoTrack] = mediaStream.getVideoTracks()
     const videoProcessor = new MediaStreamTrackProcessor({ track: videoTrack })
     const videoStream = videoProcessor.readable
     videoEncoderWorker.postMessage({ videoStream: videoStream }, [videoStream])
-    // const [audioTrack] = mediaStream.getAudioTracks()
-    // const audioProcessor = new MediaStreamTrackProcessor({ track: audioTrack })
-    // const audioStream = audioProcessor.readable
-    // audioEncoderWorker.postMessage({ audioStream: audioStream }, [audioStream])
+    const [audioTrack] = mediaStream.getAudioTracks()
+    const audioProcessor = new MediaStreamTrackProcessor({ track: audioTrack })
+    const audioStream = audioProcessor.readable
+    audioEncoderWorker.postMessage({ audioStream: audioStream }, [audioStream])
   })
 }
 
