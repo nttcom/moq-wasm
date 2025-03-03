@@ -169,10 +169,14 @@ impl MOQTClient {
     }
 
     #[wasm_bindgen(js_name = onSubgroupStreamObject)]
-    pub fn set_subgroup_stream_object_callback(&mut self, callback: js_sys::Function) {
+    pub fn set_subgroup_stream_object_callback(
+        &mut self,
+        track_alias: u64,
+        callback: js_sys::Function,
+    ) {
         self.callbacks
             .borrow_mut()
-            .set_subgroup_stream_object_callback(callback);
+            .set_subgroup_stream_object_callback(track_alias, callback);
     }
 
     #[wasm_bindgen(js_name = sendSetupMessage)]
@@ -1248,7 +1252,7 @@ async fn uni_directional_stream_read_thread(
 
     log("uni_directional_stream_read_thread");
 
-    let mut header_read = false;
+    let mut subgroup_stream_header: Option<subgroup_stream::Header> = None;
     let mut data_stream_type = DataStreamType::ObjectDatagram;
     let mut buf = BytesMut::new();
 
@@ -1271,25 +1275,29 @@ async fn uni_directional_stream_read_thread(
         }
 
         while buf.len() > 0 {
-            if !header_read {
-                data_stream_type = match object_header_handler(callbacks.clone(), &mut buf).await {
+            if subgroup_stream_header.is_none() {
+                let result = match object_header_handler(callbacks.clone(), &mut buf).await {
                     Ok(v) => v,
                     Err(_e) => {
                         break;
                     }
                 };
-
-                header_read = true;
+                data_stream_type = result.0;
+                subgroup_stream_header = result.1;
             } else {
                 match data_stream_type {
                     DataStreamType::ObjectDatagram => {
                         let msg = "format error".to_string();
-                        log(std::format!("{}", msg).as_str());
+                        log(std::format!("{:#?}", msg).as_str());
                         return Err(js_sys::Error::new(&msg).into());
                     }
                     DataStreamType::StreamHeaderSubgroup => {
-                        if let Err(e) =
-                            subgroup_stream_object_handler(callbacks.clone(), &mut buf).await
+                        if let Err(e) = subgroup_stream_object_handler(
+                            callbacks.clone(),
+                            subgroup_stream_header.clone().unwrap(),
+                            &mut buf,
+                        )
+                        .await
                         {
                             // log(std::format!("error: {:#?}", e).as_str());
                             break;
@@ -1310,17 +1318,17 @@ async fn uni_directional_stream_read_thread(
 async fn object_header_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     buf: &mut BytesMut,
-) -> Result<DataStreamType> {
+) -> Result<(DataStreamType, Option<subgroup_stream::Header>)> {
     let mut read_cur = Cursor::new(&buf[..]);
     let header_type_value = read_variable_integer(&mut read_cur);
 
-    let data_stream_type = match header_type_value {
+    let (data_stream_type, subgroup_stream_header) = match header_type_value {
         Ok(v) => {
             let data_stream_type = DataStreamType::try_from(v as u8)?;
 
             log(std::format!("data_stream_type_value: {:#x?}", data_stream_type).as_str());
 
-            match data_stream_type {
+            let subgroup_stream_header = match data_stream_type {
                 DataStreamType::StreamHeaderSubgroup => {
                     let subgroup_stream_header =
                         subgroup_stream::Header::depacketize(&mut read_cur)?;
@@ -1335,14 +1343,16 @@ async fn object_header_handler(
                         let v = serde_wasm_bindgen::to_value(&subgroup_stream_header).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
+                    Some(subgroup_stream_header)
                 }
                 _ => {
                     // TODO: impl rest of message type
                     log(std::format!("data_stream_type: {:#?}", data_stream_type).as_str());
+                    None
                 }
             };
 
-            data_stream_type
+            (data_stream_type, subgroup_stream_header)
         }
         Err(e) => {
             log("data_stream_type_value is None");
@@ -1350,7 +1360,7 @@ async fn object_header_handler(
         }
     };
 
-    Ok(data_stream_type)
+    Ok((data_stream_type, subgroup_stream_header))
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]
@@ -1367,7 +1377,6 @@ async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut Bytes
             if data_stream_type == DataStreamType::ObjectDatagram {
                 let datagram_object = match datagram::Object::depacketize(&mut read_cur) {
                     Ok(v) => {
-                        log(std::format!("object_id: {:#?}", v.object_id()).as_str());
                         buf.advance(read_cur.position() as usize);
                         v
                     }
@@ -1400,12 +1409,12 @@ async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut Bytes
 #[cfg(feature = "web_sys_unstable_apis")]
 async fn subgroup_stream_object_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
+    subgroup_stream_header: subgroup_stream::Header,
     buf: &mut BytesMut,
 ) -> Result<()> {
     let mut read_cur = Cursor::new(&buf[..]);
     let subgroup_stream_object = match subgroup_stream::Object::depacketize(&mut read_cur) {
         Ok(v) => {
-            log(std::format!("object_id: {:#?}", v.object_id()).as_str());
             buf.advance(read_cur.position() as usize);
             v
         }
@@ -1416,7 +1425,10 @@ async fn subgroup_stream_object_handler(
         }
     };
 
-    if let Some(callback) = callbacks.borrow().subgroup_stream_object_callback() {
+    if let Some(callback) = callbacks
+        .borrow()
+        .get_subgroup_stream_object_callback(subgroup_stream_header.track_alias())
+    {
         let v = serde_wasm_bindgen::to_value(&subgroup_stream_object).unwrap();
         callback.call1(&JsValue::null(), &(v)).unwrap();
     }
@@ -1633,7 +1645,7 @@ struct MOQTCallbacks {
     unsubscribe_callback: Option<js_sys::Function>,
     datagram_object_callback: Option<js_sys::Function>,
     subgroup_stream_header_callback: Option<js_sys::Function>,
-    subgroup_stream_object_callback: Option<js_sys::Function>,
+    subgroup_stream_object_callbacks: HashMap<u64, js_sys::Function>,
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]
@@ -1649,7 +1661,7 @@ impl MOQTCallbacks {
             unsubscribe_callback: None,
             datagram_object_callback: None,
             subgroup_stream_header_callback: None,
-            subgroup_stream_object_callback: None,
+            subgroup_stream_object_callbacks: HashMap::new(),
         }
     }
 
@@ -1721,11 +1733,20 @@ impl MOQTCallbacks {
         self.subgroup_stream_header_callback = Some(callback);
     }
 
-    pub fn subgroup_stream_object_callback(&self) -> Option<js_sys::Function> {
-        self.subgroup_stream_object_callback.clone()
+    pub fn get_subgroup_stream_object_callback(
+        &self,
+        track_alias: u64,
+    ) -> Option<&js_sys::Function> {
+        let callback = self.subgroup_stream_object_callbacks.get(&track_alias);
+        callback
     }
 
-    pub fn set_subgroup_stream_object_callback(&mut self, callback: js_sys::Function) {
-        self.subgroup_stream_object_callback = Some(callback);
+    pub fn set_subgroup_stream_object_callback(
+        &mut self,
+        track_alias: u64,
+        callback: js_sys::Function,
+    ) {
+        self.subgroup_stream_object_callbacks
+            .insert(track_alias, callback);
     }
 }
