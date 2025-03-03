@@ -186,7 +186,8 @@ impl MOQTClient {
         versions: Vec<u64>,
         max_subscribe_id: u64,
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.control_stream_writer.borrow() {
+        let writer = self.control_stream_writer.borrow().clone();
+        if let Some(writer) = writer {
             let role = RoleCase::try_from(role_value).unwrap();
             let versions = versions.iter().map(|v| *v as u32).collect::<Vec<u32>>();
             let mut setup_parameters: Vec<SetupParameter> =
@@ -257,7 +258,8 @@ impl MOQTClient {
         track_namespace: js_sys::Array,
         auth_info: String, // param[0]
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.control_stream_writer.borrow() {
+        let writer = self.control_stream_writer.borrow().clone();
+        if let Some(writer) = writer {
             let auth_info_parameter =
                 VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
 
@@ -305,7 +307,8 @@ impl MOQTClient {
         &self,
         track_namespace: js_sys::Array,
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.control_stream_writer.borrow() {
+        let writer = self.control_stream_writer.borrow().clone();
+        if let Some(writer) = writer {
             let length = track_namespace.length();
             let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
             for i in 0..length {
@@ -349,7 +352,8 @@ impl MOQTClient {
         &self,
         track_namespace: js_sys::Array,
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.control_stream_writer.borrow() {
+        let writer = self.control_stream_writer.borrow().clone();
+        if let Some(writer) = writer {
             // TODO: construct UnAnnounce
             let length = track_namespace.length();
             let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
@@ -391,6 +395,7 @@ impl MOQTClient {
 
     // tmp impl
     #[wasm_bindgen(js_name = sendSubscribeMessage)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_subscribe_message(
         &self,
         subscribe_id: u64,
@@ -406,7 +411,8 @@ impl MOQTClient {
         end_object: u64,
         auth_info: String,
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.control_stream_writer.borrow() {
+        let writer = self.control_stream_writer.borrow().clone();
+        if let Some(writer) = writer {
             // This is equal to `Now example`
             let auth_info =
                 VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
@@ -503,7 +509,8 @@ impl MOQTClient {
         auth_info: String,
         fowarding_preference: String,
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.control_stream_writer.borrow() {
+        let writer = self.control_stream_writer.borrow().clone();
+        if let Some(writer) = writer {
             let auth_info =
                 VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
             let subscription = self
@@ -567,16 +574,14 @@ impl MOQTClient {
                             *self.datagram_writer.borrow_mut() = Some(datagram_writer);
                         }
                         "track" => {
-                            let send_uni_stream = WritableStream::from(
-                                JsFuture::from(
-                                    self.transport
-                                        .borrow()
-                                        .as_ref()
-                                        .unwrap()
-                                        .create_unidirectional_stream(),
-                                )
-                                .await?,
-                            );
+                            let send_uni_stream = self
+                                .transport
+                                .borrow()
+                                .as_ref()
+                                .unwrap()
+                                .create_unidirectional_stream();
+                            let send_uni_stream =
+                                WritableStream::from(JsFuture::from(send_uni_stream).await?);
                             let send_uni_stream_writer = send_uni_stream.get_writer()?;
 
                             let writer_key = (subscribe_id, None);
@@ -605,7 +610,8 @@ impl MOQTClient {
         track_namespace_prefix: js_sys::Array,
         auth_info: String,
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.control_stream_writer.borrow() {
+        let writer = self.control_stream_writer.borrow().clone();
+        if let Some(writer) = writer {
             let auth_info =
                 VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
             let length = track_namespace_prefix.length();
@@ -661,7 +667,8 @@ impl MOQTClient {
         error_code: u64,
         reason_phrase: String,
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.control_stream_writer.borrow() {
+        let writer = self.control_stream_writer.borrow().clone();
+        if let Some(writer) = writer {
             // Find unused subscribe_id and track_alias automatically
             let valid_track_alias = self
                 .subscription_node
@@ -708,7 +715,8 @@ impl MOQTClient {
 
     #[wasm_bindgen(js_name = sendUnsubscribeMessage)]
     pub async fn send_unsubscribe_message(&self, subscribe_id: u64) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.control_stream_writer.borrow() {
+        let writer = self.control_stream_writer.borrow().clone();
+        if let Some(writer) = writer {
             let unsubscribe_message = Unsubscribe::new(subscribe_id);
             let mut unsubscribe_message_buf = BytesMut::new();
             unsubscribe_message.packetize(&mut unsubscribe_message_buf);
@@ -746,7 +754,8 @@ impl MOQTClient {
         publisher_priority: u8,
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
-        if let Some(writer) = &*self.datagram_writer.borrow() {
+        let writer = self.datagram_writer.borrow().clone();
+        if let Some(writer) = writer {
             let datagram_object = datagram::Object::new(
                 track_alias,
                 group_id,
@@ -757,7 +766,7 @@ impl MOQTClient {
             )
             .unwrap();
             let mut datagram_object_buf = BytesMut::new();
-            let _ = datagram_object.packetize(&mut datagram_object_buf);
+            datagram_object.packetize(&mut datagram_object_buf);
 
             let mut buf = Vec::new();
             // Message Type
@@ -779,7 +788,7 @@ impl MOQTClient {
                 }
             }
         } else {
-            return Err(JsValue::from_str("datagram_writer is None"));
+            Err(JsValue::from_str("datagram_writer is None"))
         }
     }
 
@@ -791,34 +800,47 @@ impl MOQTClient {
         subgroup_id: u64,
         publisher_priority: u8,
     ) -> Result<JsValue, JsValue> {
-        let mut stream_writers = self.stream_writers.borrow_mut();
         let subscribe_id = self
             .subscription_node
             .borrow()
             .get_publishing_subscribe_id_by_track_alias(track_alias)
             .unwrap();
         let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
-        if stream_writers.get(&writer_key).is_none() {
-            let send_uni_stream = WritableStream::from(
-                JsFuture::from(
-                    self.transport
-                        .borrow()
-                        .as_ref()
-                        .unwrap()
-                        .create_unidirectional_stream(),
-                )
-                .await?,
-            );
-            let send_uni_stream_writer = send_uni_stream.get_writer()?;
-            stream_writers.insert(writer_key, send_uni_stream_writer);
-        }
 
-        let writer = stream_writers.get(&writer_key).unwrap();
+        let writer = {
+            let stream_writers = self.stream_writers.borrow_mut();
+
+            if !stream_writers.contains_key(&writer_key) {
+                // 新しいwriterを作成
+                let _ = {
+                    let transport = self.transport.borrow();
+                    transport.as_ref().unwrap().create_unidirectional_stream()
+                };
+            };
+            stream_writers.get(&writer_key).cloned()
+        };
+        let writer = if let Some(writer) = writer {
+            writer
+        } else {
+            let uni_stream_future = {
+                let transport = self.transport.borrow();
+                transport.as_ref().unwrap().create_unidirectional_stream()
+            };
+            let send_uni_stream = WritableStream::from(JsFuture::from(uni_stream_future).await?);
+            let send_uni_stream_writer = send_uni_stream.get_writer()?;
+
+            // 作成したwriterを保存
+            self.stream_writers
+                .borrow_mut()
+                .insert(writer_key, send_uni_stream_writer.clone());
+            send_uni_stream_writer
+        };
+
         let subgroup_stream_header_message =
             subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
                 .unwrap();
         let mut subgroup_stream_header_message_buf = BytesMut::new();
-        let _ = subgroup_stream_header_message.packetize(&mut subgroup_stream_header_message_buf);
+        subgroup_stream_header_message.packetize(&mut subgroup_stream_header_message_buf);
 
         let mut buf = Vec::new();
         // Message Type
@@ -841,18 +863,21 @@ impl MOQTClient {
         object_id: u64,
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
-        let stream_writers = self.stream_writers.borrow();
         let subscribe_id = self
             .subscription_node
             .borrow()
             .get_publishing_subscribe_id_by_track_alias(track_alias)
             .unwrap();
         let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
-        if let Some(writer) = stream_writers.get(&writer_key) {
+        let writer = {
+            let stream_writers = self.stream_writers.borrow();
+            stream_writers.get(&writer_key).cloned()
+        };
+        if let Some(writer) = writer {
             let subgroup_stream_object =
                 subgroup_stream::Object::new(object_id, None, object_payload).unwrap();
             let mut subgroup_stream_object_buf = BytesMut::new();
-            let _ = subgroup_stream_object.packetize(&mut subgroup_stream_object_buf);
+            subgroup_stream_object.packetize(&mut subgroup_stream_object_buf);
 
             let mut buf = Vec::new();
             // Message Payload and Payload Length
@@ -871,7 +896,7 @@ impl MOQTClient {
                 }
             }
         } else {
-            return Err(JsValue::from_str("stream_writer is None"));
+            Err(JsValue::from_str("stream_writer is None"))
         }
     }
 
@@ -925,8 +950,7 @@ impl MOQTClient {
 
         // For receiving object messages as streams
         let incoming_uni_stream = transport.incoming_unidirectional_streams();
-        let incoming_uni_stream_reader =
-            ReadableStreamDefaultReader::new(&&incoming_uni_stream.into())?;
+        let incoming_uni_stream_reader = ReadableStreamDefaultReader::new(&incoming_uni_stream)?;
         let callbacks = self.callbacks.clone();
         *self.stream_writers.borrow_mut() = HashMap::new();
 
@@ -1024,15 +1048,15 @@ async fn bi_directional_stream_read_thread(
 async fn control_message_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     subscription_node: Rc<RefCell<SubscriptionNode>>,
-    mut buf: &mut BytesMut,
+    buf: &mut BytesMut,
 ) -> Result<()> {
-    let message_type_value = read_variable_integer_from_buffer(&mut buf);
+    let message_type_value = read_variable_integer_from_buffer(buf);
 
     // TODO: Check stream type
     match message_type_value {
         Ok(v) => {
             let message_type = ControlMessageType::try_from(v as u8)?;
-            let payload_length = read_variable_integer_from_buffer(&mut buf)?;
+            let payload_length = read_variable_integer_from_buffer(buf)?;
             let mut payload_buf = buf.split_to(payload_length as usize);
 
             log(std::format!("message_type_value: {:#?}", message_type).as_str());
@@ -1067,7 +1091,7 @@ async fn control_message_handler(
                             .as_str(),
                     );
 
-                    let _ = subscription_node
+                    subscription_node
                         .borrow_mut()
                         .set_namespace(announce_ok_message.track_namespace().clone());
 
@@ -1129,7 +1153,7 @@ async fn control_message_handler(
                             .as_str(),
                     );
 
-                    let _ = subscription_node
+                    subscription_node
                         .borrow_mut()
                         .activate_as_subscriber(subscribe_ok_message.subscribe_id());
 
@@ -1160,7 +1184,7 @@ async fn control_message_handler(
                     )
                     .as_str());
 
-                    let _ = subscription_node.borrow_mut().set_namespace_prefix(
+                    subscription_node.borrow_mut().set_namespace_prefix(
                         subscribe_announces_ok_message
                             .track_namespace_prefix()
                             .clone(),
@@ -1233,7 +1257,7 @@ async fn datagram_read_thread(
             buf.put_u8(i);
         }
 
-        while buf.len() > 0 {
+        while !buf.is_empty() {
             if let Err(e) = datagram_handler(callbacks.clone(), &mut buf).await {
                 log(std::format!("error: {:#?}", e).as_str());
                 break;
@@ -1274,7 +1298,7 @@ async fn uni_directional_stream_read_thread(
             buf.put_u8(i);
         }
 
-        while buf.len() > 0 {
+        while !buf.is_empty() {
             if subgroup_stream_header.is_none() {
                 let result = match object_header_handler(callbacks.clone(), &mut buf).await {
                     Ok(v) => v,
@@ -1292,7 +1316,7 @@ async fn uni_directional_stream_read_thread(
                         return Err(js_sys::Error::new(&msg).into());
                     }
                     DataStreamType::StreamHeaderSubgroup => {
-                        if let Err(e) = subgroup_stream_object_handler(
+                        if let Err(_e) = subgroup_stream_object_handler(
                             callbacks.clone(),
                             subgroup_stream_header.clone().unwrap(),
                             &mut buf,
@@ -1393,7 +1417,7 @@ async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut Bytes
                 }
             } else {
                 let msg = "format error".to_string();
-                log(std::format!("{}", msg).as_str());
+                log(std::format!("msg: {}", msg).as_str());
                 return Err(anyhow::anyhow!(msg));
             }
         }
@@ -1479,6 +1503,7 @@ impl SubscriptionNode {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn set_subscribing_subscription(
         &mut self,
         subscribe_id: u64,
@@ -1510,6 +1535,7 @@ impl SubscriptionNode {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn set_publishing_subscription(
         &mut self,
         subscribe_id: u64,
