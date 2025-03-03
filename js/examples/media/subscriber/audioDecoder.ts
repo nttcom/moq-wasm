@@ -1,5 +1,6 @@
 function sendAudioDataMessage(audioData: AudioData): void {
   self.postMessage({ audioData })
+  audioData.close()
 }
 
 let audioDecoder: AudioDecoder | undefined
