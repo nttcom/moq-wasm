@@ -15,21 +15,39 @@ function setUpStartGetUserMediaButton() {
   })
 }
 
-const LatestMediaTrackInfo = {
+interface Subgroup {
+  isSendedSubgroupHeader: boolean
+}
+
+const LatestMediaTrackInfo: {
+  video: {
+    objectId: bigint
+    groupId: bigint
+    subgroups: {}
+  }
+  audio: {
+    objectId: bigint
+    groupId: bigint
+    subgroups: { [key: number]: Subgroup }
+  }
+} = {
   video: {
     objectId: 0n,
     groupId: 0n,
-    subgroupId: 0n,
-    isSendedSubgroupHeader: false
+    subgroups: {
+      0: {},
+      1: {},
+      2: {}
+    }
   },
   audio: {
     objectId: 0n,
     groupId: 0n,
-    subgroupId: 0n,
-    isSendedSubgroupHeader: false
+    subgroups: {
+      0: { isSendedSubgroupHeader: false }
+    }
   }
 }
-
 const videoEncoderWorker = new Worker('videoEncoder.ts')
 async function handleVideoChunkMessage(
   chunk: EncodedVideoChunk,
@@ -39,36 +57,37 @@ async function handleVideoChunkMessage(
   const form = getFormElement()
   const trackAlias = form['video-object-track-alias'].value
   const publisherPriority = form['video-publisher-priority'].value
-  // const key = `${groupId}:${subgroupId}`
 
+  // Increment the groupId and reset the objectId at the timing of the keyframe
+  // Then, resend the SubgroupStreamHeader
   if (chunk.type === 'key') {
     LatestMediaTrackInfo['video'].groupId++
     LatestMediaTrackInfo['video'].objectId = BigInt(0)
-    LatestMediaTrackInfo['video'].isSendedSubgroupHeader = false
-  } else {
-    LatestMediaTrackInfo['video'].objectId++
-  }
 
-  if (!LatestMediaTrackInfo['video'].isSendedSubgroupHeader) {
-    await client.sendSubgroupStreamHeaderMessage(
-      BigInt(trackAlias),
-      LatestMediaTrackInfo['video'].groupId,
-      LatestMediaTrackInfo['video'].subgroupId,
-      publisherPriority
-    )
-    console.log('send subgroup stream header')
-    LatestMediaTrackInfo['video'].isSendedSubgroupHeader = true
+    const subgroupKeys = Object.keys(LatestMediaTrackInfo['video'].subgroups).map(BigInt)
+    for (const subgroup of subgroupKeys) {
+      await client.sendSubgroupStreamHeaderMessage(
+        BigInt(trackAlias),
+        LatestMediaTrackInfo['video'].groupId,
+        // @ts-ignore - The SVC property is not defined in the standard but actually exists
+        subgroup,
+        publisherPriority
+      )
+      console.log('send subgroup stream header')
+    }
   }
 
   sendVideoObjectMessage(
     trackAlias,
     LatestMediaTrackInfo['video'].groupId,
-    LatestMediaTrackInfo['video'].subgroupId,
+    // @ts-ignore - The SVC property is not defined in the standard but actually exists
+    BigInt(metadata?.svc.temporalLayerId), // = subgroupId
     LatestMediaTrackInfo['video'].objectId,
     chunk,
     metadata,
     client
   )
+  LatestMediaTrackInfo['video'].objectId++
 }
 
 const audioEncoderWorker = new Worker('audioEncoder.ts')
@@ -80,29 +99,29 @@ async function handleAudioChunkMessage(
   const form = getFormElement()
   const trackAlias = form['audio-object-track-alias'].value
   const publisherPriority = form['audio-publisher-priority'].value
-  // const key = `${groupId}:${subgroupId}`
+  const subgroupId = 0
 
-  if (!LatestMediaTrackInfo['audio'].isSendedSubgroupHeader) {
+  if (!LatestMediaTrackInfo['audio']['subgroups'][subgroupId].isSendedSubgroupHeader) {
     await client.sendSubgroupStreamHeaderMessage(
       BigInt(trackAlias),
       LatestMediaTrackInfo['audio'].groupId,
-      LatestMediaTrackInfo['audio'].subgroupId,
+      BigInt(subgroupId),
       publisherPriority
     )
     console.log('send subgroup stream header')
-    LatestMediaTrackInfo['audio'].isSendedSubgroupHeader = true
+    LatestMediaTrackInfo['audio']['subgroups'][subgroupId].isSendedSubgroupHeader = true
   }
 
-  LatestMediaTrackInfo['audio'].objectId++
   sendAudioObjectMessage(
     trackAlias,
     LatestMediaTrackInfo['audio'].groupId,
-    LatestMediaTrackInfo['audio'].subgroupId,
+    BigInt(subgroupId),
     LatestMediaTrackInfo['audio'].objectId,
     chunk,
     metadata,
     client
   )
+  LatestMediaTrackInfo['audio'].objectId++
 }
 
 const authInfo = 'secret'
@@ -181,6 +200,7 @@ function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
         chunk: EncodedVideoChunk
         metadata: EncodedVideoChunkMetadata | undefined
       }
+      console.log(chunk, metadata)
       handleVideoChunkMessage(chunk, metadata, client)
     }
     audioEncoderWorker.onmessage = async (e: MessageEvent) => {
