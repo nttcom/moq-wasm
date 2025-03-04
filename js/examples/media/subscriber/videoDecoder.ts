@@ -9,13 +9,14 @@ async function initializeVideoDecoder() {
     output: sendVideoFrameMessage,
     error: (e: any) => {
       console.log(e.message)
+      videoDecoder = undefined
     }
   }
   const config = {
     codec: 'av01.0.04M.08',
     width: 640,
     height: 480,
-    scalabilityMode: 'L1T1'
+    scalabilityMode: 'L1T3'
   }
   const decoder = new VideoDecoder(init)
   decoder.configure(config)
@@ -31,11 +32,8 @@ namespace VideoDecoder {
   }
 }
 
+let keyframeDecoded = false
 self.onmessage = async (event) => {
-  if (!videoDecoder) {
-    videoDecoder = await initializeVideoDecoder()
-  }
-
   const subgroupStreamObject: VideoDecoder.SubgroupStreamObject = {
     objectId: event.data.subgroupStreamObject.object_id,
     objectPayloadLength: event.data.subgroupStreamObject.object_payload_length,
@@ -54,6 +52,14 @@ self.onmessage = async (event) => {
     duration: objectPayload.chunk.duration,
     data: new Uint8Array(objectPayload.chunk.data)
   })
+
+  if (!videoDecoder) {
+    videoDecoder = await initializeVideoDecoder()
+    // The first frame after initializing the decoder must be a keyframe
+    if (objectPayload.chunk.type !== 'key') {
+      return
+    }
+  }
 
   await videoDecoder.decode(encodedVideoChunk)
 }

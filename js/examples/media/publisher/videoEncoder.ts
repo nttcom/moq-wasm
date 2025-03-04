@@ -14,7 +14,7 @@ async function initializeVideoEncoder() {
     width: 640,
     height: 480,
     bitrate: 2_000_000, // 2 Mbps
-    scalabilityMode: 'L1T1',
+    scalabilityMode: 'L1T3',
     framerate: 30
   }
   const encoder = new VideoEncoder(init)

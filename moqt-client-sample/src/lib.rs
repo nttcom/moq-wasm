@@ -887,7 +887,14 @@ impl MOQTClient {
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(ok) => {
-                    log(std::format!("sent: object id: {:#?}", object_id).as_str());
+                    log(std::format!(
+                        "sent: trackAlias: {:#?} object . group_id: {:#?} subgroup_id: {:#?} object_id: {:#?}",
+                        track_alias,
+                        group_id,
+                        subgroup_id,
+                        object_id,
+                    )
+                    .as_str());
                     Ok(ok)
                 }
                 Err(e) => {
