@@ -18,6 +18,6 @@
     "vite-plugin-wasm-pack": "^0.1.12"
   },
   "dependencies": {
-    "@types/dom-mediacapture-transform": "^0.1.10"
+    "@types/dom-mediacapture-transform": "^0.1.11"
   }
 }
