@@ -8,5 +8,5 @@ pub enum ObjectStatus {
     DoesNotExist = 0x1,
     EndOfGroup = 0x3,
     EndOfTrackAndGroup = 0x4,
-    EndOfSubgroup = 0x5,
+    EndOfTrack = 0x5,
 }
