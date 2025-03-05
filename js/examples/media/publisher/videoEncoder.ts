@@ -39,9 +39,9 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
       console.error('videoEncoder.encodeQueueSize > 2', videoEncoder.encodeQueueSize)
       videoFrame.close()
     } else {
-      frameCounter++
       const keyFrame = frameCounter % 150 == 0
       videoEncoder.encode(videoFrame, { keyFrame })
+      frameCounter++
       videoFrame.close()
     }
   }
