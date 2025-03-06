@@ -875,6 +875,103 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     .unwrap();
                 resp.send(Ok(range)).unwrap();
             }
+            SetUpstreamStreamIdToGroup {
+                upstream_session_id,
+                upstream_subscribe_id,
+                group_id,
+                stream_id,
+                resp,
+            } => {
+                // Return an error if the publisher does not exist
+                let consumer = match consumers.get_mut(&upstream_session_id) {
+                    Some(consumer) => consumer,
+                    None => {
+                        let msg = "publisher not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                match consumer.set_stream_id_to_group(upstream_subscribe_id, group_id, stream_id) {
+                    Ok(_) => resp.send(Ok(())).unwrap(),
+                    Err(err) => {
+                        tracing::error!("set_stream_id_to_group: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                    }
+                }
+            }
+            GetUpstreamStreamIdsFromGroup {
+                upstream_session_id,
+                upstream_subscribe_id,
+                group_id,
+                resp,
+            } => {
+                // Return an error if the publisher does not exist
+                let consumer = match consumers.get(&upstream_session_id) {
+                    Some(consumer) => consumer,
+                    None => {
+                        let msg = "publisher not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let stream_ids = consumer
+                    .get_stream_ids_from_group(upstream_subscribe_id, group_id)
+                    .unwrap();
+                resp.send(Ok(stream_ids)).unwrap();
+            }
+            SetDownstreamStreamIdToGroup {
+                downstream_session_id,
+                downstream_subscribe_id,
+                group_id,
+                stream_id,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get_mut(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                match producer.set_stream_id_to_group(downstream_subscribe_id, group_id, stream_id)
+                {
+                    Ok(_) => resp.send(Ok(())).unwrap(),
+                    Err(err) => {
+                        tracing::error!("set_stream_id_to_group: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                    }
+                }
+            }
+            GetDownstreamStreamIdsFromGroup {
+                downstream_session_id,
+                downstream_subscribe_id,
+                group_id,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let stream_ids = producer
+                    .get_stream_ids_from_group(downstream_subscribe_id, group_id)
+                    .unwrap();
+                resp.send(Ok(stream_ids)).unwrap();
+            }
             GetRelatedSubscribers {
                 upstream_session_id,
                 upstream_subscribe_id,

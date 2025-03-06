@@ -196,6 +196,32 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
     ) -> Result<Option<Range>>;
+    async fn set_upstream_stream_id_to_group(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        group_id: u64,
+        stream_id: u64,
+    ) -> Result<()>;
+    async fn get_upstream_stream_ids_from_group(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        group_id: u64,
+    ) -> Result<Vec<u64>>;
+    async fn set_downstream_stream_id_to_group(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        group_id: u64,
+        stream_id: u64,
+    ) -> Result<()>;
+    async fn get_downstream_stream_ids_from_group(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        group_id: u64,
+    ) -> Result<Vec<u64>>;
     async fn get_related_subscribers(
         &self,
         upstream_session_id: usize,

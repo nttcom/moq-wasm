@@ -99,6 +99,14 @@ impl Subscription {
     pub fn get_group_order(&self) -> GroupOrder {
         self.group_order
     }
+
+    pub fn set_stream_id_to_group(&mut self, group_id: u64, stream_id: u64) {
+        self.track.set_stream_id_to_group(group_id, stream_id);
+    }
+
+    pub fn get_stream_ids_from_group(&self, group_id: u64) -> &Vec<u64> {
+        self.track.get_stream_ids_from_group(group_id)
+    }
 }
 
 #[cfg(test)]
@@ -383,5 +391,35 @@ mod success {
         let result_forwarding_preference = subscription.get_forwarding_preference().unwrap();
 
         assert_eq!(result_forwarding_preference, forwarding_preference);
+    }
+
+    #[test]
+    fn subgroup_id() {
+        let variable = test_helper_fn::common_subscription_variable();
+
+        let mut subscription = Subscription::new(
+            variable.track_alias,
+            variable.track_namespace,
+            variable.track_name,
+            variable.subscriber_priority,
+            variable.group_order,
+            variable.filter_type,
+            variable.start_group,
+            variable.start_object,
+            variable.end_group,
+            variable.end_object,
+            None,
+        );
+
+        let group_id = 0;
+        let subgroup_ids = vec![0, 1, 2];
+
+        subscription.set_stream_id_to_group(group_id, subgroup_ids[0]);
+        subscription.set_stream_id_to_group(group_id, subgroup_ids[1]);
+        subscription.set_stream_id_to_group(group_id, subgroup_ids[2]);
+
+        let result = subscription.get_stream_ids_from_group(group_id);
+
+        assert_eq!(result, &subgroup_ids);
     }
 }
