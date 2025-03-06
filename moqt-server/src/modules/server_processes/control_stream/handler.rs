@@ -4,7 +4,7 @@ use crate::modules::{
     message_handlers::control_message::{control_message_handler, MessageProcessResult},
     moqt_client::MOQTClient,
     pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
-    send_stream_dispatcher::SendStreamDispatcher,
+    control_message_dispatcher::ControlMessageDispatcher,
 };
 use anyhow::Result;
 use bytes::BytesMut;
@@ -27,7 +27,7 @@ pub(crate) async fn handle_control_stream(
 
     let mut pubsub_relation_manager =
         PubSubRelationManagerWrapper::new(senders.pubsub_relation_tx().clone());
-    let mut send_stream_dispatcher = SendStreamDispatcher::new(senders.send_stream_tx().clone());
+    let mut control_message_dispatcher = ControlMessageDispatcher::new(senders.control_message_dispatch_tx().clone());
 
     let mut object_cache_storage =
         crate::modules::object_cache_storage::wrapper::ObjectCacheStorageWrapper::new(
@@ -57,7 +57,7 @@ pub(crate) async fn handle_control_stream(
                 &mut client,
                 senders.start_forwarder_txes().clone(),
                 &mut pubsub_relation_manager,
-                &mut send_stream_dispatcher,
+                &mut control_message_dispatcher,
                 &mut object_cache_storage,
             )
             .await;

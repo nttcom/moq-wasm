@@ -12,13 +12,12 @@ use super::{
     },
 };
 use crate::{
-    modules::{moqt_client::MOQTClient, send_stream_dispatcher::SendStreamDispatchCommand},
+    modules::{control_message_dispatcher::ControlMessageDispatchCommand, moqt_client::MOQTClient},
     SubgroupStreamId,
 };
 use anyhow::{bail, Result};
 use moqt_core::{
-    constants::{StreamDirection, TerminationErrorCode},
-    data_stream_type::DataStreamType,
+    constants::TerminationErrorCode, data_stream_type::DataStreamType,
     messages::moqt_payload::MOQTPayload,
 };
 use std::sync::Arc;
@@ -55,10 +54,9 @@ async fn spawn_control_stream_threads(
 
     let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
     senders
-        .send_stream_tx()
-        .send(SendStreamDispatchCommand::Set {
+        .control_message_dispatch_tx()
+        .send(ControlMessageDispatchCommand::Set {
             session_id: stable_id,
-            stream_direction: StreamDirection::Bi,
             sender: message_tx,
         })
         .await?;

@@ -2,10 +2,10 @@ use super::senders::{SenderToOtherConnectionThread, SendersToManagementThread};
 use crate::{
     modules::{
         buffer_manager::BufferCommand,
+        control_message_dispatcher::ControlMessageDispatchCommand,
         moqt_client::MOQTClient,
         object_cache_storage::wrapper::ObjectCacheStorageWrapper,
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
-        send_stream_dispatcher::SendStreamDispatchCommand,
         server_processes::{
             senders::{SenderToSelf, Senders},
             thread_starters::select_spawn_thread,
@@ -124,8 +124,8 @@ impl SessionHandler {
 
         // Delete senders to the client
         senders
-            .send_stream_tx()
-            .send(SendStreamDispatchCommand::Delete {
+            .control_message_dispatch_tx()
+            .send(ControlMessageDispatchCommand::Delete {
                 session_id: stable_id,
             })
             .await?;

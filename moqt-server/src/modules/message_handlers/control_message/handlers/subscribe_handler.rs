@@ -1,5 +1,6 @@
 use crate::{
     modules::{
+        control_message_dispatcher::ControlMessageDispatcher,
         moqt_client::MOQTClient,
         object_cache_storage::{cache::CacheKey, wrapper::ObjectCacheStorageWrapper},
     },
@@ -7,7 +8,6 @@ use crate::{
 };
 use anyhow::{bail, Result};
 use moqt_core::{
-    constants::StreamDirection,
     data_stream_type::DataStreamType,
     messages::{
         control_messages::{
@@ -19,7 +19,6 @@ use moqt_core::{
     },
     models::tracks::ForwardingPreference,
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    SendStreamDispatcherRepository,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
@@ -28,7 +27,7 @@ pub(crate) async fn subscribe_handler(
     subscribe_message: Subscribe,
     client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
     start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
 ) -> Result<Option<SubscribeError>> {
@@ -139,12 +138,8 @@ pub(crate) async fn subscribe_handler(
         let subscribe_ok_payload: Box<dyn MOQTPayload> = Box::new(subscribe_ok_message.clone());
 
         // TODO: Unify the method to send a message to the opposite client itself
-        send_stream_dispatcher_repository
-            .transfer_message_to_send_stream_thread(
-                client.id(),
-                subscribe_ok_payload,
-                StreamDirection::Bi,
-            )
+        control_message_dispatcher_repository
+            .transfer_message_to_control_message_sender_thread(client.id(), subscribe_ok_payload)
             .await?;
 
         if subscribe_ok_message.content_exists() {
@@ -217,12 +212,8 @@ pub(crate) async fn subscribe_handler(
             // Notify to the publisher about the SUBSCRIBE message
             // TODO: Wait for the SUBSCRIBE_OK message to be returned on a transaction
             // TODO: validate Timeout
-            match send_stream_dispatcher_repository
-                .transfer_message_to_send_stream_thread(
-                    session_id,
-                    forwarding_subscribe_message,
-                    StreamDirection::Bi,
-                )
+            match control_message_dispatcher_repository
+                .transfer_message_to_control_message_sender_thread(session_id, forwarding_subscribe_message)
                 .await
             {
                 Ok(_) => {
@@ -543,6 +534,9 @@ mod success {
     use crate::SenderToOpenSubscription;
     use crate::{
         modules::{
+            control_message_dispatcher::{
+                control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+            },
             moqt_client::MOQTClient,
             object_cache_storage::{
                 cache::CacheKey, commands::ObjectCacheStorageCommand,
@@ -553,9 +547,6 @@ mod success {
                 manager::pubsub_relation_manager,
                 wrapper::{test_helper_fn, PubSubRelationManagerWrapper},
             },
-            send_stream_dispatcher::{
-                send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-            },
             server_processes::senders,
         },
         SubgroupStreamId,
@@ -563,7 +554,6 @@ mod success {
     use moqt_core::messages::data_streams::subgroup_stream;
     use moqt_core::models::tracks::ForwardingPreference;
     use moqt_core::{
-        constants::StreamDirection,
         data_stream_type::DataStreamType,
         messages::{
             control_messages::{
@@ -639,18 +629,18 @@ mod success {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -670,7 +660,7 @@ mod success {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -776,25 +766,24 @@ mod success {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx.clone(),
             })
             .await;
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: downstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -814,7 +803,7 @@ mod success {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -926,25 +915,24 @@ mod success {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx.clone(),
             })
             .await;
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: downstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -1007,7 +995,7 @@ mod success {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -1039,6 +1027,9 @@ mod success {
 mod failure {
     use super::subscribe_handler;
     use crate::modules::{
+        control_message_dispatcher::{
+            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+        },
         moqt_client::MOQTClient,
         object_cache_storage::{
             commands::ObjectCacheStorageCommand, storage::object_cache_storage,
@@ -1048,14 +1039,10 @@ mod failure {
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
             wrapper::PubSubRelationManagerWrapper,
         },
-        send_stream_dispatcher::{
-            send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-        },
         server_processes::senders,
     };
     use crate::SenderToOpenSubscription;
     use moqt_core::{
-        constants::StreamDirection,
         messages::{
             control_messages::{
                 subscribe::{FilterType, GroupOrder, Subscribe},
@@ -1145,18 +1132,18 @@ mod failure {
             )
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -1176,7 +1163,7 @@ mod failure {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -1246,12 +1233,13 @@ mod failure {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher (without set sender)
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher (without set sender)
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -1268,7 +1256,7 @@ mod failure {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -1337,18 +1325,18 @@ mod failure {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -1368,7 +1356,7 @@ mod failure {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -1451,18 +1439,18 @@ mod failure {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -1482,7 +1470,7 @@ mod failure {
             subscribes[0].clone(),
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes.clone(),
         )
@@ -1492,7 +1480,7 @@ mod failure {
             subscribes[1].clone(),
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -1568,18 +1556,18 @@ mod failure {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -1599,7 +1587,7 @@ mod failure {
             subscribes[0].clone(),
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes.clone(),
         )
@@ -1609,7 +1597,7 @@ mod failure {
             subscribes[1].clone(),
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )

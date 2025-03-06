@@ -1,17 +1,17 @@
-use crate::modules::moqt_client::MOQTClient;
+use crate::modules::{
+    control_message_dispatcher::ControlMessageDispatcher, moqt_client::MOQTClient,
+};
 use anyhow::Result;
 use moqt_core::{
-    constants::StreamDirection,
     messages::control_messages::{
         announce::Announce, announce_error::AnnounceError, announce_ok::AnnounceOk,
     },
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    SendStreamDispatcherRepository,
 };
 
 async fn forward_announce_to_subscribers(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
     track_namespace: Vec<String>,
 ) -> Result<()> {
     let downstream_session_ids = match pubsub_relation_manager_repository
@@ -33,12 +33,8 @@ async fn forward_announce_to_subscribers(
             Ok(true) => {}
             Ok(false) => {
                 let announce_message = Box::new(Announce::new(track_namespace.clone(), vec![]));
-                let _ = send_stream_dispatcher_repository
-                    .transfer_message_to_send_stream_thread(
-                        downstream_session_id,
-                        announce_message,
-                        StreamDirection::Bi,
-                    )
+                let _ = control_message_dispatcher_repository
+                    .transfer_message_to_control_message_sender_thread(downstream_session_id, announce_message)
                     .await;
             }
             Err(err) => {
@@ -54,7 +50,7 @@ pub(crate) async fn announce_handler(
     announce_message: Announce,
     client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
 ) -> Result<Option<AnnounceError>> {
     tracing::trace!("announce_handler start.");
     tracing::debug!("announce_message: {:#?}", announce_message);
@@ -71,18 +67,14 @@ pub(crate) async fn announce_handler(
 
             // TODO: Unify the method to send a message to the opposite client itself
             let announce_ok_message = Box::new(AnnounceOk::new(track_namespace.clone()));
-            let _ = send_stream_dispatcher_repository
-                .transfer_message_to_send_stream_thread(
-                    client.id(),
-                    announce_ok_message,
-                    StreamDirection::Bi,
-                )
+            let _ = control_message_dispatcher_repository
+                .transfer_message_to_control_message_sender_thread(client.id(), announce_ok_message)
                 .await;
 
             // If subscribers already sent SUBSCRIBE_ANNOUNCES, send ANNOUNCE message to them
             match forward_announce_to_subscribers(
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher_repository,
                 track_namespace.clone(),
             )
             .await
@@ -108,17 +100,16 @@ pub(crate) async fn announce_handler(
 #[cfg(test)]
 mod success {
     use super::announce_handler;
+    use crate::modules::control_message_dispatcher::{
+        control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+    };
     use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
     };
-    use crate::modules::send_stream_dispatcher::{
-        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-    };
     use crate::modules::server_processes::senders;
     use bytes::BytesMut;
-    use moqt_core::constants::StreamDirection;
     use moqt_core::messages::control_messages::{
         announce::Announce,
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
@@ -173,25 +164,26 @@ mod success {
             )
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx.clone(),
             })
             .await;
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: downstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -201,7 +193,7 @@ mod success {
             announce_message,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
         )
         .await
         .unwrap();
@@ -257,18 +249,20 @@ mod success {
             .set_downstream_announced_namespace(track_namespace.clone(), downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -278,7 +272,7 @@ mod success {
             announce_message,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
         )
         .await
         .unwrap();
@@ -290,17 +284,16 @@ mod success {
 #[cfg(test)]
 mod failure {
     use super::announce_handler;
+    use crate::modules::control_message_dispatcher::{
+        control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+    };
     use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
     };
-    use crate::modules::send_stream_dispatcher::{
-        send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-    };
     use crate::modules::server_processes::senders;
     use bytes::BytesMut;
-    use moqt_core::constants::StreamDirection;
     use moqt_core::messages::control_messages::{
         announce::Announce,
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
@@ -350,18 +343,20 @@ mod failure {
             )
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -371,7 +366,7 @@ mod failure {
             announce_message,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
         )
         .await;
 
