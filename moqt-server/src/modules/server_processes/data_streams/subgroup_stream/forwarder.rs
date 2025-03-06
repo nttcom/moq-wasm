@@ -118,6 +118,7 @@ impl SubgroupStreamObjectForwarder {
             })
             .await?;
 
+        // Send RESET_STREAM frame to the subscriber
         self.stream.finish().await?;
 
         tracing::info!("SubgroupStreamObjectForwarder finished");

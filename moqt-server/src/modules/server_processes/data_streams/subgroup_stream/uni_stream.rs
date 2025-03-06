@@ -34,6 +34,8 @@ impl UniRecvStream {
     }
 
     pub(crate) fn stop(self) {
+        // Use code 0 for normal termination
+        // TODO: Use accurate error code
         let code = VarInt::from_u32(0);
         self.recv_stream.stop(code);
     }
