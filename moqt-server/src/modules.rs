@@ -7,3 +7,4 @@ pub(crate) mod moqt_client;
 pub(crate) mod object_cache_storage;
 pub(crate) mod pubsub_relation_manager;
 pub(crate) mod server_processes;
+pub(crate) mod stream_signal_dispatcher;

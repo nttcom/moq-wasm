@@ -770,6 +770,102 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         }
     }
 
+    async fn set_upstream_stream_id_to_group(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        group_id: u64,
+        stream_id: u64,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
+        let cmd = PubSubRelationCommand::SetUpstreamStreamIdToGroup {
+            upstream_session_id,
+            upstream_subscribe_id,
+            group_id,
+            stream_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => bail!(err),
+        }
+    }
+
+    async fn get_upstream_stream_ids_from_group(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        group_id: u64,
+    ) -> Result<Vec<u64>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Vec<u64>>>();
+        let cmd = PubSubRelationCommand::GetUpstreamStreamIdsFromGroup {
+            upstream_session_id,
+            upstream_subscribe_id,
+            group_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(stream_ids) => Ok(stream_ids),
+            Err(err) => bail!(err),
+        }
+    }
+
+    async fn set_downstream_stream_id_to_group(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        group_id: u64,
+        stream_id: u64,
+    ) -> Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
+        let cmd = PubSubRelationCommand::SetDownstreamStreamIdToGroup {
+            downstream_session_id,
+            downstream_subscribe_id,
+            group_id,
+            stream_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => bail!(err),
+        }
+    }
+
+    async fn get_downstream_stream_ids_from_group(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        group_id: u64,
+    ) -> Result<Vec<u64>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Vec<u64>>>();
+        let cmd = PubSubRelationCommand::GetDownstreamStreamIdsFromGroup {
+            downstream_session_id,
+            downstream_subscribe_id,
+            group_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(stream_ids) => Ok(stream_ids),
+            Err(err) => bail!(err),
+        }
+    }
+
     async fn get_related_subscribers(
         &self,
         upstream_session_id: usize,
@@ -2580,7 +2676,6 @@ mod success {
             .await;
         assert!(result.is_ok());
 
-        // Assert that the forwarding preference is set
         let (consumers, _, _) =
             test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
         let consumer = consumers.get(&upstream_session_id).unwrap();
@@ -2704,7 +2799,6 @@ mod success {
             .await;
         assert!(result.is_ok());
 
-        // Assert that the forwarding preference is set
         let (_, producers, _) =
             test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
         let producer = producers.get(&downstream_session_id).unwrap();
@@ -2919,6 +3013,262 @@ mod success {
         assert_eq!(result_range.start_object(), start_object);
         assert_eq!(result_range.end_group(), end_group);
         assert_eq!(result_range.end_object(), end_object);
+    }
+
+    #[tokio::test]
+    async fn set_upstream_stream_id_to_group() {
+        let max_subscribe_id = 10;
+        let upstream_session_id = 1;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+        let group_id = 1;
+        let stream_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_publisher(max_subscribe_id, upstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .await;
+        let (upstream_subscribe_id, _) = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
+
+        let _ = pubsub_relation_manager
+            .set_upstream_stream_id_to_group(
+                upstream_session_id,
+                upstream_subscribe_id,
+                group_id,
+                stream_id,
+            )
+            .await;
+
+        // Assert that the subgroup id is set
+        let (consumers, _, _) =
+            test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
+        let consumer = consumers.get(&upstream_session_id).unwrap();
+        let subscription = consumer
+            .get_subscription(upstream_subscribe_id)
+            .unwrap()
+            .unwrap();
+
+        let result_stream_id = subscription.get_stream_ids_from_group(group_id);
+
+        assert_eq!(result_stream_id[0], stream_id);
+    }
+
+    #[tokio::test]
+    async fn get_upstream_stream_ids_from_group() {
+        let max_subscribe_id = 10;
+        let upstream_session_id = 1;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+        let group_id = 1;
+        let stream_ids: Vec<u64> = vec![5, 6, 7];
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_publisher(max_subscribe_id, upstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_upstream_announced_namespace(track_namespace.clone(), upstream_session_id)
+            .await;
+        let (upstream_subscribe_id, _) = pubsub_relation_manager
+            .set_upstream_subscription(
+                upstream_session_id,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await
+            .unwrap();
+
+        for stream_id in stream_ids.iter() {
+            let _ = pubsub_relation_manager
+                .set_upstream_stream_id_to_group(
+                    upstream_session_id,
+                    upstream_subscribe_id,
+                    group_id,
+                    *stream_id,
+                )
+                .await;
+        }
+
+        let result_stream_ids = pubsub_relation_manager
+            .get_upstream_stream_ids_from_group(
+                upstream_session_id,
+                upstream_subscribe_id,
+                group_id,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result_stream_ids, stream_ids);
+    }
+
+    #[tokio::test]
+    async fn set_downstream_stream_id_to_group() {
+        let max_subscribe_id = 10;
+        let downstream_session_id = 1;
+        let subscribe_id = 0;
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+        let group_id = 1;
+        let stream_id = 1;
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_downstream_subscription(
+                downstream_session_id,
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+
+        let _ = pubsub_relation_manager
+            .set_downstream_stream_id_to_group(
+                downstream_session_id,
+                subscribe_id,
+                group_id,
+                stream_id,
+            )
+            .await;
+
+        let (_, producers, _) =
+            test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
+        let producer = producers.get(&downstream_session_id).unwrap();
+        let subscription = producer.get_subscription(subscribe_id).unwrap().unwrap();
+
+        let result_stream_id = subscription.get_stream_ids_from_group(group_id);
+
+        assert_eq!(result_stream_id[0], stream_id);
+    }
+
+    #[tokio::test]
+    async fn get_downstream_stream_ids_from_group() {
+        let max_subscribe_id = 10;
+        let downstream_session_id = 1;
+        let subscribe_id = 0;
+        let track_alias = 0;
+        let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
+        let track_name = "track_name".to_string();
+        let subscriber_priority = 0;
+        let group_order = GroupOrder::Ascending;
+        let filter_type = FilterType::AbsoluteStart;
+        let start_group = Some(0);
+        let start_object = Some(0);
+        let end_group = None;
+        let end_object = None;
+        let group_id = 1;
+        let stream_ids: Vec<u64> = vec![5, 6, 7];
+
+        // Start track management thread
+        let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
+        tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
+
+        let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
+        let _ = pubsub_relation_manager
+            .setup_subscriber(max_subscribe_id, downstream_session_id)
+            .await;
+        let _ = pubsub_relation_manager
+            .set_downstream_subscription(
+                downstream_session_id,
+                subscribe_id,
+                track_alias,
+                track_namespace,
+                track_name,
+                subscriber_priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+                end_object,
+            )
+            .await;
+
+        for stream_id in stream_ids.iter() {
+            let _ = pubsub_relation_manager
+                .set_downstream_stream_id_to_group(
+                    downstream_session_id,
+                    subscribe_id,
+                    group_id,
+                    *stream_id,
+                )
+                .await;
+        }
+
+        let result_stream_ids = pubsub_relation_manager
+            .get_downstream_stream_ids_from_group(downstream_session_id, subscribe_id, group_id)
+            .await
+            .unwrap();
+
+        assert_eq!(result_stream_ids, stream_ids);
     }
 
     #[tokio::test]
