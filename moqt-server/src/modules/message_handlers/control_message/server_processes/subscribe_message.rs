@@ -1,3 +1,4 @@
+use crate::modules::control_message_dispatcher::ControlMessageDispatcher;
 use crate::modules::moqt_client::MOQTClient;
 use crate::modules::{
     message_handlers::control_message::handlers::subscribe_handler::subscribe_handler,
@@ -10,7 +11,6 @@ use moqt_core::{
     messages::control_messages::subscribe_error::SubscribeError,
     messages::{control_messages::subscribe::Subscribe, moqt_payload::MOQTPayload},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    SendStreamDispatcherRepository,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
@@ -20,7 +20,7 @@ pub(crate) async fn process_subscribe_message(
     client: &MOQTClient,
     write_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
     start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
 ) -> Result<Option<SubscribeError>> {
@@ -36,7 +36,7 @@ pub(crate) async fn process_subscribe_message(
         subscribe_request_message,
         client,
         pubsub_relation_manager_repository,
-        send_stream_dispatcher_repository,
+        control_message_dispatcher_repository,
         object_cache_storage,
         start_forwarder_txes,
     )

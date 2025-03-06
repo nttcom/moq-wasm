@@ -2,6 +2,7 @@ pub(crate) mod handlers;
 pub(crate) mod server_processes;
 
 use crate::constants::TerminationErrorCode;
+use crate::modules::control_message_dispatcher::ControlMessageDispatcher;
 use crate::modules::moqt_client::MOQTClient;
 use crate::modules::{
     message_handlers::control_message::{
@@ -29,7 +30,6 @@ use moqt_core::{
     messages::{control_messages::unannounce::UnAnnounce, moqt_payload::MOQTPayload},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::{read_variable_integer, write_variable_integer},
-    SendStreamDispatcherRepository,
 };
 use server_processes::unsubscribe_message::process_unsubscribe_message;
 use std::{collections::HashMap, io::Cursor, sync::Arc};
@@ -66,7 +66,7 @@ pub async fn control_message_handler(
     client: &mut MOQTClient,
     start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
 ) -> MessageProcessResult {
     tracing::trace!("control_message_handler! {}", read_buf.len());
@@ -141,7 +141,7 @@ pub async fn control_message_handler(
                 client,
                 &mut write_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher_repository,
                 object_cache_storage,
                 start_forwarder_txes,
             )
@@ -166,7 +166,7 @@ pub async fn control_message_handler(
             match process_subscribe_ok_message(
                 &mut payload_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher_repository,
                 client,
             )
             .await
@@ -186,7 +186,7 @@ pub async fn control_message_handler(
             match process_subscribe_error_message(
                 &mut payload_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher_repository,
                 client,
             )
             .await
@@ -206,7 +206,7 @@ pub async fn control_message_handler(
             match process_unsubscribe_message(
                 &mut payload_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher_repository,
                 client,
             )
             .await
@@ -228,7 +228,7 @@ pub async fn control_message_handler(
                 client,
                 &mut write_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher_repository,
             )
             .await
             {
@@ -284,7 +284,7 @@ pub async fn control_message_handler(
                 client,
                 &mut write_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher_repository,
             )
             .await
             {
@@ -350,6 +350,9 @@ pub async fn control_message_handler(
 #[cfg(test)]
 pub(crate) mod test_helper_fn {
     use crate::modules::{
+        control_message_dispatcher::{
+            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+        },
         message_handlers::control_message::{control_message_handler, MessageProcessResult},
         moqt_client::{MOQTClient, MOQTClientStatus},
         object_cache_storage::{
@@ -359,9 +362,6 @@ pub(crate) mod test_helper_fn {
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
             wrapper::PubSubRelationManagerWrapper,
-        },
-        send_stream_dispatcher::{
-            send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
         server_processes::senders,
     };
@@ -394,12 +394,15 @@ pub(crate) mod test_helper_fn {
         let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
             PubSubRelationManagerWrapper::new(track_namespace_tx);
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -418,7 +421,7 @@ pub(crate) mod test_helper_fn {
             &mut client,
             start_forwarder_txes,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
         )
         .await
