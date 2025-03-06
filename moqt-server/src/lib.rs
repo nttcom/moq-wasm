@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, mpsc::Sender, Mutex};
 use tracing::{self, Instrument};
-use wtransport::quinn::TransportConfig;
+use wtransport::quinn::{TransportConfig, VarInt};
 use wtransport::{Endpoint, Identity, ServerConfig};
 mod modules;
 pub use modules::config::MOQTConfig;
@@ -57,7 +57,8 @@ impl MOQTServer {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
         }
         let mut transport_config = TransportConfig::default();
-        transport_config.max_concurrent_uni_streams(100000u32.into()); // 単方向ストリーム数を増加
+        transport_config.max_concurrent_uni_streams(100000u32.into()); // 単方向ストリーム数を100000に設定
+        transport_config.stream_receive_window(VarInt::from_u32(10 * 1024 * 1024)); // デフォ1MBなので100MBにする
         let config = ServerConfig::builder()
             .with_bind_default(self.port)
             .with_custom_transport(
