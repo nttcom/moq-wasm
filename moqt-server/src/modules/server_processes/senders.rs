@@ -3,6 +3,7 @@ use crate::{
         buffer_manager::BufferCommand, control_message_dispatcher::ControlMessageDispatchCommand,
         object_cache_storage::commands::ObjectCacheStorageCommand,
         pubsub_relation_manager::commands::PubSubRelationCommand,
+        signal_dispatcher::SignalDispatchCommand,
     },
     SenderToOpenSubscription,
 };
@@ -40,6 +41,7 @@ pub(crate) struct SendersToManagementThread {
     buffer_tx: mpsc::Sender<BufferCommand>,
     pubsub_relation_tx: mpsc::Sender<PubSubRelationCommand>,
     control_message_dispatch_tx: mpsc::Sender<ControlMessageDispatchCommand>,
+    signal_dispatch_tx: mpsc::Sender<SignalDispatchCommand>,
     object_cache_tx: mpsc::Sender<ObjectCacheStorageCommand>,
 }
 
@@ -48,12 +50,14 @@ impl SendersToManagementThread {
         buffer_tx: mpsc::Sender<BufferCommand>,
         pubsub_relation_tx: mpsc::Sender<PubSubRelationCommand>,
         control_message_dispatch_tx: mpsc::Sender<ControlMessageDispatchCommand>,
+        signal_dispatch_tx: mpsc::Sender<SignalDispatchCommand>,
         object_cache_tx: mpsc::Sender<ObjectCacheStorageCommand>,
     ) -> Self {
         SendersToManagementThread {
             buffer_tx,
             pubsub_relation_tx,
             control_message_dispatch_tx,
+            signal_dispatch_tx,
             object_cache_tx,
         }
     }
@@ -105,6 +109,10 @@ impl Senders {
             .control_message_dispatch_tx
     }
 
+    pub(crate) fn signal_dispatch_tx(&self) -> &mpsc::Sender<SignalDispatchCommand> {
+        &self.senders_to_management_thread.signal_dispatch_tx
+    }
+
     pub(crate) fn object_cache_tx(&self) -> &mpsc::Sender<ObjectCacheStorageCommand> {
         &self.senders_to_management_thread.object_cache_tx
     }
@@ -127,11 +135,13 @@ pub(crate) mod test_helper_fn {
         let (buffer_tx, _) = tokio::sync::mpsc::channel(1);
         let (pubsub_relation_tx, _) = tokio::sync::mpsc::channel(1);
         let (control_message_dispatch_tx, _) = tokio::sync::mpsc::channel(1);
+        let (signal_dispatch_tx, _) = tokio::sync::mpsc::channel(1);
         let (object_cache_tx, _) = tokio::sync::mpsc::channel(1);
         let senders_to_management_thread = super::SendersToManagementThread::new(
             buffer_tx,
             pubsub_relation_tx,
             control_message_dispatch_tx,
+            signal_dispatch_tx,
             object_cache_tx,
         );
 
