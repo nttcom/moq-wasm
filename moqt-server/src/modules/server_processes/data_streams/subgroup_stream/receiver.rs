@@ -102,6 +102,7 @@ impl SubgroupStreamObjectReceiver {
             })
             .await?;
 
+        // Send STOP_SENDING frame to the publisher
         self.stream.stop();
 
         tracing::debug!("SubgroupStreamObjectReceiver finished");
