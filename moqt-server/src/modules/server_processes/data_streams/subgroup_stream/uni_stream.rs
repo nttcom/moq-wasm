@@ -1,6 +1,6 @@
 use wtransport::{
     error::{StreamReadError, StreamWriteError},
-    RecvStream, SendStream,
+    RecvStream, SendStream, VarInt,
 };
 
 pub(crate) struct UniRecvStream {
@@ -32,6 +32,11 @@ impl UniRecvStream {
     ) -> Result<Option<usize>, StreamReadError> {
         self.recv_stream.read(buffer).await
     }
+
+    pub(crate) fn stop(self) {
+        let code = VarInt::from_u32(0);
+        self.recv_stream.stop(code);
+    }
 }
 
 pub(crate) struct UniSendStream {
@@ -59,5 +64,9 @@ impl UniSendStream {
 
     pub(crate) async fn write_all(&mut self, buffer: &[u8]) -> Result<(), StreamWriteError> {
         self.send_stream.write_all(buffer).await
+    }
+
+    pub(crate) async fn finish(&mut self) -> Result<(), StreamWriteError> {
+        self.send_stream.finish().await
     }
 }
