@@ -105,9 +105,9 @@ impl SubgroupStreamObjectReceiver {
                 is_end = self.receive_objects(&mut object_cache_storage).await?;
             },
             Some(signal) = signal_rx.recv() => {
-                tracing::debug!("Received signal: {:?}", signal);
                 match *signal {
-                    DataStreamThreadSignal::Termination(_) => {
+                    DataStreamThreadSignal::Terminate(status) => {
+                        tracing::debug!("Received Terminate signal (status: {:?})", status);
                         break;
                     }
                 }
@@ -603,7 +603,7 @@ impl SubgroupStreamObjectReceiver {
                 stream_id
             );
 
-            let signal = Box::new(DataStreamThreadSignal::Termination(object_status));
+            let signal = Box::new(DataStreamThreadSignal::Terminate(object_status));
             signal_dispatcher
                 .transfer_signal_to_data_stream_thread(upstream_session_id, stream_id, signal)
                 .await?;
