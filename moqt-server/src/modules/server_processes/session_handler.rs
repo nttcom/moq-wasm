@@ -11,7 +11,7 @@ use crate::{
             thread_starters::select_spawn_thread,
         },
     },
-    SubgroupStreamId,
+    SignalDispatchCommand, SubgroupStreamId,
 };
 use anyhow::Result;
 use moqt_core::{
@@ -134,6 +134,14 @@ impl SessionHandler {
         senders
             .buffer_tx()
             .send(BufferCommand::ReleaseSession {
+                session_id: stable_id,
+            })
+            .await?;
+
+        // Delete senders for data stream threads
+        senders
+            .signal_dispatch_tx()
+            .send(SignalDispatchCommand::Delete {
                 session_id: stable_id,
             })
             .await?;
