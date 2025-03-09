@@ -20,7 +20,7 @@ pub(crate) async fn process_subscribe_message(
     client: &MOQTClient,
     write_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
     start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
 ) -> Result<Option<SubscribeError>> {
@@ -36,7 +36,7 @@ pub(crate) async fn process_subscribe_message(
         subscribe_request_message,
         client,
         pubsub_relation_manager_repository,
-        control_message_dispatcher_repository,
+        control_message_dispatcher,
         object_cache_storage,
         start_forwarder_txes,
     )

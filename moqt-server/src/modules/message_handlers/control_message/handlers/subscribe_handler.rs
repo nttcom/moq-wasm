@@ -27,7 +27,7 @@ pub(crate) async fn subscribe_handler(
     subscribe_message: Subscribe,
     client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
     start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
 ) -> Result<Option<SubscribeError>> {
@@ -138,7 +138,7 @@ pub(crate) async fn subscribe_handler(
         let subscribe_ok_payload: Box<dyn MOQTPayload> = Box::new(subscribe_ok_message.clone());
 
         // TODO: Unify the method to send a message to the opposite client itself
-        control_message_dispatcher_repository
+        control_message_dispatcher
             .transfer_message_to_control_message_sender_thread(client.id(), subscribe_ok_payload)
             .await?;
 
@@ -212,7 +212,7 @@ pub(crate) async fn subscribe_handler(
             // Notify to the publisher about the SUBSCRIBE message
             // TODO: Wait for the SUBSCRIBE_OK message to be returned on a transaction
             // TODO: validate Timeout
-            match control_message_dispatcher_repository
+            match control_message_dispatcher
                 .transfer_message_to_control_message_sender_thread(session_id, forwarding_subscribe_message)
                 .await
             {

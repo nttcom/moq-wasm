@@ -23,7 +23,7 @@ pub(crate) async fn process_subscribe_announces_message(
     client: &MOQTClient,
     write_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
 ) -> Result<Option<SubscribeAnnouncesError>> {
     let subscribe_announces_message = match SubscribeAnnounces::depacketize(payload_buf) {
         Ok(subscribe_announces_message) => subscribe_announces_message,
@@ -37,7 +37,7 @@ pub(crate) async fn process_subscribe_announces_message(
         subscribe_announces_message,
         client,
         pubsub_relation_manager_repository,
-        control_message_dispatcher_repository,
+        control_message_dispatcher,
     )
     .await;
 

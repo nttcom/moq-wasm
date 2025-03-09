@@ -11,7 +11,7 @@ use moqt_core::{
 
 async fn forward_announce_to_subscribers(
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     track_namespace: Vec<String>,
 ) -> Result<()> {
     let downstream_session_ids = match pubsub_relation_manager_repository
@@ -33,8 +33,11 @@ async fn forward_announce_to_subscribers(
             Ok(true) => {}
             Ok(false) => {
                 let announce_message = Box::new(Announce::new(track_namespace.clone(), vec![]));
-                let _ = control_message_dispatcher_repository
-                    .transfer_message_to_control_message_sender_thread(downstream_session_id, announce_message)
+                let _ = control_message_dispatcher
+                    .transfer_message_to_control_message_sender_thread(
+                        downstream_session_id,
+                        announce_message,
+                    )
                     .await;
             }
             Err(err) => {
@@ -50,7 +53,7 @@ pub(crate) async fn announce_handler(
     announce_message: Announce,
     client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
 ) -> Result<Option<AnnounceError>> {
     tracing::trace!("announce_handler start.");
     tracing::debug!("announce_message: {:#?}", announce_message);
@@ -67,14 +70,14 @@ pub(crate) async fn announce_handler(
 
             // TODO: Unify the method to send a message to the opposite client itself
             let announce_ok_message = Box::new(AnnounceOk::new(track_namespace.clone()));
-            let _ = control_message_dispatcher_repository
+            let _ = control_message_dispatcher
                 .transfer_message_to_control_message_sender_thread(client.id(), announce_ok_message)
                 .await;
 
             // If subscribers already sent SUBSCRIBE_ANNOUNCES, send ANNOUNCE message to them
             match forward_announce_to_subscribers(
                 pubsub_relation_manager_repository,
-                control_message_dispatcher_repository,
+                control_message_dispatcher,
                 track_namespace.clone(),
             )
             .await

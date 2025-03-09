@@ -18,7 +18,7 @@ pub(crate) async fn process_announce_message(
     client: &MOQTClient,
     write_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
 ) -> Result<Option<AnnounceError>> {
     let announce_message = match Announce::depacketize(payload_buf) {
         Ok(announce_message) => announce_message,
@@ -32,7 +32,7 @@ pub(crate) async fn process_announce_message(
         announce_message,
         client,
         pubsub_relation_manager_repository,
-        control_message_dispatcher_repository,
+        control_message_dispatcher,
     )
     .await;
 

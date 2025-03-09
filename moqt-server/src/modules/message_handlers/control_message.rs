@@ -66,7 +66,7 @@ pub async fn control_message_handler(
     client: &mut MOQTClient,
     start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
 ) -> MessageProcessResult {
     tracing::trace!("control_message_handler! {}", read_buf.len());
@@ -141,7 +141,7 @@ pub async fn control_message_handler(
                 client,
                 &mut write_buf,
                 pubsub_relation_manager_repository,
-                control_message_dispatcher_repository,
+                control_message_dispatcher,
                 object_cache_storage,
                 start_forwarder_txes,
             )
@@ -166,7 +166,7 @@ pub async fn control_message_handler(
             match process_subscribe_ok_message(
                 &mut payload_buf,
                 pubsub_relation_manager_repository,
-                control_message_dispatcher_repository,
+                control_message_dispatcher,
                 client,
             )
             .await
@@ -186,7 +186,7 @@ pub async fn control_message_handler(
             match process_subscribe_error_message(
                 &mut payload_buf,
                 pubsub_relation_manager_repository,
-                control_message_dispatcher_repository,
+                control_message_dispatcher,
                 client,
             )
             .await
@@ -206,7 +206,7 @@ pub async fn control_message_handler(
             match process_unsubscribe_message(
                 &mut payload_buf,
                 pubsub_relation_manager_repository,
-                control_message_dispatcher_repository,
+                control_message_dispatcher,
                 client,
             )
             .await
@@ -228,7 +228,7 @@ pub async fn control_message_handler(
                 client,
                 &mut write_buf,
                 pubsub_relation_manager_repository,
-                control_message_dispatcher_repository,
+                control_message_dispatcher,
             )
             .await
             {
@@ -284,7 +284,7 @@ pub async fn control_message_handler(
                 client,
                 &mut write_buf,
                 pubsub_relation_manager_repository,
-                control_message_dispatcher_repository,
+                control_message_dispatcher,
             )
             .await
             {

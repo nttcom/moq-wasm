@@ -10,7 +10,7 @@ use moqt_core::{
 pub(crate) async fn subscribe_ok_handler(
     subscribe_ok_message: SubscribeOk,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     client: &MOQTClient,
 ) -> Result<()> {
     tracing::trace!("subscribe_ok_handler start.");
@@ -48,7 +48,7 @@ pub(crate) async fn subscribe_ok_handler(
                 );
                 let subscribe_ok_message: Box<dyn MOQTPayload> = Box::new(message_payload.clone());
 
-                control_message_dispatcher_repository
+                control_message_dispatcher
                     .transfer_message_to_control_message_sender_thread(
                         *downstream_session_id,
                         subscribe_ok_message,
