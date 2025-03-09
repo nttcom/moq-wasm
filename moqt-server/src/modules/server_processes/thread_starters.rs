@@ -104,14 +104,27 @@ async fn spawn_subgroup_stream_object_receiver_thread(
         tracing::info!("Accepted uni-directional recv stream");
     });
     let stream_id = recv_stream.id().into_u64();
+    let (signal_tx, signal_rx) = mpsc::channel::<Box<DataStreamThreadSignal>>(1024);
+
+    let senders = client.lock().await.senders();
+    senders
+        .signal_dispatch_tx()
+        .send(SignalDispatchCommand::Set {
+            session_id: stable_id,
+            stream_id,
+            sender: signal_tx,
+        })
+        .await
+        .unwrap();
 
     tokio::spawn(
         async move {
             let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
             let senders = client.lock().await.senders();
-            let mut stream_object_receiver = SubgroupStreamObjectReceiver::init(stream, client)
-                .instrument(session_span.clone())
-                .await;
+            let mut stream_object_receiver =
+                SubgroupStreamObjectReceiver::init(stream, client, signal_rx)
+                    .instrument(session_span.clone())
+                    .await;
 
             match stream_object_receiver
                 .start()
