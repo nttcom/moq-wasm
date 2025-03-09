@@ -7,9 +7,10 @@ use crate::{
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         server_processes::senders::Senders,
     },
+    signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher},
     SubgroupStreamId,
 };
-use anyhow::{bail, Result};
+use anyhow::{bail, Ok, Result};
 use bytes::BytesMut;
 use moqt_core::{
     data_stream_type::DataStreamType,
@@ -21,8 +22,12 @@ use moqt_core::{
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::write_variable_integer,
 };
-use std::{sync::Arc, thread, time::Duration};
-use tokio::sync::Mutex;
+use std::{
+    sync::{atomic::AtomicBool, atomic::Ordering, Arc},
+    thread,
+    time::Duration,
+};
+use tokio::sync::{mpsc, Mutex};
 use tracing::{self};
 
 pub(crate) struct SubgroupStreamObjectForwarder {
@@ -34,6 +39,7 @@ pub(crate) struct SubgroupStreamObjectForwarder {
     subgroup_stream_id: Option<SubgroupStreamId>,
     filter_type: FilterType,
     requested_range: Range,
+    is_terminated: Arc<AtomicBool>,
     sleep_time: Duration,
 }
 
@@ -43,6 +49,7 @@ impl SubgroupStreamObjectForwarder {
         downstream_subscribe_id: u64,
         client: Arc<Mutex<MOQTClient>>,
         subgroup_stream_id: Option<SubgroupStreamId>,
+        mut signal_rx: mpsc::Receiver<Box<DataStreamThreadSignal>>,
     ) -> Result<Self> {
         let senders = client.lock().await.senders();
         let sleep_time = Duration::from_millis(10);
@@ -71,6 +78,32 @@ impl SubgroupStreamObjectForwarder {
             .get_related_publisher(downstream_session_id, downstream_subscribe_id)
             .await?;
 
+        // Register stream_id to receive signal from other subgroup forwarder threads belong to the same group
+        let (group_id, _) = subgroup_stream_id.unwrap();
+        let stream_id = stream.stream_id();
+        pubsub_relation_manager
+            .set_downstream_stream_id_to_group(
+                downstream_session_id,
+                downstream_subscribe_id,
+                group_id,
+                stream_id,
+            )
+            .await?;
+
+        // Task to receive termination signal
+        let is_terminated = Arc::new(AtomicBool::new(false));
+        let is_terminated_clone = is_terminated.clone();
+        tokio::spawn(async move {
+            while let Some(signal) = signal_rx.recv().await {
+                tracing::debug!("Received signal: {:?}", signal);
+                match *signal {
+                    DataStreamThreadSignal::Termination(_) => {
+                        is_terminated_clone.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+        });
+
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 
         let stream_object_forwarder = SubgroupStreamObjectForwarder {
@@ -82,6 +115,7 @@ impl SubgroupStreamObjectForwarder {
             subgroup_stream_id,
             filter_type,
             requested_range,
+            is_terminated,
             sleep_time,
         };
 
@@ -218,6 +252,12 @@ impl SubgroupStreamObjectForwarder {
     ) -> Result<(Option<usize>, bool)> {
         // Do loop until get an object from the cache storage
         loop {
+            let is_terminated = self.is_terminated.load(Ordering::Relaxed);
+            if is_terminated {
+                let is_end = true;
+                return Ok((cache_id, is_end));
+            }
+
             let (cache_id, stream_object) =
                 match self.try_get_object(object_cache_storage, cache_id).await? {
                     Some((id, object)) => (id, object),
@@ -231,8 +271,15 @@ impl SubgroupStreamObjectForwarder {
             let message_buf = self.packetize_object(&stream_object).await?;
             self.send(message_buf).await?;
 
-            let is_end = self.is_subscription_ended(&stream_object)
-                || self.is_data_stream_ended(&stream_object);
+            let is_subscription_ended = self.is_subscription_ended(&stream_object);
+            let is_data_stream_ended = self.is_data_stream_ended(&stream_object);
+
+            if is_data_stream_ended {
+                self.send_termination_signal_to_other_forwarders(&stream_object)
+                    .await?;
+            }
+
+            let is_end = is_subscription_ended || is_data_stream_ended;
 
             return Ok((Some(cache_id), is_end));
         }
@@ -404,5 +451,50 @@ impl SubgroupStreamObjectForwarder {
                 | Some(ObjectStatus::EndOfGroup)
                 | Some(ObjectStatus::EndOfTrackAndGroup)
         )
+    }
+
+    async fn send_termination_signal_to_other_forwarders(
+        &self,
+        object: &subgroup_stream::Object,
+    ) -> Result<()> {
+        let downstream_session_id = self.stream.stable_id();
+        let downstream_subscribe_id = self.downstream_subscribe_id;
+        let (group_id, _) = self.subgroup_stream_id.unwrap();
+        let object_status = object.object_status().unwrap();
+
+        let pubsub_relation_manager =
+            PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
+        let stream_ids = pubsub_relation_manager
+            .get_downstream_stream_ids_from_group(
+                downstream_session_id,
+                downstream_subscribe_id,
+                group_id,
+            )
+            .await?;
+
+        let signal_dispatcher = SignalDispatcher::new(self.senders.signal_dispatch_tx().clone());
+
+        // Wait to forward rest of the objects on other forwarders
+        let send_delay_ms = Duration::from_millis(50); // FIXME: Temporary threshold
+        thread::sleep(send_delay_ms);
+
+        for stream_id in stream_ids {
+            if stream_id == self.stream.stream_id() {
+                continue;
+            }
+
+            tracing::debug!(
+                "Send termination signal to downstream session: {}, stream: {}",
+                downstream_session_id,
+                stream_id
+            );
+
+            let signal = Box::new(DataStreamThreadSignal::Termination(object_status));
+            signal_dispatcher
+                .transfer_signal_to_data_stream_thread(downstream_session_id, stream_id, signal)
+                .await?;
+        }
+
+        Ok(())
     }
 }
