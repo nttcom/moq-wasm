@@ -13,7 +13,7 @@ use moqt_core::{
 pub(crate) async fn unsubscribe_handler(
     unsubscribe_message: Unsubscribe,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     client: &MOQTClient,
 ) -> Result<()> {
     tracing::trace!("unsubscribe_handler start.");
@@ -47,7 +47,7 @@ pub(crate) async fn unsubscribe_handler(
         None,
         None,
     ));
-    control_message_dispatcher_repository
+    control_message_dispatcher
         .transfer_message_to_control_message_sender_thread(client.id(), subscribe_done_message)
         .await?;
 
@@ -57,7 +57,7 @@ pub(crate) async fn unsubscribe_handler(
         .await?;
     if downstream_subscribers.is_empty() {
         let unsubscribe_message = Box::new(Unsubscribe::new(upstream_subscribe_id));
-        control_message_dispatcher_repository
+        control_message_dispatcher
             .transfer_message_to_control_message_sender_thread(
                 upstream_session_id,
                 unsubscribe_message,

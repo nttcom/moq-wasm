@@ -15,7 +15,7 @@ use crate::modules::{
 pub(crate) async fn process_subscribe_ok_message(
     payload_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     client: &MOQTClient,
 ) -> Result<()> {
     let subscribe_ok_message = match SubscribeOk::depacketize(payload_buf) {
@@ -29,7 +29,7 @@ pub(crate) async fn process_subscribe_ok_message(
     subscribe_ok_handler(
         subscribe_ok_message,
         pubsub_relation_manager_repository,
-        control_message_dispatcher_repository,
+        control_message_dispatcher,
         client,
     )
     .await

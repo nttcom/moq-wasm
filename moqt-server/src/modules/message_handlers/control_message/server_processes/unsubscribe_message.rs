@@ -13,7 +13,7 @@ use moqt_core::{
 pub(crate) async fn process_unsubscribe_message(
     payload_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     client: &MOQTClient,
 ) -> Result<()> {
     let unsubscribe_message = match Unsubscribe::depacketize(payload_buf) {
@@ -27,7 +27,7 @@ pub(crate) async fn process_unsubscribe_message(
     unsubscribe_handler(
         unsubscribe_message,
         pubsub_relation_manager_repository,
-        control_message_dispatcher_repository,
+        control_message_dispatcher,
         client,
     )
     .await

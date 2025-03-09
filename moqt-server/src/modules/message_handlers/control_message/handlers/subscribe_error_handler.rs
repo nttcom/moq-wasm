@@ -10,7 +10,7 @@ use moqt_core::{
 pub(crate) async fn subscribe_error_handler(
     subscribe_error_message: SubscribeError,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    control_message_dispatcher_repository: &mut ControlMessageDispatcher,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     client: &MOQTClient,
 ) -> Result<()> {
     tracing::trace!("subscribe_error_handler start.");
@@ -59,7 +59,7 @@ pub(crate) async fn subscribe_error_handler(
                 let forwarding_subscribe_error_message: Box<dyn MOQTPayload> =
                     Box::new(message_payload.clone());
 
-                control_message_dispatcher_repository
+                control_message_dispatcher
                     .transfer_message_to_control_message_sender_thread(
                         *downstream_session_id,
                         forwarding_subscribe_error_message,
