@@ -207,7 +207,7 @@ pub(crate) enum PubSubRelationCommand {
         downstream_subscribe_id: u64,
         resp: oneshot::Sender<Result<Option<Range>>>,
     },
-    SetUpstreamStreamIdToGroup {
+    SetUpstreamStreamId {
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
         group_id: u64,
@@ -220,7 +220,7 @@ pub(crate) enum PubSubRelationCommand {
         group_id: u64,
         resp: oneshot::Sender<Result<Vec<u64>>>,
     },
-    SetDownstreamStreamIdToGroup {
+    SetDownstreamStreamId {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
         group_id: u64,

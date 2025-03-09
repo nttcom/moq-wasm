@@ -875,7 +875,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     .unwrap();
                 resp.send(Ok(range)).unwrap();
             }
-            SetUpstreamStreamIdToGroup {
+            SetUpstreamStreamId {
                 upstream_session_id,
                 upstream_subscribe_id,
                 group_id,
@@ -893,10 +893,10 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
 
-                match consumer.set_stream_id_to_group(upstream_subscribe_id, group_id, stream_id) {
+                match consumer.set_stream_id(upstream_subscribe_id, group_id, stream_id) {
                     Ok(_) => resp.send(Ok(())).unwrap(),
                     Err(err) => {
-                        tracing::error!("set_stream_id_to_group: err: {:?}", err.to_string());
+                        tracing::error!("set_stream_id: err: {:?}", err.to_string());
                         resp.send(Err(anyhow!(err))).unwrap();
                     }
                 }
@@ -923,7 +923,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     .unwrap();
                 resp.send(Ok(stream_ids)).unwrap();
             }
-            SetDownstreamStreamIdToGroup {
+            SetDownstreamStreamId {
                 downstream_session_id,
                 downstream_subscribe_id,
                 group_id,
@@ -941,11 +941,10 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
 
-                match producer.set_stream_id_to_group(downstream_subscribe_id, group_id, stream_id)
-                {
+                match producer.set_stream_id(downstream_subscribe_id, group_id, stream_id) {
                     Ok(_) => resp.send(Ok(())).unwrap(),
                     Err(err) => {
-                        tracing::error!("set_stream_id_to_group: err: {:?}", err.to_string());
+                        tracing::error!("set_stream_id: err: {:?}", err.to_string());
                         resp.send(Err(anyhow!(err))).unwrap();
                     }
                 }

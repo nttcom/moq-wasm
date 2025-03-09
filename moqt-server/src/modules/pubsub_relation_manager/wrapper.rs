@@ -770,7 +770,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         }
     }
 
-    async fn set_upstream_stream_id_to_group(
+    async fn set_upstream_stream_id(
         &self,
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
@@ -778,7 +778,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         stream_id: u64,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
-        let cmd = PubSubRelationCommand::SetUpstreamStreamIdToGroup {
+        let cmd = PubSubRelationCommand::SetUpstreamStreamId {
             upstream_session_id,
             upstream_subscribe_id,
             group_id,
@@ -818,7 +818,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         }
     }
 
-    async fn set_downstream_stream_id_to_group(
+    async fn set_downstream_stream_id(
         &self,
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
@@ -826,7 +826,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         stream_id: u64,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
-        let cmd = PubSubRelationCommand::SetDownstreamStreamIdToGroup {
+        let cmd = PubSubRelationCommand::SetDownstreamStreamId {
             downstream_session_id,
             downstream_subscribe_id,
             group_id,
@@ -3016,7 +3016,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn set_upstream_stream_id_to_group() {
+    async fn set_upstream_stream_id() {
         let max_subscribe_id = 10;
         let upstream_session_id = 1;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
@@ -3059,7 +3059,7 @@ mod success {
             .unwrap();
 
         let _ = pubsub_relation_manager
-            .set_upstream_stream_id_to_group(
+            .set_upstream_stream_id(
                 upstream_session_id,
                 upstream_subscribe_id,
                 group_id,
@@ -3126,7 +3126,7 @@ mod success {
 
         for stream_id in stream_ids.iter() {
             let _ = pubsub_relation_manager
-                .set_upstream_stream_id_to_group(
+                .set_upstream_stream_id(
                     upstream_session_id,
                     upstream_subscribe_id,
                     group_id,
@@ -3148,7 +3148,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn set_downstream_stream_id_to_group() {
+    async fn set_downstream_stream_id() {
         let max_subscribe_id = 10;
         let downstream_session_id = 1;
         let subscribe_id = 0;
@@ -3191,12 +3191,7 @@ mod success {
             .await;
 
         let _ = pubsub_relation_manager
-            .set_downstream_stream_id_to_group(
-                downstream_session_id,
-                subscribe_id,
-                group_id,
-                stream_id,
-            )
+            .set_downstream_stream_id(downstream_session_id, subscribe_id, group_id, stream_id)
             .await;
 
         let (_, producers, _) =
@@ -3254,12 +3249,7 @@ mod success {
 
         for stream_id in stream_ids.iter() {
             let _ = pubsub_relation_manager
-                .set_downstream_stream_id_to_group(
-                    downstream_session_id,
-                    subscribe_id,
-                    group_id,
-                    *stream_id,
-                )
+                .set_downstream_stream_id(downstream_session_id, subscribe_id, group_id, *stream_id)
                 .await;
         }
 

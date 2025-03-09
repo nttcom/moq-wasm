@@ -175,7 +175,7 @@ impl SubgroupStreamObjectReceiver {
         self.subscribe_id = Some(subscribe_id);
         self.subgroup_stream_id = Some((header.group_id(), header.subgroup_id()));
 
-        self.set_upstream_stream_id_to_group(session_id).await?;
+        self.set_upstream_stream_id(session_id).await?;
         self.set_upstream_forwarding_preference(session_id).await?;
 
         let filter_type = self.get_upstream_filter_type(session_id).await?;
@@ -240,7 +240,7 @@ impl SubgroupStreamObjectReceiver {
         }
     }
 
-    async fn set_upstream_stream_id_to_group(
+    async fn set_upstream_stream_id(
         &self,
         upstream_session_id: usize,
     ) -> Result<(), TerminationError> {
@@ -252,7 +252,7 @@ impl SubgroupStreamObjectReceiver {
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
         match pubsub_relation_manager
-            .set_upstream_stream_id_to_group(
+            .set_upstream_stream_id(
                 upstream_session_id,
                 upstream_subscribe_id,
                 group_id,
@@ -262,7 +262,7 @@ impl SubgroupStreamObjectReceiver {
         {
             Ok(_) => Ok(()),
             Err(err) => {
-                let msg = format!("Fail to set upstream stream id to group: {:?}", err);
+                let msg = format!("Fail to set upstream stream id: {:?}", err);
                 let code = TerminationErrorCode::InternalError;
 
                 Err((code, msg))

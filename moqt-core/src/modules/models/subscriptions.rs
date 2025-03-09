@@ -100,8 +100,8 @@ impl Subscription {
         self.group_order
     }
 
-    pub fn set_stream_id_to_group(&mut self, group_id: u64, stream_id: u64) {
-        self.track.set_stream_id_to_group(group_id, stream_id);
+    pub fn set_stream_id(&mut self, group_id: u64, stream_id: u64) {
+        self.track.set_stream_id(group_id, stream_id);
     }
 
     pub fn get_stream_ids_from_group(&self, group_id: u64) -> &Vec<u64> {
@@ -414,9 +414,9 @@ mod success {
         let group_id = 0;
         let subgroup_ids = vec![0, 1, 2];
 
-        subscription.set_stream_id_to_group(group_id, subgroup_ids[0]);
-        subscription.set_stream_id_to_group(group_id, subgroup_ids[1]);
-        subscription.set_stream_id_to_group(group_id, subgroup_ids[2]);
+        subscription.set_stream_id(group_id, subgroup_ids[0]);
+        subscription.set_stream_id(group_id, subgroup_ids[1]);
+        subscription.set_stream_id(group_id, subgroup_ids[2]);
 
         let result = subscription.get_stream_ids_from_group(group_id);
 

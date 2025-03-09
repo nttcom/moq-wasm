@@ -193,14 +193,14 @@ impl SubscriptionNodeRegistry for Producer {
         Ok((end_group, end_object))
     }
 
-    fn set_stream_id_to_group(
+    fn set_stream_id(
         &mut self,
         subscribe_id: SubscribeId,
         group_id: u64,
         stream_id: u64,
     ) -> Result<()> {
         let subscription = self.subscriptions.get_mut(&subscribe_id).unwrap();
-        subscription.set_stream_id_to_group(group_id, stream_id);
+        subscription.set_stream_id(group_id, stream_id);
 
         Ok(())
     }
