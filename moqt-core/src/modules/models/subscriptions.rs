@@ -1,5 +1,5 @@
 pub mod nodes;
-use super::range::Range;
+use super::range::{ObjectRange, ObjectStart};
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::tracks::{ForwardingPreference, Track},
@@ -17,7 +17,8 @@ pub struct Subscription {
     priority: u8,
     group_order: GroupOrder,
     filter_type: FilterType,
-    requested_range: Range,
+    requested_object_range: ObjectRange,
+    actual_object_start: Option<ObjectStart>,
     status: Status,
 }
 
@@ -43,14 +44,16 @@ impl Subscription {
             forwarding_preference,
         );
 
-        let requested_range = Range::new(start_group, start_object, end_group, end_object);
+        let requested_object_range =
+            ObjectRange::new(start_group, start_object, end_group, end_object);
 
         Self {
             track,
             priority,
             group_order,
             filter_type,
-            requested_range,
+            requested_object_range,
+            actual_object_start: None,
             status: Status::Requesting,
         }
     }
@@ -76,8 +79,8 @@ impl Subscription {
         self.filter_type
     }
 
-    pub fn get_requested_range(&self) -> Range {
-        self.requested_range.clone()
+    pub fn get_requested_object_range(&self) -> ObjectRange {
+        self.requested_object_range.clone()
     }
 
     pub fn set_forwarding_preference(&mut self, forwarding_preference: ForwardingPreference) {
@@ -98,6 +101,14 @@ impl Subscription {
 
     pub fn get_group_order(&self) -> GroupOrder {
         self.group_order
+    }
+
+    pub fn set_actual_object_start(&mut self, actual_object_start: ObjectStart) {
+        self.actual_object_start = Some(actual_object_start);
+    }
+
+    pub fn get_actual_object_start(&self) -> Option<ObjectStart> {
+        self.actual_object_start.clone()
     }
 }
 
@@ -151,6 +162,7 @@ mod success {
     use crate::{
         messages::control_messages::subscribe::{FilterType, GroupOrder},
         models::{
+            range::ObjectStart,
             subscriptions::{test_helper_fn, Subscription},
             tracks::ForwardingPreference,
         },
@@ -192,10 +204,16 @@ mod success {
         assert_eq!(subscription.priority, priority);
         assert_eq!(subscription.group_order, group_order);
         assert_eq!(subscription.filter_type, filter_type);
-        assert_eq!(subscription.requested_range.start_group(), start_group);
-        assert_eq!(subscription.requested_range.start_object(), start_object);
-        assert_eq!(subscription.requested_range.end_group(), end_group);
-        assert_eq!(subscription.requested_range.end_object(), end_object);
+        assert_eq!(
+            subscription.requested_object_range.start_group(),
+            start_group
+        );
+        assert_eq!(
+            subscription.requested_object_range.start_object(),
+            start_object
+        );
+        assert_eq!(subscription.requested_object_range.end_group(), end_group);
+        assert_eq!(subscription.requested_object_range.end_object(), end_object);
     }
 
     #[test]
@@ -383,5 +401,89 @@ mod success {
         let result_forwarding_preference = subscription.get_forwarding_preference().unwrap();
 
         assert_eq!(result_forwarding_preference, forwarding_preference);
+    }
+
+    #[test]
+    fn get_requested_object_range() {
+        let variable = test_helper_fn::common_subscription_variable();
+
+        let subscription = Subscription::new(
+            variable.track_alias,
+            variable.track_namespace,
+            variable.track_name,
+            variable.subscriber_priority,
+            variable.group_order,
+            variable.filter_type,
+            variable.start_group,
+            variable.start_object,
+            variable.end_group,
+            variable.end_object,
+            None,
+        );
+
+        let result = subscription.get_requested_object_range();
+
+        assert_eq!(result.start_group(), variable.start_group);
+        assert_eq!(result.start_object(), variable.start_object);
+        assert_eq!(result.end_group(), variable.end_group);
+        assert_eq!(result.end_object(), variable.end_object);
+    }
+
+    #[test]
+    fn set_actual_object_start() {
+        let variable = test_helper_fn::common_subscription_variable();
+
+        let start_group = 1;
+        let start_object = 1;
+
+        let mut subscription = Subscription::new(
+            variable.track_alias,
+            variable.track_namespace,
+            variable.track_name,
+            variable.subscriber_priority,
+            variable.group_order,
+            variable.filter_type,
+            variable.start_group,
+            variable.start_object,
+            variable.end_group,
+            variable.end_object,
+            None,
+        );
+
+        subscription.set_actual_object_start(ObjectStart::new(start_group, start_object));
+
+        let result = subscription.get_actual_object_start().unwrap();
+
+        assert_eq!(result.group_id(), start_group);
+        assert_eq!(result.object_id(), start_object);
+    }
+
+    #[test]
+    fn get_actual_object_start() {
+        let variable = test_helper_fn::common_subscription_variable();
+
+        let start_group = 1;
+        let start_object = 1;
+
+        let mut subscription = Subscription::new(
+            variable.track_alias,
+            variable.track_namespace,
+            variable.track_name,
+            variable.subscriber_priority,
+            variable.group_order,
+            variable.filter_type,
+            variable.start_group,
+            variable.start_object,
+            variable.end_group,
+            variable.end_object,
+            None,
+        );
+
+        subscription.set_actual_object_start(ObjectStart::new(start_group, start_object));
+
+        let result = subscription.get_actual_object_start().unwrap();
+
+        assert_eq!(result.group_id(), start_group);
+        assert_eq!(result.object_id(), start_object);
     }
 }

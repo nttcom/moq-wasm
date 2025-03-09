@@ -144,7 +144,7 @@ async fn spawn_subgroup_stream_object_forwarder_thread(
     client: Arc<Mutex<MOQTClient>>,
     send_stream: SendStream,
     subscribe_id: u64,
-    subgroup_stream_id: Option<SubgroupStreamId>,
+    subgroup_stream_id: SubgroupStreamId,
 ) -> Result<()> {
     let stable_id = client.lock().await.id();
     let session_span = tracing::info_span!("Session", stable_id);
@@ -312,6 +312,7 @@ pub(crate) async fn select_spawn_thread(
             match data_stream_type {
                 DataStreamType::StreamHeaderSubgroup => {
                     let send_stream = session.open_uni().await?.await?;
+                    let subgroup_stream_id = subgroup_stream_id.unwrap();
                     spawn_subgroup_stream_object_forwarder_thread(client.clone(), send_stream, subscribe_id, subgroup_stream_id).await?;
                 }
                 DataStreamType::ObjectDatagram => {

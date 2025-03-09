@@ -224,6 +224,20 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 let object_with_cache_id = datagram_cache.get_latest_group_with_cache_id();
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
+            ObjectCacheStorageCommand::GetLatestDatagramObject { cache_key, resp } => {
+                let cache = storage.get_mut(&cache_key);
+                let datagram_cache = match cache {
+                    Some(Cache::Datagram(datagram_cache)) => datagram_cache,
+                    _ => {
+                        resp.send(Err(anyhow::anyhow!("datagram cache not found")))
+                            .unwrap();
+                        continue;
+                    }
+                };
+
+                let object_with_cache_id = datagram_cache.get_latest_object_with_cache_id();
+                resp.send(Ok(object_with_cache_id)).unwrap();
+            }
             ObjectCacheStorageCommand::GetFirstSubgroupStreamObject {
                 cache_key,
                 group_id,
@@ -244,18 +258,24 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     subgroup_streams_cache.get_first_object_with_cache_id(group_id, subgroup_id);
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
-            ObjectCacheStorageCommand::GetLatestDatagramObject { cache_key, resp } => {
+            ObjectCacheStorageCommand::GetLatestSubgroupStreamObject {
+                cache_key,
+                group_id,
+                subgroup_id,
+                resp,
+            } => {
                 let cache = storage.get_mut(&cache_key);
-                let datagram_cache = match cache {
-                    Some(Cache::Datagram(datagram_cache)) => datagram_cache,
+                let subgroup_streams_cache = match cache {
+                    Some(Cache::SubgroupStream(subgroup_stream_cache)) => subgroup_stream_cache,
                     _ => {
-                        resp.send(Err(anyhow::anyhow!("datagram cache not found")))
+                        resp.send(Err(anyhow::anyhow!("subgroup stream cache not found")))
                             .unwrap();
                         continue;
                     }
                 };
 
-                let object_with_cache_id = datagram_cache.get_latest_object_with_cache_id();
+                let object_with_cache_id =
+                    subgroup_streams_cache.get_latest_object_with_cache_id(group_id, subgroup_id);
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
             ObjectCacheStorageCommand::GetAllSubgroupIds {
