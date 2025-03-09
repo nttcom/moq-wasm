@@ -6,7 +6,7 @@ type SenderToDataStreamThread = mpsc::Sender<Box<DataStreamThreadSignal>>;
 
 #[derive(Debug)]
 pub(crate) enum DataStreamThreadSignal {
-    Termination(ObjectStatus),
+    Terminate(ObjectStatus),
 }
 
 #[derive(Debug)]

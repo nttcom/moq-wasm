@@ -95,9 +95,9 @@ impl SubgroupStreamObjectForwarder {
         let is_terminated_clone = is_terminated.clone();
         tokio::spawn(async move {
             while let Some(signal) = signal_rx.recv().await {
-                tracing::debug!("Received signal: {:?}", signal);
                 match *signal {
-                    DataStreamThreadSignal::Termination(_) => {
+                    DataStreamThreadSignal::Terminate(status) => {
+                        tracing::debug!("Received Terminate signal (status: {:?})", status);
                         is_terminated_clone.store(true, Ordering::Relaxed);
                     }
                 }
@@ -489,7 +489,7 @@ impl SubgroupStreamObjectForwarder {
                 stream_id
             );
 
-            let signal = Box::new(DataStreamThreadSignal::Termination(object_status));
+            let signal = Box::new(DataStreamThreadSignal::Terminate(object_status));
             signal_dispatcher
                 .transfer_signal_to_data_stream_thread(downstream_session_id, stream_id, signal)
                 .await?;
