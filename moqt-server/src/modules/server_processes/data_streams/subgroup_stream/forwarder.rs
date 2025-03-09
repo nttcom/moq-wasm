@@ -470,8 +470,8 @@ impl SubgroupStreamObjectForwarder {
     }
 
     // This function is implemented according to the following sentence in draft.
-    //   A relay MAY treat receipt of EndOfGroup, EndOfSubgroup, GroupDoesNotExist, or
-    //   EndOfSubgroup objects as a signal to close corresponding streams even if the FIN
+    //   A relay MAY treat receipt of EndOfGroup, EndOfTrack, GroupDoesNotExist, or
+    //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
     //   has not arrived, as further objects on the stream would be a protocol violation.
     fn is_data_stream_ended(&self, stream_object: &subgroup_stream::Object) -> bool {
         matches!(
