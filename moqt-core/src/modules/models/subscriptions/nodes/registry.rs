@@ -57,7 +57,11 @@ pub trait SubscriptionNodeRegistry {
     fn get_requested_object_range(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectRange>>;
     fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
     fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
-    fn set_actual_object_start(&mut self, subscribe_id: SubscribeId, actual_object_start: ObjectStart) -> Result<()>;
+    fn set_actual_object_start(
+        &mut self,
+        subscribe_id: SubscribeId,
+        actual_object_start: ObjectStart,
+    ) -> Result<()>;
     fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectStart>>;
 
     fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool;

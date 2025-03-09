@@ -44,7 +44,8 @@ impl Subscription {
             forwarding_preference,
         );
 
-        let requested_object_range = ObjectRange::new(start_group, start_object, end_group, end_object);
+        let requested_object_range =
+            ObjectRange::new(start_group, start_object, end_group, end_object);
 
         Self {
             track,
@@ -203,8 +204,14 @@ mod success {
         assert_eq!(subscription.priority, priority);
         assert_eq!(subscription.group_order, group_order);
         assert_eq!(subscription.filter_type, filter_type);
-        assert_eq!(subscription.requested_object_range.start_group(), start_group);
-        assert_eq!(subscription.requested_object_range.start_object(), start_object);
+        assert_eq!(
+            subscription.requested_object_range.start_group(),
+            start_group
+        );
+        assert_eq!(
+            subscription.requested_object_range.start_object(),
+            start_object
+        );
         assert_eq!(subscription.requested_object_range.end_group(), end_group);
         assert_eq!(subscription.requested_object_range.end_object(), end_object);
     }

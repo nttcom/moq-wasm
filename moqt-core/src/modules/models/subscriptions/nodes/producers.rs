@@ -192,7 +192,11 @@ impl SubscriptionNodeRegistry for Producer {
         Ok((end_group, end_object))
     }
 
-    fn set_actual_object_start(&mut self, subscribe_id: SubscribeId, actual_object_start: ObjectStart) -> Result<()> {
+    fn set_actual_object_start(
+        &mut self,
+        subscribe_id: SubscribeId,
+        actual_object_start: ObjectStart,
+    ) -> Result<()> {
         self.subscriptions
             .get_mut(&subscribe_id)
             .unwrap()

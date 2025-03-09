@@ -175,7 +175,11 @@ impl SubscriptionNodeRegistry for Consumer {
         unimplemented!("subscribe_id: {}", subscribe_id)
     }
 
-    fn set_actual_object_start(&mut self, subscribe_id: SubscribeId, actual_object_start: ObjectStart) -> Result<()> {
+    fn set_actual_object_start(
+        &mut self,
+        subscribe_id: SubscribeId,
+        actual_object_start: ObjectStart,
+    ) -> Result<()> {
         unimplemented!(
             "subscribe_id: {}, actual_object_start: {:?}",
             subscribe_id,
