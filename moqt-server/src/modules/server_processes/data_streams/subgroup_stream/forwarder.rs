@@ -274,7 +274,7 @@ impl SubgroupStreamObjectForwarder {
             None => {
                 // If there is no actual start, it means that this is the first forwarder on this subscription.
                 let object_with_cache_id = self
-                    .try_get_first_object_for_first_subgroup_stream(object_cache_storage)
+                    .try_get_first_object_for_first_stream(object_cache_storage)
                     .await?;
 
                 if object_with_cache_id.is_none() {
@@ -298,16 +298,13 @@ impl SubgroupStreamObjectForwarder {
             }
             Some(actual_start) => {
                 // If there is an actual start, it means that this is the second or later forwarder on this subscription.
-                self.try_get_first_object_for_subsequent_subgroup_stream(
-                    object_cache_storage,
-                    actual_start,
-                )
-                .await
+                self.try_get_first_object_for_subsequent_stream(object_cache_storage, actual_start)
+                    .await
             }
         }
     }
 
-    async fn try_get_first_object_for_first_subgroup_stream(
+    async fn try_get_first_object_for_first_stream(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<(usize, subgroup_stream::Object)>> {
@@ -348,7 +345,7 @@ impl SubgroupStreamObjectForwarder {
         }
     }
 
-    async fn try_get_first_object_for_subsequent_subgroup_stream(
+    async fn try_get_first_object_for_subsequent_stream(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         actual_start: Start,
@@ -471,7 +468,7 @@ impl SubgroupStreamObjectForwarder {
 
     // This function is implemented according to the following sentence in draft.
     //   A relay MAY treat receipt of EndOfGroup, EndOfSubgroup, GroupDoesNotExist, or
-    //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
+    //   EndOfSubgroup objects as a signal to close corresponding streams even if the FIN
     //   has not arrived, as further objects on the stream would be a protocol violation.
     fn is_data_stream_ended(&self, stream_object: &subgroup_stream::Object) -> bool {
         matches!(
