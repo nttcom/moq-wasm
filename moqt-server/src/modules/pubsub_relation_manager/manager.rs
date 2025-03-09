@@ -835,7 +835,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 let filter_type = producer.get_filter_type(downstream_subscribe_id).unwrap();
                 resp.send(Ok(filter_type)).unwrap();
             }
-            GetUpstreamRequestedRange {
+            GetUpstreamRequestedObjectRange {
                 upstream_session_id,
                 upstream_subscribe_id,
                 resp,
@@ -851,10 +851,12 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
 
-                let range = consumer.get_requested_range(upstream_subscribe_id).unwrap();
+                let range = consumer
+                    .get_requested_object_range(upstream_subscribe_id)
+                    .unwrap();
                 resp.send(Ok(range)).unwrap();
             }
-            GetDownstreamRequestedRange {
+            GetDownstreamRequestedObjectRange {
                 downstream_session_id,
                 downstream_subscribe_id,
                 resp,
@@ -871,7 +873,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 };
 
                 let range = producer
-                    .get_requested_range(downstream_subscribe_id)
+                    .get_requested_object_range(downstream_subscribe_id)
                     .unwrap();
                 resp.send(Ok(range)).unwrap();
             }
@@ -891,7 +893,8 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                         continue;
                     }
                 };
-                match producer.set_actual_object_start(downstream_subscribe_id, actual_object_start) {
+                match producer.set_actual_object_start(downstream_subscribe_id, actual_object_start)
+                {
                     Ok(_) => resp.send(Ok(())).unwrap(),
                     Err(err) => {
                         tracing::error!("set_actual_object_start: err: {:?}", err.to_string());
@@ -915,7 +918,9 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
 
-                let actual_object_start = producer.get_actual_object_start(downstream_subscribe_id).unwrap();
+                let actual_object_start = producer
+                    .get_actual_object_start(downstream_subscribe_id)
+                    .unwrap();
                 resp.send(Ok(actual_object_start)).unwrap();
             }
             GetRelatedSubscribers {

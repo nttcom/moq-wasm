@@ -1,7 +1,7 @@
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::{
-        range::{Range, Start},
+        range::{ObjectRange, ObjectStart},
         subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription},
         tracks::ForwardingPreference,
     },
@@ -159,12 +159,12 @@ impl SubscriptionNodeRegistry for Consumer {
         Ok(filter_type)
     }
 
-    fn get_requested_range(&self, subscribe_id: SubscribeId) -> Result<Option<Range>> {
-        let requested_range = self
+    fn get_requested_object_range(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectRange>> {
+        let requested_object_range = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_requested_range());
-        Ok(requested_range)
+            .map(|subscription| subscription.get_requested_object_range());
+        Ok(requested_object_range)
     }
 
     fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
@@ -175,7 +175,7 @@ impl SubscriptionNodeRegistry for Consumer {
         unimplemented!("subscribe_id: {}", subscribe_id)
     }
 
-    fn set_actual_object_start(&mut self, subscribe_id: SubscribeId, actual_object_start: Start) -> Result<()> {
+    fn set_actual_object_start(&mut self, subscribe_id: SubscribeId, actual_object_start: ObjectStart) -> Result<()> {
         unimplemented!(
             "subscribe_id: {}, actual_object_start: {:?}",
             subscribe_id,
@@ -183,7 +183,7 @@ impl SubscriptionNodeRegistry for Consumer {
         )
     }
 
-    fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<Start>> {
+    fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectStart>> {
         unimplemented!("subscribe_id: {}", subscribe_id)
     }
 
@@ -674,7 +674,7 @@ mod success {
         assert_eq!(result_filter_type, variables.filter_type);
     }
     #[test]
-    fn get_requested_range() {
+    fn get_requested_object_range() {
         let subscribe_id = 0;
         let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
@@ -699,7 +699,7 @@ mod success {
 
         let result_range = variables
             .consumer
-            .get_requested_range(variables.subscribe_id)
+            .get_requested_object_range(variables.subscribe_id)
             .unwrap()
             .unwrap();
 

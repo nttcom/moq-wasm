@@ -5,7 +5,7 @@ use tokio::sync::{mpsc, oneshot};
 use moqt_core::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::{
-        range::{Range, Start},
+        range::{ObjectRange, ObjectStart},
         tracks::ForwardingPreference,
     },
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -731,13 +731,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         }
     }
 
-    async fn get_upstream_requested_range(
+    async fn get_upstream_requested_object_range(
         &self,
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
-    ) -> Result<Option<Range>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<Range>>>();
-        let cmd = PubSubRelationCommand::GetUpstreamRequestedRange {
+    ) -> Result<Option<ObjectRange>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<ObjectRange>>>();
+        let cmd = PubSubRelationCommand::GetUpstreamRequestedObjectRange {
             upstream_session_id,
             upstream_subscribe_id,
             resp: resp_tx,
@@ -752,13 +752,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         }
     }
 
-    async fn get_downstream_requested_range(
+    async fn get_downstream_requested_object_range(
         &self,
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
-    ) -> Result<Option<Range>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<Range>>>();
-        let cmd = PubSubRelationCommand::GetDownstreamRequestedRange {
+    ) -> Result<Option<ObjectRange>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<ObjectRange>>>();
+        let cmd = PubSubRelationCommand::GetDownstreamRequestedObjectRange {
             downstream_session_id,
             downstream_subscribe_id,
             resp: resp_tx,
@@ -777,7 +777,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         &self,
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
-        actual_object_start: Start,
+        actual_object_start: ObjectStart,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
         let cmd = PubSubRelationCommand::SetDownstreamActualObjectStart {
@@ -800,8 +800,8 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         &self,
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
-    ) -> Result<Option<Start>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<Start>>>();
+    ) -> Result<Option<ObjectStart>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<ObjectStart>>>();
         let cmd = PubSubRelationCommand::GetDownstreamActualObjectStart {
             downstream_session_id,
             downstream_subscribe_id,
@@ -890,7 +890,7 @@ mod success {
         wrapper::PubSubRelationManagerWrapper,
     };
     use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
-    use moqt_core::models::range::Start;
+    use moqt_core::models::range::ObjectStart;
     use moqt_core::models::subscriptions::{
         nodes::registry::SubscriptionNodeRegistry, Subscription,
     };
@@ -2864,7 +2864,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn get_upstream_requested_range() {
+    async fn get_upstream_requested_object_range() {
         let max_subscribe_id = 10;
         let upstream_session_id = 1;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
@@ -2905,7 +2905,7 @@ mod success {
             .unwrap();
 
         let result_range = pubsub_relation_manager
-            .get_upstream_requested_range(upstream_session_id, upstream_subscribe_id)
+            .get_upstream_requested_object_range(upstream_session_id, upstream_subscribe_id)
             .await
             .unwrap()
             .unwrap();
@@ -2917,7 +2917,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn get_downstream_requested_range() {
+    async fn get_downstream_requested_object_range() {
         let max_subscribe_id = 10;
         let downstream_session_id = 1;
         let subscribe_id = 0;
@@ -2958,7 +2958,7 @@ mod success {
             .await;
 
         let result_range = pubsub_relation_manager
-            .get_downstream_requested_range(downstream_session_id, subscribe_id)
+            .get_downstream_requested_object_range(downstream_session_id, subscribe_id)
             .await
             .unwrap()
             .unwrap();
@@ -2984,7 +2984,7 @@ mod success {
         let start_object = Some(0);
         let end_group = None;
         let end_object = None;
-        let actual_object_start = Start::new(1, 1);
+        let actual_object_start = ObjectStart::new(1, 1);
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -3012,7 +3012,11 @@ mod success {
             .await;
 
         let result = pubsub_relation_manager
-            .set_downstream_actual_object_start(downstream_session_id, subscribe_id, actual_object_start.clone())
+            .set_downstream_actual_object_start(
+                downstream_session_id,
+                subscribe_id,
+                actual_object_start.clone(),
+            )
             .await;
         assert!(result.is_ok());
 

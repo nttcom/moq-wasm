@@ -1,7 +1,7 @@
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::{
-        range::{Range, Start},
+        range::{ObjectRange, ObjectStart},
         subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription},
         tracks::ForwardingPreference,
     },
@@ -157,20 +157,20 @@ impl SubscriptionNodeRegistry for Producer {
         Ok(filter_type)
     }
 
-    fn get_requested_range(&self, subscribe_id: SubscribeId) -> Result<Option<Range>> {
-        let requested_range = self
+    fn get_requested_object_range(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectRange>> {
+        let requested_object_range = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_requested_range());
+            .map(|subscription| subscription.get_requested_object_range());
 
-        Ok(requested_range)
+        Ok(requested_object_range)
     }
 
     fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
         let range = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_requested_range())
+            .map(|subscription| subscription.get_requested_object_range())
             .unwrap();
 
         let start_group = range.start_group();
@@ -183,7 +183,7 @@ impl SubscriptionNodeRegistry for Producer {
         let range = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_requested_range())
+            .map(|subscription| subscription.get_requested_object_range())
             .unwrap();
 
         let end_group = range.end_group();
@@ -192,7 +192,7 @@ impl SubscriptionNodeRegistry for Producer {
         Ok((end_group, end_object))
     }
 
-    fn set_actual_object_start(&mut self, subscribe_id: SubscribeId, actual_object_start: Start) -> Result<()> {
+    fn set_actual_object_start(&mut self, subscribe_id: SubscribeId, actual_object_start: ObjectStart) -> Result<()> {
         self.subscriptions
             .get_mut(&subscribe_id)
             .unwrap()
@@ -201,7 +201,7 @@ impl SubscriptionNodeRegistry for Producer {
         Ok(())
     }
 
-    fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<Start>> {
+    fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectStart>> {
         let actual_object_start = self
             .subscriptions
             .get(&subscribe_id)
@@ -371,7 +371,7 @@ pub(crate) mod test_helper_fn {
 #[cfg(test)]
 mod success {
     use crate::models::{
-        range::Start,
+        range::ObjectStart,
         subscriptions::{
             nodes::{
                 producers::{test_helper_fn, Producer},
@@ -729,7 +729,7 @@ mod success {
     }
 
     #[test]
-    fn get_requested_range() {
+    fn get_requested_object_range() {
         let subscribe_id = 0;
         let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
@@ -749,7 +749,7 @@ mod success {
 
         let result_range = variables
             .producer
-            .get_requested_range(variables.subscribe_id)
+            .get_requested_object_range(variables.subscribe_id)
             .unwrap()
             .unwrap();
 
@@ -836,7 +836,7 @@ mod success {
             variables.end_object,
         );
 
-        let actual_object_start = Start::new(0, 0);
+        let actual_object_start = ObjectStart::new(0, 0);
 
         let result = variables
             .producer
@@ -850,7 +850,7 @@ mod success {
         let subscribe_id = 0;
         let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
-        let actual_object_start = Start::new(0, 0);
+        let actual_object_start = ObjectStart::new(0, 0);
 
         let _ = variables.producer.set_subscription(
             variables.subscribe_id,

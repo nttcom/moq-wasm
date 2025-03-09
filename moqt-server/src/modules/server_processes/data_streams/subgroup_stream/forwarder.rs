@@ -18,7 +18,7 @@ use moqt_core::{
         data_streams::{object_status::ObjectStatus, subgroup_stream, DataStreams},
     },
     models::{
-        range::{Range, Start},
+        range::{ObjectRange, ObjectStart},
         tracks::ForwardingPreference,
     },
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -36,7 +36,7 @@ pub(crate) struct SubgroupStreamObjectForwarder {
     cache_key: CacheKey,
     subgroup_stream_id: SubgroupStreamId,
     filter_type: FilterType,
-    requested_range: Range,
+    requested_object_range: ObjectRange,
     sleep_time: Duration,
 }
 
@@ -64,8 +64,8 @@ impl SubgroupStreamObjectForwarder {
             .await?
             .unwrap();
 
-        let requested_range = pubsub_relation_manager
-            .get_downstream_requested_range(downstream_session_id, downstream_subscribe_id)
+        let requested_object_range = pubsub_relation_manager
+            .get_downstream_requested_object_range(downstream_session_id, downstream_subscribe_id)
             .await?
             .unwrap();
 
@@ -84,7 +84,7 @@ impl SubgroupStreamObjectForwarder {
             cache_key,
             subgroup_stream_id,
             filter_type,
-            requested_range,
+            requested_object_range,
             sleep_time,
         };
 
@@ -284,7 +284,7 @@ impl SubgroupStreamObjectForwarder {
                 let (cache_id, stream_object) = object_with_cache_id.unwrap();
                 let group_id = self.subgroup_stream_id.0;
                 let object_id = stream_object.object_id();
-                let actual_object_start = Start::new(group_id, object_id);
+                let actual_object_start = ObjectStart::new(group_id, object_id);
 
                 pubsub_relation_manager
                     .set_downstream_actual_object_start(
@@ -327,8 +327,8 @@ impl SubgroupStreamObjectForwarder {
                     .await
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
-                let start_group = self.requested_range.start_group().unwrap();
-                let start_object = self.requested_range.start_object().unwrap();
+                let start_group = self.requested_object_range.start_group().unwrap();
+                let start_object = self.requested_object_range.start_object().unwrap();
 
                 if group_id == start_group {
                     object_cache_storage
@@ -351,7 +351,7 @@ impl SubgroupStreamObjectForwarder {
     async fn try_get_first_object_for_subsequent_stream(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-        actual_object_start: Start,
+        actual_object_start: ObjectStart,
     ) -> Result<Option<(usize, subgroup_stream::Object)>> {
         let (group_id, subgroup_id) = self.subgroup_stream_id;
 
@@ -466,7 +466,7 @@ impl SubgroupStreamObjectForwarder {
         let group_id = self.subgroup_stream_id.0;
         let object_id = stream_object.object_id();
 
-        self.requested_range.is_end(group_id, object_id)
+        self.requested_object_range.is_end(group_id, object_id)
     }
 
     // This function is implemented according to the following sentence in draft.

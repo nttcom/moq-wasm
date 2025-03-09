@@ -1,7 +1,7 @@
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::{
-        range::{Range, Start},
+        range::{ObjectRange, ObjectStart},
         subscriptions::Subscription,
         tracks::ForwardingPreference,
     },
@@ -54,11 +54,11 @@ pub trait SubscriptionNodeRegistry {
         subscribe_id: SubscribeId,
     ) -> Result<Option<ForwardingPreference>>;
     fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<Option<FilterType>>;
-    fn get_requested_range(&self, subscribe_id: SubscribeId) -> Result<Option<Range>>;
+    fn get_requested_object_range(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectRange>>;
     fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
     fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
-    fn set_actual_object_start(&mut self, subscribe_id: SubscribeId, actual_object_start: Start) -> Result<()>;
-    fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<Start>>;
+    fn set_actual_object_start(&mut self, subscribe_id: SubscribeId, actual_object_start: ObjectStart) -> Result<()>;
+    fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectStart>>;
 
     fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool;
     fn is_subscribe_id_less_than_max(&self, subscribe_id: SubscribeId) -> bool;

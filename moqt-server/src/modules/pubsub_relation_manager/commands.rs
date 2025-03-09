@@ -4,7 +4,7 @@ use tokio::sync::oneshot;
 use moqt_core::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::{
-        range::{Range, Start},
+        range::{ObjectRange, ObjectStart},
         tracks::ForwardingPreference,
     },
 };
@@ -200,26 +200,26 @@ pub(crate) enum PubSubRelationCommand {
         downstream_subscribe_id: u64,
         resp: oneshot::Sender<Result<Option<FilterType>>>,
     },
-    GetUpstreamRequestedRange {
+    GetUpstreamRequestedObjectRange {
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<Range>>>,
+        resp: oneshot::Sender<Result<Option<ObjectRange>>>,
     },
-    GetDownstreamRequestedRange {
+    GetDownstreamRequestedObjectRange {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<Range>>>,
+        resp: oneshot::Sender<Result<Option<ObjectRange>>>,
     },
     SetDownstreamActualObjectStart {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
-        actual_object_start: Start,
+        actual_object_start: ObjectStart,
         resp: oneshot::Sender<Result<()>>,
     },
     GetDownstreamActualObjectStart {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<Start>>>,
+        resp: oneshot::Sender<Result<Option<ObjectStart>>>,
     },
     GetRelatedSubscribers {
         upstream_session_id: usize,

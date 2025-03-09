@@ -17,7 +17,7 @@ use moqt_core::{
         },
         moqt_payload::MOQTPayload,
     },
-    models::{range::Start, tracks::ForwardingPreference},
+    models::{range::ObjectStart, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     SendStreamDispatcherRepository,
 };
@@ -159,7 +159,7 @@ pub(crate) async fn subscribe_handler(
             // Store Largest Group/Object ID to culculate the Joining FETCH range
             if subscribe_message.filter_type() == FilterType::LatestObject {
                 let actual_object_start =
-                    Start::new(largest_group_id.unwrap(), largest_object_id.unwrap());
+                    ObjectStart::new(largest_group_id.unwrap(), largest_object_id.unwrap());
                 pubsub_relation_manager_repository
                     .set_downstream_actual_object_start(
                         downstream_session_id,
