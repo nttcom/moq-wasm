@@ -158,13 +158,13 @@ pub(crate) async fn subscribe_handler(
         if content_exists {
             // Store Largest Group/Object ID to culculate the Joining FETCH range
             if subscribe_message.filter_type() == FilterType::LatestObject {
-                let actual_start =
+                let actual_object_start =
                     Start::new(largest_group_id.unwrap(), largest_object_id.unwrap());
                 pubsub_relation_manager_repository
-                    .set_downstream_actual_start(
+                    .set_downstream_actual_object_start(
                         downstream_session_id,
                         downstream_subscribe_id,
-                        actual_start,
+                        actual_object_start,
                     )
                     .await?;
             }
@@ -875,7 +875,7 @@ mod success {
     #[tokio::test]
     // Return SUBSCRIBE_OK immediately
     // ContentExists is true
-    // If, FilterType is LatestObject, the largest group_id and object_id are stored as actual_start
+    // If, FilterType is LatestObject, the largest group_id and object_id are stored as actual_object_start
     async fn normal_case_track_exists_and_content_exists() {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
@@ -1066,14 +1066,14 @@ mod success {
         assert_eq!(downstream_session_id, downstream_session_id);
         assert_eq!(downstream_subscribe_id, downstream_subscribe_id);
 
-        let actual_start = pubsub_relation_manager
-            .get_downstream_actual_start(*downstream_session_id, *downstream_subscribe_id)
+        let actual_object_start = pubsub_relation_manager
+            .get_downstream_actual_object_start(*downstream_session_id, *downstream_subscribe_id)
             .await
             .unwrap()
             .unwrap();
 
-        assert_eq!(actual_start.group_id(), group_id);
-        assert_eq!(actual_start.object_id(), 9);
+        assert_eq!(actual_object_start.group_id(), group_id);
+        assert_eq!(actual_object_start.object_id(), 9);
     }
 }
 

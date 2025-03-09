@@ -210,13 +210,13 @@ pub(crate) enum PubSubRelationCommand {
         downstream_subscribe_id: u64,
         resp: oneshot::Sender<Result<Option<Range>>>,
     },
-    SetDownstreamActualStart {
+    SetDownstreamActualObjectStart {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
-        actual_start: Start,
+        actual_object_start: Start,
         resp: oneshot::Sender<Result<()>>,
     },
-    GetDownstreamActualStart {
+    GetDownstreamActualObjectStart {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
         resp: oneshot::Sender<Result<Option<Start>>>,

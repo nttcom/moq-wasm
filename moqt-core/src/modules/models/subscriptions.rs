@@ -18,7 +18,7 @@ pub struct Subscription {
     group_order: GroupOrder,
     filter_type: FilterType,
     requested_range: Range,
-    actual_start: Option<Start>,
+    actual_object_start: Option<Start>,
     status: Status,
 }
 
@@ -52,7 +52,7 @@ impl Subscription {
             group_order,
             filter_type,
             requested_range,
-            actual_start: None,
+            actual_object_start: None,
             status: Status::Requesting,
         }
     }
@@ -102,12 +102,12 @@ impl Subscription {
         self.group_order
     }
 
-    pub fn set_actual_start(&mut self, actual_start: Start) {
-        self.actual_start = Some(actual_start);
+    pub fn set_actual_object_start(&mut self, actual_object_start: Start) {
+        self.actual_object_start = Some(actual_object_start);
     }
 
-    pub fn get_actual_start(&self) -> Option<Start> {
-        self.actual_start.clone()
+    pub fn get_actual_object_start(&self) -> Option<Start> {
+        self.actual_object_start.clone()
     }
 }
 
@@ -423,7 +423,7 @@ mod success {
     }
 
     #[test]
-    fn set_actual_start() {
+    fn set_actual_object_start() {
         let variable = test_helper_fn::common_subscription_variable();
 
         let start_group = 1;
@@ -443,16 +443,16 @@ mod success {
             None,
         );
 
-        subscription.set_actual_start(Start::new(start_group, start_object));
+        subscription.set_actual_object_start(Start::new(start_group, start_object));
 
-        let result = subscription.get_actual_start().unwrap();
+        let result = subscription.get_actual_object_start().unwrap();
 
         assert_eq!(result.group_id(), start_group);
         assert_eq!(result.object_id(), start_object);
     }
 
     #[test]
-    fn get_actual_start() {
+    fn get_actual_object_start() {
         let variable = test_helper_fn::common_subscription_variable();
 
         let start_group = 1;
@@ -472,9 +472,9 @@ mod success {
             None,
         );
 
-        subscription.set_actual_start(Start::new(start_group, start_object));
+        subscription.set_actual_object_start(Start::new(start_group, start_object));
 
-        let result = subscription.get_actual_start().unwrap();
+        let result = subscription.get_actual_object_start().unwrap();
 
         assert_eq!(result.group_id(), start_group);
         assert_eq!(result.object_id(), start_object);

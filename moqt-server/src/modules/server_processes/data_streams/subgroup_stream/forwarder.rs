@@ -266,11 +266,11 @@ impl SubgroupStreamObjectForwarder {
 
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
-        let actual_start = pubsub_relation_manager
-            .get_downstream_actual_start(downstream_session_id, downstream_subscribe_id)
+        let actual_object_start = pubsub_relation_manager
+            .get_downstream_actual_object_start(downstream_session_id, downstream_subscribe_id)
             .await?;
 
-        match actual_start {
+        match actual_object_start {
             None => {
                 // If there is no actual start, it means that this is the first forwarder on this subscription.
                 let object_with_cache_id = self
@@ -284,22 +284,25 @@ impl SubgroupStreamObjectForwarder {
                 let (cache_id, stream_object) = object_with_cache_id.unwrap();
                 let group_id = self.subgroup_stream_id.0;
                 let object_id = stream_object.object_id();
-                let actual_start = Start::new(group_id, object_id);
+                let actual_object_start = Start::new(group_id, object_id);
 
                 pubsub_relation_manager
-                    .set_downstream_actual_start(
+                    .set_downstream_actual_object_start(
                         downstream_session_id,
                         downstream_subscribe_id,
-                        actual_start,
+                        actual_object_start,
                     )
                     .await?;
 
                 Ok(Some((cache_id, stream_object)))
             }
-            Some(actual_start) => {
+            Some(actual_object_start) => {
                 // If there is an actual start, it means that this is the second or later forwarder on this subscription.
-                self.try_get_first_object_for_subsequent_stream(object_cache_storage, actual_start)
-                    .await
+                self.try_get_first_object_for_subsequent_stream(
+                    object_cache_storage,
+                    actual_object_start,
+                )
+                .await
             }
         }
     }
@@ -348,11 +351,11 @@ impl SubgroupStreamObjectForwarder {
     async fn try_get_first_object_for_subsequent_stream(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-        actual_start: Start,
+        actual_object_start: Start,
     ) -> Result<Option<(usize, subgroup_stream::Object)>> {
         let (group_id, subgroup_id) = self.subgroup_stream_id;
 
-        if group_id == actual_start.group_id() {
+        if group_id == actual_object_start.group_id() {
             // If the actual start group id is the same as the group_id of this subgroup stream,
             // this subgroup stream belongs same group with the first subgroup stream.
             // So get the object with same object id with the first subgroup stream.
@@ -361,7 +364,7 @@ impl SubgroupStreamObjectForwarder {
                     &self.cache_key,
                     group_id,
                     subgroup_id,
-                    actual_start.object_id(),
+                    actual_object_start.object_id(),
                 )
                 .await
         } else {

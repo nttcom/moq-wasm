@@ -192,23 +192,23 @@ impl SubscriptionNodeRegistry for Producer {
         Ok((end_group, end_object))
     }
 
-    fn set_actual_start(&mut self, subscribe_id: SubscribeId, actual_start: Start) -> Result<()> {
+    fn set_actual_object_start(&mut self, subscribe_id: SubscribeId, actual_object_start: Start) -> Result<()> {
         self.subscriptions
             .get_mut(&subscribe_id)
             .unwrap()
-            .set_actual_start(actual_start);
+            .set_actual_object_start(actual_object_start);
 
         Ok(())
     }
 
-    fn get_actual_start(&self, subscribe_id: SubscribeId) -> Result<Option<Start>> {
-        let actual_start = self
+    fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<Start>> {
+        let actual_object_start = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_actual_start())
+            .map(|subscription| subscription.get_actual_object_start())
             .unwrap();
 
-        Ok(actual_start)
+        Ok(actual_object_start)
     }
 
     fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool {
@@ -818,7 +818,7 @@ mod success {
     }
 
     #[test]
-    fn set_actual_start() {
+    fn set_actual_object_start() {
         let subscribe_id = 0;
         let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
@@ -836,21 +836,21 @@ mod success {
             variables.end_object,
         );
 
-        let actual_start = Start::new(0, 0);
+        let actual_object_start = Start::new(0, 0);
 
         let result = variables
             .producer
-            .set_actual_start(variables.subscribe_id, actual_start);
+            .set_actual_object_start(variables.subscribe_id, actual_object_start);
 
         assert!(result.is_ok());
     }
 
     #[test]
-    fn get_actual_start() {
+    fn get_actual_object_start() {
         let subscribe_id = 0;
         let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
-        let actual_start = Start::new(0, 0);
+        let actual_object_start = Start::new(0, 0);
 
         let _ = variables.producer.set_subscription(
             variables.subscribe_id,
@@ -868,15 +868,15 @@ mod success {
 
         let _ = variables
             .producer
-            .set_actual_start(variables.subscribe_id, actual_start.clone());
+            .set_actual_object_start(variables.subscribe_id, actual_object_start.clone());
 
         let result = variables
             .producer
-            .get_actual_start(variables.subscribe_id)
+            .get_actual_object_start(variables.subscribe_id)
             .unwrap()
             .unwrap();
 
-        assert_eq!(result, actual_start);
+        assert_eq!(result, actual_object_start);
     }
 
     #[test]

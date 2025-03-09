@@ -875,10 +875,10 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     .unwrap();
                 resp.send(Ok(range)).unwrap();
             }
-            SetDownstreamActualStart {
+            SetDownstreamActualObjectStart {
                 downstream_session_id,
                 downstream_subscribe_id,
-                actual_start,
+                actual_object_start,
                 resp,
             } => {
                 // Return an error if the subscriber does not exist
@@ -891,15 +891,15 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                         continue;
                     }
                 };
-                match producer.set_actual_start(downstream_subscribe_id, actual_start) {
+                match producer.set_actual_object_start(downstream_subscribe_id, actual_object_start) {
                     Ok(_) => resp.send(Ok(())).unwrap(),
                     Err(err) => {
-                        tracing::error!("set_actual_start: err: {:?}", err.to_string());
+                        tracing::error!("set_actual_object_start: err: {:?}", err.to_string());
                         resp.send(Err(anyhow!(err))).unwrap();
                     }
                 }
             }
-            GetDownstreamActualStart {
+            GetDownstreamActualObjectStart {
                 downstream_session_id,
                 downstream_subscribe_id,
                 resp,
@@ -915,8 +915,8 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
 
-                let actual_start = producer.get_actual_start(downstream_subscribe_id).unwrap();
-                resp.send(Ok(actual_start)).unwrap();
+                let actual_object_start = producer.get_actual_object_start(downstream_subscribe_id).unwrap();
+                resp.send(Ok(actual_object_start)).unwrap();
             }
             GetRelatedSubscribers {
                 upstream_session_id,
