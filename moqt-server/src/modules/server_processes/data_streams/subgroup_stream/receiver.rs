@@ -25,7 +25,7 @@ use moqt_core::{
         control_messages::subscribe::FilterType,
         data_streams::{object_status::ObjectStatus, subgroup_stream},
     },
-    models::{range::Range, tracks::ForwardingPreference},
+    models::{range::ObjectRange, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
 use std::sync::Arc;
@@ -41,7 +41,7 @@ pub(crate) struct SubgroupStreamObjectReceiver {
     subscribe_id: Option<u64>,
     subgroup_stream_id: Option<SubgroupStreamId>,
     filter_type: Option<FilterType>,
-    requested_range: Option<Range>,
+    requested_object_range: Option<ObjectRange>,
 }
 
 impl SubgroupStreamObjectReceiver {
@@ -62,7 +62,7 @@ impl SubgroupStreamObjectReceiver {
             subscribe_id: None,
             subgroup_stream_id: None,
             filter_type: None,
-            requested_range: None,
+            requested_object_range: None,
         }
     }
 
@@ -154,8 +154,8 @@ impl SubgroupStreamObjectReceiver {
 
         let filter_type = self.get_upstream_filter_type(session_id).await?;
         self.filter_type = Some(filter_type);
-        let requested_range = self.get_upstream_requested_range(session_id).await?;
-        self.requested_range = Some(requested_range);
+        let requested_object_range = self.get_upstream_requested_object_range(session_id).await?;
+        self.requested_object_range = Some(requested_object_range);
 
         self.create_cache_storage(session_id, header, object_cache_storage)
             .await?;
@@ -267,16 +267,16 @@ impl SubgroupStreamObjectReceiver {
         }
     }
 
-    async fn get_upstream_requested_range(
+    async fn get_upstream_requested_object_range(
         &mut self,
         upstream_session_id: usize,
-    ) -> Result<Range, TerminationError> {
+    ) -> Result<ObjectRange, TerminationError> {
         let upstream_subscribe_id = self.subscribe_id.unwrap();
 
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
         match pubsub_relation_manager
-            .get_upstream_requested_range(upstream_session_id, upstream_subscribe_id)
+            .get_upstream_requested_object_range(upstream_session_id, upstream_subscribe_id)
             .await
         {
             Ok(Some(range)) => Ok(range),
@@ -484,7 +484,7 @@ impl SubgroupStreamObjectReceiver {
 
         let (group_id, _) = self.subgroup_stream_id.unwrap();
         let object_id = object.object_id();
-        let range = self.requested_range.as_ref().unwrap();
+        let range = self.requested_object_range.as_ref().unwrap();
 
         range.is_end(group_id, object_id)
     }

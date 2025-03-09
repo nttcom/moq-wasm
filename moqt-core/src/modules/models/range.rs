@@ -1,10 +1,10 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Range {
-    start: Option<Start>,
-    end: Option<End>,
+pub struct ObjectRange {
+    start: Option<ObjectStart>,
+    end: Option<ObjectEnd>,
 }
 
-impl Range {
+impl ObjectRange {
     pub fn new(
         start_group: Option<u64>,
         start_object: Option<u64>,
@@ -12,12 +12,12 @@ impl Range {
         end_object: Option<u64>,
     ) -> Self {
         let start = match (start_group, start_object) {
-            (Some(group_id), Some(object_id)) => Some(Start::new(group_id, object_id)),
+            (Some(group_id), Some(object_id)) => Some(ObjectStart::new(group_id, object_id)),
             _ => None,
         };
 
         let end = match (end_group, end_object) {
-            (Some(group_id), Some(object_id)) => Some(End::new(group_id, object_id)),
+            (Some(group_id), Some(object_id)) => Some(ObjectEnd::new(group_id, object_id)),
             _ => None,
         };
 
@@ -57,12 +57,12 @@ impl Range {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Start {
+pub struct ObjectStart {
     group_id: u64,
     object_id: u64,
 }
 
-impl Start {
+impl ObjectStart {
     pub fn new(group_id: u64, object_id: u64) -> Self {
         Self {
             group_id,
@@ -80,12 +80,12 @@ impl Start {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct End {
+pub struct ObjectEnd {
     group_id: u64,
     object_id: u64,
 }
 
-impl End {
+impl ObjectEnd {
     pub fn new(group_id: u64, object_id: u64) -> Self {
         Self {
             group_id,
