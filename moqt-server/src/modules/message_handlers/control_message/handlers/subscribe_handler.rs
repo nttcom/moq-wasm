@@ -11,13 +11,13 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::{
-            subscribe::Subscribe,
+            subscribe::{FilterType, Subscribe},
             subscribe_error::{SubscribeError, SubscribeErrorCode},
             subscribe_ok::SubscribeOk,
         },
         moqt_payload::MOQTPayload,
     },
-    models::tracks::ForwardingPreference,
+    models::{range::Start, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     SendStreamDispatcherRepository,
 };
@@ -83,11 +83,19 @@ pub(crate) async fn subscribe_handler(
         .await
         .unwrap()
     {
-        // Generate message -> Set subscription -> Send message
-        let subscribe_ok_message = match generate_subscribe_ok_message(
+        let (content_exists, largest_group_id, largest_object_id) = check_existing_contents(
+            &subscribe_message,
             pubsub_relation_manager_repository,
             object_cache_storage,
+        )
+        .await?;
+
+        // Generate message -> Set subscription -> Send message
+        let subscribe_ok_message = match generate_subscribe_ok_message(
             &subscribe_message,
+            content_exists,
+            largest_group_id,
+            largest_object_id,
         )
         .await
         {
@@ -147,7 +155,20 @@ pub(crate) async fn subscribe_handler(
             )
             .await?;
 
-        if subscribe_ok_message.content_exists() {
+        if content_exists {
+            // Store Largest Group/Object ID to culculate the Joining FETCH range
+            if subscribe_message.filter_type() == FilterType::LatestObject {
+                let actual_start =
+                    Start::new(largest_group_id.unwrap(), largest_object_id.unwrap());
+                pubsub_relation_manager_repository
+                    .set_downstream_actual_start(
+                        downstream_session_id,
+                        downstream_subscribe_id,
+                        actual_start,
+                    )
+                    .await?;
+            }
+
             start_new_forwarder(
                 pubsub_relation_manager_repository,
                 object_cache_storage,
@@ -353,11 +374,11 @@ async fn start_new_forwarder(
     Ok(())
 }
 
-async fn generate_subscribe_ok_message(
+async fn check_existing_contents(
+    subscribe_message: &Subscribe,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    subscribe_message: &Subscribe,
-) -> Result<SubscribeOk> {
+) -> Result<(bool, Option<u64>, Option<u64>)> {
     let upstream_session_id = pubsub_relation_manager_repository
         .get_upstream_session_id(subscribe_message.track_namespace().clone())
         .await?
@@ -383,10 +404,20 @@ async fn generate_subscribe_ok_message(
         Err(_) => None,
     };
 
-    // TODO: check cache duration
-    let expires = 0;
     // If the largest_group_id or largest_object_id is None, the content does not exist
     let content_exists = largest_group_id.is_some() && largest_object_id.is_some();
+
+    Ok((content_exists, largest_group_id, largest_object_id))
+}
+
+async fn generate_subscribe_ok_message(
+    subscribe_message: &Subscribe,
+    content_exists: bool,
+    largest_group_id: Option<u64>,
+    largest_object_id: Option<u64>,
+) -> Result<SubscribeOk> {
+    // TODO: check cache duration
+    let expires = 0;
     // TODO: check DELIVERY TIMEOUT
     let subscribe_parameters = vec![];
     // TODO: accurate group_order
@@ -842,7 +873,9 @@ mod success {
     }
 
     #[tokio::test]
-    // Return SUBSCRIBE_OK immediately and its ContentExists is true
+    // Return SUBSCRIBE_OK immediately
+    // ContentExists is true
+    // If, FilterType is LatestObject, the largest group_id and object_id are stored as actual_start
     async fn normal_case_track_exists_and_content_exists() {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
@@ -851,7 +884,7 @@ mod success {
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
-        let filter_type = FilterType::LatestGroup;
+        let filter_type = FilterType::LatestObject;
         let start_group = None;
         let start_object = None;
         let end_group = None;
@@ -1032,6 +1065,15 @@ mod success {
 
         assert_eq!(downstream_session_id, downstream_session_id);
         assert_eq!(downstream_subscribe_id, downstream_subscribe_id);
+
+        let actual_start = pubsub_relation_manager
+            .get_downstream_actual_start(*downstream_session_id, *downstream_subscribe_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(actual_start.group_id(), group_id);
+        assert_eq!(actual_start.object_id(), 9);
     }
 }
 
