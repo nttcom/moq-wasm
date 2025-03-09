@@ -16,5 +16,8 @@
     "prettier": "^3.2.5",
     "vite": "^4.4.10",
     "vite-plugin-wasm-pack": "^0.1.12"
+  },
+  "dependencies": {
+    "@types/dom-mediacapture-transform": "^0.1.11"
   }
 }

@@ -476,7 +476,7 @@ impl SubgroupStreamObjectForwarder {
     fn is_data_stream_ended(&self, stream_object: &subgroup_stream::Object) -> bool {
         matches!(
             stream_object.object_status(),
-            Some(ObjectStatus::EndOfSubgroup)
+            Some(ObjectStatus::EndOfTrack)
                 | Some(ObjectStatus::EndOfGroup)
                 | Some(ObjectStatus::EndOfTrackAndGroup)
         )

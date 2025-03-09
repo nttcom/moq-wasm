@@ -312,7 +312,7 @@ impl DatagramObjectForwarder {
     }
 
     // This function is implemented according to the following sentence in draft.
-    //   A relay MAY treat receipt of EndOfGroup, EndOfSubgroup, GroupDoesNotExist, or
+    //   A relay MAY treat receipt of EndOfGroup, EndOfTrack, GroupDoesNotExist, or
     //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
     //   has not arrived, as further objects on the stream would be a protocol violation.
     fn is_data_stream_ended(&self, datagram_object: &datagram::Object) -> bool {

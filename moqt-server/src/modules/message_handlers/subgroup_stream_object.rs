@@ -24,8 +24,9 @@ pub async fn try_read_object(buf: &mut BytesMut) -> SubgroupStreamObjectProcessR
             buf.advance(read_cur.position() as usize);
             SubgroupStreamObjectProcessResult::Success(stream_object)
         }
-        Err(err) => {
-            tracing::warn!("{:#?}", err);
+        Err(_err) => {
+            // TODO: `buffer does not have enough length` is not error. we want to change it to `Continue`
+            // tracing::info!("{:#?}", err);
             // Reset the cursor position because data for an object has not yet arrived
             read_cur.set_position(0);
             SubgroupStreamObjectProcessResult::Continue
