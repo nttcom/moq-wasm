@@ -13,7 +13,8 @@ use super::{
 };
 use crate::{
     modules::{control_message_dispatcher::ControlMessageDispatchCommand, moqt_client::MOQTClient},
-    SubgroupStreamId,
+    signal_dispatcher::DataStreamThreadSignal,
+    SignalDispatchCommand, SubgroupStreamId,
 };
 use anyhow::{bail, Result};
 use moqt_core::{
@@ -150,6 +151,18 @@ async fn spawn_subgroup_stream_object_forwarder_thread(
         tracing::info!("Open uni-directional send for subgroup stream",);
     });
     let stream_id = send_stream.id().into_u64();
+    let (signal_tx, signal_rx) = mpsc::channel::<Box<DataStreamThreadSignal>>(1024);
+
+    let senders = client.lock().await.senders();
+    senders
+        .signal_dispatch_tx()
+        .send(SignalDispatchCommand::Set {
+            session_id: stable_id,
+            stream_id,
+            sender: signal_tx,
+        })
+        .await
+        .unwrap();
 
     tokio::spawn(
         async move {
@@ -161,6 +174,7 @@ async fn spawn_subgroup_stream_object_forwarder_thread(
                 subscribe_id,
                 client,
                 subgroup_stream_id,
+                signal_rx,
             )
             .instrument(session_span.clone())
             .await

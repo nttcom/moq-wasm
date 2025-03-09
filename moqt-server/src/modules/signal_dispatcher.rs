@@ -1,9 +1,10 @@
 use anyhow::Result;
 use moqt_core::messages::data_streams::object_status::ObjectStatus;
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
-type SenderToDataStreamThread = mpsc::Sender<Arc<Box<DataStreamThreadSignal>>>;
+type SenderToDataStreamThread = mpsc::Sender<Box<DataStreamThreadSignal>>;
 
+#[derive(Debug)]
 pub(crate) enum DataStreamThreadSignal {
     Termination(ObjectStatus),
 }
@@ -43,7 +44,7 @@ pub(crate) async fn signal_dispatcher(rx: &mut mpsc::Receiver<SignalDispatchComm
                 stream_id,
                 sender,
             } => {
-                let inner_map = dispatcher.entry(session_id).or_insert_with(HashMap::new);
+                let inner_map = dispatcher.entry(session_id).or_default();
                 inner_map.insert(stream_id, sender);
                 tracing::debug!("set: {:?}", session_id);
             }
@@ -99,7 +100,7 @@ impl SignalDispatcher {
         let sender = resp_rx
             .await?
             .ok_or_else(|| anyhow::anyhow!("sender not found"))?;
-        let _ = sender.send(signal.into()).await;
+        let _ = sender.send(signal).await;
         Ok(())
     }
 }
