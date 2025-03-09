@@ -54,7 +54,7 @@ pub trait SubscriptionNodeRegistry {
     fn get_requested_range(&self, subscribe_id: SubscribeId) -> Result<Option<Range>>;
     fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
     fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
-    fn set_stream_id_to_group(
+    fn set_stream_id(
         &mut self,
         subscribe_id: SubscribeId,
         group_id: u64,

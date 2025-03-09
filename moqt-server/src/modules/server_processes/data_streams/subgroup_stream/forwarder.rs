@@ -82,7 +82,7 @@ impl SubgroupStreamObjectForwarder {
         let (group_id, _) = subgroup_stream_id.unwrap();
         let stream_id = stream.stream_id();
         pubsub_relation_manager
-            .set_downstream_stream_id_to_group(
+            .set_downstream_stream_id(
                 downstream_session_id,
                 downstream_subscribe_id,
                 group_id,

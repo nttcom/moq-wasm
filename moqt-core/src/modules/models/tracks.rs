@@ -50,7 +50,7 @@ impl Track {
         self.track_alias
     }
 
-    pub fn set_stream_id_to_group(&mut self, group_id: GroupId, stream_id: StreamId) {
+    pub fn set_stream_id(&mut self, group_id: GroupId, stream_id: StreamId) {
         if let Some(subgroup_list) = self.group_streams_map.get_mut(&group_id) {
             subgroup_list.push(stream_id);
         } else {
