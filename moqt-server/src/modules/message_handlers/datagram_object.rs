@@ -113,11 +113,11 @@ mod tests {
         async fn datagram_object_success() {
             let data_stream_type = DataStreamType::ObjectDatagram;
             let bytes_array = [
-                0, // Subscribe ID (i)
                 1, // Track Alias (i)
                 2, // Group ID (i)
                 3, // Object ID (i)
                 4, // Subscriber Priority (8)
+                0, // Extension Headers Length (i)
                 3, // Object Payload Length (i)
                 0, 1, 2, // Object Payload (..)
             ];
@@ -134,14 +134,18 @@ mod tests {
 
             let result = try_read_object(&mut buf, client).await;
 
+            println!("{:?}", result);
+
             let mut buf_without_type = BytesMut::with_capacity(bytes_array.len());
             buf_without_type.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf_without_type[..]);
-            let datagram_object = datagram::Object::depacketize(&mut read_cur).unwrap();
+            let datagram_object = datagram::Object::depacketize(&mut read_cur);
+
+            println!("{:?}", datagram_object);
 
             assert_eq!(
                 result,
-                DatagramObjectProcessResult::Success(datagram_object)
+                DatagramObjectProcessResult::Success(datagram_object.unwrap())
             );
         }
 
@@ -153,6 +157,7 @@ mod tests {
                 2,  // Group ID (i)
                 3,  // Object ID (i)
                 4,  // Subscriber Priority (8)
+                0,  // Extension Headers Length (i)
                 50, // Object Payload Length (i)
                 0, 1, 2, // Object Payload (..)
             ];
@@ -176,7 +181,6 @@ mod tests {
         async fn datagram_object_continue_incomplete_message() {
             let data_stream_type = DataStreamType::ObjectDatagram;
             let bytes_array = [
-                0, // Subscribe ID (i)
                 1, // Track Alias (i)
                 2, // Group ID (i)
             ];

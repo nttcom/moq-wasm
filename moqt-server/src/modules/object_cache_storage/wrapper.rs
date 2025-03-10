@@ -550,6 +550,7 @@ mod success {
         let track_alias = 3;
         let group_id = 4;
         let publisher_priority = 5;
+        let extension_headers = vec![];
         let object_status = None;
         let object_payload = vec![1, 2, 3, 4];
         let duration = 1000;
@@ -558,6 +559,7 @@ mod success {
             group_id,
             object_id,
             publisher_priority,
+            extension_headers,
             object_status,
             object_payload,
         )
@@ -587,10 +589,16 @@ mod success {
         let group_id = 3;
         let subgroup_id = 4;
         let publisher_priority = 5;
+        let extension_headers = vec![];
         let object_status = None;
         let object_payload = vec![1, 2, 3, 4];
-        let subgroup_stream_object =
-            subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+        let subgroup_stream_object = subgroup_stream::Object::new(
+            object_id,
+            extension_headers,
+            object_status,
+            object_payload,
+        )
+        .unwrap();
         let header =
             subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
                 .unwrap();
@@ -626,6 +634,7 @@ mod success {
         let track_alias = 3;
         let group_id = 4;
         let publisher_priority = 5;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
 
@@ -646,6 +655,7 @@ mod success {
                 group_id,
                 object_id,
                 publisher_priority,
+                extension_headers.clone(),
                 object_status,
                 object_payload,
             )
@@ -664,6 +674,7 @@ mod success {
             group_id,
             object_id,
             publisher_priority,
+            extension_headers,
             object_status,
             expected_object_payload,
         )
@@ -689,6 +700,7 @@ mod success {
         let group_id = 4;
         let subgroup_id = 5;
         let publisher_priority = 6;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
         let header =
@@ -708,8 +720,13 @@ mod success {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers.clone(),
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             let _ = object_cache_storage
                 .set_subgroup_stream_object(
@@ -725,9 +742,13 @@ mod success {
         let object_id = 9;
         let expected_cache_id = 9;
         let expected_object_payload = vec![9, 10, 11, 12];
-        let expected_object =
-            subgroup_stream::Object::new(object_id, object_status, expected_object_payload)
-                .unwrap();
+        let expected_object = subgroup_stream::Object::new(
+            object_id,
+            extension_headers,
+            object_status,
+            expected_object_payload,
+        )
+        .unwrap();
 
         let result = object_cache_storage
             .get_absolute_subgroup_stream_object(&cache_key, group_id, subgroup_id, object_id)
@@ -748,6 +769,7 @@ mod success {
         let track_alias = 3;
         let group_id = 4;
         let publisher_priority = 5;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
 
@@ -767,6 +789,7 @@ mod success {
                 group_id,
                 object_id,
                 publisher_priority,
+                extension_headers.clone(),
                 object_status,
                 object_payload,
             )
@@ -786,6 +809,7 @@ mod success {
             group_id,
             expected_object_id,
             publisher_priority,
+            extension_headers,
             object_status,
             expected_object_payload,
         )
@@ -811,6 +835,7 @@ mod success {
         let group_id = 4;
         let subgroup_id = 5;
         let publisher_priority = 6;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
         let header =
@@ -830,8 +855,13 @@ mod success {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers.clone(),
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             let _ = object_cache_storage
                 .set_subgroup_stream_object(
@@ -850,6 +880,7 @@ mod success {
         let expected_object_payload = vec![1, 2, 3, 4];
         let expected_object = subgroup_stream::Object::new(
             expected_object_id,
+            extension_headers,
             object_status,
             expected_object_payload,
         )
@@ -874,6 +905,7 @@ mod success {
         let track_alias = 3;
         let group_id = 4;
         let publisher_priority = 5;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
 
@@ -893,6 +925,7 @@ mod success {
                 group_id,
                 object_id,
                 publisher_priority,
+                extension_headers.clone(),
                 object_status,
                 object_payload,
             )
@@ -911,6 +944,7 @@ mod success {
             group_id,
             expected_object_id,
             publisher_priority,
+            extension_headers,
             object_status,
             expected_object_payload,
         )
@@ -934,6 +968,7 @@ mod success {
         let cache_key = CacheKey::new(session_id, subscribe_id);
         let track_alias = 3;
         let publisher_priority = 5;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
 
@@ -962,6 +997,7 @@ mod success {
                     group_id,
                     object_id,
                     publisher_priority,
+                    extension_headers.clone(),
                     object_status,
                     object_payload,
                 )
@@ -981,6 +1017,7 @@ mod success {
             expected_group_id,
             expected_object_id,
             publisher_priority,
+            extension_headers,
             object_status,
             expected_object_payload,
         )
@@ -1005,6 +1042,7 @@ mod success {
         let cache_key = CacheKey::new(session_id, subscribe_id);
         let track_alias = 3;
         let publisher_priority = 5;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
 
@@ -1033,6 +1071,7 @@ mod success {
                     group_id,
                     object_id,
                     publisher_priority,
+                    extension_headers.clone(),
                     object_status,
                     object_payload,
                 )
@@ -1053,6 +1092,7 @@ mod success {
             expected_group_id,
             expected_object_id,
             publisher_priority,
+            extension_headers.clone(),
             object_status,
             expected_object_payload,
         )
@@ -1078,6 +1118,7 @@ mod success {
         let group_id = 4;
         let subgroup_id = 5;
         let publisher_priority = 6;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
         let header =
@@ -1097,8 +1138,13 @@ mod success {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers.clone(),
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             let _ = object_cache_storage
                 .set_subgroup_stream_object(
@@ -1116,6 +1162,7 @@ mod success {
         let expected_object_payload = vec![0, 1, 2, 3];
         let expected_object = subgroup_stream::Object::new(
             expected_object_id,
+            extension_headers,
             object_status,
             expected_object_payload,
         )
@@ -1141,6 +1188,7 @@ mod success {
         let group_id = 4;
         let subgroup_id = 5;
         let publisher_priority = 6;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
         let header =
@@ -1160,8 +1208,13 @@ mod success {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers.clone(),
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             let _ = object_cache_storage
                 .set_subgroup_stream_object(
@@ -1179,6 +1232,7 @@ mod success {
         let expected_object_payload = vec![19, 20, 21, 22];
         let expected_object = subgroup_stream::Object::new(
             expected_object_id,
+            extension_headers,
             object_status,
             expected_object_payload,
         )
@@ -1203,6 +1257,7 @@ mod success {
         let track_alias = 3;
         let group_id = 4;
         let publisher_priority = 6;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
 
@@ -1226,8 +1281,13 @@ mod success {
                 .create_subgroup_stream_cache(&cache_key, group_id, subgroup_id, header)
                 .await;
 
-            let subgroup_stream_object =
-                subgroup_stream::Object::new(subgroup_id, object_status, vec![]).unwrap();
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                subgroup_id,
+                extension_headers.clone(),
+                object_status,
+                vec![],
+            )
+            .unwrap();
 
             let _ = object_cache_storage
                 .set_subgroup_stream_object(
@@ -1259,6 +1319,7 @@ mod success {
         let cache_key = CacheKey::new(session_id, subscribe_id);
         let track_alias = 3;
         let publisher_priority = 5;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
 
@@ -1287,6 +1348,7 @@ mod success {
                     group_id,
                     object_id,
                     publisher_priority,
+                    extension_headers.clone(),
                     object_status,
                     object_payload,
                 )
@@ -1325,6 +1387,7 @@ mod success {
         let group_id = 4;
         let subgroup_id = 5;
         let publisher_priority = 6;
+        let extension_headers = vec![];
         let object_status = None;
         let duration = 1000;
         let header = subgroup_stream::Header::new(
@@ -1356,8 +1419,13 @@ mod success {
                 ];
                 let object_id = i as u64;
 
-                let subgroup_stream_object =
-                    subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+                let subgroup_stream_object = subgroup_stream::Object::new(
+                    object_id,
+                    extension_headers.clone(),
+                    object_status,
+                    object_payload,
+                )
+                .unwrap();
 
                 let _ = object_cache_storage
                     .set_subgroup_stream_object(

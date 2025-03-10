@@ -267,11 +267,13 @@ impl DatagramObjectForwarder {
     }
 
     fn generate_downstream_object(&self, upstream_object: &datagram::Object) -> datagram::Object {
+        let extension_headers = upstream_object.extension_headers().clone();
         datagram::Object::new(
             self.downstream_track_alias, // Replace with downstream_track_alias
             upstream_object.group_id(),
             upstream_object.object_id(),
             upstream_object.publisher_priority(),
+            extension_headers,
             upstream_object.object_status(),
             upstream_object.object_payload(),
         )
