@@ -1,51 +1,7 @@
 import init, { MOQTClient } from '../../../pkg/moqt_client_sample'
-
-const videoDecoderWorker = new Worker('videoDecoder.ts')
-const audioDecoderWorker = new Worker('audioDecoder.ts')
-// videoFrameをvideoタグに表示する処理を追加
-const videoElement = document.getElementById('video') as HTMLFormElement
-const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
-const videoWriter = videoGenerator.writable.getWriter()
-const videoStream = new MediaStream([videoGenerator])
-videoElement.srcObject = videoStream
-
-const audioElement = document.getElementById('audio') as HTMLFormElement
-const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
-const audioWriter = audioGenerator.writable.getWriter()
-const audioStream = new MediaStream([audioGenerator])
-audioElement.srcObject = audioStream
-
-videoDecoderWorker.onmessage = async (e: MessageEvent) => {
-  const videoFrame = e.data.frame
-  console.log(e.data)
-  await videoWriter.write(videoFrame)
-  videoFrame.close()
-}
-
-audioDecoderWorker.onmessage = async (e: MessageEvent) => {
-  const audioData = e.data.audioData
-  console.log(audioData)
-  await audioWriter.write(audioData)
-  audioElement.play()
-}
-
 const authInfo = 'secret'
 const getFormElement = (): HTMLFormElement => {
   return document.getElementById('form') as HTMLFormElement
-}
-
-function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio', trackAlias: number) {
-  client.onSubgroupStreamHeader(async (subgroupStreamHeader: any) => {
-    console.log({ subgroupStreamHeader })
-  })
-
-  client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject: any) => {
-    if (type === 'video') {
-      videoDecoderWorker.postMessage({ subgroupStreamObject })
-    } else {
-      audioDecoderWorker.postMessage({ subgroupStreamObject })
-    }
-  })
 }
 
 function setupClientCallbacks(client: MOQTClient) {
@@ -103,6 +59,55 @@ function sendSubscribeButtonClickHandler(client: MOQTClient) {
       BigInt(10000), // endObject
       authInfo
     )
+  })
+}
+
+const audioDecoderWorker = new Worker('audioDecoder.ts')
+function setupAudioDecoderWorker() {
+  const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
+  const audioWriter = audioGenerator.writable.getWriter()
+  const audioStream = new MediaStream([audioGenerator])
+  const audioElement = document.getElementById('audio') as HTMLFormElement
+  audioElement.srcObject = audioStream
+  audioDecoderWorker.onmessage = async (e: MessageEvent) => {
+    const audioData = e.data.audioData
+    console.log(audioData)
+    await audioWriter.write(audioData)
+    await audioElement.play()
+  }
+}
+const videoDecoderWorker = new Worker('videoDecoder.ts')
+function setupVideoDecoderWorker() {
+  const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
+  const videoWriter = videoGenerator.writable.getWriter()
+  const videoStream = new MediaStream([videoGenerator])
+  const videoElement = document.getElementById('video') as HTMLFormElement
+  videoElement.srcObject = videoStream
+  videoDecoderWorker.onmessage = async (e: MessageEvent) => {
+    const videoFrame = e.data.frame
+    console.log(e.data)
+    await videoWriter.write(videoFrame)
+    videoFrame.close()
+    await videoElement.play()
+  }
+}
+
+function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio', trackAlias: number) {
+  client.onSubgroupStreamHeader(async (subgroupStreamHeader: any) => {
+    console.log({ subgroupStreamHeader })
+  })
+
+  if (type === 'audio') {
+    setupAudioDecoderWorker()
+  } else {
+    setupVideoDecoderWorker()
+  }
+  client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject: any) => {
+    if (type === 'video') {
+      videoDecoderWorker.postMessage({ subgroupStreamObject })
+    } else {
+      audioDecoderWorker.postMessage({ subgroupStreamObject })
+    }
   })
 }
 
