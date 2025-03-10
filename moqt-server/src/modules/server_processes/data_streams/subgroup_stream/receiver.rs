@@ -108,7 +108,8 @@ impl SubgroupStreamObjectReceiver {
     }
 
     async fn read_stream(&mut self) -> Result<BytesMut, TerminationError> {
-        let mut buffer = vec![0; 65536].into_boxed_slice();
+        // Align with the stream_receive_window configured on the MoQT Server
+        let mut buffer = vec![0; 10 * 1024 * 1024].into_boxed_slice();
 
         let length: usize = match self.stream.read(&mut buffer).await {
             Ok(byte_read) => byte_read.unwrap(),
