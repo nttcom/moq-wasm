@@ -1,3 +1,11 @@
+let audioEncoder: AudioEncoder | undefined
+const AUDIO_ENCODER_CONFIG = {
+  codec: 'opus',
+  sampleRate: 48000, // Opusの推奨サンプルレート
+  numberOfChannels: 1, // モノラル
+  bitrate: 64000 // 64kbpsのビットレート
+}
+
 function sendAudioChunkMessage(chunk: EncodedAudioChunk, metadata: EncodedAudioChunkMetadata | undefined) {
   self.postMessage({ chunk, metadata })
 }
@@ -9,18 +17,12 @@ async function initializeAudioEncoder() {
       console.log(e.message)
     }
   }
-  const config = {
-    codec: 'opus',
-    sampleRate: 48000, // Opusの推奨サンプルレート
-    numberOfChannels: 1, // モノラル
-    bitrate: 64000 // 64kbpsのビットレート
-  }
+
   const encoder = new AudioEncoder(init)
-  encoder.configure(config)
+  encoder.configure(AUDIO_ENCODER_CONFIG)
   return encoder
 }
 
-let audioEncoder: AudioEncoder | undefined
 async function startAudioEncode(audioReadableStream: ReadableStream<AudioData>) {
   if (!audioEncoder) {
     audioEncoder = await initializeAudioEncoder()
