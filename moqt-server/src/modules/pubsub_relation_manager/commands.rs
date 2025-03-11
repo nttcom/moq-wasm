@@ -101,7 +101,6 @@ pub(crate) enum PubSubRelationCommand {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
         resp: oneshot::Sender<Result<()>>,
     },
     SetUpstreamSubscription {
@@ -114,7 +113,6 @@ pub(crate) enum PubSubRelationCommand {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
         resp: oneshot::Sender<Result<(u64, u64)>>,
     },
     SetPubSubRelation {

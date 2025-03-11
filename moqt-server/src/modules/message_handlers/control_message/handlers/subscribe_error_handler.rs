@@ -152,7 +152,6 @@ mod success {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
 
         // Generate client
         let upstream_session_id = 1;
@@ -186,7 +185,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -207,7 +205,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
         let _ = pubsub_relation_manager
@@ -295,7 +292,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
 
         // Generate client
         let upstream_session_id = 1;
@@ -329,7 +325,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -350,7 +345,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
         let _ = pubsub_relation_manager

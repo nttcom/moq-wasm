@@ -38,7 +38,6 @@ function sendSubscribeButtonClickHandler(client: MOQTClient) {
       BigInt(0), // startGroup
       BigInt(0), // startObject
       BigInt(10000), // endGroup
-      BigInt(10000), // endObject
       AUTH_INFO
     )
 
@@ -54,7 +53,6 @@ function sendSubscribeButtonClickHandler(client: MOQTClient) {
       BigInt(0), // startGroup
       BigInt(0), // startObject
       BigInt(10000), // endGroup
-      BigInt(10000), // endObject
       AUTH_INFO
     )
   })

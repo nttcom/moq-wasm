@@ -34,7 +34,6 @@ impl Subscription {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
         forwarding_preference: Option<ForwardingPreference>,
     ) -> Self {
         let track = Track::new(
@@ -44,8 +43,7 @@ impl Subscription {
             forwarding_preference,
         );
 
-        let requested_object_range =
-            ObjectRange::new(start_group, start_object, end_group, end_object);
+        let requested_object_range = ObjectRange::new(start_group, start_object, end_group, None);
 
         Self {
             track,
@@ -127,7 +125,6 @@ pub(crate) mod test_helper_fn {
         pub(crate) start_group: Option<u64>,
         pub(crate) start_object: Option<u64>,
         pub(crate) end_group: Option<u64>,
-        pub(crate) end_object: Option<u64>,
     }
 
     pub(crate) fn common_subscription_variable() -> SubscriptionVariables {
@@ -140,7 +137,6 @@ pub(crate) mod test_helper_fn {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         SubscriptionVariables {
             track_alias,
@@ -152,7 +148,6 @@ pub(crate) mod test_helper_fn {
             start_group,
             start_object,
             end_group,
-            end_object,
         }
     }
 }
@@ -179,7 +174,6 @@ mod success {
         let start_group = Some(1);
         let start_object = Some(1);
         let end_group = Some(1);
-        let end_object = Some(1);
         let forwarding_preference = Some(ForwardingPreference::Subgroup);
 
         let subscription = Subscription::new(
@@ -192,7 +186,6 @@ mod success {
             start_group,
             start_object,
             end_group,
-            end_object,
             forwarding_preference,
         );
 
@@ -213,7 +206,6 @@ mod success {
             start_object
         );
         assert_eq!(subscription.requested_object_range.end_group(), end_group);
-        assert_eq!(subscription.requested_object_range.end_object(), end_object);
     }
 
     #[test]
@@ -230,7 +222,6 @@ mod success {
             variable.start_group,
             variable.start_object,
             variable.end_group,
-            variable.end_object,
             None,
         );
 
@@ -255,7 +246,6 @@ mod success {
             variable.start_group,
             variable.start_object,
             variable.end_group,
-            variable.end_object,
             None,
         );
 
@@ -279,7 +269,6 @@ mod success {
             variable.start_group,
             variable.start_object,
             variable.end_group,
-            variable.end_object,
             None,
         );
 
@@ -303,7 +292,6 @@ mod success {
             variable.start_group,
             variable.start_object,
             variable.end_group,
-            variable.end_object,
             None,
         );
 
@@ -324,7 +312,6 @@ mod success {
             variable.start_group,
             variable.start_object,
             variable.end_group,
-            variable.end_object,
             None,
         );
 
@@ -348,7 +335,6 @@ mod success {
             variable.start_group,
             variable.start_object,
             variable.end_group,
-            variable.end_object,
             None,
         );
 
@@ -369,7 +355,6 @@ mod success {
             variable.start_group,
             variable.start_object,
             variable.end_group,
-            variable.end_object,
             None,
         );
 
@@ -392,7 +377,6 @@ mod success {
             variable.start_group,
             variable.start_object,
             variable.end_group,
-            variable.end_object,
             None,
         );
 
@@ -417,7 +401,6 @@ mod success {
             variable.start_group,
             variable.start_object,
             variable.end_group,
-            variable.end_object,
             None,
         );
 
@@ -426,7 +409,6 @@ mod success {
         assert_eq!(result.start_group(), variable.start_group);
         assert_eq!(result.start_object(), variable.start_object);
         assert_eq!(result.end_group(), variable.end_group);
-        assert_eq!(result.end_object(), variable.end_object);
     }
 
     #[test]
@@ -446,7 +428,6 @@ mod success {
             variable.start_group,
             variable.start_object,
             variable.end_group,
-            variable.end_object,
             None,
         );
 
@@ -475,7 +456,6 @@ mod success {
             variable.start_group,
             variable.start_object,
             variable.end_group,
-            variable.end_object,
             None,
         );
 

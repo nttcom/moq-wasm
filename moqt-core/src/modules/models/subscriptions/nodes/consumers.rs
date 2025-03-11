@@ -47,7 +47,6 @@ impl SubscriptionNodeRegistry for Consumer {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<()> {
         // Subscriber cannot define forwarding preference until it receives object message.
         let subscription = Subscription::new(
@@ -60,7 +59,6 @@ impl SubscriptionNodeRegistry for Consumer {
             start_group,
             start_object,
             end_group,
-            end_object,
             None,
         );
 
@@ -165,14 +163,6 @@ impl SubscriptionNodeRegistry for Consumer {
             .get(&subscribe_id)
             .map(|subscription| subscription.get_requested_object_range());
         Ok(requested_object_range)
-    }
-
-    fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
-        unimplemented!("subscribe_id: {}", subscribe_id)
-    }
-
-    fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
-        unimplemented!("subscribe_id: {}", subscribe_id)
     }
 
     fn set_actual_object_start(
@@ -313,7 +303,6 @@ pub(crate) mod test_helper_fn {
         pub(crate) start_group: Option<u64>,
         pub(crate) start_object: Option<u64>,
         pub(crate) end_group: Option<u64>,
-        pub(crate) end_object: Option<u64>,
     }
 
     pub(crate) fn common_subscription_variable(subscribe_id: u64) -> SubscriptionVariables {
@@ -327,7 +316,6 @@ pub(crate) mod test_helper_fn {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         SubscriptionVariables {
             consumer,
@@ -341,7 +329,6 @@ pub(crate) mod test_helper_fn {
             start_group,
             start_object,
             end_group,
-            end_object,
         }
     }
 }
@@ -375,7 +362,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         assert!(result.is_ok());
@@ -398,7 +384,6 @@ mod success {
             variables_clone.start_group,
             variables_clone.start_object,
             variables_clone.end_group,
-            variables_clone.end_object,
         );
 
         let subscription = variables_clone
@@ -416,7 +401,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
             None,
         ));
 
@@ -439,7 +423,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let expected_subscribe_id = variables.subscribe_id;
@@ -469,7 +452,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let expected_subscribe_id = variables.subscribe_id;
@@ -499,7 +481,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -525,7 +506,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -552,7 +532,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables.consumer.is_requesting(variables.subscribe_id);
@@ -576,7 +555,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -602,7 +580,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let forwarding_preference = ForwardingPreference::Datagram;
@@ -630,7 +607,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let forwarding_preference = ForwardingPreference::Datagram;
@@ -666,7 +642,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result_filter_type = variables
@@ -685,7 +660,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = Some(1);
-        let end_object = Some(1);
 
         let _ = variables.consumer.set_subscription(
             variables.subscribe_id,
@@ -698,7 +672,6 @@ mod success {
             start_group,
             start_object,
             end_group,
-            end_object,
         );
 
         let result_range = variables
@@ -710,58 +683,6 @@ mod success {
         assert_eq!(result_range.start_group(), start_group);
         assert_eq!(result_range.start_object(), start_object);
         assert_eq!(result_range.end_group(), end_group);
-        assert_eq!(result_range.end_object(), end_object);
-    }
-    #[test]
-    #[should_panic]
-    fn get_absolute_start() {
-        let subscribe_id = 0;
-        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
-
-        let _ = variables.consumer.set_subscription(
-            variables.subscribe_id,
-            variables.track_alias,
-            variables.track_namespace.clone(),
-            variables.track_name.clone(),
-            variables.subscriber_priority,
-            variables.group_order,
-            variables.filter_type,
-            variables.start_group,
-            variables.start_object,
-            variables.end_group,
-            variables.end_object,
-        );
-
-        let _ = variables
-            .consumer
-            .get_absolute_start(variables.subscribe_id)
-            .unwrap();
-    }
-
-    #[test]
-    #[should_panic]
-    fn get_absolute_end() {
-        let subscribe_id = 0;
-        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
-
-        let _ = variables.consumer.set_subscription(
-            variables.subscribe_id,
-            variables.track_alias,
-            variables.track_namespace.clone(),
-            variables.track_name.clone(),
-            variables.subscriber_priority,
-            variables.group_order,
-            variables.filter_type,
-            variables.start_group,
-            variables.start_object,
-            variables.end_group,
-            variables.end_object,
-        );
-
-        let _ = variables
-            .consumer
-            .get_absolute_end(variables.subscribe_id)
-            .unwrap();
     }
 
     #[test]
@@ -780,7 +701,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -812,7 +732,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables.consumer.is_subscribe_id_less_than_max(9);
@@ -839,7 +758,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -879,7 +797,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
