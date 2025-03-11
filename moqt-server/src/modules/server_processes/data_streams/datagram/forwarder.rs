@@ -307,10 +307,10 @@ impl DatagramObjectForwarder {
             return false;
         }
 
-        let group_id = datagram_object.group_id();
-        let object_id = datagram_object.object_id();
-
-        self.requested_object_range.is_end(group_id, object_id)
+        matches!(
+            datagram_object.object_status(),
+            Some(ObjectStatus::EndOfTrack) | Some(ObjectStatus::EndOfTrackAndGroup)
+        )
     }
 
     // This function is implemented according to the following sentence in draft.

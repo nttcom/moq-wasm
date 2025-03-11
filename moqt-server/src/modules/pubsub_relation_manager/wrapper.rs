@@ -338,7 +338,6 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
         let cmd = PubSubRelationCommand::SetDownstreamSubscription {
@@ -353,7 +352,6 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             start_group,
             start_object,
             end_group,
-            end_object,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -378,7 +376,6 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<(u64, u64)> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<(u64, u64)>>();
         let cmd = PubSubRelationCommand::SetUpstreamSubscription {
@@ -391,7 +388,6 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             start_group,
             start_object,
             end_group,
-            end_object,
             resp: resp_tx,
         };
         self.tx.send(cmd).await.unwrap();
@@ -1074,7 +1070,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1097,7 +1092,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -1192,7 +1186,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1215,7 +1208,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -1240,7 +1232,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1267,7 +1258,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -1342,7 +1332,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1367,7 +1356,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -1389,7 +1377,6 @@ mod success {
                     start_group,
                     start_object,
                     end_group,
-                    end_object,
                 )
                 .await;
             let _ = pubsub_relation_manager
@@ -1431,7 +1418,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1456,7 +1442,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -1484,7 +1469,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1507,7 +1491,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -1533,7 +1516,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1558,7 +1540,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -1586,7 +1567,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1609,7 +1589,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -1631,7 +1610,6 @@ mod success {
             start_group,
             start_object,
             end_group,
-            end_object,
             None,
         );
 
@@ -1650,7 +1628,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1671,7 +1648,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -1698,7 +1674,6 @@ mod success {
             start_group,
             start_object,
             end_group,
-            end_object,
             None,
         );
 
@@ -1720,7 +1695,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1746,7 +1720,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -1768,7 +1741,6 @@ mod success {
                     start_group,
                     start_object,
                     end_group,
-                    end_object,
                 )
                 .await;
             let result = pubsub_relation_manager
@@ -1814,7 +1786,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1837,7 +1808,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -1869,7 +1839,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -1890,7 +1859,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -1926,7 +1894,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
         let track_namespace_prefix = Vec::from(["aaa".to_string(), "bbb".to_string()]);
 
         // Start track management thread
@@ -1951,7 +1918,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -1975,7 +1941,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
         let track_namespace_prefix = Vec::from(["aa".to_string()]);
 
         // Start track management thread
@@ -2000,7 +1965,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -2191,7 +2155,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -2224,7 +2187,6 @@ mod success {
                     start_group,
                     start_object,
                     end_group,
-                    end_object,
                 )
                 .await
                 .unwrap();
@@ -2252,7 +2214,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -2273,7 +2234,6 @@ mod success {
                         start_group,
                         start_object,
                         end_group,
-                        end_object,
                     )
                     .await;
 
@@ -2395,7 +2355,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -2424,7 +2383,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
         let (upstream_subscribe_id, _) = pubsub_relation_manager
@@ -2438,7 +2396,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -2484,7 +2441,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -2505,7 +2461,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -2537,7 +2492,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -2560,7 +2514,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -2589,7 +2542,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
         let forwarding_preference = ForwardingPreference::Subgroup;
 
         // Start track management thread
@@ -2614,7 +2566,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -2654,7 +2605,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
         let forwarding_preference = ForwardingPreference::Subgroup;
 
         // Start track management thread
@@ -2679,7 +2629,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -2715,7 +2664,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
         let forwarding_preference = ForwardingPreference::Subgroup;
 
         // Start track management thread
@@ -2739,7 +2687,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -2775,7 +2722,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -2799,7 +2745,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -2827,7 +2772,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -2850,7 +2794,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -2875,7 +2818,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -2899,7 +2841,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -2913,7 +2854,6 @@ mod success {
         assert_eq!(result_range.start_group(), start_group);
         assert_eq!(result_range.start_object(), start_object);
         assert_eq!(result_range.end_group(), end_group);
-        assert_eq!(result_range.end_object(), end_object);
     }
 
     #[tokio::test]
@@ -2930,8 +2870,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
-
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut track_rx).await });
@@ -2953,7 +2891,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -2966,7 +2903,6 @@ mod success {
         assert_eq!(result_range.start_group(), start_group);
         assert_eq!(result_range.start_object(), start_object);
         assert_eq!(result_range.end_group(), end_group);
-        assert_eq!(result_range.end_object(), end_object);
     }
 
     #[tokio::test]
@@ -2983,7 +2919,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
         let actual_object_start = ObjectStart::new(1, 1);
 
         // Start track management thread
@@ -3007,7 +2942,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -3046,7 +2980,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -3072,7 +3005,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -3094,7 +3026,6 @@ mod success {
                     start_group,
                     start_object,
                     end_group,
-                    end_object,
                 )
                 .await;
             let _ = pubsub_relation_manager
@@ -3146,7 +3077,6 @@ mod success {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -3172,7 +3102,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -3194,7 +3123,6 @@ mod success {
                     start_group,
                     start_object,
                     end_group,
-                    end_object,
                 )
                 .await;
             let _ = pubsub_relation_manager
@@ -3453,7 +3381,6 @@ mod failure {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
         let invalid_downstream_session_id = 2;
 
         // Start track management thread
@@ -3479,7 +3406,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -3498,7 +3424,6 @@ mod failure {
         let start_group = Some(0);
         let start_object = Some(0);
         let end_group = None;
-        let end_object = None;
         let invalid_upstream_session_id = 2;
 
         // Start track management thread
@@ -3522,7 +3447,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 

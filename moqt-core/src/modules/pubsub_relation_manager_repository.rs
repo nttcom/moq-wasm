@@ -90,7 +90,6 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<()>;
     #[allow(clippy::too_many_arguments)]
     async fn set_upstream_subscription(
@@ -104,7 +103,6 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<(u64, u64)>;
     async fn set_pubsub_relation(
         &self,

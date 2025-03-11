@@ -139,7 +139,6 @@ init().then(async () => {
       const startGroup = form['start-group'].value
       const startObject = form['start-object'].value
       const endGroup = form['end-group'].value
-      const endObject = form['end-object'].value
 
       const authInfo = form['auth-info'].value
       console.log(
@@ -152,8 +151,7 @@ init().then(async () => {
         filterType,
         startGroup,
         startObject,
-        endGroup,
-        endObject
+        endGroup
       )
 
       await client.sendSubscribeMessage(
@@ -167,7 +165,6 @@ init().then(async () => {
         BigInt(startGroup),
         BigInt(startObject),
         BigInt(endGroup),
-        BigInt(endObject),
         authInfo
       )
     })

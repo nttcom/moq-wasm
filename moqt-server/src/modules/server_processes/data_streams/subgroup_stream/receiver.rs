@@ -486,11 +486,10 @@ impl SubgroupStreamObjectReceiver {
             return false;
         }
 
-        let (group_id, _) = self.subgroup_stream_id.unwrap();
-        let object_id = object.object_id();
-        let range = self.requested_object_range.as_ref().unwrap();
-
-        range.is_end(group_id, object_id)
+        matches!(
+            object.object_status(),
+            Some(ObjectStatus::EndOfTrack) | Some(ObjectStatus::EndOfTrackAndGroup)
+        )
     }
 
     // This function is implemented according to the following sentence in draft.

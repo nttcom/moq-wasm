@@ -366,7 +366,6 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 resp,
             } => {
                 // Return an error if the subscriber does not exist
@@ -391,7 +390,6 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     start_group,
                     start_object,
                     end_group,
-                    end_object,
                 ) {
                     Ok(_) => resp.send(Ok(())).unwrap(),
                     Err(err) => {
@@ -411,7 +409,6 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 resp,
             } => {
                 // Return an error if the publisher does not exist
@@ -448,7 +445,6 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     start_group,
                     start_object,
                     end_group,
-                    end_object,
                 ) {
                     Ok(_) => resp.send(Ok((subscribe_id, track_alias))).unwrap(),
                     Err(err) => {
