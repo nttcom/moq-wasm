@@ -26,7 +26,7 @@ use moqt_core::{
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     messages::{
-        data_streams::{datagram, subgroup_stream, DataStreams},
+        data_streams::{datagram, object_status::ObjectStatus, subgroup_stream, DataStreams},
         moqt_payload::MOQTPayload,
     },
     models::subscriptions::{
