@@ -93,7 +93,7 @@ impl SubgroupStreamObjectReceiver {
         Ok(())
     }
 
-    pub(crate) async fn finish(&self) -> Result<()> {
+    pub(crate) async fn finish(self) -> Result<()> {
         self.senders
             .buffer_tx()
             .send(BufferCommand::ReleaseStream {
@@ -101,6 +101,9 @@ impl SubgroupStreamObjectReceiver {
                 stream_id: self.stream.stream_id(),
             })
             .await?;
+
+        // Send STOP_SENDING frame to the publisher
+        self.stream.stop();
 
         tracing::debug!("SubgroupStreamObjectReceiver finished");
 

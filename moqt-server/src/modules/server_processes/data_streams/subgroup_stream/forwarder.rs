@@ -110,7 +110,7 @@ impl SubgroupStreamObjectForwarder {
         Ok(())
     }
 
-    pub(crate) async fn finish(&self) -> Result<()> {
+    pub(crate) async fn finish(&mut self) -> Result<()> {
         let downstream_session_id = self.stream.stable_id();
         let downstream_stream_id = self.stream.stream_id();
         self.senders
@@ -120,6 +120,9 @@ impl SubgroupStreamObjectForwarder {
                 stream_id: downstream_stream_id,
             })
             .await?;
+
+        // Send RESET_STREAM frame to the subscriber
+        self.stream.finish().await?;
 
         tracing::info!("SubgroupStreamObjectForwarder finished");
 
