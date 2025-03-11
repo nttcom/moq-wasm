@@ -465,11 +465,10 @@ impl SubgroupStreamObjectForwarder {
         if self.filter_type != FilterType::AbsoluteRange {
             return false;
         }
-
-        let group_id = self.subgroup_stream_id.0;
-        let object_id = stream_object.object_id();
-
-        self.requested_object_range.is_end(group_id, object_id)
+        matches!(
+            stream_object.object_status(),
+            Some(ObjectStatus::EndOfTrack) | Some(ObjectStatus::EndOfTrackAndGroup)
+        )
     }
 
     // This function is implemented according to the following sentence in draft.

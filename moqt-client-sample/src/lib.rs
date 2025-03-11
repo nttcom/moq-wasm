@@ -385,7 +385,6 @@ impl MOQTClient {
         start_group: u64,
         start_object: u64,
         end_group: u64,
-        end_object: u64,
         auth_info: String,
     ) -> Result<JsValue, JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
@@ -411,11 +410,11 @@ impl MOQTClient {
                     (Some(start_group), Some(start_object))
                 }
             };
-            let (end_group, end_object) = match filter_type {
+            let end_group = match filter_type {
                 FilterType::LatestObject | FilterType::LatestGroup | FilterType::AbsoluteStart => {
-                    (None, None)
+                    None
                 }
-                FilterType::AbsoluteRange => (Some(end_group), Some(end_object)),
+                FilterType::AbsoluteRange => Some(end_group),
             };
 
             let version_specific_parameters = vec![auth_info];
@@ -430,7 +429,6 @@ impl MOQTClient {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 version_specific_parameters,
             )
             .unwrap();
@@ -466,7 +464,6 @@ impl MOQTClient {
                             start_group,
                             start_object,
                             end_group,
-                            end_object,
                         );
 
                     Ok(ok)
@@ -1518,7 +1515,6 @@ impl SubscriptionNode {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) {
         if let Some(consumer) = &mut self.consumer {
             let _ = consumer.set_subscription(
@@ -1532,7 +1528,6 @@ impl SubscriptionNode {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             );
         }
     }
@@ -1550,7 +1545,6 @@ impl SubscriptionNode {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) {
         if let Some(producer) = &mut self.producer {
             let _ = producer.set_subscription(
@@ -1564,7 +1558,6 @@ impl SubscriptionNode {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             );
         }
     }
@@ -1623,7 +1616,6 @@ impl SubscriptionNode {
             subscribe_message.start_group(),
             subscribe_message.start_object(),
             subscribe_message.end_group(),
-            subscribe_message.end_object(),
         );
 
         Ok(())

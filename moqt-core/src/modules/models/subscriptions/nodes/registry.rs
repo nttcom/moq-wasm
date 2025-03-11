@@ -26,7 +26,6 @@ pub trait SubscriptionNodeRegistry {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<()>;
     fn get_subscription(&self, subscribe_id: SubscribeId) -> Result<Option<Subscription>>;
     // TODO: Unify getter methods of subscribe_id
@@ -55,8 +54,6 @@ pub trait SubscriptionNodeRegistry {
     ) -> Result<Option<ForwardingPreference>>;
     fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<Option<FilterType>>;
     fn get_requested_object_range(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectRange>>;
-    fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
-    fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
     fn set_actual_object_start(
         &mut self,
         subscribe_id: SubscribeId,

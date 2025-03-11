@@ -133,7 +133,6 @@ mod success {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -182,7 +181,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -203,7 +201,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
         let _ = pubsub_relation_manager
@@ -291,7 +288,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -340,7 +336,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -361,7 +356,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
         let _ = pubsub_relation_manager
@@ -408,7 +402,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -457,7 +450,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -507,7 +499,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -556,7 +547,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -577,7 +567,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
         let _ = pubsub_relation_manager
@@ -638,7 +627,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -687,7 +675,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -708,7 +695,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
         let _ = pubsub_relation_manager

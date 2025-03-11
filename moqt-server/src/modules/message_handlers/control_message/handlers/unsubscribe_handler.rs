@@ -196,7 +196,6 @@ mod success {
                 None,
                 None,
                 None,
-                None,
             )
             .await
             .unwrap();
@@ -234,7 +233,6 @@ mod success {
                 0,
                 GroupOrder::Ascending,
                 FilterType::LatestGroup,
-                None,
                 None,
                 None,
                 None,

@@ -44,7 +44,6 @@ pub struct Subscribe {
     start_group: Option<u64>,
     start_object: Option<u64>,
     end_group: Option<u64>,
-    end_object: Option<u64>,
     number_of_parameters: u64,
     subscribe_parameters: Vec<VersionSpecificParameter>,
 }
@@ -62,12 +61,11 @@ impl Subscribe {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
         subscribe_parameters: Vec<VersionSpecificParameter>,
     ) -> anyhow::Result<Subscribe> {
-        // If FilterType is LatestGroup or LatestObject, start_group/start_object/end_group/end_object must be None
-        // If FilterType is AbsoluteStart, start_group/start_object must be needed and end_group/end_object must be None
-        // If FilterType is AbsoluteRange, start_group/start_object/end_group/end_object must be needed
+        // If FilterType is LatestGroup or LatestObject, start_group/start_object/end_group must be None
+        // If FilterType is AbsoluteStart, start_group/start_object must be needed and end_group must be None
+        // If FilterType is AbsoluteRange, start_group/start_object/end_group must be needed
         match filter_type {
             FilterType::LatestGroup | FilterType::LatestObject => {
                 if start_group.is_some() {
@@ -76,8 +74,6 @@ impl Subscribe {
                     bail!("start_object must be None for LatestGroup or LatestObject");
                 } else if end_group.is_some() {
                     bail!("end_group must be None for LatestGroup or LatestObject");
-                } else if end_object.is_some() {
-                    bail!("end_object must be None for LatestGroup or LatestObject");
                 }
             }
             FilterType::AbsoluteStart => {
@@ -87,8 +83,6 @@ impl Subscribe {
                     bail!("start_object must be Some for AbsoluteStart");
                 } else if end_group.is_some() {
                     bail!("end_group must be None for AbsoluteStart");
-                } else if end_object.is_some() {
-                    bail!("end_object must be None for AbsoluteStart");
                 }
             }
             FilterType::AbsoluteRange => {
@@ -98,8 +92,6 @@ impl Subscribe {
                     bail!("start_object must be Some for AbsoluteRange");
                 } else if end_group.is_none() {
                     bail!("end_group must be Some for AbsoluteRange");
-                } else if end_object.is_none() {
-                    bail!("end_object must be Some for AbsoluteRange");
                 }
             }
         }
@@ -116,7 +108,6 @@ impl Subscribe {
             start_group,
             start_object,
             end_group,
-            end_object,
             number_of_parameters,
             subscribe_parameters,
         })
@@ -160,10 +151,6 @@ impl Subscribe {
 
     pub fn end_group(&self) -> Option<u64> {
         self.end_group
-    }
-
-    pub fn end_object(&self) -> Option<u64> {
-        self.end_object
     }
 
     pub fn subscribe_parameters(&self) -> &Vec<VersionSpecificParameter> {
@@ -219,12 +206,11 @@ impl MOQTPayload for Subscribe {
             _ => (None, None),
         };
 
-        let (end_group, end_object) = match filter_type {
-            FilterType::AbsoluteRange => (
-                Some(read_variable_integer_from_buffer(buf).context("end group")?),
-                Some(read_variable_integer_from_buffer(buf).context("end object")?),
-            ),
-            _ => (None, None),
+        let end_group = match filter_type {
+            FilterType::AbsoluteRange => {
+                Some(read_variable_integer_from_buffer(buf).context("end group")?)
+            }
+            _ => None,
         };
         let number_of_parameters =
             read_variable_integer_from_buffer(buf).context("number of parameters")?;
@@ -251,7 +237,6 @@ impl MOQTPayload for Subscribe {
             start_group,
             start_object,
             end_group,
-            end_object,
             number_of_parameters,
             subscribe_parameters,
         })
@@ -280,7 +265,6 @@ impl MOQTPayload for Subscribe {
                 buf.extend(write_variable_integer(self.start_group.unwrap()));
                 buf.extend(write_variable_integer(self.start_object.unwrap()));
                 buf.extend(write_variable_integer(self.end_group.unwrap()));
-                buf.extend(write_variable_integer(self.end_object.unwrap()));
             }
             _ => {}
         }
@@ -324,7 +308,6 @@ mod tests {
             let start_group = None;
             let start_object = None;
             let end_group = None;
-            let end_object = None;
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -341,7 +324,6 @@ mod tests {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters,
             )
             .unwrap();
@@ -383,7 +365,6 @@ mod tests {
             let start_group = Some(0);
             let start_object = Some(0);
             let end_group = None;
-            let end_object = None;
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -400,7 +381,6 @@ mod tests {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters,
             )
             .unwrap();
@@ -444,7 +424,6 @@ mod tests {
             let start_group = Some(0);
             let start_object = Some(0);
             let end_group = Some(10);
-            let end_object = Some(100);
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -461,7 +440,6 @@ mod tests {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters,
             )
             .unwrap();
@@ -486,7 +464,6 @@ mod tests {
                 0,   // Start Group (i)
                 0,   // Start Object (i)
                 10,  // End Group (i)
-                64, 100, // End Object (i)
                 1,   // Track Request Parameters (..): Number of Parameters
                 2,   // Parameter Type (i): AuthorizationInfo
                 4,   // Parameter Length
@@ -530,7 +507,6 @@ mod tests {
             let start_group = None;
             let start_object = None;
             let end_group = None;
-            let end_object = None;
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -546,7 +522,6 @@ mod tests {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters,
             )
             .unwrap();
@@ -591,7 +566,6 @@ mod tests {
             let start_group = Some(0);
             let start_object = Some(0);
             let end_group = None;
-            let end_object = None;
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -607,7 +581,6 @@ mod tests {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters,
             )
             .unwrap();
@@ -634,7 +607,6 @@ mod tests {
                 0,   // Start Group (i)
                 0,   // Start Object (i)
                 10,  // End Group (i)
-                64, 100, // End Object (i)
                 1,   // Track Request Parameters (..): Number of Parameters
                 2,   // Parameter Type (i): AuthorizationInfo
                 4,   // Parameter Length
@@ -654,7 +626,6 @@ mod tests {
             let start_group = Some(0);
             let start_object = Some(0);
             let end_group = Some(10);
-            let end_object = Some(100);
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -670,7 +641,6 @@ mod tests {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters,
             )
             .unwrap();
@@ -701,7 +671,6 @@ mod tests {
             let start_group = Some(0);
             let start_object = Some(0);
             let end_group = None;
-            let end_object = None;
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -718,7 +687,6 @@ mod tests {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters,
             );
 
@@ -737,7 +705,6 @@ mod tests {
             let start_group = None;
             let start_object = None;
             let end_group = Some(1);
-            let end_object = Some(1);
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -754,7 +721,6 @@ mod tests {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters,
             );
 
@@ -773,7 +739,6 @@ mod tests {
             let start_group = Some(0);
             let start_object = Some(0);
             let end_group = Some(1);
-            let end_object = Some(1);
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -790,7 +755,6 @@ mod tests {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters,
             );
 
