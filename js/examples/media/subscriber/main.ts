@@ -69,7 +69,6 @@ function setupAudioDecoderWorker() {
   audioElement.srcObject = audioStream
   audioDecoderWorker.onmessage = async (e: MessageEvent) => {
     const audioData = e.data.audioData
-    console.log(audioData)
     await audioWriter.write(audioData)
     await audioElement.play()
   }
@@ -83,7 +82,6 @@ function setupVideoDecoderWorker() {
   videoElement.srcObject = videoStream
   videoDecoderWorker.onmessage = async (e: MessageEvent) => {
     const videoFrame = e.data.frame
-    console.log(e.data)
     await videoWriter.write(videoFrame)
     videoFrame.close()
     await videoElement.play()
@@ -102,6 +100,15 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
   }
   client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject: any) => {
     if (type === 'video') {
+      if (
+        subgroupStreamObject.objectPayloadLength === 0 ||
+        subgroupStreamObject.object_status === 'EndOfGroup' ||
+        subgroupStreamObject.object_status === 'EndOfTrackAndGroup' ||
+        subgroupStreamObject.object_status === 'EndOfTrack'
+      ) {
+        console.log(subgroupStreamObject)
+        return
+      }
       videoDecoderWorker.postMessage({ subgroupStreamObject })
     } else {
       audioDecoderWorker.postMessage({ subgroupStreamObject })
