@@ -1,3 +1,14 @@
+let videoEncoder: VideoEncoder | undefined
+let keyframeInterval: number
+const VIDEO_ENCODER_CONFIG = {
+  codec: 'av01.0.04M.08',
+  width: 640,
+  height: 480,
+  bitrate: 2_000_000, // 2 Mbps
+  scalabilityMode: 'L1T3',
+  framerate: 30
+}
+
 function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoChunkMetadata | undefined) {
   self.postMessage({ chunk, metadata })
 }
@@ -9,20 +20,12 @@ async function initializeVideoEncoder() {
       console.log(e.message)
     }
   }
-  const config = {
-    codec: 'av01.0.04M.08',
-    width: 640,
-    height: 480,
-    bitrate: 2_000_000, // 2 Mbps
-    scalabilityMode: 'L1T3',
-    framerate: 30
-  }
+
   const encoder = new VideoEncoder(init)
-  encoder.configure(config)
+  encoder.configure(VIDEO_ENCODER_CONFIG)
   return encoder
 }
 
-let videoEncoder: VideoEncoder | undefined
 async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>) {
   let frameCounter = 0
   if (!videoEncoder) {
@@ -39,7 +42,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
       console.error('videoEncoder.encodeQueueSize > 2', videoEncoder.encodeQueueSize)
       videoFrame.close()
     } else {
-      const keyFrame = frameCounter % 150 == 0
+      const keyFrame = frameCounter % keyframeInterval == 0
       videoEncoder.encode(videoFrame, { keyFrame })
       frameCounter++
       videoFrame.close()
@@ -48,10 +51,14 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
 }
 
 self.onmessage = async (event) => {
-  const videoReadableStream: ReadableStream<VideoFrame> = event.data.videoStream
-  if (!videoReadableStream) {
-    console.error('MediaStreamTrack が渡されていません')
-    return
+  if (event.data.type === 'keyframeInterval') {
+    keyframeInterval = event.data.keyframeInterval
+  } else if (event.data.type === 'videoStream') {
+    const videoReadableStream: ReadableStream<VideoFrame> = event.data.videoStream
+    if (!videoReadableStream) {
+      console.error('MediaStreamTrack が渡されていません')
+      return
+    }
+    await startVideoEncode(videoReadableStream)
   }
-  await startVideoEncode(videoReadableStream)
 }
