@@ -102,12 +102,10 @@ init().then(async () => {
     const sendSetupBtn = document.getElementById('sendSetupBtn')
     sendSetupBtn.addEventListener('click', async () => {
       console.log('send setup btn clicked')
-      const role = Array.from(form['role']).filter((elem) => elem.checked)[0].value
-      console.log(role)
       const versions = form['versions'].value.split(',').map(BigInt)
       const maxSubscribeId = form['max-subscribe-id'].value
 
-      await client.sendSetupMessage(role, versions, BigInt(maxSubscribeId))
+      await client.sendSetupMessage(versions, BigInt(maxSubscribeId))
     })
 
     const sendAnnounceBtn = document.getElementById('sendAnnounceBtn')
@@ -212,7 +210,14 @@ init().then(async () => {
         subgroupHeaderSent.add(key)
       }
 
-      await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId++, objectPayloadArray)
+      await client.sendSubgroupStreamObject(
+        BigInt(trackAlias),
+        groupId,
+        subgroupId,
+        objectId++,
+        undefined,
+        objectPayloadArray
+      )
       objectIdElement.textContent = objectId
     })
 

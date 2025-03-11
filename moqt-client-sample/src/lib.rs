@@ -14,7 +14,7 @@ use moqt_core::{
         announce_ok::AnnounceOk,
         client_setup::ClientSetup,
         server_setup::ServerSetup,
-        setup_parameters::{MaxSubscribeID, Role, RoleCase, SetupParameter},
+        setup_parameters::{MaxSubscribeID, SetupParameter},
         subscribe::{FilterType, GroupOrder, Subscribe},
         subscribe_announces::SubscribeAnnounces,
         subscribe_announces_error::SubscribeAnnouncesError,
@@ -182,25 +182,15 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendSetupMessage)]
     pub async fn send_setup_message(
         &mut self,
-        role_value: u8,
         versions: Vec<u64>,
         max_subscribe_id: u64,
     ) -> Result<JsValue, JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
-            let role = RoleCase::try_from(role_value).unwrap();
             let versions = versions.iter().map(|v| *v as u32).collect::<Vec<u32>>();
-            let mut setup_parameters: Vec<SetupParameter> =
-                vec![SetupParameter::Role(Role::new(role))];
-
-            match role {
-                RoleCase::Publisher | RoleCase::PubSub => {
-                    setup_parameters.push(SetupParameter::MaxSubscribeID(MaxSubscribeID::new(
-                        max_subscribe_id,
-                    )));
-                }
-                _ => {}
-            }
+            let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(
+                max_subscribe_id,
+            ))];
 
             let client_setup_message = ClientSetup::new(versions, setup_parameters);
             let mut client_setup_message_buf = BytesMut::new();
@@ -222,26 +212,13 @@ impl MOQTClient {
                 // Setup nodes along with the role
                 Ok(ok) => {
                     log(std::format!("sent: client_setup: {:#x?}", client_setup_message).as_str());
-                    match role {
-                        RoleCase::Publisher => {
-                            self.subscription_node
-                                .borrow_mut()
-                                .setup_as_publisher(max_subscribe_id);
-                        }
-                        RoleCase::Subscriber => {
-                            self.subscription_node
-                                .borrow_mut()
-                                .setup_as_subscriber(max_subscribe_id);
-                        }
-                        RoleCase::PubSub => {
-                            self.subscription_node
-                                .borrow_mut()
-                                .setup_as_publisher(max_subscribe_id);
-                            self.subscription_node
-                                .borrow_mut()
-                                .setup_as_subscriber(max_subscribe_id);
-                        }
-                    }
+                    self.subscription_node
+                        .borrow_mut()
+                        .setup_as_publisher(max_subscribe_id);
+                    self.subscription_node
+                        .borrow_mut()
+                        .setup_as_subscriber(max_subscribe_id);
+
                     Ok(ok)
                 }
                 Err(e) => Err(e),
