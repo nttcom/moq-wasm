@@ -1,4 +1,5 @@
 import { MOQTClient } from '../../../pkg/moqt_client_sample'
+import { KEYFRAME_INTERVAL } from './const'
 
 export async function sendVideoObjectMessage(
   trackAlias: bigint,
@@ -40,12 +41,12 @@ export async function sendVideoObjectMessage(
   await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, objectPayload)
   // If this object is end of group, send the ObjectStatus=EndOfGroupMessage.
   // And delete unnecessary streams.
-  if (objectId === BigInt(149)) {
+  if (objectId === BigInt(KEYFRAME_INTERVAL - 1)) {
     await client.sendSubgroupStreamObject(
       BigInt(trackAlias),
       groupId,
       subgroupId,
-      BigInt(150),
+      BigInt(KEYFRAME_INTERVAL),
       3, // 0x3: EndOfGroup
       Uint8Array.from([])
     )

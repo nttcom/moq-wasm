@@ -1,8 +1,6 @@
 import init, { MOQTClient } from '../../../pkg/moqt_client_sample'
-const authInfo = 'secret'
-const getFormElement = (): HTMLFormElement => {
-  return document.getElementById('form') as HTMLFormElement
-}
+import { AUTH_INFO } from './const'
+import { getFormElement } from './utils'
 
 function setupClientCallbacks(client: MOQTClient) {
   client.onSetup(async (serverSetup: any) => {
@@ -41,7 +39,7 @@ function sendSubscribeButtonClickHandler(client: MOQTClient) {
       BigInt(0), // startObject
       BigInt(10000), // endGroup
       BigInt(10000), // endObject
-      authInfo
+      AUTH_INFO
     )
 
     setupClientObjectCallbacks(client, 'audio', Number(1))
@@ -57,7 +55,7 @@ function sendSubscribeButtonClickHandler(client: MOQTClient) {
       BigInt(0), // startObject
       BigInt(10000), // endGroup
       BigInt(10000), // endObject
-      authInfo
+      AUTH_INFO
     )
   })
 }
