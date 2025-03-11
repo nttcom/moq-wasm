@@ -48,6 +48,7 @@ mod tests {
         async fn stream_object_subgroup_success() {
             let bytes_array = [
                 0, // Object ID (i)
+                0, // Extension Header Length (i)
                 3, // Object Payload Length (i)
                 0, 1, 2, // Object Payload (..)
             ];
@@ -67,6 +68,7 @@ mod tests {
         async fn stream_object_subgroup_continue_insufficient_payload() {
             let bytes_array = [
                 0,  // Object ID (i)
+                0,  // Extension Headers Length (i)
                 50, // Object Payload Length (i)
                 0, 1, 2, // Object Payload (..)
             ];

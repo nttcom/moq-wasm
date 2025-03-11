@@ -756,11 +756,13 @@ impl MOQTClient {
     ) -> Result<JsValue, JsValue> {
         let writer = self.datagram_writer.borrow().clone();
         if let Some(writer) = writer {
+            let extension_headers = vec![];
             let datagram_object = datagram::Object::new(
                 track_alias,
                 group_id,
                 object_id,
                 publisher_priority,
+                extension_headers,
                 None,
                 object_payload,
             )
@@ -875,8 +877,10 @@ impl MOQTClient {
             stream_writers.get(&writer_key).cloned()
         };
         if let Some(writer) = writer {
+            let extension_headers = vec![];
             let subgroup_stream_object = subgroup_stream::Object::new(
                 object_id,
+                extension_headers,
                 object_status.map(|status| ObjectStatus::try_from(status).unwrap()),
                 object_payload,
             )
