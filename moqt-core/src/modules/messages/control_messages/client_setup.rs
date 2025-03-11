@@ -82,7 +82,7 @@ mod test {
             messages::{
                 control_messages::{
                     client_setup::ClientSetup,
-                    setup_parameters::{Role, RoleCase, SetupParameter},
+                    setup_parameters::{MaxSubscribeID, SetupParameter},
                 },
                 moqt_payload::MOQTPayload,
             },
@@ -92,8 +92,7 @@ mod test {
         #[test]
         fn packetize() {
             let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-            let role_parameter = Role::new(RoleCase::Subscriber);
-            let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
+            let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000))];
             let client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
             let mut buf = BytesMut::new();
             client_setup.packetize(&mut buf);
@@ -101,11 +100,12 @@ mod test {
             let expected_bytes_array = [
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 8, // Supported Version(i): Value(0xff000008) in 62bit
-                1, // Number of Parameters (i)
-                0, // SETUP Parameters (..): Type(Role)
-                1, // SETUP Parameters (..): Length
-                2, // SETUP Parameters (..): Role(Subscriber)
+                0, 0, 0, 255, 0, 0, 8,   // Supported Version(i): Value(0xff000008) in 62bit
+                1,   // Number of Parameters (i)
+                2,   // Parameter Type (i): Type(MaxSubscribeID)
+                2,   // Parameter Length (i)
+                71,  // Parameter Value (..): Length(01 of 2MSB)
+                208, // Parameter Value (..): Value(2000) in 62bit
             ];
 
             assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -116,19 +116,19 @@ mod test {
             let bytes_array = [
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 8, // Supported Version(i): Value(0xff000008) in 62bit
-                1, // Number of Parameters (i)
-                0, // SETUP Parameters (..): Type(Role)
-                1, // SETUP Parameters (..): Length
-                2, // SETUP Parameters (..): Role(Subscriber)
+                0, 0, 0, 255, 0, 0, 8,   // Supported Version(i): Value(0xff000008) in 62bit
+                1,   // Number of Parameters (i)
+                2,   // Parameter Type (i): Type(MaxSubscribeID)
+                2,   // Parameter Length (i)
+                71,  // Parameter Value (..): Length(01 of 2MSB)
+                208, // Parameter Value (..): Value(2000) in 62bit
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let depacketized_client_setup = ClientSetup::depacketize(&mut buf).unwrap();
 
             let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-            let role_parameter = Role::new(RoleCase::Subscriber);
-            let setup_parameters = vec![SetupParameter::Role(role_parameter.clone())];
+            let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000))];
             let expected_client_setup =
                 ClientSetup::new(supported_versions, setup_parameters.clone());
 
