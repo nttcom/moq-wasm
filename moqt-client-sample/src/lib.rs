@@ -4,6 +4,7 @@ mod utils;
 use anyhow::Result;
 #[cfg(feature = "web_sys_unstable_apis")]
 use bytes::{Buf, BufMut, BytesMut};
+#[cfg(feature = "web_sys_unstable_apis")]
 use moqt_core::messages::data_streams::object_status::ObjectStatus;
 #[cfg(feature = "web_sys_unstable_apis")]
 use moqt_core::{
