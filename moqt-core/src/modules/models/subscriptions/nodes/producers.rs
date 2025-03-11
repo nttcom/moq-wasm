@@ -45,7 +45,6 @@ impl SubscriptionNodeRegistry for Producer {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<()> {
         // Publisher can define forwarding preference when it publishes track.
         let subscription = Subscription::new(
@@ -58,7 +57,6 @@ impl SubscriptionNodeRegistry for Producer {
             start_group,
             start_object,
             end_group,
-            end_object,
             None,
         );
 
@@ -164,32 +162,6 @@ impl SubscriptionNodeRegistry for Producer {
             .map(|subscription| subscription.get_requested_object_range());
 
         Ok(requested_object_range)
-    }
-
-    fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
-        let range = self
-            .subscriptions
-            .get(&subscribe_id)
-            .map(|subscription| subscription.get_requested_object_range())
-            .unwrap();
-
-        let start_group = range.start_group();
-        let start_object = range.start_object();
-
-        Ok((start_group, start_object))
-    }
-
-    fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
-        let range = self
-            .subscriptions
-            .get(&subscribe_id)
-            .map(|subscription| subscription.get_requested_object_range())
-            .unwrap();
-
-        let end_group = range.end_group();
-        let end_object = range.end_object();
-
-        Ok((end_group, end_object))
     }
 
     fn set_actual_object_start(
@@ -402,7 +374,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         assert!(result.is_ok());
@@ -425,7 +396,6 @@ mod success {
             variables_clone.start_group,
             variables_clone.start_object,
             variables_clone.end_group,
-            variables_clone.end_object,
         );
 
         let subscription = variables_clone
@@ -443,7 +413,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
             None,
         ));
 
@@ -466,7 +435,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let expected_subscribe_id = variables.subscribe_id;
@@ -496,7 +464,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let expected_track_alias = variables.track_alias;
@@ -526,7 +493,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let expected_subscribe_id = variables.subscribe_id;
@@ -556,7 +522,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -582,7 +547,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -609,7 +573,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables.producer.is_requesting(variables.subscribe_id);
@@ -633,7 +596,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -659,7 +621,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let forwarding_preference = ForwardingPreference::Datagram;
@@ -688,7 +649,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let forwarding_preference = ForwardingPreference::Datagram;
@@ -720,7 +680,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result_filter_type = variables
@@ -748,7 +707,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result_range = variables
@@ -761,64 +719,6 @@ mod success {
         assert_eq!(result_range.start_object(), variables.start_object);
         assert_eq!(result_range.end_group(), variables.end_group);
         assert_eq!(result_range.end_object(), variables.end_object);
-    }
-
-    #[test]
-    fn get_absolute_start() {
-        let subscribe_id = 0;
-        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
-
-        let _ = variables.producer.set_subscription(
-            variables.subscribe_id,
-            variables.track_alias,
-            variables.track_namespace.clone(),
-            variables.track_name.clone(),
-            variables.subscriber_priority,
-            variables.group_order,
-            variables.filter_type,
-            variables.start_group,
-            variables.start_object,
-            variables.end_group,
-            variables.end_object,
-        );
-
-        let result = variables
-            .producer
-            .get_absolute_start(variables.subscribe_id)
-            .unwrap();
-
-        let expected_result = (variables.start_group, variables.start_object);
-
-        assert_eq!(result, expected_result);
-    }
-
-    #[test]
-    fn get_absolute_end() {
-        let subscribe_id = 0;
-        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
-
-        let _ = variables.producer.set_subscription(
-            variables.subscribe_id,
-            variables.track_alias,
-            variables.track_namespace.clone(),
-            variables.track_name.clone(),
-            variables.subscriber_priority,
-            variables.group_order,
-            variables.filter_type,
-            variables.start_group,
-            variables.start_object,
-            variables.end_group,
-            variables.end_object,
-        );
-
-        let result = variables
-            .producer
-            .get_absolute_end(variables.subscribe_id)
-            .unwrap();
-
-        let expected_result = (variables.end_group, variables.end_object);
-
-        assert_eq!(result, expected_result);
     }
 
     #[test]
@@ -837,7 +737,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let actual_object_start = ObjectStart::new(0, 0);
@@ -867,7 +766,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let _ = variables
@@ -899,7 +797,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -931,7 +828,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -962,7 +858,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -994,7 +889,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables.producer.create_valid_track_alias();
