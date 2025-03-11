@@ -93,7 +93,7 @@ impl SubgroupStreamObjectReceiver {
         Ok(())
     }
 
-    pub(crate) async fn finish(&self) -> Result<()> {
+    pub(crate) async fn finish(self) -> Result<()> {
         self.senders
             .buffer_tx()
             .send(BufferCommand::ReleaseStream {
@@ -102,13 +102,17 @@ impl SubgroupStreamObjectReceiver {
             })
             .await?;
 
+        // Send STOP_SENDING frame to the publisher
+        self.stream.stop();
+
         tracing::debug!("SubgroupStreamObjectReceiver finished");
 
         Ok(())
     }
 
     async fn read_stream(&mut self) -> Result<BytesMut, TerminationError> {
-        let mut buffer = vec![0; 65536].into_boxed_slice();
+        // Align with the stream_receive_window configured on the MoQT Server
+        let mut buffer = vec![0; 10 * 1024 * 1024].into_boxed_slice();
 
         let length: usize = match self.stream.read(&mut buffer).await {
             Ok(byte_read) => byte_read.unwrap(),

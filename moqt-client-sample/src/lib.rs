@@ -26,7 +26,7 @@ use moqt_core::{
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     messages::{
-        data_streams::{datagram, subgroup_stream, DataStreams},
+        data_streams::{datagram, object_status::ObjectStatus, subgroup_stream, DataStreams},
         moqt_payload::MOQTPayload,
     },
     models::subscriptions::{
@@ -863,6 +863,7 @@ impl MOQTClient {
         group_id: u64,
         subgroup_id: u64,
         object_id: u64,
+        object_status: Option<u8>,
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
         let subscribe_id = self
@@ -877,9 +878,13 @@ impl MOQTClient {
         };
         if let Some(writer) = writer {
             let extension_headers = vec![];
-            let subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, extension_headers, None, object_payload)
-                    .unwrap();
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status.map(|status| ObjectStatus::try_from(status).unwrap()),
+                object_payload,
+            )
+            .unwrap();
             let mut subgroup_stream_object_buf = BytesMut::new();
             subgroup_stream_object.packetize(&mut subgroup_stream_object_buf);
 
@@ -892,11 +897,12 @@ impl MOQTClient {
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(ok) => {
                     log(std::format!(
-                        "sent: trackAlias: {:#?} object . group_id: {:#?} subgroup_id: {:#?} object_id: {:#?}",
+                        "sent: trackAlias: {:#?} object . group_id: {:#?} subgroup_id: {:#?} object_id: {:#?} object_status: {:#?}",
                         track_alias,
                         group_id,
                         subgroup_id,
                         object_id,
+                        object_status,
                     )
                     .as_str());
                     Ok(ok)
@@ -1075,12 +1081,10 @@ async fn control_message_handler(
             match message_type {
                 ControlMessageType::ServerSetup => {
                     let server_setup_message = ServerSetup::depacketize(&mut payload_buf)?;
-
                     log(
                         std::format!("recv: server_setup_message: {:#x?}", server_setup_message)
                             .as_str(),
                     );
-
                     if let Some(callback) = callbacks.borrow().setup_callback() {
                         let v = serde_wasm_bindgen::to_value(&server_setup_message).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
@@ -1283,68 +1287,78 @@ async fn uni_directional_stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
 ) -> Result<(), JsValue> {
-    use moqt_core::data_stream_type::DataStreamType;
-
     log("uni_directional_stream_read_thread");
 
     let mut subgroup_stream_header: Option<subgroup_stream::Header> = None;
     let mut data_stream_type = DataStreamType::ObjectDatagram;
     let mut buf = BytesMut::new();
+    let mut is_end_of_stream = false;
 
-    loop {
-        let ret = reader.read();
-        let ret = JsFuture::from(ret).await?;
-
-        let ret_value = js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?;
-        let ret_done = js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?;
-        let ret_done = js_sys::Boolean::from(ret_done).value_of();
-
-        if ret_done {
+    while !is_end_of_stream {
+        let ret = JsFuture::from(reader.read()).await?;
+        let (value, is_done) = {
+            let value = js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?;
+            let value = js_sys::Uint8Array::from(value).to_vec();
+            let is_done = js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?;
+            let is_done = js_sys::Boolean::from(is_done).value_of();
+            (value, is_done)
+        };
+        if is_done {
             break;
         }
 
-        let ret_value = js_sys::Uint8Array::from(ret_value).to_vec();
-
-        for i in ret_value {
+        for i in value {
             buf.put_u8(i);
         }
 
         while !buf.is_empty() {
             if subgroup_stream_header.is_none() {
-                let result = match object_header_handler(callbacks.clone(), &mut buf).await {
-                    Ok(v) => v,
-                    Err(_e) => {
-                        break;
-                    }
-                };
-                data_stream_type = result.0;
-                subgroup_stream_header = result.1;
-            } else {
-                match data_stream_type {
-                    DataStreamType::ObjectDatagram => {
-                        let msg = "format error".to_string();
-                        log(std::format!("{:#?}", msg).as_str());
-                        return Err(js_sys::Error::new(&msg).into());
-                    }
-                    DataStreamType::StreamHeaderSubgroup => {
-                        if let Err(_e) = subgroup_stream_object_handler(
-                            callbacks.clone(),
-                            subgroup_stream_header.clone().unwrap(),
-                            &mut buf,
-                        )
-                        .await
-                        {
+                let (_data_stream_type, _subgroup_stream_header) =
+                    match object_header_handler(callbacks.clone(), &mut buf).await {
+                        Ok(v) => v,
+                        Err(_e) => {
+                            break;
+                        }
+                    };
+                data_stream_type = _data_stream_type;
+                subgroup_stream_header = _subgroup_stream_header;
+                continue;
+            }
+
+            match data_stream_type {
+                DataStreamType::ObjectDatagram => {
+                    let msg = "format error".to_string();
+                    log(std::format!("{:#?}", msg).as_str());
+                    return Err(js_sys::Error::new(&msg).into());
+                }
+                DataStreamType::StreamHeaderSubgroup => {
+                    match subgroup_stream_object_handler(
+                        callbacks.clone(),
+                        subgroup_stream_header.clone().unwrap(),
+                        &mut buf,
+                    )
+                    .await
+                    {
+                        Ok(object) => {
+                            if object.object_status() == Some(ObjectStatus::EndOfGroup) {
+                                is_end_of_stream = true;
+                                break;
+                            }
+                        }
+                        Err(_e) => {
                             // log(std::format!("error: {:#?}", e).as_str());
                             break;
                         }
                     }
-                    DataStreamType::FetchHeader => {
-                        unimplemented!();
-                    }
+                }
+                DataStreamType::FetchHeader => {
+                    unimplemented!();
                 }
             }
         }
     }
+    JsFuture::from(reader.cancel()).await?;
+    log("End of unidirectional stream");
 
     Ok(())
 }
@@ -1446,7 +1460,7 @@ async fn subgroup_stream_object_handler(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     subgroup_stream_header: subgroup_stream::Header,
     buf: &mut BytesMut,
-) -> Result<()> {
+) -> Result<subgroup_stream::Object> {
     let mut read_cur = Cursor::new(&buf[..]);
     let subgroup_stream_object = match subgroup_stream::Object::depacketize(&mut read_cur) {
         Ok(v) => {
@@ -1468,7 +1482,7 @@ async fn subgroup_stream_object_handler(
         callback.call1(&JsValue::null(), &(v)).unwrap();
     }
 
-    Ok(())
+    Ok(subgroup_stream_object)
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]

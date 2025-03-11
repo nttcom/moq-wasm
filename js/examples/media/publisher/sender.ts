@@ -1,4 +1,5 @@
 import { MOQTClient } from '../../../pkg/moqt_client_sample'
+import { KEYFRAME_INTERVAL } from './const'
 
 export async function sendVideoObjectMessage(
   trackAlias: bigint,
@@ -37,8 +38,20 @@ export async function sendVideoObjectMessage(
   const jsonString = JSON.stringify({ chunk: chunkData })
   const objectPayload = encoder.encode(jsonString)
 
-  // TODO: change groupId When keyframe is created
-  await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, objectPayload)
+  await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, objectPayload)
+  // If this object is end of group, send the ObjectStatus=EndOfGroupMessage.
+  // And delete unnecessary streams.
+  if (objectId === BigInt(KEYFRAME_INTERVAL - 1)) {
+    await client.sendSubgroupStreamObject(
+      BigInt(trackAlias),
+      groupId,
+      subgroupId,
+      BigInt(KEYFRAME_INTERVAL),
+      3, // 0x3: EndOfGroup
+      Uint8Array.from([])
+    )
+    console.log('send Object(ObjectStatus=EndOfGroup)')
+  }
 }
 
 export async function sendAudioObjectMessage(
@@ -70,5 +83,5 @@ export async function sendAudioObjectMessage(
   const encoder = new TextEncoder()
   const jsonString = JSON.stringify({ chunk: chunkData })
   const objectPayload = encoder.encode(jsonString)
-  await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, objectPayload)
+  await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, objectPayload)
 }
