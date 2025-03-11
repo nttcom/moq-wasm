@@ -1,10 +1,10 @@
 use super::bi_stream::BiStream;
 use crate::modules::{
     buffer_manager::{request_buffer, BufferCommand},
+    control_message_dispatcher::ControlMessageDispatcher,
     message_handlers::control_message::{control_message_handler, MessageProcessResult},
     moqt_client::MOQTClient,
     pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
-    control_message_dispatcher::ControlMessageDispatcher,
 };
 use anyhow::Result;
 use bytes::BytesMut;
@@ -27,7 +27,8 @@ pub(crate) async fn handle_control_stream(
 
     let mut pubsub_relation_manager =
         PubSubRelationManagerWrapper::new(senders.pubsub_relation_tx().clone());
-    let mut control_message_dispatcher = ControlMessageDispatcher::new(senders.control_message_dispatch_tx().clone());
+    let mut control_message_dispatcher =
+        ControlMessageDispatcher::new(senders.control_message_dispatch_tx().clone());
 
     let mut object_cache_storage =
         crate::modules::object_cache_storage::wrapper::ObjectCacheStorageWrapper::new(

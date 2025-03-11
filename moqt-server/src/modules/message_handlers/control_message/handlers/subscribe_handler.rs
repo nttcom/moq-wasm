@@ -213,7 +213,10 @@ pub(crate) async fn subscribe_handler(
             // TODO: Wait for the SUBSCRIBE_OK message to be returned on a transaction
             // TODO: validate Timeout
             match control_message_dispatcher
-                .transfer_message_to_control_message_sender_thread(session_id, forwarding_subscribe_message)
+                .transfer_message_to_control_message_sender_thread(
+                    session_id,
+                    forwarding_subscribe_message,
+                )
                 .await
             {
                 Ok(_) => {
@@ -633,7 +636,9 @@ mod success {
         let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
             mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
         let mut control_message_dispatcher: ControlMessageDispatcher =
             ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
@@ -770,7 +775,9 @@ mod success {
         let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
             mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
         let mut control_message_dispatcher: ControlMessageDispatcher =
             ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
@@ -919,7 +926,9 @@ mod success {
         let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
             mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
         let mut control_message_dispatcher: ControlMessageDispatcher =
             ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
@@ -1136,7 +1145,9 @@ mod failure {
         let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
             mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
         let mut control_message_dispatcher: ControlMessageDispatcher =
             ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
@@ -1237,7 +1248,9 @@ mod failure {
         let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
             mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
         let mut control_message_dispatcher: ControlMessageDispatcher =
             ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
@@ -1329,7 +1342,9 @@ mod failure {
         let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
             mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
         let mut control_message_dispatcher: ControlMessageDispatcher =
             ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
@@ -1443,7 +1458,9 @@ mod failure {
         let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
             mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
         let mut control_message_dispatcher: ControlMessageDispatcher =
             ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
@@ -1560,7 +1577,9 @@ mod failure {
         let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
             mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { control_message_dispatcher(&mut control_message_dispatch_rx).await });
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
         let mut control_message_dispatcher: ControlMessageDispatcher =
             ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
