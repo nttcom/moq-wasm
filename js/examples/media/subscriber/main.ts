@@ -96,6 +96,7 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
     setupVideoDecoderWorker()
   }
   client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject: any) => {
+    console.log(subgroupStreamObject)
     if (type === 'video') {
       if (
         subgroupStreamObject.objectPayloadLength === 0 ||

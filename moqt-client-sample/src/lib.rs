@@ -1270,16 +1270,15 @@ async fn uni_directional_stream_read_thread(
 
     while !is_end_of_stream {
         let ret = JsFuture::from(reader.read()).await?;
-        let (value, is_done) = {
-            let value = js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?;
-            let value = js_sys::Uint8Array::from(value).to_vec();
-            let is_done = js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?;
-            let is_done = js_sys::Boolean::from(is_done).value_of();
-            (value, is_done)
-        };
+        let is_done =
+            js_sys::Boolean::from(js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?)
+                .value_of();
         if is_done {
             break;
         }
+        let value =
+            js_sys::Uint8Array::from(js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?)
+                .to_vec();
 
         for i in value {
             buf.put_u8(i);
