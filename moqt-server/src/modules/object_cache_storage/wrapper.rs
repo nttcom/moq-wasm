@@ -551,7 +551,6 @@ mod success {
         let group_id = 4;
         let publisher_priority = 5;
         let extension_headers = vec![];
-        let object_status = None;
         let object_payload = vec![1, 2, 3, 4];
         let duration = 1000;
         let datagram_object = datagram::Object::new(
@@ -560,7 +559,6 @@ mod success {
             object_id,
             publisher_priority,
             extension_headers,
-            object_status,
             object_payload,
         )
         .unwrap();
@@ -635,7 +633,6 @@ mod success {
         let group_id = 4;
         let publisher_priority = 5;
         let extension_headers = vec![];
-        let object_status = None;
         let duration = 1000;
 
         // start object cache storage thread
@@ -656,7 +653,6 @@ mod success {
                 object_id,
                 publisher_priority,
                 extension_headers.clone(),
-                object_status,
                 object_payload,
             )
             .unwrap();
@@ -675,7 +671,6 @@ mod success {
             object_id,
             publisher_priority,
             extension_headers,
-            object_status,
             expected_object_payload,
         )
         .unwrap();
@@ -770,7 +765,6 @@ mod success {
         let group_id = 4;
         let publisher_priority = 5;
         let extension_headers = vec![];
-        let object_status = None;
         let duration = 1000;
 
         // start object cache storage thread
@@ -790,7 +784,6 @@ mod success {
                 object_id,
                 publisher_priority,
                 extension_headers.clone(),
-                object_status,
                 object_payload,
             )
             .unwrap();
@@ -810,7 +803,6 @@ mod success {
             expected_object_id,
             publisher_priority,
             extension_headers,
-            object_status,
             expected_object_payload,
         )
         .unwrap();
@@ -906,7 +898,6 @@ mod success {
         let group_id = 4;
         let publisher_priority = 5;
         let extension_headers = vec![];
-        let object_status = None;
         let duration = 1000;
 
         // start object cache storage thread
@@ -926,7 +917,6 @@ mod success {
                 object_id,
                 publisher_priority,
                 extension_headers.clone(),
-                object_status,
                 object_payload,
             )
             .unwrap();
@@ -945,7 +935,6 @@ mod success {
             expected_object_id,
             publisher_priority,
             extension_headers,
-            object_status,
             expected_object_payload,
         )
         .unwrap();
@@ -969,7 +958,6 @@ mod success {
         let track_alias = 3;
         let publisher_priority = 5;
         let extension_headers = vec![];
-        let object_status = None;
         let duration = 1000;
 
         // start object cache storage thread
@@ -998,7 +986,6 @@ mod success {
                     object_id,
                     publisher_priority,
                     extension_headers.clone(),
-                    object_status,
                     object_payload,
                 )
                 .unwrap();
@@ -1018,7 +1005,6 @@ mod success {
             expected_object_id,
             publisher_priority,
             extension_headers,
-            object_status,
             expected_object_payload,
         )
         .unwrap();
@@ -1043,7 +1029,6 @@ mod success {
         let track_alias = 3;
         let publisher_priority = 5;
         let extension_headers = vec![];
-        let object_status = None;
         let duration = 1000;
 
         // start object cache storage thread
@@ -1072,7 +1057,6 @@ mod success {
                     object_id,
                     publisher_priority,
                     extension_headers.clone(),
-                    object_status,
                     object_payload,
                 )
                 .unwrap();
@@ -1093,7 +1077,6 @@ mod success {
             expected_object_id,
             publisher_priority,
             extension_headers.clone(),
-            object_status,
             expected_object_payload,
         )
         .unwrap();
@@ -1320,7 +1303,6 @@ mod success {
         let track_alias = 3;
         let publisher_priority = 5;
         let extension_headers = vec![];
-        let object_status = None;
         let duration = 1000;
 
         // start object cache storage thread
@@ -1349,7 +1331,6 @@ mod success {
                     object_id,
                     publisher_priority,
                     extension_headers.clone(),
-                    object_status,
                     object_payload,
                 )
                 .unwrap();
