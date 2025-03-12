@@ -245,7 +245,7 @@ impl SubgroupStreamObjectReceiver {
         upstream_session_id: usize,
     ) -> Result<(), TerminationError> {
         // Register stream_id to send signal to other subgroup receiver threads in the same group
-        let (group_id, _) = self.subgroup_stream_id.unwrap();
+        let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
         let upstream_subscribe_id = self.subscribe_id.unwrap();
         let stream_id = self.stream.stream_id();
 
@@ -256,6 +256,7 @@ impl SubgroupStreamObjectReceiver {
                 upstream_session_id,
                 upstream_subscribe_id,
                 group_id,
+                subgroup_id,
                 stream_id,
             )
             .await
@@ -481,9 +482,20 @@ impl SubgroupStreamObjectReceiver {
         let is_data_stream_ended = self.is_data_stream_ended(&stream_object);
 
         if is_data_stream_ended {
-            let _ = self
-                .send_termination_signal_to_other_receivers(&stream_object)
-                .await;
+            let stream_ids = self.get_stream_ids_for_same_group().await?;
+
+            // Wait to forward rest of the objects on other receivers in the same group
+            let send_delay_ms = Duration::from_millis(50); // FIXME: Temporary threshold
+            thread::sleep(send_delay_ms);
+
+            for stream_id in stream_ids {
+                // Skip the stream of this receiver
+                if stream_id == self.stream.stream_id() {
+                    continue;
+                }
+                self.send_termination_signal_to_receiver(&stream_object, stream_id)
+                    .await?;
+            }
         }
 
         let is_end = is_subscription_ended || is_data_stream_ended;
@@ -567,48 +579,90 @@ impl SubgroupStreamObjectReceiver {
         )
     }
 
-    async fn send_termination_signal_to_other_receivers(
-        &self,
-        object: &subgroup_stream::Object,
-    ) -> Result<()> {
+    async fn get_stream_ids_for_same_group(&self) -> Result<Vec<u64>, TerminationError> {
         let upstream_session_id = self.stream.stable_id();
         let upstream_subscribe_id = self.subscribe_id.unwrap();
         let (group_id, _) = self.subgroup_stream_id.unwrap();
-        let object_status = object.object_status().unwrap();
 
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
-        let stream_ids = pubsub_relation_manager
-            .get_upstream_stream_ids_from_group(
+        let subgroup_ids = match pubsub_relation_manager
+            .get_upstream_subgroup_ids_for_group(
                 upstream_session_id,
                 upstream_subscribe_id,
                 group_id,
             )
-            .await?;
+            .await
+        {
+            Ok(subgroup_ids) => subgroup_ids,
+            Err(err) => {
+                let msg = format!("Fail to get upstream subgroup ids by group: {:?}", err);
+                let code = TerminationErrorCode::InternalError;
+
+                return Err((code, msg));
+            }
+        };
+
+        let mut stream_ids: Vec<u64> = vec![];
+        for subgroup_id in subgroup_ids {
+            let stream_id = match pubsub_relation_manager
+                .get_upstream_stream_id_for_subgroup(
+                    upstream_session_id,
+                    upstream_subscribe_id,
+                    group_id,
+                    subgroup_id,
+                )
+                .await
+            {
+                Ok(Some(stream_id)) => stream_id,
+                Ok(None) => {
+                    let msg = "Stream id is not found".to_string();
+                    let code = TerminationErrorCode::InternalError;
+
+                    return Err((code, msg));
+                }
+                Err(err) => {
+                    let msg = format!("Fail to get upstream stream id by subgroup: {:?}", err);
+                    let code = TerminationErrorCode::InternalError;
+
+                    return Err((code, msg));
+                }
+            };
+
+            stream_ids.push(stream_id);
+        }
+
+        Ok(stream_ids)
+    }
+
+    async fn send_termination_signal_to_receiver(
+        &self,
+        object: &subgroup_stream::Object,
+        stream_id: u64,
+    ) -> Result<(), TerminationError> {
+        let upstream_session_id = self.stream.stable_id();
+        let object_status = object.object_status().unwrap();
 
         let signal_dispatcher = SignalDispatcher::new(self.senders.signal_dispatch_tx().clone());
 
-        // Wait to receive rest of the objects on other receivers
-        let send_delay_ms = Duration::from_millis(50); // FIXME: Temporary threshold
-        thread::sleep(send_delay_ms);
+        tracing::debug!(
+            "Send termination signal to upstream session: {}, stream: {}",
+            upstream_session_id,
+            stream_id
+        );
 
-        for stream_id in stream_ids {
-            if stream_id == self.stream.stream_id() {
-                continue;
+        let signal = Box::new(DataStreamThreadSignal::Terminate(object_status));
+        match signal_dispatcher
+            .transfer_signal_to_data_stream_thread(upstream_session_id, stream_id, signal)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let msg = format!("Fail to send termination signal: {:?}", err);
+                let code = TerminationErrorCode::InternalError;
+
+                Err((code, msg))
             }
-
-            tracing::debug!(
-                "Send termination signal to upstream session: {}, stream: {}",
-                upstream_session_id,
-                stream_id
-            );
-
-            let signal = Box::new(DataStreamThreadSignal::Terminate(object_status));
-            signal_dispatcher
-                .transfer_signal_to_data_stream_thread(upstream_session_id, stream_id, signal)
-                .await?;
         }
-
-        Ok(())
     }
 }
