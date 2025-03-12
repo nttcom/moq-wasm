@@ -53,6 +53,24 @@ pub trait SubscriptionNodeRegistry {
         subscribe_id: SubscribeId,
     ) -> Result<Option<ForwardingPreference>>;
     fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<Option<FilterType>>;
+    fn set_stream_id(
+        &mut self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+        subgroup_id: u64,
+        stream_id: u64,
+    ) -> Result<()>;
+    fn get_subgroup_ids_for_group(
+        &self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+    ) -> Result<Vec<u64>>;
+    fn get_stream_id_for_subgroup(
+        &self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+        subgroup_id: u64,
+    ) -> Result<Option<u64>>;
     fn get_requested_object_range(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectRange>>;
     fn set_actual_object_start(
         &mut self,

@@ -934,6 +934,160 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
 
                 resp.send(Ok(subscribers)).unwrap();
             }
+            SetUpstreamStreamId {
+                upstream_session_id,
+                upstream_subscribe_id,
+                group_id,
+                subgroup_id,
+                stream_id,
+                resp,
+            } => {
+                // Return an error if the publisher does not exist
+                let consumer = match consumers.get_mut(&upstream_session_id) {
+                    Some(consumer) => consumer,
+                    None => {
+                        let msg = "publisher not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                match consumer.set_stream_id(
+                    upstream_subscribe_id,
+                    group_id,
+                    subgroup_id,
+                    stream_id,
+                ) {
+                    Ok(_) => resp.send(Ok(())).unwrap(),
+                    Err(err) => {
+                        tracing::error!("set_stream_id: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                    }
+                }
+            }
+            GetUpstreamSubgroupIdsForGroup {
+                upstream_session_id,
+                upstream_subscribe_id,
+                group_id,
+                resp,
+            } => {
+                // Return an error if the publisher does not exist
+                let consumer = match consumers.get(&upstream_session_id) {
+                    Some(consumer) => consumer,
+                    None => {
+                        let msg = "publisher not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let subgroup_ids = consumer
+                    .get_subgroup_ids_for_group(upstream_subscribe_id, group_id)
+                    .unwrap();
+                resp.send(Ok(subgroup_ids)).unwrap();
+            }
+            GetUpstreamStreamIdForSubgroup {
+                upstream_session_id,
+                upstream_subscribe_id,
+                group_id,
+                subgroup_id,
+                resp,
+            } => {
+                // Return an error if the publisher does not exist
+                let consumer = match consumers.get(&upstream_session_id) {
+                    Some(consumer) => consumer,
+                    None => {
+                        let msg = "publisher not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let stream_id = consumer
+                    .get_stream_id_for_subgroup(upstream_subscribe_id, group_id, subgroup_id)
+                    .unwrap();
+                resp.send(Ok(stream_id)).unwrap();
+            }
+            SetDownstreamStreamId {
+                downstream_session_id,
+                downstream_subscribe_id,
+                group_id,
+                subgroup_id,
+                stream_id,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get_mut(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                match producer.set_stream_id(
+                    downstream_subscribe_id,
+                    group_id,
+                    subgroup_id,
+                    stream_id,
+                ) {
+                    Ok(_) => resp.send(Ok(())).unwrap(),
+                    Err(err) => {
+                        tracing::error!("set_stream_id: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                    }
+                }
+            }
+            GetDownstreamSubgroupIdsForGroup {
+                downstream_session_id,
+                downstream_subscribe_id,
+                group_id,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let stream_ids = producer
+                    .get_subgroup_ids_for_group(downstream_subscribe_id, group_id)
+                    .unwrap();
+                resp.send(Ok(stream_ids)).unwrap();
+            }
+            GetDownstreamStreamIdForSubgroup {
+                downstream_session_id,
+                downstream_subscribe_id,
+                group_id,
+                subgroup_id,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let stream_id = producer
+                    .get_stream_id_for_subgroup(downstream_subscribe_id, group_id, subgroup_id)
+                    .unwrap();
+                resp.send(Ok(stream_id)).unwrap();
+            }
             GetRelatedPublisher {
                 downstream_session_id,
                 downstream_subscribe_id,

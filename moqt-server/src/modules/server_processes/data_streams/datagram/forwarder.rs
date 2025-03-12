@@ -202,8 +202,7 @@ impl DatagramObjectForwarder {
             let message_buf = self.packetize(&downstream_object).await?;
             self.send(message_buf).await?;
 
-            let is_end = self.is_subscription_ended(&downstream_object)
-                || self.is_data_stream_ended(&downstream_object);
+            let is_end = self.is_data_stream_ended(&downstream_object);
 
             return Ok((Some(cache_id), is_end));
         }
@@ -300,17 +299,6 @@ impl DatagramObjectForwarder {
         }
 
         Ok(())
-    }
-
-    fn is_subscription_ended(&self, datagram_object: &datagram::Object) -> bool {
-        if self.filter_type != FilterType::AbsoluteRange {
-            return false;
-        }
-
-        matches!(
-            datagram_object.object_status(),
-            Some(ObjectStatus::EndOfTrack) | Some(ObjectStatus::EndOfTrackAndGroup)
-        )
     }
 
     // This function is implemented according to the following sentence in draft.

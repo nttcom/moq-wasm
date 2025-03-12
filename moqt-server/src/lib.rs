@@ -8,22 +8,25 @@ mod modules;
 pub use modules::config::MOQTConfig;
 use modules::{
     buffer_manager::{buffer_manager, BufferCommand},
+    control_message_dispatcher::{control_message_dispatcher, ControlMessageDispatchCommand},
     logging::init_logging,
     object_cache_storage::{
         cache::SubgroupStreamId, commands::ObjectCacheStorageCommand, storage::object_cache_storage,
     },
     pubsub_relation_manager::{commands::PubSubRelationCommand, manager::pubsub_relation_manager},
-    send_stream_dispatcher::{send_stream_dispatcher, SendStreamDispatchCommand},
     server_processes::{
         senders::{SenderToOtherConnectionThread, SendersToManagementThread},
         session_handler::SessionHandler,
     },
+    signal_dispatcher,
 };
 pub use moqt_core::constants;
 use moqt_core::{
     constants::{TerminationErrorCode, UnderlayType},
     data_stream_type::DataStreamType,
 };
+
+use crate::signal_dispatcher::{signal_dispatcher, SignalDispatchCommand};
 
 type SubscribeId = u64;
 pub(crate) type SenderToOpenSubscription =
@@ -83,8 +86,15 @@ impl MOQTServer {
         let (pubsub_relation_tx, mut pubsub_relation_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
         tokio::spawn(async move { pubsub_relation_manager(&mut pubsub_relation_rx).await });
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let (signal_dispatch_tx, mut signal_dispatch_rx) =
+            mpsc::channel::<SignalDispatchCommand>(1024);
+        tokio::spawn(async move { signal_dispatcher(&mut signal_dispatch_rx).await });
+
         let (object_cache_tx, mut object_cache_rx) =
             mpsc::channel::<ObjectCacheStorageCommand>(1024);
         tokio::spawn(async move { object_cache_storage(&mut object_cache_rx).await });
@@ -98,7 +108,8 @@ impl MOQTServer {
             let senders_to_management_thread = SendersToManagementThread::new(
                 buffer_tx.clone(),
                 pubsub_relation_tx.clone(),
-                send_stream_tx.clone(),
+                control_message_dispatch_tx.clone(),
+                signal_dispatch_tx.clone(),
                 object_cache_tx.clone(),
             );
 

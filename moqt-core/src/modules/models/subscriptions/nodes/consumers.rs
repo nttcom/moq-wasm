@@ -181,6 +181,42 @@ impl SubscriptionNodeRegistry for Consumer {
         unimplemented!("subscribe_id: {}", subscribe_id)
     }
 
+    fn set_stream_id(
+        &mut self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+        subgroup_id: u64,
+        stream_id: u64,
+    ) -> Result<()> {
+        let subscription = self.subscriptions.get_mut(&subscribe_id).unwrap();
+        subscription.set_stream_id(group_id, subgroup_id, stream_id);
+
+        Ok(())
+    }
+
+    fn get_subgroup_ids_for_group(
+        &self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+    ) -> Result<Vec<u64>> {
+        let subscriprion = self.subscriptions.get(&subscribe_id).unwrap();
+        let subgroup_ids = subscriprion.get_subgroup_ids_for_group(group_id);
+
+        Ok(subgroup_ids)
+    }
+
+    fn get_stream_id_for_subgroup(
+        &self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+        subgroup_id: u64,
+    ) -> Result<Option<u64>> {
+        let subscription = self.subscriptions.get(&subscribe_id).unwrap();
+        let stream_id = subscription.get_stream_id_for_subgroup(group_id, subgroup_id);
+
+        Ok(stream_id)
+    }
+
     fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool {
         !self.subscriptions.contains_key(&subscribe_id)
     }
