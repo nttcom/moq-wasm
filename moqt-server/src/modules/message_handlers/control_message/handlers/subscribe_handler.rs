@@ -328,7 +328,7 @@ async fn start_new_forwarder(
         }
         // If SUBSCRIBE message does not handle past objects, it is only necessary to open forwarders for subgroups of the current group
         ForwardingPreference::Subgroup => {
-            let data_stream_type = DataStreamType::StreamHeaderSubgroup;
+            let data_stream_type = DataStreamType::SubgroupHeader;
             let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
             let group_id = object_cache_storage
                 .get_largest_group_id(&cache_key)
