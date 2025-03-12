@@ -737,7 +737,6 @@ impl MOQTClient {
                 object_id,
                 publisher_priority,
                 extension_headers,
-                None,
                 object_payload,
             )
             .unwrap();

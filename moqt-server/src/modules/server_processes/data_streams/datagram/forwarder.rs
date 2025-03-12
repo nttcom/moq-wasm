@@ -11,7 +11,7 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::subscribe::FilterType,
-        data_streams::{datagram, object_status::ObjectStatus, DataStreams},
+        data_streams::{datagram, DataStreams},
     },
     models::{range::ObjectRange, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -202,7 +202,8 @@ impl DatagramObjectForwarder {
             let message_buf = self.packetize(&downstream_object).await?;
             self.send(message_buf).await?;
 
-            let is_end = self.is_data_stream_ended(&downstream_object);
+            // TODO: use ObjectStatus from ObjectDatagramStatus
+            let is_end = self.is_data_stream_ended(/*&downstream_object*/);
 
             return Ok((Some(cache_id), is_end));
         }
@@ -273,7 +274,6 @@ impl DatagramObjectForwarder {
             upstream_object.object_id(),
             upstream_object.publisher_priority(),
             extension_headers,
-            upstream_object.object_status(),
             upstream_object.object_payload(),
         )
         .unwrap()
@@ -305,10 +305,12 @@ impl DatagramObjectForwarder {
     //   A relay MAY treat receipt of EndOfGroup, EndOfTrack, GroupDoesNotExist, or
     //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
     //   has not arrived, as further objects on the stream would be a protocol violation.
-    fn is_data_stream_ended(&self, datagram_object: &datagram::Object) -> bool {
-        matches!(
-            datagram_object.object_status(),
-            Some(ObjectStatus::EndOfTrackAndGroup)
-        )
+    fn is_data_stream_ended(&self /*datagram_object: &datagram::Object*/) -> bool {
+        // TODO: use ObjectStatus from ObjectDatagramStatus
+        // matches!(
+        //     datagram_object.object_status(),
+        //     Some(ObjectStatus::EndOfTrackAndGroup)
+        // )
+        false
     }
 }
