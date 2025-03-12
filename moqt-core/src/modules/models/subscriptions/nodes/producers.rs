@@ -1,14 +1,13 @@
-use anyhow::{bail, Result};
-use std::collections::HashMap;
-
 use crate::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
     models::{
-        range::Range,
+        range::{ObjectRange, ObjectStart},
         subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription},
         tracks::ForwardingPreference,
     },
 };
+use anyhow::{bail, Result};
+use std::collections::HashMap;
 
 type SubscribeId = u64;
 type TrackNamespace = Vec<String>;
@@ -46,7 +45,6 @@ impl SubscriptionNodeRegistry for Producer {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<()> {
         // Publisher can define forwarding preference when it publishes track.
         let subscription = Subscription::new(
@@ -59,7 +57,6 @@ impl SubscriptionNodeRegistry for Producer {
             start_group,
             start_object,
             end_group,
-            end_object,
             None,
         );
 
@@ -158,39 +155,36 @@ impl SubscriptionNodeRegistry for Producer {
         Ok(filter_type)
     }
 
-    fn get_requested_range(&self, subscribe_id: SubscribeId) -> Result<Option<Range>> {
-        let requested_range = self
+    fn get_requested_object_range(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectRange>> {
+        let requested_object_range = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_requested_range());
+            .map(|subscription| subscription.get_requested_object_range());
 
-        Ok(requested_range)
+        Ok(requested_object_range)
     }
 
-    fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
-        let range = self
-            .subscriptions
-            .get(&subscribe_id)
-            .map(|subscription| subscription.get_requested_range())
-            .unwrap();
+    fn set_actual_object_start(
+        &mut self,
+        subscribe_id: SubscribeId,
+        actual_object_start: ObjectStart,
+    ) -> Result<()> {
+        self.subscriptions
+            .get_mut(&subscribe_id)
+            .unwrap()
+            .set_actual_object_start(actual_object_start);
 
-        let start_group = range.start_group();
-        let start_object = range.start_object();
-
-        Ok((start_group, start_object))
+        Ok(())
     }
 
-    fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
-        let range = self
+    fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectStart>> {
+        let actual_object_start = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_requested_range())
+            .map(|subscription| subscription.get_actual_object_start())
             .unwrap();
 
-        let end_group = range.end_group();
-        let end_object = range.end_object();
-
-        Ok((end_group, end_object))
+        Ok(actual_object_start)
     }
 
     fn set_stream_id(
@@ -389,6 +383,7 @@ pub(crate) mod test_helper_fn {
 #[cfg(test)]
 mod success {
     use crate::models::{
+        range::ObjectStart,
         subscriptions::{
             nodes::{
                 producers::{test_helper_fn, Producer},
@@ -415,7 +410,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         assert!(result.is_ok());
@@ -438,7 +432,6 @@ mod success {
             variables_clone.start_group,
             variables_clone.start_object,
             variables_clone.end_group,
-            variables_clone.end_object,
         );
 
         let subscription = variables_clone
@@ -456,7 +449,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
             None,
         ));
 
@@ -479,7 +471,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let expected_subscribe_id = variables.subscribe_id;
@@ -509,7 +500,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let expected_track_alias = variables.track_alias;
@@ -539,7 +529,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let expected_subscribe_id = variables.subscribe_id;
@@ -569,7 +558,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -595,7 +583,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -622,7 +609,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables.producer.is_requesting(variables.subscribe_id);
@@ -646,7 +632,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -672,7 +657,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let forwarding_preference = ForwardingPreference::Datagram;
@@ -701,7 +685,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let forwarding_preference = ForwardingPreference::Datagram;
@@ -733,7 +716,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result_filter_type = variables
@@ -746,7 +728,7 @@ mod success {
     }
 
     #[test]
-    fn get_requested_range() {
+    fn get_requested_object_range() {
         let subscribe_id = 0;
         let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
@@ -761,12 +743,11 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result_range = variables
             .producer
-            .get_requested_range(variables.subscribe_id)
+            .get_requested_object_range(variables.subscribe_id)
             .unwrap()
             .unwrap();
 
@@ -777,7 +758,7 @@ mod success {
     }
 
     #[test]
-    fn get_absolute_start() {
+    fn set_actual_object_start() {
         let subscribe_id = 0;
         let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
@@ -792,23 +773,23 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
+
+        let actual_object_start = ObjectStart::new(0, 0);
 
         let result = variables
             .producer
-            .get_absolute_start(variables.subscribe_id)
-            .unwrap();
+            .set_actual_object_start(variables.subscribe_id, actual_object_start);
 
-        let expected_result = (variables.start_group, variables.start_object);
-
-        assert_eq!(result, expected_result);
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn get_absolute_end() {
+    fn get_actual_object_start() {
         let subscribe_id = 0;
         let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let actual_object_start = ObjectStart::new(0, 0);
 
         let _ = variables.producer.set_subscription(
             variables.subscribe_id,
@@ -821,17 +802,19 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
+
+        let _ = variables
+            .producer
+            .set_actual_object_start(variables.subscribe_id, actual_object_start.clone());
 
         let result = variables
             .producer
-            .get_absolute_end(variables.subscribe_id)
+            .get_actual_object_start(variables.subscribe_id)
+            .unwrap()
             .unwrap();
 
-        let expected_result = (variables.end_group, variables.end_object);
-
-        assert_eq!(result, expected_result);
+        assert_eq!(result, actual_object_start);
     }
 
     #[test]
@@ -850,7 +833,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -882,7 +864,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -913,7 +894,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -945,7 +925,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables.producer.create_valid_track_alias();

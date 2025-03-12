@@ -54,7 +54,6 @@ self.onmessage = async (event) => {
     duration: objectPayload.chunk.duration,
     data: new Uint8Array(objectPayload.chunk.data)
   })
-  console.log(encodedAudioChunk)
 
   await audioDecoder.decode(encodedAudioChunk)
 }

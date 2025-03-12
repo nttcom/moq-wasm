@@ -40,7 +40,7 @@ self.onmessage = async (event) => {
     objectPayload: event.data.subgroupStreamObject.object_payload,
     objectStatus: event.data.subgroupStreamObject.object_status
   }
-  // Rustから渡された時点ではUint8ArrayではなくArrayなので変換が必要
+
   const chunkArray = new Uint8Array(subgroupStreamObject.objectPayload)
   const decoder = new TextDecoder()
   const jsonString = decoder.decode(chunkArray)

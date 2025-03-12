@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Result};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, mpsc::Sender, Mutex};
 use tracing::{self, Instrument};
+use wtransport::quinn::{TransportConfig, VarInt};
 use wtransport::{Endpoint, Identity, ServerConfig};
 mod modules;
 pub use modules::config::MOQTConfig;
@@ -58,10 +59,13 @@ impl MOQTServer {
         if self.underlay != UnderlayType::WebTransport {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
         }
+        let mut transport_config = TransportConfig::default();
+        transport_config.max_concurrent_uni_streams(100000u32.into()); // 単方向ストリーム数を100000に設定
+        transport_config.stream_receive_window(VarInt::from_u32(10 * 1024 * 1024)); // initial_max_stream_data_uniと同義。デフォルトは65,536 バイト (64KB)なので1MBにする
         let config = ServerConfig::builder()
             .with_bind_default(self.port)
-            .with_identity(
-                &Identity::load_pemfiles(&self.cert_path, &self.key_path)
+            .with_custom_transport(
+                Identity::load_pemfiles(&self.cert_path, &self.key_path)
                     .await
                     .with_context(|| {
                         format!(
@@ -69,6 +73,7 @@ impl MOQTServer {
                             self.cert_path, self.key_path
                         )
                     })?,
+                transport_config,
             )
             .keep_alive_interval(Some(Duration::from_secs(self.keep_alive_interval_sec)))
             .build();
