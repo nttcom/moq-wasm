@@ -15,7 +15,7 @@ impl SubgroupStreamsCache {
         Self { streams }
     }
 
-    pub(crate) fn add_subgroup_stream(
+    pub(crate) fn set_subgroup_stream(
         &mut self,
         group_id: u64,
         subgroup_id: u64,

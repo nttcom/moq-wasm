@@ -12,13 +12,13 @@ use super::{
     },
 };
 use crate::{
-    modules::{moqt_client::MOQTClient, send_stream_dispatcher::SendStreamDispatchCommand},
-    SubgroupStreamId,
+    modules::{control_message_dispatcher::ControlMessageDispatchCommand, moqt_client::MOQTClient},
+    signal_dispatcher::DataStreamThreadSignal,
+    SignalDispatchCommand, SubgroupStreamId,
 };
 use anyhow::{bail, Result};
 use moqt_core::{
-    constants::{StreamDirection, TerminationErrorCode},
-    data_stream_type::DataStreamType,
+    constants::TerminationErrorCode, data_stream_type::DataStreamType,
     messages::moqt_payload::MOQTPayload,
 };
 use std::sync::Arc;
@@ -55,10 +55,9 @@ async fn spawn_control_stream_threads(
 
     let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
     senders
-        .send_stream_tx()
-        .send(SendStreamDispatchCommand::Set {
+        .control_message_dispatch_tx()
+        .send(ControlMessageDispatchCommand::Set {
             session_id: stable_id,
-            stream_direction: StreamDirection::Bi,
             sender: message_tx,
         })
         .await?;
@@ -105,14 +104,27 @@ async fn spawn_subgroup_stream_object_receiver_thread(
         tracing::info!("Accepted uni-directional recv stream");
     });
     let stream_id = recv_stream.id().into_u64();
+    let (signal_tx, signal_rx) = mpsc::channel::<Box<DataStreamThreadSignal>>(1024);
+
+    let senders = client.lock().await.senders();
+    senders
+        .signal_dispatch_tx()
+        .send(SignalDispatchCommand::Set {
+            session_id: stable_id,
+            stream_id,
+            sender: signal_tx,
+        })
+        .await
+        .unwrap();
 
     tokio::spawn(
         async move {
             let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
             let senders = client.lock().await.senders();
-            let mut stream_object_receiver = SubgroupStreamObjectReceiver::init(stream, client)
-                .instrument(session_span.clone())
-                .await;
+            let mut stream_object_receiver =
+                SubgroupStreamObjectReceiver::init(stream, client, signal_rx)
+                    .instrument(session_span.clone())
+                    .await;
 
             match stream_object_receiver
                 .start()
@@ -152,6 +164,18 @@ async fn spawn_subgroup_stream_object_forwarder_thread(
         tracing::info!("Open uni-directional send for subgroup stream",);
     });
     let stream_id = send_stream.id().into_u64();
+    let (signal_tx, signal_rx) = mpsc::channel::<Box<DataStreamThreadSignal>>(1024);
+
+    let senders = client.lock().await.senders();
+    senders
+        .signal_dispatch_tx()
+        .send(SignalDispatchCommand::Set {
+            session_id: stable_id,
+            stream_id,
+            sender: signal_tx,
+        })
+        .await
+        .unwrap();
 
     tokio::spawn(
         async move {
@@ -163,6 +187,7 @@ async fn spawn_subgroup_stream_object_forwarder_thread(
                 subscribe_id,
                 client,
                 subgroup_stream_id,
+                signal_rx,
             )
             .instrument(session_span.clone())
             .await

@@ -14,6 +14,7 @@ use crate::{
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         server_processes::senders::Senders,
     },
+    signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher},
     TerminationError,
 };
 use anyhow::Result;
@@ -28,8 +29,8 @@ use moqt_core::{
     models::{range::ObjectRange, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::{sync::Arc, thread, time::Duration};
+use tokio::sync::{mpsc, Mutex};
 use tracing::{self};
 
 pub(crate) struct SubgroupStreamObjectReceiver {
@@ -38,6 +39,7 @@ pub(crate) struct SubgroupStreamObjectReceiver {
     senders: Arc<Senders>,
     client: Arc<Mutex<MOQTClient>>,
     duration: u64,
+    signal_rx: Arc<Mutex<mpsc::Receiver<Box<DataStreamThreadSignal>>>>,
     subscribe_id: Option<u64>,
     subgroup_stream_id: Option<SubgroupStreamId>,
     filter_type: Option<FilterType>,
@@ -45,13 +47,18 @@ pub(crate) struct SubgroupStreamObjectReceiver {
 }
 
 impl SubgroupStreamObjectReceiver {
-    pub(crate) async fn init(stream: UniRecvStream, client: Arc<Mutex<MOQTClient>>) -> Self {
+    pub(crate) async fn init(
+        stream: UniRecvStream,
+        client: Arc<Mutex<MOQTClient>>,
+        signal_rx: mpsc::Receiver<Box<DataStreamThreadSignal>>,
+    ) -> Self {
         let senders = client.lock().await.senders();
         let stable_id = stream.stable_id();
         let stream_id = stream.stream_id();
         let buf = request_buffer(senders.buffer_tx().clone(), stable_id, stream_id).await;
         // TODO: Set the accurate duration
         let duration = 100000;
+        let signal_rx = Arc::new(Mutex::new(signal_rx));
 
         SubgroupStreamObjectReceiver {
             stream,
@@ -59,6 +66,7 @@ impl SubgroupStreamObjectReceiver {
             senders,
             client,
             duration,
+            signal_rx,
             subscribe_id: None,
             subgroup_stream_id: None,
             filter_type: None,
@@ -74,20 +82,37 @@ impl SubgroupStreamObjectReceiver {
         let session_id = self.client.lock().await.id();
 
         while !is_end {
-            let read_bytes = self.read_stream().await?;
-            self.add_to_buf(read_bytes).await;
+            let signal_rx = self.signal_rx.clone();
+            let mut signal_rx = signal_rx.lock().await;
 
-            if !self.has_received_header() {
-                self.receive_header(session_id, &mut object_cache_storage)
-                    .await?;
+            tokio::select! {
+                    read_bytes = self.read_stream() => {
 
-                // If the header has not been received, continue to receive the header.
+                let read_bytes = read_bytes?;
+
+                self.add_to_buf(read_bytes).await;
+
                 if !self.has_received_header() {
-                    continue;
+                    self.receive_header(session_id, &mut object_cache_storage)
+                        .await?;
+
+                    // If the header has not been received, continue to receive the header.
+                    if !self.has_received_header() {
+                        continue;
+                    }
+                }
+
+                is_end = self.receive_objects(&mut object_cache_storage).await?;
+            },
+            Some(signal) = signal_rx.recv() => {
+                match *signal {
+                    DataStreamThreadSignal::Terminate(status) => {
+                        tracing::debug!("Received Terminate signal (status: {:?})", status);
+                        break;
+                    }
                 }
             }
-
-            is_end = self.receive_objects(&mut object_cache_storage).await?;
+            }
         }
 
         Ok(())
@@ -154,6 +179,7 @@ impl SubgroupStreamObjectReceiver {
         self.subscribe_id = Some(subscribe_id);
         self.subgroup_stream_id = Some((header.group_id(), header.subgroup_id()));
 
+        self.set_upstream_stream_id(session_id).await?;
         self.set_upstream_forwarding_preference(session_id).await?;
 
         let filter_type = self.get_upstream_filter_type(session_id).await?;
@@ -211,6 +237,37 @@ impl SubgroupStreamObjectReceiver {
             }
             Err(err) => {
                 let msg = format!("Fail to get subscribe id: {:?}", err);
+                let code = TerminationErrorCode::InternalError;
+
+                Err((code, msg))
+            }
+        }
+    }
+
+    async fn set_upstream_stream_id(
+        &self,
+        upstream_session_id: usize,
+    ) -> Result<(), TerminationError> {
+        // Register stream_id to send signal to other subgroup receiver threads in the same group
+        let (group_id, subgroup_id) = self.subgroup_stream_id.unwrap();
+        let upstream_subscribe_id = self.subscribe_id.unwrap();
+        let stream_id = self.stream.stream_id();
+
+        let pubsub_relation_manager =
+            PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
+        match pubsub_relation_manager
+            .set_upstream_stream_id(
+                upstream_session_id,
+                upstream_subscribe_id,
+                group_id,
+                subgroup_id,
+                stream_id,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let msg = format!("Fail to set upstream stream id: {:?}", err);
                 let code = TerminationErrorCode::InternalError;
 
                 Err((code, msg))
@@ -425,8 +482,26 @@ impl SubgroupStreamObjectReceiver {
         )
         .await?;
 
-        let is_end =
-            self.is_subscription_ended(&stream_object) || self.is_data_stream_ended(&stream_object);
+        let is_data_stream_ended = self.is_data_stream_ended(&stream_object);
+
+        if is_data_stream_ended {
+            let stream_ids = self.get_stream_ids_for_same_group().await?;
+
+            // Wait to forward rest of the objects on other receivers in the same group
+            let send_delay_ms = Duration::from_millis(50); // FIXME: Temporary threshold
+            thread::sleep(send_delay_ms);
+
+            for stream_id in stream_ids {
+                // Skip the stream of this receiver
+                if stream_id == self.stream.stream_id() {
+                    continue;
+                }
+                self.send_termination_signal_to_receiver(&stream_object, stream_id)
+                    .await?;
+            }
+        }
+
+        let is_end = is_data_stream_ended;
 
         Ok(Some(is_end))
     }
@@ -481,17 +556,6 @@ impl SubgroupStreamObjectReceiver {
         }
     }
 
-    fn is_subscription_ended(&self, object: &subgroup_stream::Object) -> bool {
-        if self.filter_type.unwrap() != FilterType::AbsoluteRange {
-            return false;
-        }
-
-        matches!(
-            object.object_status(),
-            Some(ObjectStatus::EndOfTrack) | Some(ObjectStatus::EndOfTrackAndGroup)
-        )
-    }
-
     // This function is implemented according to the following sentence in draft.
     //   A relay MAY treat receipt of EndOfGroup, EndOfTrack, GroupDoesNotExist, or
     //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
@@ -504,5 +568,92 @@ impl SubgroupStreamObjectReceiver {
                 | Some(ObjectStatus::EndOfGroup)
                 | Some(ObjectStatus::EndOfTrackAndGroup)
         )
+    }
+
+    async fn get_stream_ids_for_same_group(&self) -> Result<Vec<u64>, TerminationError> {
+        let upstream_session_id = self.stream.stable_id();
+        let upstream_subscribe_id = self.subscribe_id.unwrap();
+        let (group_id, _) = self.subgroup_stream_id.unwrap();
+
+        let pubsub_relation_manager =
+            PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
+        let subgroup_ids = match pubsub_relation_manager
+            .get_upstream_subgroup_ids_for_group(
+                upstream_session_id,
+                upstream_subscribe_id,
+                group_id,
+            )
+            .await
+        {
+            Ok(subgroup_ids) => subgroup_ids,
+            Err(err) => {
+                let msg = format!("Fail to get upstream subgroup ids by group: {:?}", err);
+                let code = TerminationErrorCode::InternalError;
+
+                return Err((code, msg));
+            }
+        };
+
+        let mut stream_ids: Vec<u64> = vec![];
+        for subgroup_id in subgroup_ids {
+            let stream_id = match pubsub_relation_manager
+                .get_upstream_stream_id_for_subgroup(
+                    upstream_session_id,
+                    upstream_subscribe_id,
+                    group_id,
+                    subgroup_id,
+                )
+                .await
+            {
+                Ok(Some(stream_id)) => stream_id,
+                Ok(None) => {
+                    let msg = "Stream id is not found".to_string();
+                    let code = TerminationErrorCode::InternalError;
+
+                    return Err((code, msg));
+                }
+                Err(err) => {
+                    let msg = format!("Fail to get upstream stream id by subgroup: {:?}", err);
+                    let code = TerminationErrorCode::InternalError;
+
+                    return Err((code, msg));
+                }
+            };
+
+            stream_ids.push(stream_id);
+        }
+
+        Ok(stream_ids)
+    }
+
+    async fn send_termination_signal_to_receiver(
+        &self,
+        object: &subgroup_stream::Object,
+        stream_id: u64,
+    ) -> Result<(), TerminationError> {
+        let upstream_session_id = self.stream.stable_id();
+        let object_status = object.object_status().unwrap();
+
+        let signal_dispatcher = SignalDispatcher::new(self.senders.signal_dispatch_tx().clone());
+
+        tracing::debug!(
+            "Send termination signal to upstream session: {}, stream: {}",
+            upstream_session_id,
+            stream_id
+        );
+
+        let signal = Box::new(DataStreamThreadSignal::Terminate(object_status));
+        match signal_dispatcher
+            .transfer_signal_to_data_stream_thread(upstream_session_id, stream_id, signal)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let msg = format!("Fail to send termination signal: {:?}", err);
+                let code = TerminationErrorCode::InternalError;
+
+                Err((code, msg))
+            }
+        }
     }
 }

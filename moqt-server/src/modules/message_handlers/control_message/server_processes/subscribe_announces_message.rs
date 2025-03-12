@@ -10,10 +10,10 @@ use moqt_core::{
         moqt_payload::MOQTPayload,
     },
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    SendStreamDispatcherRepository,
 };
 
 use crate::modules::{
+    control_message_dispatcher::ControlMessageDispatcher,
     message_handlers::control_message::handlers::subscribe_announces_handler::subscribe_announces_handler,
     moqt_client::MOQTClient,
 };
@@ -23,7 +23,7 @@ pub(crate) async fn process_subscribe_announces_message(
     client: &MOQTClient,
     write_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
 ) -> Result<Option<SubscribeAnnouncesError>> {
     let subscribe_announces_message = match SubscribeAnnounces::depacketize(payload_buf) {
         Ok(subscribe_announces_message) => subscribe_announces_message,
@@ -37,7 +37,7 @@ pub(crate) async fn process_subscribe_announces_message(
         subscribe_announces_message,
         client,
         pubsub_relation_manager_repository,
-        send_stream_dispatcher_repository,
+        control_message_dispatcher,
     )
     .await;
 

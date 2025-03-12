@@ -43,7 +43,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 };
 
                 // Add a new SubgroupStream to the SubgroupCache
-                subgroup_stream_cache.add_subgroup_stream(
+                subgroup_stream_cache.set_subgroup_stream(
                     group_id,
                     subgroup_id,
                     header,
