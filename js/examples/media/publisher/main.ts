@@ -168,7 +168,6 @@ function sendSetupButtonClickHandler(client: MOQTClient): void {
   sendSetupBtn.addEventListener('click', async () => {
     const form = getFormElement()
 
-    const role = 1
     const versions = new BigUint64Array('0xff000008'.split(',').map(BigInt))
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
 
