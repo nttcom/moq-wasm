@@ -420,7 +420,7 @@ impl SubgroupStreamObjectReceiver {
         downstream_subscribe_id: u64,
     ) -> Result<()> {
         let start_forwarder_txes = self.senders.start_forwarder_txes();
-        let data_stream_type = DataStreamType::StreamHeaderSubgroup;
+        let data_stream_type = DataStreamType::SubgroupHeader;
 
         let start_forwarder_tx = start_forwarder_txes
             .lock()

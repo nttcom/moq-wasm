@@ -335,12 +335,12 @@ pub(crate) async fn select_spawn_thread(
         // Waiting for requests to open a new data stream thread
         Some((subscribe_id, data_stream_type, subgroup_stream_id)) = start_forwarder_rx.recv() => {
             match data_stream_type {
-                DataStreamType::StreamHeaderSubgroup => {
+                DataStreamType::SubgroupHeader => {
                     let send_stream = session.open_uni().await?.await?;
                     let subgroup_stream_id = subgroup_stream_id.unwrap();
                     spawn_subgroup_stream_object_forwarder_thread(client.clone(), send_stream, subscribe_id, subgroup_stream_id).await?;
                 }
-                DataStreamType::ObjectDatagram => {
+                DataStreamType::ObjectDatagram | DataStreamType::ObjectDatagramStatus => {
                     let session = session.clone();
                     spawn_datagram_object_forwarder_thread(client.clone(), session, subscribe_id).await?;
 
