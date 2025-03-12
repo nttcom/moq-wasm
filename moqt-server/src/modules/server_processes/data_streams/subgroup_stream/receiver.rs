@@ -482,7 +482,6 @@ impl SubgroupStreamObjectReceiver {
         )
         .await?;
 
-        let is_subscription_ended = self.is_subscription_ended(&stream_object);
         let is_data_stream_ended = self.is_data_stream_ended(&stream_object);
 
         if is_data_stream_ended {
@@ -502,7 +501,7 @@ impl SubgroupStreamObjectReceiver {
             }
         }
 
-        let is_end = is_subscription_ended || is_data_stream_ended;
+        let is_end = is_data_stream_ended;
 
         Ok(Some(is_end))
     }
@@ -555,17 +554,6 @@ impl SubgroupStreamObjectReceiver {
                 Err((code, msg))
             }
         }
-    }
-
-    fn is_subscription_ended(&self, object: &subgroup_stream::Object) -> bool {
-        if self.filter_type.unwrap() != FilterType::AbsoluteRange {
-            return false;
-        }
-
-        matches!(
-            object.object_status(),
-            Some(ObjectStatus::EndOfTrack) | Some(ObjectStatus::EndOfTrackAndGroup)
-        )
     }
 
     // This function is implemented according to the following sentence in draft.
