@@ -1299,7 +1299,7 @@ async fn uni_directional_stream_read_thread(
             }
 
             match data_stream_type {
-                DataStreamType::ObjectDatagram => {
+                DataStreamType::ObjectDatagram | DataStreamType::ObjectDatagramStatus => {
                     let msg = "format error".to_string();
                     log(std::format!("{:#?}", msg).as_str());
                     return Err(js_sys::Error::new(&msg).into());
