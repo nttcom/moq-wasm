@@ -491,7 +491,7 @@ impl SubgroupStreamObjectForwarder {
 
         let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
         message_buf.extend(write_variable_integer(
-            u8::from(DataStreamType::StreamHeaderSubgroup) as u64,
+            u8::from(DataStreamType::SubgroupHeader) as u64,
         ));
         message_buf.extend(buf);
 

@@ -72,7 +72,7 @@ pub async fn try_read_header(
     };
     tracing::info!("Received data stream type: {:?}", data_stream_type);
 
-    if data_stream_type != DataStreamType::StreamHeaderSubgroup {
+    if data_stream_type != DataStreamType::SubgroupHeader {
         return SubgroupStreamHeaderProcessResult::Failure(
             TerminationErrorCode::ProtocolViolation,
             format!("Unknown message type: {:?}", data_stream_type),
@@ -114,7 +114,7 @@ mod tests {
 
         #[tokio::test]
         async fn subgroup_stream_header_success() {
-            let data_stream_type = DataStreamType::StreamHeaderSubgroup;
+            let data_stream_type = DataStreamType::SubgroupHeader;
             let bytes_array = [
                 0, // Subscribe ID (i)
                 1, // Track Alias (i)
@@ -145,7 +145,7 @@ mod tests {
 
         #[tokio::test]
         async fn subgroup_stream_header_continue_incomplete_message() {
-            let data_stream_type = DataStreamType::StreamHeaderSubgroup;
+            let data_stream_type = DataStreamType::SubgroupHeader;
             let bytes_array = [
                 0, // Object ID (i)
             ];

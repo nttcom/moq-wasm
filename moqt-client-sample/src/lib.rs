@@ -821,7 +821,7 @@ impl MOQTClient {
         let mut buf = Vec::new();
         // Message Type
         buf.extend(write_variable_integer(
-            u8::from(DataStreamType::StreamHeaderSubgroup) as u64,
+            u8::from(DataStreamType::SubgroupHeader) as u64,
         ));
         buf.extend(subgroup_stream_header_message_buf);
 
@@ -1304,7 +1304,7 @@ async fn uni_directional_stream_read_thread(
                     log(std::format!("{:#?}", msg).as_str());
                     return Err(js_sys::Error::new(&msg).into());
                 }
-                DataStreamType::StreamHeaderSubgroup => {
+                DataStreamType::SubgroupHeader => {
                     match subgroup_stream_object_handler(
                         callbacks.clone(),
                         subgroup_stream_header.clone().unwrap(),
@@ -1351,7 +1351,7 @@ async fn object_header_handler(
             log(std::format!("data_stream_type_value: {:#x?}", data_stream_type).as_str());
 
             let subgroup_stream_header = match data_stream_type {
-                DataStreamType::StreamHeaderSubgroup => {
+                DataStreamType::SubgroupHeader => {
                     let subgroup_stream_header =
                         subgroup_stream::Header::depacketize(&mut read_cur)?;
                     buf.advance(read_cur.position() as usize);
