@@ -58,13 +58,20 @@ pub trait SubscriptionNodeRegistry {
         &mut self,
         subscribe_id: SubscribeId,
         group_id: u64,
+        subgroup_id: u64,
         stream_id: u64,
     ) -> Result<()>;
-    fn get_stream_ids_from_group(
+    fn get_subgroup_ids_for_group(
         &self,
         subscribe_id: SubscribeId,
         group_id: u64,
     ) -> Result<Vec<u64>>;
+    fn get_stream_id_for_subgroup(
+        &self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+        subgroup_id: u64,
+    ) -> Result<Option<u64>>;
 
     fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool;
     fn is_subscribe_id_less_than_max(&self, subscribe_id: SubscribeId) -> bool;

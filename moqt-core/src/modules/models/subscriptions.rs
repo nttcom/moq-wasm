@@ -100,12 +100,18 @@ impl Subscription {
         self.group_order
     }
 
-    pub fn set_stream_id(&mut self, group_id: u64, stream_id: u64) {
-        self.track.set_stream_id(group_id, stream_id);
+    pub fn set_stream_id(&mut self, group_id: u64, subgroup_id: u64, stream_id: u64) {
+        self.track.set_stream_id(group_id, subgroup_id, stream_id);
     }
 
-    pub fn get_stream_ids_from_group(&self, group_id: u64) -> &Vec<u64> {
-        self.track.get_stream_ids_from_group(group_id)
+    pub fn get_subgroup_ids_for_group(&self, group_id: u64) -> Vec<u64> {
+        let mut subgroup_ids = self.track.get_subgroup_ids_for_group(group_id);
+        subgroup_ids.sort_unstable();
+        subgroup_ids
+    }
+
+    pub fn get_stream_id_for_subgroup(&self, group_id: u64, subgroup_id: u64) -> Option<u64> {
+        self.track.get_stream_id_for_subgroup(group_id, subgroup_id)
     }
 }
 
@@ -394,7 +400,7 @@ mod success {
     }
 
     #[test]
-    fn subgroup_id() {
+    fn get_stream_id_for_group() {
         let variable = test_helper_fn::common_subscription_variable();
 
         let mut subscription = Subscription::new(
@@ -413,13 +419,28 @@ mod success {
 
         let group_id = 0;
         let subgroup_ids = vec![0, 1, 2];
+        let stream_ids = vec![3, 4, 5];
 
-        subscription.set_stream_id(group_id, subgroup_ids[0]);
-        subscription.set_stream_id(group_id, subgroup_ids[1]);
-        subscription.set_stream_id(group_id, subgroup_ids[2]);
+        subscription.set_stream_id(group_id, subgroup_ids[0], stream_ids[0]);
+        subscription.set_stream_id(group_id, subgroup_ids[1], stream_ids[1]);
+        subscription.set_stream_id(group_id, subgroup_ids[2], stream_ids[2]);
 
-        let result = subscription.get_stream_ids_from_group(group_id);
+        let result_subgroup_ids = subscription.get_subgroup_ids_for_group(group_id);
 
-        assert_eq!(result, &subgroup_ids);
+        assert_eq!(result_subgroup_ids, subgroup_ids);
+
+        let result_stream_id = vec![
+            subscription
+                .get_stream_id_for_subgroup(group_id, result_subgroup_ids[0])
+                .unwrap(),
+            subscription
+                .get_stream_id_for_subgroup(group_id, result_subgroup_ids[1])
+                .unwrap(),
+            subscription
+                .get_stream_id_for_subgroup(group_id, result_subgroup_ids[2])
+                .unwrap(),
+        ];
+
+        assert_eq!(result_stream_id, stream_ids);
     }
 }

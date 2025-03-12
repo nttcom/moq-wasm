@@ -775,6 +775,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
         group_id: u64,
+        subgroup_id: u64,
         stream_id: u64,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
@@ -782,6 +783,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_session_id,
             upstream_subscribe_id,
             group_id,
+            subgroup_id,
             stream_id,
             resp: resp_tx,
         };
@@ -795,14 +797,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         }
     }
 
-    async fn get_upstream_stream_ids_from_group(
+    async fn get_upstream_subgroup_ids_for_group(
         &self,
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
         group_id: u64,
     ) -> Result<Vec<u64>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Vec<u64>>>();
-        let cmd = PubSubRelationCommand::GetUpstreamStreamIdsFromGroup {
+        let cmd = PubSubRelationCommand::GetUpstreamSubgroupIdsForGroup {
             upstream_session_id,
             upstream_subscribe_id,
             group_id,
@@ -818,11 +820,37 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         }
     }
 
+    async fn get_upstream_stream_id_for_subgroup(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+    ) -> Result<Option<u64>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<u64>>>();
+        let cmd = PubSubRelationCommand::GetUpstreamStreamIdForSubgroup {
+            upstream_session_id,
+            upstream_subscribe_id,
+            group_id,
+            subgroup_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(stream_id) => Ok(stream_id),
+            Err(err) => bail!(err),
+        }
+    }
+
     async fn set_downstream_stream_id(
         &self,
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
         group_id: u64,
+        subgroup_id: u64,
         stream_id: u64,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
@@ -830,6 +858,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_session_id,
             downstream_subscribe_id,
             group_id,
+            subgroup_id,
             stream_id,
             resp: resp_tx,
         };
@@ -843,14 +872,39 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         }
     }
 
-    async fn get_downstream_stream_ids_from_group(
+    async fn get_downstream_stream_id_for_subgroup(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+    ) -> Result<Option<u64>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<u64>>>();
+        let cmd = PubSubRelationCommand::GetDownstreamStreamIdForSubgroup {
+            downstream_session_id,
+            downstream_subscribe_id,
+            group_id,
+            subgroup_id,
+            resp: resp_tx,
+        };
+        self.tx.send(cmd).await.unwrap();
+
+        let result = resp_rx.await.unwrap();
+
+        match result {
+            Ok(stream_id) => Ok(stream_id),
+            Err(err) => bail!(err),
+        }
+    }
+
+    async fn get_downstream_subgroup_ids_for_group(
         &self,
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
         group_id: u64,
     ) -> Result<Vec<u64>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Vec<u64>>>();
-        let cmd = PubSubRelationCommand::GetDownstreamStreamIdsFromGroup {
+        let cmd = PubSubRelationCommand::GetDownstreamSubgroupIdsForGroup {
             downstream_session_id,
             downstream_subscribe_id,
             group_id,
@@ -3028,8 +3082,9 @@ mod success {
         let start_object = Some(0);
         let end_group = None;
         let end_object = None;
-        let group_id = 1;
-        let stream_id = 1;
+        let group_id = 2;
+        let subgroup_id = 3;
+        let stream_id = 4;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -3063,11 +3118,11 @@ mod success {
                 upstream_session_id,
                 upstream_subscribe_id,
                 group_id,
+                subgroup_id,
                 stream_id,
             )
             .await;
 
-        // Assert that the subgroup id is set
         let (consumers, _, _) =
             test_helper_fn::get_node_and_relation_clone(&pubsub_relation_manager).await;
         let consumer = consumers.get(&upstream_session_id).unwrap();
@@ -3076,9 +3131,13 @@ mod success {
             .unwrap()
             .unwrap();
 
-        let result_stream_id = subscription.get_stream_ids_from_group(group_id);
+        let result_subgroup_id = subscription.get_subgroup_ids_for_group(group_id)[0];
+        assert_eq!(result_subgroup_id, subgroup_id);
 
-        assert_eq!(result_stream_id[0], stream_id);
+        let result_stream_id = subscription
+            .get_stream_id_for_subgroup(group_id, result_subgroup_id)
+            .unwrap();
+        assert_eq!(result_stream_id, stream_id);
     }
 
     #[tokio::test]
@@ -3094,8 +3153,9 @@ mod success {
         let start_object = Some(0);
         let end_group = None;
         let end_object = None;
-        let group_id = 1;
-        let stream_ids: Vec<u64> = vec![5, 6, 7];
+        let group_id = 2;
+        let subgroup_ids: Vec<u64> = vec![3, 4, 5];
+        let stream_ids: Vec<u64> = vec![6, 7, 8];
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -3124,19 +3184,20 @@ mod success {
             .await
             .unwrap();
 
-        for stream_id in stream_ids.iter() {
+        for i in 0..subgroup_ids.len() {
             let _ = pubsub_relation_manager
                 .set_upstream_stream_id(
                     upstream_session_id,
                     upstream_subscribe_id,
                     group_id,
-                    *stream_id,
+                    subgroup_ids[i],
+                    stream_ids[i],
                 )
                 .await;
         }
 
-        let result_stream_ids = pubsub_relation_manager
-            .get_upstream_stream_ids_from_group(
+        let result_subgroup_ids = pubsub_relation_manager
+            .get_upstream_subgroup_ids_for_group(
                 upstream_session_id,
                 upstream_subscribe_id,
                 group_id,
@@ -3144,7 +3205,22 @@ mod success {
             .await
             .unwrap();
 
-        assert_eq!(result_stream_ids, stream_ids);
+        assert_eq!(result_subgroup_ids, subgroup_ids);
+
+        for i in 0..subgroup_ids.len() {
+            let result_stream_id = pubsub_relation_manager
+                .get_upstream_stream_id_for_subgroup(
+                    upstream_session_id,
+                    upstream_subscribe_id,
+                    group_id,
+                    result_subgroup_ids[i],
+                )
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(result_stream_id, stream_ids[i]);
+        }
     }
 
     #[tokio::test]
@@ -3162,8 +3238,9 @@ mod success {
         let start_object = Some(0);
         let end_group = None;
         let end_object = None;
-        let group_id = 1;
-        let stream_id = 1;
+        let group_id = 2;
+        let subgroup_id = 3;
+        let stream_id = 4;
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -3191,7 +3268,13 @@ mod success {
             .await;
 
         let _ = pubsub_relation_manager
-            .set_downstream_stream_id(downstream_session_id, subscribe_id, group_id, stream_id)
+            .set_downstream_stream_id(
+                downstream_session_id,
+                subscribe_id,
+                group_id,
+                subgroup_id,
+                stream_id,
+            )
             .await;
 
         let (_, producers, _) =
@@ -3199,9 +3282,13 @@ mod success {
         let producer = producers.get(&downstream_session_id).unwrap();
         let subscription = producer.get_subscription(subscribe_id).unwrap().unwrap();
 
-        let result_stream_id = subscription.get_stream_ids_from_group(group_id);
+        let result_subgroup_id = subscription.get_subgroup_ids_for_group(group_id)[0];
+        assert_eq!(result_subgroup_id, subgroup_id);
 
-        assert_eq!(result_stream_id[0], stream_id);
+        let result_stream_id = subscription
+            .get_stream_id_for_subgroup(group_id, result_subgroup_id)
+            .unwrap();
+        assert_eq!(result_stream_id, stream_id);
     }
 
     #[tokio::test]
@@ -3219,8 +3306,9 @@ mod success {
         let start_object = Some(0);
         let end_group = None;
         let end_object = None;
-        let group_id = 1;
-        let stream_ids: Vec<u64> = vec![5, 6, 7];
+        let group_id = 2;
+        let subgroup_ids: Vec<u64> = vec![3, 4, 5];
+        let stream_ids: Vec<u64> = vec![6, 7, 8];
 
         // Start track management thread
         let (track_tx, mut track_rx) = mpsc::channel::<PubSubRelationCommand>(1024);
@@ -3247,18 +3335,38 @@ mod success {
             )
             .await;
 
-        for stream_id in stream_ids.iter() {
+        for i in 0..stream_ids.len() {
             let _ = pubsub_relation_manager
-                .set_downstream_stream_id(downstream_session_id, subscribe_id, group_id, *stream_id)
+                .set_downstream_stream_id(
+                    downstream_session_id,
+                    subscribe_id,
+                    group_id,
+                    subgroup_ids[i],
+                    stream_ids[i],
+                )
                 .await;
         }
 
-        let result_stream_ids = pubsub_relation_manager
-            .get_downstream_stream_ids_from_group(downstream_session_id, subscribe_id, group_id)
+        let result_subgroup_ids = pubsub_relation_manager
+            .get_downstream_subgroup_ids_for_group(downstream_session_id, subscribe_id, group_id)
             .await
             .unwrap();
+        assert_eq!(result_subgroup_ids, subgroup_ids);
 
-        assert_eq!(result_stream_ids, stream_ids);
+        for i in 0..subgroup_ids.len() {
+            let result_stream_id = pubsub_relation_manager
+                .get_downstream_stream_id_for_subgroup(
+                    downstream_session_id,
+                    subscribe_id,
+                    group_id,
+                    result_subgroup_ids[i],
+                )
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(result_stream_id, stream_ids[i]);
+        }
     }
 
     #[tokio::test]
