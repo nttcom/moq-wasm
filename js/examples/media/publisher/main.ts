@@ -1,5 +1,7 @@
 import init, { MOQTClient } from '../../../pkg/moqt_client_sample'
+import { AUTH_INFO, KEYFRAME_INTERVAL } from './const'
 import { sendVideoObjectMessage, sendAudioObjectMessage } from './sender'
+import { getFormElement } from './utils'
 
 let mediaStream: MediaStream | null = null
 function setUpStartGetUserMediaButton() {
@@ -15,10 +17,6 @@ function setUpStartGetUserMediaButton() {
   })
 }
 
-interface Subgroup {
-  isSendedSubgroupHeader: boolean
-}
-
 const LatestMediaTrackInfo: {
   video: {
     objectId: bigint
@@ -28,7 +26,11 @@ const LatestMediaTrackInfo: {
   audio: {
     objectId: bigint
     groupId: bigint
-    subgroups: { [key: number]: Subgroup }
+    subgroups: {
+      [key: number]: {
+        isSendedSubgroupHeader: boolean
+      }
+    }
   }
 } = {
   video: {
@@ -48,6 +50,7 @@ const LatestMediaTrackInfo: {
     }
   }
 }
+
 const videoEncoderWorker = new Worker('videoEncoder.ts')
 async function handleVideoChunkMessage(
   chunk: EncodedVideoChunk,
@@ -124,11 +127,6 @@ async function handleAudioChunkMessage(
   LatestMediaTrackInfo['audio'].objectId++
 }
 
-const authInfo = 'secret'
-const getFormElement = (): HTMLFormElement => {
-  return document.getElementById('form') as HTMLFormElement
-}
-
 function setupClientCallbacks(client: MOQTClient): void {
   client.onSetup(async (serverSetup: any) => {
     console.log({ serverSetup })
@@ -157,7 +155,7 @@ function setupClientCallbacks(client: MOQTClient): void {
       const forwardingPreference = (Array.from(form['forwarding-preference']) as HTMLInputElement[]).filter(
         (elem) => elem.checked
       )[0].value
-      await client.sendSubscribeOkMessage(receivedSubscribeId, expire, authInfo, forwardingPreference)
+      await client.sendSubscribeOkMessage(receivedSubscribeId, expire, AUTH_INFO, forwardingPreference)
     } else {
       const reasonPhrase = 'subscribe error'
       await client.sendSubscribeErrorMessage(subscribeMessage.subscribe_id, code, reasonPhrase)
@@ -174,7 +172,7 @@ function sendSetupButtonClickHandler(client: MOQTClient): void {
     const versions = new BigUint64Array('0xff000008'.split(',').map(BigInt))
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
 
-    await client.sendSetupMessage(role, versions, maxSubscribeId)
+    await client.sendSetupMessage(versions, maxSubscribeId)
   })
 }
 
@@ -184,7 +182,7 @@ function sendAnnounceButtonClickHandler(client: MOQTClient): void {
     const form = getFormElement()
     const trackNamespace = form['announce-track-namespace'].value.split('/')
 
-    await client.sendAnnounceMessage(trackNamespace, authInfo)
+    await client.sendAnnounceMessage(trackNamespace, AUTH_INFO)
   })
 }
 
@@ -214,11 +212,15 @@ function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
     const [videoTrack] = mediaStream.getVideoTracks()
     const videoProcessor = new MediaStreamTrackProcessor({ track: videoTrack })
     const videoStream = videoProcessor.readable
-    videoEncoderWorker.postMessage({ videoStream: videoStream }, [videoStream])
+    videoEncoderWorker.postMessage({
+      type: 'keyframeInterval',
+      keyframeInterval: KEYFRAME_INTERVAL
+    })
+    videoEncoderWorker.postMessage({ type: 'videoStream', videoStream: videoStream }, [videoStream])
     const [audioTrack] = mediaStream.getAudioTracks()
     const audioProcessor = new MediaStreamTrackProcessor({ track: audioTrack })
     const audioStream = audioProcessor.readable
-    audioEncoderWorker.postMessage({ audioStream: audioStream }, [audioStream])
+    audioEncoderWorker.postMessage({ type: 'audioStream', audioStream: audioStream }, [audioStream])
   })
 }
 

@@ -3,7 +3,10 @@ use tokio::sync::oneshot;
 
 use moqt_core::{
     messages::control_messages::subscribe::{FilterType, GroupOrder},
-    models::{range::Range, tracks::ForwardingPreference},
+    models::{
+        range::{ObjectRange, ObjectStart},
+        tracks::ForwardingPreference,
+    },
 };
 
 #[cfg(test)]
@@ -98,7 +101,6 @@ pub(crate) enum PubSubRelationCommand {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
         resp: oneshot::Sender<Result<()>>,
     },
     SetUpstreamSubscription {
@@ -111,7 +113,6 @@ pub(crate) enum PubSubRelationCommand {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
         resp: oneshot::Sender<Result<(u64, u64)>>,
     },
     SetPubSubRelation {
@@ -197,15 +198,26 @@ pub(crate) enum PubSubRelationCommand {
         downstream_subscribe_id: u64,
         resp: oneshot::Sender<Result<Option<FilterType>>>,
     },
-    GetUpstreamRequestedRange {
+    GetUpstreamRequestedObjectRange {
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<Range>>>,
+        resp: oneshot::Sender<Result<Option<ObjectRange>>>,
     },
-    GetDownstreamRequestedRange {
+    GetDownstreamRequestedObjectRange {
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<Range>>>,
+        resp: oneshot::Sender<Result<Option<ObjectRange>>>,
+    },
+    SetDownstreamActualObjectStart {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        actual_object_start: ObjectStart,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    GetDownstreamActualObjectStart {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<ObjectStart>>>,
     },
     SetUpstreamStreamId {
         upstream_session_id: usize,

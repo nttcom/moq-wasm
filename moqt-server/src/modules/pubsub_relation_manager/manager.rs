@@ -366,7 +366,6 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 resp,
             } => {
                 // Return an error if the subscriber does not exist
@@ -391,7 +390,6 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     start_group,
                     start_object,
                     end_group,
-                    end_object,
                 ) {
                     Ok(_) => resp.send(Ok(())).unwrap(),
                     Err(err) => {
@@ -411,7 +409,6 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 resp,
             } => {
                 // Return an error if the publisher does not exist
@@ -448,7 +445,6 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     start_group,
                     start_object,
                     end_group,
-                    end_object,
                 ) {
                     Ok(_) => resp.send(Ok((subscribe_id, track_alias))).unwrap(),
                     Err(err) => {
@@ -835,7 +831,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 let filter_type = producer.get_filter_type(downstream_subscribe_id).unwrap();
                 resp.send(Ok(filter_type)).unwrap();
             }
-            GetUpstreamRequestedRange {
+            GetUpstreamRequestedObjectRange {
                 upstream_session_id,
                 upstream_subscribe_id,
                 resp,
@@ -851,10 +847,12 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
 
-                let range = consumer.get_requested_range(upstream_subscribe_id).unwrap();
+                let range = consumer
+                    .get_requested_object_range(upstream_subscribe_id)
+                    .unwrap();
                 resp.send(Ok(range)).unwrap();
             }
-            GetDownstreamRequestedRange {
+            GetDownstreamRequestedObjectRange {
                 downstream_session_id,
                 downstream_subscribe_id,
                 resp,
@@ -871,9 +869,70 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 };
 
                 let range = producer
-                    .get_requested_range(downstream_subscribe_id)
+                    .get_requested_object_range(downstream_subscribe_id)
                     .unwrap();
                 resp.send(Ok(range)).unwrap();
+            }
+            SetDownstreamActualObjectStart {
+                downstream_session_id,
+                downstream_subscribe_id,
+                actual_object_start,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get_mut(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+                match producer.set_actual_object_start(downstream_subscribe_id, actual_object_start)
+                {
+                    Ok(_) => resp.send(Ok(())).unwrap(),
+                    Err(err) => {
+                        tracing::error!("set_actual_object_start: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                    }
+                }
+            }
+            GetDownstreamActualObjectStart {
+                downstream_session_id,
+                downstream_subscribe_id,
+                resp,
+            } => {
+                // Return an error if the subscriber does not exist
+                let producer = match producers.get(&downstream_session_id) {
+                    Some(producer) => producer,
+                    None => {
+                        let msg = "subscriber not found";
+                        tracing::error!(msg);
+                        resp.send(Err(anyhow!(msg))).unwrap();
+                        continue;
+                    }
+                };
+
+                let actual_object_start = producer
+                    .get_actual_object_start(downstream_subscribe_id)
+                    .unwrap();
+                resp.send(Ok(actual_object_start)).unwrap();
+            }
+            GetRelatedSubscribers {
+                upstream_session_id,
+                upstream_subscribe_id,
+                resp,
+            } => {
+                let subscribers =
+                    pubsub_relation.get_subscribers(upstream_session_id, upstream_subscribe_id);
+
+                let subscribers = match subscribers {
+                    Some(subscribers) => subscribers.clone(),
+                    None => vec![],
+                };
+
+                resp.send(Ok(subscribers)).unwrap();
             }
             SetUpstreamStreamId {
                 upstream_session_id,
@@ -1028,21 +1087,6 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     .get_stream_id_for_subgroup(downstream_subscribe_id, group_id, subgroup_id)
                     .unwrap();
                 resp.send(Ok(stream_id)).unwrap();
-            }
-            GetRelatedSubscribers {
-                upstream_session_id,
-                upstream_subscribe_id,
-                resp,
-            } => {
-                let subscribers =
-                    pubsub_relation.get_subscribers(upstream_session_id, upstream_subscribe_id);
-
-                let subscribers = match subscribers {
-                    Some(subscribers) => subscribers.clone(),
-                    None => vec![],
-                };
-
-                resp.send(Ok(subscribers)).unwrap();
             }
             GetRelatedPublisher {
                 downstream_session_id,

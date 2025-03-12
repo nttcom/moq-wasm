@@ -13,7 +13,7 @@ use moqt_core::{
         control_messages::subscribe::FilterType,
         data_streams::{datagram, object_status::ObjectStatus, DataStreams},
     },
-    models::{range::Range, tracks::ForwardingPreference},
+    models::{range::ObjectRange, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::write_variable_integer,
 };
@@ -29,7 +29,7 @@ pub(crate) struct DatagramObjectForwarder {
     downstream_track_alias: u64,
     cache_key: CacheKey,
     filter_type: FilterType,
-    requested_range: Range,
+    requested_object_range: ObjectRange,
     sleep_time: Duration,
 }
 
@@ -56,8 +56,8 @@ impl DatagramObjectForwarder {
             .await?
             .unwrap();
 
-        let requested_range = pubsub_relation_manager
-            .get_downstream_requested_range(downstream_session_id, downstream_subscribe_id)
+        let requested_object_range = pubsub_relation_manager
+            .get_downstream_requested_object_range(downstream_session_id, downstream_subscribe_id)
             .await?
             .unwrap();
 
@@ -75,7 +75,7 @@ impl DatagramObjectForwarder {
             downstream_track_alias,
             cache_key,
             filter_type,
-            requested_range,
+            requested_object_range,
             sleep_time,
         };
 
@@ -246,8 +246,8 @@ impl DatagramObjectForwarder {
                     .await
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
-                let start_group = self.requested_range.start_group().unwrap();
-                let start_object = self.requested_range.start_object().unwrap();
+                let start_group = self.requested_object_range.start_group().unwrap();
+                let start_object = self.requested_object_range.start_object().unwrap();
 
                 object_cache_storage
                     .get_absolute_datagram_object(&self.cache_key, start_group, start_object)
@@ -267,11 +267,13 @@ impl DatagramObjectForwarder {
     }
 
     fn generate_downstream_object(&self, upstream_object: &datagram::Object) -> datagram::Object {
+        let extension_headers = upstream_object.extension_headers().clone();
         datagram::Object::new(
             self.downstream_track_alias, // Replace with downstream_track_alias
             upstream_object.group_id(),
             upstream_object.object_id(),
             upstream_object.publisher_priority(),
+            extension_headers,
             upstream_object.object_status(),
             upstream_object.object_payload(),
         )
@@ -305,10 +307,10 @@ impl DatagramObjectForwarder {
             return false;
         }
 
-        let group_id = datagram_object.group_id();
-        let object_id = datagram_object.object_id();
-
-        self.requested_range.is_end(group_id, object_id)
+        matches!(
+            datagram_object.object_status(),
+            Some(ObjectStatus::EndOfTrack) | Some(ObjectStatus::EndOfTrackAndGroup)
+        )
     }
 
     // This function is implemented according to the following sentence in draft.

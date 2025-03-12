@@ -11,13 +11,13 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::{
-            subscribe::Subscribe,
+            subscribe::{FilterType, Subscribe},
             subscribe_error::{SubscribeError, SubscribeErrorCode},
             subscribe_ok::SubscribeOk,
         },
         moqt_payload::MOQTPayload,
     },
-    models::tracks::ForwardingPreference,
+    models::{range::ObjectStart, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
 use std::{collections::HashMap, sync::Arc};
@@ -82,11 +82,19 @@ pub(crate) async fn subscribe_handler(
         .await
         .unwrap()
     {
-        // Generate message -> Set subscription -> Send message
-        let subscribe_ok_message = match generate_subscribe_ok_message(
+        let (content_exists, largest_group_id, largest_object_id) = check_existing_contents(
+            &subscribe_message,
             pubsub_relation_manager_repository,
             object_cache_storage,
+        )
+        .await?;
+
+        // Generate message -> Set subscription -> Send message
+        let subscribe_ok_message = match generate_subscribe_ok_message(
             &subscribe_message,
+            content_exists,
+            largest_group_id,
+            largest_object_id,
         )
         .await
         {
@@ -142,7 +150,20 @@ pub(crate) async fn subscribe_handler(
             .transfer_message_to_control_message_sender_thread(client.id(), subscribe_ok_payload)
             .await?;
 
-        if subscribe_ok_message.content_exists() {
+        if content_exists {
+            // Store Largest Group/Object ID to culculate the Joining FETCH range
+            if subscribe_message.filter_type() == FilterType::LatestObject {
+                let actual_object_start =
+                    ObjectStart::new(largest_group_id.unwrap(), largest_object_id.unwrap());
+                pubsub_relation_manager_repository
+                    .set_downstream_actual_object_start(
+                        downstream_session_id,
+                        downstream_subscribe_id,
+                        actual_object_start,
+                    )
+                    .await?;
+            }
+
             start_new_forwarder(
                 pubsub_relation_manager_repository,
                 object_cache_storage,
@@ -201,7 +222,6 @@ pub(crate) async fn subscribe_handler(
                 subscribe_message.start_group(),
                 subscribe_message.start_object(),
                 subscribe_message.end_group(),
-                subscribe_message.end_object(),
                 subscribe_message.subscribe_parameters().clone(),
             )
             .unwrap();
@@ -347,11 +367,11 @@ async fn start_new_forwarder(
     Ok(())
 }
 
-async fn generate_subscribe_ok_message(
+async fn check_existing_contents(
+    subscribe_message: &Subscribe,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    subscribe_message: &Subscribe,
-) -> Result<SubscribeOk> {
+) -> Result<(bool, Option<u64>, Option<u64>)> {
     let upstream_session_id = pubsub_relation_manager_repository
         .get_upstream_session_id(subscribe_message.track_namespace().clone())
         .await?
@@ -377,10 +397,20 @@ async fn generate_subscribe_ok_message(
         Err(_) => None,
     };
 
-    // TODO: check cache duration
-    let expires = 0;
     // If the largest_group_id or largest_object_id is None, the content does not exist
     let content_exists = largest_group_id.is_some() && largest_object_id.is_some();
+
+    Ok((content_exists, largest_group_id, largest_object_id))
+}
+
+async fn generate_subscribe_ok_message(
+    subscribe_message: &Subscribe,
+    content_exists: bool,
+    largest_group_id: Option<u64>,
+    largest_object_id: Option<u64>,
+) -> Result<SubscribeOk> {
+    // TODO: check cache duration
+    let expires = 0;
     // TODO: check DELIVERY TIMEOUT
     let subscribe_parameters = vec![];
     // TODO: accurate group_order
@@ -415,7 +445,6 @@ async fn set_downstream_subscription(
     let downstream_start_group = subscribe_message.start_group();
     let downstream_start_object = subscribe_message.start_object();
     let downstream_end_group = subscribe_message.end_group();
-    let downstream_end_object = subscribe_message.end_object();
 
     pubsub_relation_manager_repository
         .set_downstream_subscription(
@@ -430,7 +459,6 @@ async fn set_downstream_subscription(
             downstream_start_group,
             downstream_start_object,
             downstream_end_group,
-            downstream_end_object,
         )
         .await?;
 
@@ -485,7 +513,6 @@ async fn set_downstream_and_upstream_subscription(
     let downstream_start_group = subscribe_message.start_group();
     let downstream_start_object = subscribe_message.start_object();
     let downstream_end_group = subscribe_message.end_group();
-    let downstream_end_object = subscribe_message.end_object();
 
     pubsub_relation_manager_repository
         .set_downstream_subscription(
@@ -500,7 +527,6 @@ async fn set_downstream_and_upstream_subscription(
             downstream_start_group,
             downstream_start_object,
             downstream_end_group,
-            downstream_end_object,
         )
         .await?;
 
@@ -515,7 +541,6 @@ async fn set_downstream_and_upstream_subscription(
             downstream_start_group,
             downstream_start_object,
             downstream_end_group,
-            downstream_end_object,
         )
         .await?;
 
@@ -584,7 +609,6 @@ mod success {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -600,7 +624,6 @@ mod success {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -708,7 +731,6 @@ mod success {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -724,7 +746,6 @@ mod success {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -762,7 +783,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -838,7 +858,9 @@ mod success {
     }
 
     #[tokio::test]
-    // Return SUBSCRIBE_OK immediately and its ContentExists is true
+    // Return SUBSCRIBE_OK immediately
+    // ContentExists is true
+    // If, FilterType is LatestObject, the largest group_id and object_id are stored as actual_object_start
     async fn normal_case_track_exists_and_content_exists() {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
@@ -847,11 +869,10 @@ mod success {
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
-        let filter_type = FilterType::LatestGroup;
+        let filter_type = FilterType::LatestObject;
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -867,7 +888,6 @@ mod success {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -905,7 +925,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -957,6 +976,7 @@ mod success {
         let object_status = None;
         let duration = 1000;
         let publisher_priority = 0;
+        let extension_headers = vec![];
 
         let subgroup_header =
             subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
@@ -971,8 +991,13 @@ mod success {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let subgroup_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+            let subgroup_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers.clone(),
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             let _ = object_cache_storage
                 .set_subgroup_stream_object(
@@ -1029,6 +1054,15 @@ mod success {
 
         assert_eq!(downstream_session_id, downstream_session_id);
         assert_eq!(downstream_subscribe_id, downstream_subscribe_id);
+
+        let actual_object_start = pubsub_relation_manager
+            .get_downstream_actual_object_start(*downstream_session_id, *downstream_subscribe_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(actual_object_start.group_id(), group_id);
+        assert_eq!(actual_object_start.object_id(), 9);
     }
 }
 
@@ -1078,7 +1112,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -1094,7 +1127,6 @@ mod failure {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -1137,7 +1169,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
@@ -1197,7 +1228,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -1213,7 +1243,6 @@ mod failure {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -1298,7 +1327,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -1314,7 +1342,6 @@ mod failure {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -1400,7 +1427,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -1419,7 +1445,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters.clone(),
             )
             .unwrap();
@@ -1519,7 +1544,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -1538,7 +1562,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters.clone(),
             )
             .unwrap();

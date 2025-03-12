@@ -5,8 +5,6 @@ use anyhow::Result;
 #[cfg(feature = "web_sys_unstable_apis")]
 use bytes::{Buf, BufMut, BytesMut};
 #[cfg(feature = "web_sys_unstable_apis")]
-use moqt_core::messages::data_streams::object_status::ObjectStatus;
-#[cfg(feature = "web_sys_unstable_apis")]
 use moqt_core::{
     control_message_type::ControlMessageType,
     data_stream_type::DataStreamType,
@@ -16,7 +14,7 @@ use moqt_core::{
         announce_ok::AnnounceOk,
         client_setup::ClientSetup,
         server_setup::ServerSetup,
-        setup_parameters::{MaxSubscribeID, Role, RoleCase, SetupParameter},
+        setup_parameters::{MaxSubscribeID, SetupParameter},
         subscribe::{FilterType, GroupOrder, Subscribe},
         subscribe_announces::SubscribeAnnounces,
         subscribe_announces_error::SubscribeAnnouncesError,
@@ -28,7 +26,7 @@ use moqt_core::{
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     messages::{
-        data_streams::{datagram, subgroup_stream, DataStreams},
+        data_streams::{datagram, object_status::ObjectStatus, subgroup_stream, DataStreams},
         moqt_payload::MOQTPayload,
     },
     models::subscriptions::{
@@ -184,25 +182,15 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendSetupMessage)]
     pub async fn send_setup_message(
         &mut self,
-        role_value: u8,
         versions: Vec<u64>,
         max_subscribe_id: u64,
     ) -> Result<JsValue, JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
-            let role = RoleCase::try_from(role_value).unwrap();
             let versions = versions.iter().map(|v| *v as u32).collect::<Vec<u32>>();
-            let mut setup_parameters: Vec<SetupParameter> =
-                vec![SetupParameter::Role(Role::new(role))];
-
-            match role {
-                RoleCase::Publisher | RoleCase::PubSub => {
-                    setup_parameters.push(SetupParameter::MaxSubscribeID(MaxSubscribeID::new(
-                        max_subscribe_id,
-                    )));
-                }
-                _ => {}
-            }
+            let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(
+                max_subscribe_id,
+            ))];
 
             let client_setup_message = ClientSetup::new(versions, setup_parameters);
             let mut client_setup_message_buf = BytesMut::new();
@@ -224,26 +212,13 @@ impl MOQTClient {
                 // Setup nodes along with the role
                 Ok(ok) => {
                     log(std::format!("sent: client_setup: {:#x?}", client_setup_message).as_str());
-                    match role {
-                        RoleCase::Publisher => {
-                            self.subscription_node
-                                .borrow_mut()
-                                .setup_as_publisher(max_subscribe_id);
-                        }
-                        RoleCase::Subscriber => {
-                            self.subscription_node
-                                .borrow_mut()
-                                .setup_as_subscriber(max_subscribe_id);
-                        }
-                        RoleCase::PubSub => {
-                            self.subscription_node
-                                .borrow_mut()
-                                .setup_as_publisher(max_subscribe_id);
-                            self.subscription_node
-                                .borrow_mut()
-                                .setup_as_subscriber(max_subscribe_id);
-                        }
-                    }
+                    self.subscription_node
+                        .borrow_mut()
+                        .setup_as_publisher(max_subscribe_id);
+                    self.subscription_node
+                        .borrow_mut()
+                        .setup_as_subscriber(max_subscribe_id);
+
                     Ok(ok)
                 }
                 Err(e) => Err(e),
@@ -410,7 +385,6 @@ impl MOQTClient {
         start_group: u64,
         start_object: u64,
         end_group: u64,
-        end_object: u64,
         auth_info: String,
     ) -> Result<JsValue, JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
@@ -436,11 +410,11 @@ impl MOQTClient {
                     (Some(start_group), Some(start_object))
                 }
             };
-            let (end_group, end_object) = match filter_type {
+            let end_group = match filter_type {
                 FilterType::LatestObject | FilterType::LatestGroup | FilterType::AbsoluteStart => {
-                    (None, None)
+                    None
                 }
-                FilterType::AbsoluteRange => (Some(end_group), Some(end_object)),
+                FilterType::AbsoluteRange => Some(end_group),
             };
 
             let version_specific_parameters = vec![auth_info];
@@ -455,7 +429,6 @@ impl MOQTClient {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 version_specific_parameters,
             )
             .unwrap();
@@ -491,7 +464,6 @@ impl MOQTClient {
                             start_group,
                             start_object,
                             end_group,
-                            end_object,
                         );
 
                     Ok(ok)
@@ -758,11 +730,13 @@ impl MOQTClient {
     ) -> Result<JsValue, JsValue> {
         let writer = self.datagram_writer.borrow().clone();
         if let Some(writer) = writer {
+            let extension_headers = vec![];
             let datagram_object = datagram::Object::new(
                 track_alias,
                 group_id,
                 object_id,
                 publisher_priority,
+                extension_headers,
                 None,
                 object_payload,
             )
@@ -877,8 +851,10 @@ impl MOQTClient {
             stream_writers.get(&writer_key).cloned()
         };
         if let Some(writer) = writer {
+            let extension_headers = vec![];
             let subgroup_stream_object = subgroup_stream::Object::new(
                 object_id,
+                extension_headers,
                 object_status.map(|status| ObjectStatus::try_from(status).unwrap()),
                 object_payload,
             )
@@ -1539,7 +1515,6 @@ impl SubscriptionNode {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) {
         if let Some(consumer) = &mut self.consumer {
             let _ = consumer.set_subscription(
@@ -1553,7 +1528,6 @@ impl SubscriptionNode {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             );
         }
     }
@@ -1571,7 +1545,6 @@ impl SubscriptionNode {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) {
         if let Some(producer) = &mut self.producer {
             let _ = producer.set_subscription(
@@ -1585,7 +1558,6 @@ impl SubscriptionNode {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             );
         }
     }
@@ -1644,7 +1616,6 @@ impl SubscriptionNode {
             subscribe_message.start_group(),
             subscribe_message.start_object(),
             subscribe_message.end_group(),
-            subscribe_message.end_object(),
         );
 
         Ok(())
