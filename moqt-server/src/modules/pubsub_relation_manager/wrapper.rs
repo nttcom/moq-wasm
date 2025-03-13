@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use tokio::sync::{mpsc, oneshot};
 
 use moqt_core::{
-    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
     models::{
         range::{ObjectRange, ObjectStart},
         tracks::ForwardingPreference,
@@ -1035,7 +1035,7 @@ mod success {
         commands::PubSubRelationCommand, manager::pubsub_relation_manager, wrapper::test_helper_fn,
         wrapper::PubSubRelationManagerWrapper,
     };
-    use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
+    use moqt_core::messages::control_messages::{group_order::GroupOrder, subscribe::FilterType};
     use moqt_core::models::range::ObjectStart;
     use moqt_core::models::subscriptions::{
         nodes::registry::SubscriptionNodeRegistry, Subscription,
@@ -3601,7 +3601,7 @@ mod failure {
         commands::PubSubRelationCommand, manager::pubsub_relation_manager,
         wrapper::PubSubRelationManagerWrapper,
     };
-    use moqt_core::messages::control_messages::subscribe::{FilterType, GroupOrder};
+    use moqt_core::messages::control_messages::{group_order::GroupOrder, subscribe::FilterType};
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;
     use tokio::sync::mpsc;
 

@@ -3,6 +3,7 @@ pub mod announce_error;
 pub mod announce_ok;
 pub mod client_setup;
 pub mod go_away;
+pub mod group_order;
 pub mod server_setup;
 pub mod setup_parameters;
 pub mod subscribe;

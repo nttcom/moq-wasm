@@ -126,8 +126,8 @@ mod success {
     };
     use moqt_core::{
         messages::{
-            control_messages::subscribe::{FilterType, GroupOrder},
             control_messages::subscribe_error::{SubscribeError, SubscribeErrorCode},
+            control_messages::{group_order::GroupOrder, subscribe::FilterType},
             moqt_payload::MOQTPayload,
         },
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -270,7 +270,8 @@ mod failure {
     };
     use moqt_core::{
         messages::control_messages::{
-            subscribe::{FilterType, GroupOrder},
+            group_order::GroupOrder,
+            subscribe::FilterType,
             subscribe_error::{SubscribeError, SubscribeErrorCode},
         },
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,

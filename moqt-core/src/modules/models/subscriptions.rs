@@ -1,7 +1,7 @@
 pub mod nodes;
 use super::range::{ObjectRange, ObjectStart};
 use crate::{
-    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
     models::tracks::{ForwardingPreference, Track},
 };
 
@@ -126,7 +126,7 @@ impl Subscription {
 
 #[cfg(test)]
 pub(crate) mod test_helper_fn {
-    use crate::messages::control_messages::subscribe::{FilterType, GroupOrder};
+    use crate::messages::control_messages::{group_order::GroupOrder, subscribe::FilterType};
 
     #[derive(Debug, Clone)]
     pub(crate) struct SubscriptionVariables {
@@ -169,7 +169,7 @@ pub(crate) mod test_helper_fn {
 #[cfg(test)]
 mod success {
     use crate::{
-        messages::control_messages::subscribe::{FilterType, GroupOrder},
+        messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
         models::{
             range::ObjectStart,
             subscriptions::{test_helper_fn, Subscription},

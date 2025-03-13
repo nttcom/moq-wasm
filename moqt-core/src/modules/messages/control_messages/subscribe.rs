@@ -1,6 +1,8 @@
 use crate::{
     messages::{
-        control_messages::version_specific_parameters::VersionSpecificParameter,
+        control_messages::{
+            group_order::GroupOrder, version_specific_parameters::VersionSpecificParameter,
+        },
         moqt_payload::MOQTPayload,
     },
     variable_bytes::{
@@ -14,14 +16,6 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
 use std::any::Any;
 use tracing;
-
-#[derive(Debug, Serialize, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
-#[repr(u8)]
-pub enum GroupOrder {
-    Original = 0x0, // Use the original publisher's Group Order
-    Ascending = 0x1,
-    Descending = 0x2,
-}
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
 #[repr(u8)]
