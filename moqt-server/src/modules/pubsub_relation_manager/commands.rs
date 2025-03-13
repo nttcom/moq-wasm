@@ -2,7 +2,7 @@ use anyhow::Result;
 use tokio::sync::oneshot;
 
 use moqt_core::{
-    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
     models::{
         range::{ObjectRange, ObjectStart},
         tracks::ForwardingPreference,
