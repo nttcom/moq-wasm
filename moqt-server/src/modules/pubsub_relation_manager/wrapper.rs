@@ -208,7 +208,7 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         track_name: String,
     ) -> Result<bool> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<bool>>();
-        let cmd = PubSubRelationCommand::IsTrackSubscribed {
+        let cmd = PubSubRelationCommand::IsUpstreamSubscribed {
             track_namespace,
             track_name,
             resp: resp_tx,
