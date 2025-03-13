@@ -3,7 +3,7 @@ use super::{
     commands::ObjectCacheStorageCommand,
 };
 use anyhow::{bail, Result};
-use moqt_core::messages::data_streams::{datagram, subgroup_stream};
+use moqt_core::messages::data_streams::{subgroup_stream, DatagramObject};
 use tokio::sync::{mpsc, oneshot};
 
 pub(crate) struct ObjectCacheStorageWrapper {
@@ -106,7 +106,7 @@ impl ObjectCacheStorageWrapper {
     pub(crate) async fn set_datagram_object(
         &mut self,
         cache_key: &CacheKey,
-        datagram_object: datagram::Object,
+        datagram_object: DatagramObject,
         duration: u64,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
@@ -162,8 +162,8 @@ impl ObjectCacheStorageWrapper {
         cache_key: &CacheKey,
         group_id: u64,
         object_id: u64,
-    ) -> Result<Option<(CacheId, datagram::Object)>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, datagram::Object)>>>();
+    ) -> Result<Option<(CacheId, DatagramObject)>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, DatagramObject)>>>();
 
         let cmd = ObjectCacheStorageCommand::GetAbsoluteDatagramObject {
             cache_key: cache_key.clone(),
@@ -214,8 +214,8 @@ impl ObjectCacheStorageWrapper {
         &mut self,
         cache_key: &CacheKey,
         cache_id: usize,
-    ) -> Result<Option<(CacheId, datagram::Object)>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, datagram::Object)>>>();
+    ) -> Result<Option<(CacheId, DatagramObject)>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, DatagramObject)>>>();
 
         let cmd = ObjectCacheStorageCommand::GetNextDatagramObject {
             cache_key: cache_key.clone(),
@@ -264,8 +264,8 @@ impl ObjectCacheStorageWrapper {
     pub(crate) async fn get_latest_datagram_object(
         &mut self,
         cache_key: &CacheKey,
-    ) -> Result<Option<(CacheId, datagram::Object)>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, datagram::Object)>>>();
+    ) -> Result<Option<(CacheId, DatagramObject)>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, DatagramObject)>>>();
 
         let cmd = ObjectCacheStorageCommand::GetLatestDatagramObject {
             cache_key: cache_key.clone(),
@@ -285,8 +285,8 @@ impl ObjectCacheStorageWrapper {
     pub(crate) async fn get_latest_datagram_group(
         &mut self,
         cache_key: &CacheKey,
-    ) -> Result<Option<(CacheId, datagram::Object)>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, datagram::Object)>>>();
+    ) -> Result<Option<(CacheId, DatagramObject)>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, DatagramObject)>>>();
 
         let cmd = ObjectCacheStorageCommand::GetLatestDatagramGroup {
             cache_key: cache_key.clone(),
@@ -439,7 +439,9 @@ mod success {
         cache::CacheKey, commands::ObjectCacheStorageCommand, storage::object_cache_storage,
         wrapper::ObjectCacheStorageWrapper,
     };
-    use moqt_core::messages::data_streams::{datagram, subgroup_stream};
+    use moqt_core::messages::data_streams::{
+        datagram, datagram_status, object_status::ObjectStatus, subgroup_stream, DatagramObject,
+    };
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -562,6 +564,44 @@ mod success {
             object_payload,
         )
         .unwrap();
+        let datagram_object = DatagramObject::ObjectDatagram(datagram_object);
+
+        // start object cache storage thread
+        let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
+        tokio::spawn(async move { object_cache_storage(&mut cache_rx).await });
+
+        let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
+
+        let _ = object_cache_storage.create_datagram_cache(&cache_key).await;
+        let result = object_cache_storage
+            .set_datagram_object(&cache_key, datagram_object, duration)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn set_datagram_object_status() {
+        let session_id = 0;
+        let subscribe_id = 1;
+        let cache_key = CacheKey::new(session_id, subscribe_id);
+        let object_id = 2;
+        let track_alias = 3;
+        let group_id = 4;
+        let publisher_priority = 5;
+        let extension_headers = vec![];
+        let object_status = ObjectStatus::EndOfGroup;
+        let duration = 1000;
+        let datagram_object = datagram_status::Object::new(
+            track_alias,
+            group_id,
+            object_id,
+            publisher_priority,
+            extension_headers,
+            object_status,
+        )
+        .unwrap();
+        let datagram_object = DatagramObject::ObjectDatagramStatus(datagram_object);
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -656,6 +696,7 @@ mod success {
                 object_payload,
             )
             .unwrap();
+            let datagram_object = DatagramObject::ObjectDatagram(datagram_object);
 
             let _ = object_cache_storage
                 .set_datagram_object(&cache_key, datagram_object, duration)
@@ -674,6 +715,7 @@ mod success {
             expected_object_payload,
         )
         .unwrap();
+        let expected_object = DatagramObject::ObjectDatagram(expected_object);
 
         let result = object_cache_storage
             .get_absolute_datagram_object(&cache_key, group_id, object_id)
@@ -787,6 +829,7 @@ mod success {
                 object_payload,
             )
             .unwrap();
+            let datagram_object = DatagramObject::ObjectDatagram(datagram_object);
 
             let _ = object_cache_storage
                 .set_datagram_object(&cache_key, datagram_object, duration)
@@ -806,6 +849,71 @@ mod success {
             expected_object_payload,
         )
         .unwrap();
+        let expected_object = DatagramObject::ObjectDatagram(expected_object);
+
+        let result = object_cache_storage
+            .get_next_datagram_object(&cache_key, cache_id)
+            .await;
+
+        assert!(result.is_ok());
+
+        let (result_cache_id, result_object) = result.unwrap().unwrap();
+        assert_eq!(result_cache_id, expected_cache_id);
+        assert_eq!(result_object, expected_object);
+    }
+
+    #[tokio::test]
+    async fn get_next_datagram_object_status() {
+        let session_id = 0;
+        let subscribe_id = 1;
+        let cache_key = CacheKey::new(session_id, subscribe_id);
+        let track_alias = 3;
+        let group_id = 4;
+        let publisher_priority = 5;
+        let extension_headers = vec![];
+        let duration = 1000;
+
+        // start object cache storage thread
+        let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
+        tokio::spawn(async move { object_cache_storage(&mut cache_rx).await });
+        let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
+
+        let _ = object_cache_storage.create_datagram_cache(&cache_key).await;
+
+        for i in 0..10 {
+            let object_status = ObjectStatus::DoesNotExist;
+            let object_id = i as u64;
+
+            let datagram_object = datagram_status::Object::new(
+                track_alias,
+                group_id,
+                object_id,
+                publisher_priority,
+                extension_headers.clone(),
+                object_status,
+            )
+            .unwrap();
+            let datagram_object = DatagramObject::ObjectDatagramStatus(datagram_object);
+
+            let _ = object_cache_storage
+                .set_datagram_object(&cache_key, datagram_object, duration)
+                .await;
+        }
+
+        let cache_id = 2;
+        let expected_object_id = 3;
+        let expected_cache_id = 3;
+        let expected_object_status = ObjectStatus::DoesNotExist;
+        let expected_object = datagram_status::Object::new(
+            track_alias,
+            group_id,
+            expected_object_id,
+            publisher_priority,
+            extension_headers,
+            expected_object_status,
+        )
+        .unwrap();
+        let expected_object = DatagramObject::ObjectDatagramStatus(expected_object);
 
         let result = object_cache_storage
             .get_next_datagram_object(&cache_key, cache_id)
@@ -920,6 +1028,7 @@ mod success {
                 object_payload,
             )
             .unwrap();
+            let datagram_object = DatagramObject::ObjectDatagram(datagram_object);
 
             let _ = object_cache_storage
                 .set_datagram_object(&cache_key, datagram_object, duration)
@@ -938,6 +1047,7 @@ mod success {
             expected_object_payload,
         )
         .unwrap();
+        let expected_object = DatagramObject::ObjectDatagram(expected_object);
 
         let result = object_cache_storage
             .get_latest_datagram_object(&cache_key)
@@ -989,6 +1099,7 @@ mod success {
                     object_payload,
                 )
                 .unwrap();
+                let datagram_object = DatagramObject::ObjectDatagram(datagram_object);
 
                 let _ = object_cache_storage
                     .set_datagram_object(&cache_key, datagram_object, duration)
@@ -1008,6 +1119,7 @@ mod success {
             expected_object_payload,
         )
         .unwrap();
+        let expected_object = DatagramObject::ObjectDatagram(expected_object);
         let expected_cache_id = group_size * expected_group_id as u8 + expected_object_id as u8;
 
         let result = object_cache_storage
@@ -1060,6 +1172,7 @@ mod success {
                     object_payload,
                 )
                 .unwrap();
+                let datagram_object = DatagramObject::ObjectDatagram(datagram_object);
 
                 let _ = object_cache_storage
                     .set_datagram_object(&cache_key, datagram_object, duration)
@@ -1080,6 +1193,7 @@ mod success {
             expected_object_payload,
         )
         .unwrap();
+        let expected_object = DatagramObject::ObjectDatagram(expected_object);
 
         let result = object_cache_storage
             .get_latest_datagram_group(&cache_key)
@@ -1334,6 +1448,7 @@ mod success {
                     object_payload,
                 )
                 .unwrap();
+                let datagram_object = DatagramObject::ObjectDatagram(datagram_object);
 
                 let _ = object_cache_storage
                     .set_datagram_object(&cache_key, datagram_object, duration)

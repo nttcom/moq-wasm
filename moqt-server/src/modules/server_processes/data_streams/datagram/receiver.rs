@@ -13,7 +13,7 @@ use anyhow::Result;
 use bytes::BytesMut;
 use moqt_core::{
     constants::TerminationErrorCode, data_stream_type::DataStreamType,
-    messages::data_streams::datagram, models::tracks::ForwardingPreference,
+    messages::data_streams::DatagramObject, models::tracks::ForwardingPreference,
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
 use std::sync::Arc;
@@ -72,9 +72,11 @@ impl DatagramObjectReceiver {
         };
 
         let session_id = self.client.lock().await.id();
-        let subscribe_id = self
-            .get_subscribe_id(session_id, object.track_alias())
-            .await?;
+        let track_alias = match &object {
+            DatagramObject::ObjectDatagram(object) => object.track_alias(),
+            DatagramObject::ObjectDatagramStatus(object) => object.track_alias(),
+        };
+        let subscribe_id = self.get_subscribe_id(session_id, track_alias).await?;
 
         if self
             .is_first_object(session_id, subscribe_id, object_cache_storage)
@@ -103,7 +105,7 @@ impl DatagramObjectReceiver {
         buf.extend_from_slice(&read_bytes);
     }
 
-    async fn read_object_from_buf(&self) -> Result<Option<datagram::Object>, TerminationError> {
+    async fn read_object_from_buf(&self) -> Result<Option<DatagramObject>, TerminationError> {
         let result = self.try_read_object_from_buf().await;
 
         match result {
@@ -216,7 +218,7 @@ impl DatagramObjectReceiver {
 
     async fn store_object(
         &self,
-        datagram_object: datagram::Object,
+        datagram_object: DatagramObject,
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
