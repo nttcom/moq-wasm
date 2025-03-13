@@ -1,8 +1,9 @@
 use crate::{
     messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
     models::{
+        nodes::registry::SubscriptionNodeRegistry,
         range::{ObjectRange, ObjectStart},
-        subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription},
+        subscriptions::subscribe::Subscription,
         tracks::ForwardingPreference,
     },
 };
@@ -330,9 +331,7 @@ impl SubscriptionNodeRegistry for Producer {
 #[cfg(test)]
 pub(crate) mod test_helper_fn {
 
-    use crate::models::subscriptions::nodes::producers::{
-        FilterType, GroupOrder, Producer, TrackNamespace,
-    };
+    use crate::models::nodes::producers::{FilterType, GroupOrder, Producer, TrackNamespace};
 
     #[derive(Debug, Clone)]
     pub(crate) struct SubscriptionVariables {
@@ -383,14 +382,12 @@ pub(crate) mod test_helper_fn {
 #[cfg(test)]
 mod success {
     use crate::models::{
-        range::ObjectStart,
-        subscriptions::{
-            nodes::{
-                producers::{test_helper_fn, Producer},
-                registry::SubscriptionNodeRegistry,
-            },
-            Subscription,
+        nodes::{
+            producers::{test_helper_fn, Producer},
+            registry::SubscriptionNodeRegistry,
         },
+        range::ObjectStart,
+        subscriptions::subscribe::Subscription,
         tracks::ForwardingPreference,
     };
 

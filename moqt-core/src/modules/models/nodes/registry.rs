@@ -2,7 +2,7 @@ use crate::{
     messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
     models::{
         range::{ObjectRange, ObjectStart},
-        subscriptions::Subscription,
+        subscriptions::subscribe::Subscription,
         tracks::ForwardingPreference,
     },
 };

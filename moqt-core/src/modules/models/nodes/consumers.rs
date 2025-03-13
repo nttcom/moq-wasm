@@ -1,8 +1,9 @@
 use crate::{
     messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
     models::{
+        nodes::registry::SubscriptionNodeRegistry,
         range::{ObjectRange, ObjectStart},
-        subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription},
+        subscriptions::subscribe::Subscription,
         tracks::ForwardingPreference,
     },
 };
@@ -322,9 +323,7 @@ impl SubscriptionNodeRegistry for Consumer {
 
 #[cfg(test)]
 pub(crate) mod test_helper_fn {
-    use crate::models::subscriptions::nodes::consumers::{
-        Consumer, FilterType, GroupOrder, TrackNamespace,
-    };
+    use crate::models::nodes::consumers::{Consumer, FilterType, GroupOrder, TrackNamespace};
 
     #[derive(Debug, Clone)]
     pub(crate) struct SubscriptionVariables {
@@ -372,14 +371,14 @@ pub(crate) mod test_helper_fn {
 #[cfg(test)]
 mod success {
     use crate::models::{
-        subscriptions::{
+        tracks::ForwardingPreference,
+        {
             nodes::{
                 consumers::{test_helper_fn, Consumer},
                 registry::SubscriptionNodeRegistry,
             },
-            Subscription,
+            subscriptions::subscribe::Subscription,
         },
-        tracks::ForwardingPreference,
     };
 
     #[test]

@@ -30,9 +30,9 @@ use moqt_core::{
         data_streams::{datagram, object_status::ObjectStatus, subgroup_stream, DataStreams},
         moqt_payload::MOQTPayload,
     },
-    models::subscriptions::{
+    models::{
         nodes::{consumers::Consumer, producers::Producer, registry::SubscriptionNodeRegistry},
-        Subscription,
+        subscriptions::subscribe::Subscription,
     },
     variable_integer::{
         read_variable_integer, read_variable_integer_from_buffer, write_variable_integer,

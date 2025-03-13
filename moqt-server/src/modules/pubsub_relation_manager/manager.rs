@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use std::{collections::HashMap, vec};
 use tokio::sync::mpsc;
 
-use moqt_core::models::subscriptions::nodes::{
+use moqt_core::models::nodes::{
     consumers::Consumer, producers::Producer, registry::SubscriptionNodeRegistry,
 };
 
