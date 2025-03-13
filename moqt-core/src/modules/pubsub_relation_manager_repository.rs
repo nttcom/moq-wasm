@@ -48,7 +48,7 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         track_alias: u64,
         downstream_session_id: usize,
     ) -> Result<bool>;
-    async fn is_track_existing(
+    async fn is_upstream_subscribed(
         &self,
         track_namespace: Vec<String>,
         track_name: String,
