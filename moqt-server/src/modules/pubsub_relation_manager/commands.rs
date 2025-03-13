@@ -57,7 +57,7 @@ pub(crate) enum PubSubRelationCommand {
         downstream_session_id: usize,
         resp: oneshot::Sender<Result<bool>>,
     },
-    IsTrackExisting {
+    IsTrackSubscribed {
         track_namespace: Vec<String>,
         track_name: String,
         resp: oneshot::Sender<Result<bool>>,
