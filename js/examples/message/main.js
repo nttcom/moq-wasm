@@ -84,6 +84,10 @@ init().then(async () => {
       describeReceivedObject(datagramObject.object_payload)
     })
 
+    client.onDatagramObjectStatus(async (datagramObjectStatus) => {
+      console.log({ datagramObjectStatus })
+    })
+
     client.onSubgroupStreamHeader(async (subgroupStreamHeader) => {
       console.log({ subgroupStreamHeader })
     })
@@ -91,7 +95,11 @@ init().then(async () => {
     const trackAlias = form['subscribe-track-alias'].value
     client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject) => {
       console.log({ subgroupStreamObject })
-      describeReceivedObject(subgroupStreamObject.object_payload)
+      const objectPayload = subgroupStreamObject.object_payload
+
+      if (objectPayload.length > 0) {
+        describeReceivedObject(objectPayload)
+      }
     })
 
     const objectIdElement = document.getElementById('objectId')
@@ -190,6 +198,17 @@ init().then(async () => {
       objectIdElement.textContent = objectId
     })
 
+    const sendDatagramObjectWithStatusBtn = document.getElementById('sendDatagramObjectWithStatusBtn')
+    sendDatagramObjectWithStatusBtn.addEventListener('click', async () => {
+      console.log('send datagram object with status btn clicked')
+      const trackAlias = form['object-track-alias'].value
+      const publisherPriority = form['publisher-priority'].value
+      const objectStatus = Array.from(form['object-status']).filter((elem) => elem.checked)[0].value
+
+      await client.sendDatagramObjectStatus(BigInt(trackAlias), groupId, objectId++, publisherPriority, objectStatus)
+      objectIdElement.textContent = objectId
+    })
+
     const sendSubgroupObjectBtn = document.getElementById('sendSubgroupObjectBtn')
     sendSubgroupObjectBtn.addEventListener('click', async () => {
       console.log('send subgroup stream object btn clicked')
@@ -213,6 +232,33 @@ init().then(async () => {
         subgroupId,
         objectId++,
         undefined,
+        objectPayloadArray
+      )
+      objectIdElement.textContent = objectId
+    })
+
+    const sendSubgroupObjectWithStatusBtn = document.getElementById('sendSubgroupObjectWithStatusBtn')
+    sendSubgroupObjectWithStatusBtn.addEventListener('click', async () => {
+      console.log('send subgroup stream object with status btn clicked')
+      const trackAlias = form['object-track-alias'].value
+      const publisherPriority = form['publisher-priority'].value
+      const objectStatus = Array.from(form['object-status']).filter((elem) => elem.checked)[0].value
+
+      const objectPayloadArray = Uint8Array.from([])
+      const key = `${groupId}:${subgroupId}`
+
+      // send header if it is the first time
+      if (!subgroupHeaderSent.has(key)) {
+        await client.sendSubgroupStreamHeaderMessage(BigInt(trackAlias), groupId, subgroupId, publisherPriority)
+        subgroupHeaderSent.add(key)
+      }
+
+      await client.sendSubgroupStreamObject(
+        BigInt(trackAlias),
+        groupId,
+        subgroupId,
+        objectId++,
+        objectStatus,
         objectPayloadArray
       )
       objectIdElement.textContent = objectId
@@ -292,7 +338,9 @@ init().then(async () => {
   const subgroupHeaderContents = document.getElementById('subgroupHeaderContents')
   const datagramObjectContents = document.getElementById('datagramObjectContents')
   const sendDatagramObject = document.getElementById('sendDatagramObject')
+  const sendDatagramObjectWithStatus = document.getElementById('sendDatagramObjectWithStatus')
   const sendSubgroupObject = document.getElementById('sendSubgroupObject')
+  const sendSubgroupObjectWithStatus = document.getElementById('sendSubgroupObjectWithStatus')
   const headerField = document.getElementById('headerField')
   const objectField = document.getElementById('objectField')
 
@@ -303,14 +351,18 @@ init().then(async () => {
         datagramObjectContents.style.display = 'block'
         subgroupHeaderContents.style.display = 'none'
         sendDatagramObject.style.display = 'block'
+        sendDatagramObjectWithStatus.style.display = 'block'
         sendSubgroupObject.style.display = 'none'
+        sendSubgroupObjectWithStatus.style.display = 'none'
         headerField.style.display = 'none'
         objectField.style.display = 'none'
       } else if (elem.value === 'subgroup') {
         datagramObjectContents.style.display = 'none'
         subgroupHeaderContents.style.display = 'block'
         sendDatagramObject.style.display = 'none'
+        sendDatagramObjectWithStatus.style.display = 'none'
         sendSubgroupObject.style.display = 'block'
+        sendSubgroupObjectWithStatus.style.display = 'block'
         headerField.style.display = 'block'
         objectField.style.display = 'block'
       }
