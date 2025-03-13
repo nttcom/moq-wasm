@@ -82,6 +82,8 @@ pub(crate) enum ObjectCacheStorageCommand {
         subgroup_id: u64,
         resp: oneshot::Sender<Result<Option<(CacheId, subgroup_stream::Object)>>>,
     },
+    // TODO: Remove LatestGroup since it is not exist in the draft-10
+    #[allow(dead_code)]
     GetLatestSubgroupStreamObject {
         cache_key: CacheKey,
         group_id: u64,

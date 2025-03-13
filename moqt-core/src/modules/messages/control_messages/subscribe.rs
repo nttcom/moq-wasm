@@ -17,6 +17,7 @@ use serde::Serialize;
 use std::any::Any;
 use tracing;
 
+// TODO: Remove LatestGroup since it is not exist in the draft-10
 #[derive(Debug, Serialize, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
 #[repr(u8)]
 pub enum FilterType {

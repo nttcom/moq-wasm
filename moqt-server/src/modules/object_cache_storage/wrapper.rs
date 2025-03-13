@@ -329,6 +329,7 @@ impl ObjectCacheStorageWrapper {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn get_latest_subgroup_stream_object(
         &mut self,
         cache_key: &CacheKey,
