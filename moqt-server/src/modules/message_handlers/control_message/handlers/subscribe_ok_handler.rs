@@ -102,7 +102,8 @@ mod success {
     use moqt_core::{
         messages::{
             control_messages::{
-                subscribe::{FilterType, GroupOrder},
+                group_order::GroupOrder,
+                subscribe::FilterType,
                 subscribe_ok::SubscribeOk,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
@@ -258,7 +259,8 @@ mod failure {
     use moqt_core::{
         messages::{
             control_messages::{
-                subscribe::{FilterType, GroupOrder},
+                group_order::GroupOrder,
+                subscribe::FilterType,
                 subscribe_ok::SubscribeOk,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },

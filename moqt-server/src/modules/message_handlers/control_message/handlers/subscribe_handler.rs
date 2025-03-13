@@ -585,7 +585,8 @@ mod success {
         data_stream_type::DataStreamType,
         messages::{
             control_messages::{
-                subscribe::{FilterType, GroupOrder, Subscribe},
+                group_order::GroupOrder,
+                subscribe::{FilterType, Subscribe},
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
             moqt_payload::MOQTPayload,
@@ -1088,7 +1089,8 @@ mod failure {
     use moqt_core::{
         messages::{
             control_messages::{
-                subscribe::{FilterType, GroupOrder, Subscribe},
+                group_order::GroupOrder,
+                subscribe::{FilterType, Subscribe},
                 subscribe_error::SubscribeErrorCode,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },

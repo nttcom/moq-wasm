@@ -1,7 +1,7 @@
 use crate::{
     messages::{
         control_messages::{
-            subscribe::GroupOrder, version_specific_parameters::VersionSpecificParameter,
+            group_order::GroupOrder, version_specific_parameters::VersionSpecificParameter,
         },
         moqt_payload::MOQTPayload,
     },

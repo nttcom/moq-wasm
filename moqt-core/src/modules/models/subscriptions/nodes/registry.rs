@@ -1,5 +1,5 @@
 use crate::{
-    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
     models::{
         range::{ObjectRange, ObjectStart},
         subscriptions::Subscription,
