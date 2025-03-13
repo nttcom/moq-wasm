@@ -343,7 +343,7 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                 let track_alias = producer.get_track_alias(downstream_subscribe_id).unwrap();
                 resp.send(Ok(track_alias)).unwrap();
             }
-            IsTrackExisting {
+            IsUpstreamSubscribed {
                 track_namespace,
                 track_name,
                 resp,

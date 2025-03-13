@@ -202,13 +202,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
         }
     }
 
-    async fn is_track_existing(
+    async fn is_upstream_subscribed(
         &self,
         track_namespace: Vec<String>,
         track_name: String,
     ) -> Result<bool> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<bool>>();
-        let cmd = PubSubRelationCommand::IsTrackExisting {
+        let cmd = PubSubRelationCommand::IsTrackSubscribed {
             track_namespace,
             track_name,
             resp: resp_tx,
@@ -1371,7 +1371,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn is_track_existing_exists() {
+    async fn is_upstream_subscribed() {
         let max_subscribe_id = 10;
         let upstream_session_id = 1;
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
@@ -1412,7 +1412,7 @@ mod success {
             .await;
 
         let result = pubsub_relation_manager
-            .is_track_existing(track_namespace, track_name)
+            .is_upstream_subscribed(track_namespace, track_name)
             .await;
         assert!(result.is_ok());
 
@@ -1421,7 +1421,7 @@ mod success {
     }
 
     #[tokio::test]
-    async fn is_track_existing_not_exists() {
+    async fn not_upstream_subscribed() {
         let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
         let track_name = "test_name".to_string();
 
@@ -1431,7 +1431,7 @@ mod success {
 
         let pubsub_relation_manager = PubSubRelationManagerWrapper::new(track_tx.clone());
         let result = pubsub_relation_manager
-            .is_track_existing(track_namespace, track_name)
+            .is_upstream_subscribed(track_namespace, track_name)
             .await;
         assert!(result.is_ok());
 

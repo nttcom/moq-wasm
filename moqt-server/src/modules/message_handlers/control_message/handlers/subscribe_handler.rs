@@ -75,7 +75,7 @@ pub(crate) async fn subscribe_handler(
 
     // If the track already exists, return the track as it is
     if pubsub_relation_manager_repository
-        .is_track_existing(
+        .is_upstream_subscribed(
             subscribe_message.track_namespace().to_vec(),
             subscribe_message.track_name().to_string(),
         )
