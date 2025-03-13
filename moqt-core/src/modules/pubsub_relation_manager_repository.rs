@@ -1,6 +1,6 @@
 use super::models::range::{ObjectRange, ObjectStart};
 use crate::{
-    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
     models::tracks::ForwardingPreference,
 };
 use anyhow::Result;

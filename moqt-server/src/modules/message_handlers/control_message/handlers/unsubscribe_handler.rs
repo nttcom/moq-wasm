@@ -92,7 +92,7 @@ mod success {
     use crate::SenderToOpenSubscription;
     use moqt_core::{
         messages::{
-            control_messages::subscribe::{FilterType, GroupOrder},
+            control_messages::{group_order::GroupOrder, subscribe::FilterType},
             moqt_payload::MOQTPayload,
         },
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
