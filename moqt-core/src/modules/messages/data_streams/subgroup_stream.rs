@@ -10,7 +10,7 @@ use serde::Serialize;
 
 /// Implementation of header message on QUIC Stream per Subgroup.
 /// Object messages are sent following this message.
-/// Type of Data Streams:STREAM_HEADER_SUBGROUP (0x4)
+/// Type of Data Streams:SUBGROUP_HEADER (0x4)
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct Header {
     track_alias: u64,
