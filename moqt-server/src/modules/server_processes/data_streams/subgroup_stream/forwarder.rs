@@ -421,9 +421,9 @@ impl SubgroupStreamObjectForwarder {
         if group_id == actual_object_start.group_id() {
             // If the actual start group id is the same as the group_id of this subgroup stream,
             // this subgroup stream belongs same group with the first subgroup stream.
-            // So get the object with same object id with the first subgroup stream.
+            // So get the object with next larger object id with the first subgroup stream.
             object_cache_storage
-                .get_absolute_subgroup_stream_object(
+                .get_next_larger_subgroup_stream_object(
                     &self.cache_key,
                     group_id,
                     subgroup_id,
