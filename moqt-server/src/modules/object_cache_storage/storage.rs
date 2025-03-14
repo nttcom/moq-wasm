@@ -299,7 +299,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             ObjectCacheStorageCommand::GetLargestGroupId { cache_key, resp } => {
                 let cache = storage.get_mut(&cache_key);
                 if let Some(cache) = cache {
-                    let largest_group_id: u64 = match cache {
+                    let largest_group_id = match cache {
                         Cache::Datagram(datagram_cache) => datagram_cache.get_largest_group_id(),
                         Cache::SubgroupStream(subgroup_stream_cache) => {
                             subgroup_stream_cache.get_largest_group_id()
@@ -314,7 +314,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             ObjectCacheStorageCommand::GetLargestObjectId { cache_key, resp } => {
                 let cache = storage.get_mut(&cache_key);
                 if let Some(cache) = cache {
-                    let largest_object_id: u64 = match cache {
+                    let largest_object_id = match cache {
                         Cache::Datagram(datagram_cache) => datagram_cache.get_largest_object_id(),
                         Cache::SubgroupStream(subgroup_stream_cache) => {
                             subgroup_stream_cache.get_largest_object_id()

@@ -97,11 +97,11 @@ pub(crate) enum ObjectCacheStorageCommand {
     },
     GetLargestGroupId {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<u64>>,
+        resp: oneshot::Sender<Result<Option<u64>>>,
     },
     GetLargestObjectId {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<u64>>,
+        resp: oneshot::Sender<Result<Option<u64>>>,
     },
     DeleteClient {
         session_id: usize,

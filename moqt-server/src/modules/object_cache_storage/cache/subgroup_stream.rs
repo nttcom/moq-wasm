@@ -90,30 +90,30 @@ impl SubgroupStreamsCache {
         subgroup_stream_cache.get_latest_object_with_cache_id()
     }
 
-    pub(crate) fn get_largest_group_id(&mut self) -> u64 {
-        self.streams.iter().map(|((gid, _), _)| *gid).max().unwrap()
+    pub(crate) fn get_largest_group_id(&mut self) -> Option<u64> {
+        self.streams.iter().map(|((gid, _), _)| *gid).max()
     }
 
-    pub(crate) fn get_largest_object_id(&mut self) -> u64 {
-        let largest_group_id = self.get_largest_group_id();
-        let largest_subgroup_id = self
-            .streams
-            .iter()
-            .filter_map(|((gid, sgid), _)| {
-                if *gid == largest_group_id {
-                    Some(*sgid)
-                } else {
-                    None
-                }
-            })
-            .max()
-            .unwrap();
-        let subgroup_stream_id = (largest_group_id, largest_subgroup_id);
+    pub(crate) fn get_largest_object_id(&mut self) -> Option<u64> {
+        let largest_group_id = self.get_largest_group_id()?;
 
-        self.streams
-            .get_mut(&subgroup_stream_id)
-            .unwrap()
-            .get_largest_object_id()
+        let subgroup_ids = self.get_all_subgroup_ids(largest_group_id);
+
+        let mut largest_object_id = None;
+        for subgroup_id in subgroup_ids.iter().rev() {
+            let subgroup_stream_id = (largest_group_id, *subgroup_id);
+            let object_id = self
+                .streams
+                .get_mut(&subgroup_stream_id)
+                .unwrap()
+                .get_largest_object_id();
+
+            if largest_object_id.is_none() || object_id > largest_object_id.unwrap() {
+                largest_object_id = Some(object_id);
+            }
+        }
+
+        largest_object_id
     }
 
     pub(crate) fn get_all_subgroup_ids(&mut self, group_id: u64) -> Vec<SubgroupId> {
