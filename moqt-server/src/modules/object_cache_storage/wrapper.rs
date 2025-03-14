@@ -261,34 +261,6 @@ impl ObjectCacheStorageWrapper {
         }
     }
 
-    pub(crate) async fn get_next_larger_subgroup_stream_object(
-        &mut self,
-        cache_key: &CacheKey,
-        group_id: u64,
-        subgroup_id: u64,
-        object_id: u64,
-    ) -> Result<Option<(CacheId, subgroup_stream::Object)>> {
-        let (resp_tx, resp_rx) =
-            oneshot::channel::<Result<Option<(CacheId, subgroup_stream::Object)>>>();
-
-        let cmd = ObjectCacheStorageCommand::GetNextLargerSubgroupStreamObject {
-            cache_key: cache_key.clone(),
-            group_id,
-            subgroup_id,
-            object_id,
-            resp: resp_tx,
-        };
-
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(object_cache) => Ok(object_cache),
-            Err(err) => bail!(err),
-        }
-    }
-
     pub(crate) async fn get_latest_datagram_object(
         &mut self,
         cache_key: &CacheKey,
@@ -1023,77 +995,6 @@ mod success {
 
         let result = object_cache_storage
             .get_next_subgroup_stream_object(&cache_key, group_id, subgroup_id, cache_id)
-            .await;
-
-        assert!(result.is_ok());
-
-        let (result_cache_id, result_object) = result.unwrap().unwrap();
-        assert_eq!(result_cache_id, expected_cache_id);
-        assert_eq!(result_object, expected_object);
-    }
-
-    #[tokio::test]
-    async fn get_next_larger_object_with_cache_id() {
-        let session_id = 0;
-        let subscribe_id = 1;
-        let cache_key = CacheKey::new(session_id, subscribe_id);
-        let track_alias = 3;
-        let group_id = 4;
-        let subgroup_id = 5;
-        let publisher_priority = 6;
-        let extension_headers = vec![];
-        let object_status = None;
-        let duration = 1000;
-        let header =
-            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
-                .unwrap();
-
-        // start object cache storage thread
-        let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
-        tokio::spawn(async move { object_cache_storage(&mut cache_rx).await });
-        let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
-
-        let _ = object_cache_storage
-            .create_subgroup_stream_cache(&cache_key, group_id, subgroup_id, header)
-            .await;
-
-        for i in 0..10 {
-            let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
-            let object_id = i as u64;
-
-            let subgroup_stream_object = subgroup_stream::Object::new(
-                object_id,
-                extension_headers.clone(),
-                object_status,
-                object_payload,
-            )
-            .unwrap();
-
-            let _ = object_cache_storage
-                .set_subgroup_stream_object(
-                    &cache_key,
-                    group_id,
-                    subgroup_id,
-                    subgroup_stream_object,
-                    duration,
-                )
-                .await;
-        }
-
-        let object_id = 5;
-        let expected_object_id = 6;
-        let expected_cache_id = 6;
-        let expected_object_payload = vec![6, 7, 8, 9];
-        let expected_object = subgroup_stream::Object::new(
-            expected_object_id,
-            extension_headers,
-            object_status,
-            expected_object_payload,
-        )
-        .unwrap();
-
-        let result = object_cache_storage
-            .get_next_larger_subgroup_stream_object(&cache_key, group_id, subgroup_id, object_id)
             .await;
 
         assert!(result.is_ok());
