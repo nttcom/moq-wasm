@@ -25,7 +25,7 @@ impl DatagramCache {
         self.next_cache_id += 1;
     }
 
-    pub(crate) fn get_absolute_object_with_cache_id(
+    pub(crate) fn get_object(
         &mut self,
         group_id: u64,
         object_id: u64,
@@ -49,7 +49,7 @@ impl DatagramCache {
         })
     }
 
-    pub(crate) fn get_next_object_with_cache_id(
+    pub(crate) fn get_next_object(
         &mut self,
         cache_id: CacheId,
     ) -> Option<(CacheId, DatagramObject)> {
@@ -63,7 +63,7 @@ impl DatagramCache {
         })
     }
 
-    pub(crate) fn get_latest_group_with_cache_id(&mut self) -> Option<(CacheId, DatagramObject)> {
+    pub(crate) fn get_latest_group(&mut self) -> Option<(CacheId, DatagramObject)> {
         let latest_group_id = self
             .objects
             .iter()
@@ -95,7 +95,7 @@ impl DatagramCache {
         })
     }
 
-    pub(crate) fn get_latest_object_with_cache_id(&mut self) -> Option<(CacheId, DatagramObject)> {
+    pub(crate) fn get_latest_object(&mut self) -> Option<(CacheId, DatagramObject)> {
         self.objects.iter().last().map(|(k, v)| (*k, v.clone()))
     }
 

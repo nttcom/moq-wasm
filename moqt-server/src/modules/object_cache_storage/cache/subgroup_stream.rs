@@ -48,7 +48,7 @@ impl SubgroupStreamsCache {
             .unwrap()
     }
 
-    pub(crate) fn get_absolute_object_with_cache_id(
+    pub(crate) fn get_object(
         &mut self,
         group_id: u64,
         subgroup_id: u64,
@@ -56,10 +56,10 @@ impl SubgroupStreamsCache {
     ) -> Option<(CacheId, subgroup_stream::Object)> {
         let subgroup_stream_id = (group_id, subgroup_id);
         let subgroup_stream_cache = self.streams.get_mut(&subgroup_stream_id).unwrap();
-        subgroup_stream_cache.get_absolute_object_with_cache_id(object_id)
+        subgroup_stream_cache.get_object(object_id)
     }
 
-    pub(crate) fn get_next_object_with_cache_id(
+    pub(crate) fn get_next_object(
         &mut self,
         group_id: u64,
         subgroup_id: u64,
@@ -67,27 +67,27 @@ impl SubgroupStreamsCache {
     ) -> Option<(CacheId, subgroup_stream::Object)> {
         let subgroup_stream_id = (group_id, subgroup_id);
         let subgroup_stream_cache = self.streams.get_mut(&subgroup_stream_id).unwrap();
-        subgroup_stream_cache.get_next_object_with_cache_id(cache_id)
+        subgroup_stream_cache.get_next_object(cache_id)
     }
 
-    pub(crate) fn get_first_object_with_cache_id(
+    pub(crate) fn get_first_object(
         &mut self,
         group_id: u64,
         subgroup_id: u64,
     ) -> Option<(CacheId, subgroup_stream::Object)> {
         let subgroup_stream_id = (group_id, subgroup_id);
         let subgroup_stream_cache = self.streams.get_mut(&subgroup_stream_id).unwrap();
-        subgroup_stream_cache.get_first_object_with_cache_id()
+        subgroup_stream_cache.get_first_object()
     }
 
-    pub(crate) fn get_latest_object_with_cache_id(
+    pub(crate) fn get_latest_object(
         &mut self,
         group_id: u64,
         subgroup_id: u64,
     ) -> Option<(CacheId, subgroup_stream::Object)> {
         let subgroup_stream_id = (group_id, subgroup_id);
         let subgroup_stream_cache = self.streams.get_mut(&subgroup_stream_id).unwrap();
-        subgroup_stream_cache.get_latest_object_with_cache_id()
+        subgroup_stream_cache.get_latest_object()
     }
 
     pub(crate) fn get_largest_group_id(&mut self) -> Option<u64> {
@@ -164,10 +164,7 @@ impl SubgroupStreamCache {
         self.header.clone()
     }
 
-    fn get_absolute_object_with_cache_id(
-        &mut self,
-        object_id: u64,
-    ) -> Option<(CacheId, subgroup_stream::Object)> {
+    fn get_object(&mut self, object_id: u64) -> Option<(CacheId, subgroup_stream::Object)> {
         self.objects.iter().find_map(|(k, v)| {
             if v.object_id() == object_id {
                 Some((*k, v.clone()))
@@ -177,10 +174,7 @@ impl SubgroupStreamCache {
         })
     }
 
-    fn get_next_object_with_cache_id(
-        &mut self,
-        cache_id: CacheId,
-    ) -> Option<(CacheId, subgroup_stream::Object)> {
+    fn get_next_object(&mut self, cache_id: CacheId) -> Option<(CacheId, subgroup_stream::Object)> {
         let next_cache_id = cache_id + 1;
         self.objects.iter().find_map(|(k, v)| {
             if *k == next_cache_id {
@@ -191,11 +185,11 @@ impl SubgroupStreamCache {
         })
     }
 
-    fn get_first_object_with_cache_id(&mut self) -> Option<(CacheId, subgroup_stream::Object)> {
+    fn get_first_object(&mut self) -> Option<(CacheId, subgroup_stream::Object)> {
         self.objects.iter().next().map(|(k, v)| (*k, v.clone()))
     }
 
-    fn get_latest_object_with_cache_id(&mut self) -> Option<(CacheId, subgroup_stream::Object)> {
+    fn get_latest_object(&mut self) -> Option<(CacheId, subgroup_stream::Object)> {
         self.objects.iter().last().map(|(k, v)| (*k, v.clone()))
     }
 
