@@ -234,6 +234,7 @@ impl DatagramObjectForwarder {
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<(usize, datagram::Object)>> {
         match self.filter_type {
+            // TODO: Remove LatestGroup since it is not exist in the draft-10
             FilterType::LatestGroup => {
                 object_cache_storage
                     .get_latest_datagram_group(&self.cache_key)
