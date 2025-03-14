@@ -105,6 +105,12 @@ impl Subscription {
         self.track.set_stream_id(group_id, subgroup_id, stream_id);
     }
 
+    pub fn get_all_group_ids(&self) -> Vec<u64> {
+        let mut group_ids = self.track.get_all_group_ids();
+        group_ids.sort_unstable();
+        group_ids
+    }
+
     pub fn get_subgroup_ids_for_group(&self, group_id: u64) -> Vec<u64> {
         let mut subgroup_ids = self.track.get_subgroup_ids_for_group(group_id);
         subgroup_ids.sort_unstable();
@@ -523,5 +529,33 @@ mod success {
 
         assert_eq!(result.group_id(), start_group);
         assert_eq!(result.object_id(), start_object);
+    }
+
+    #[test]
+    fn get_all_group_ids() {
+        let variable = test_helper_fn::common_subscription_variable();
+
+        let mut subscription = Subscription::new(
+            variable.track_alias,
+            variable.track_namespace,
+            variable.track_name,
+            variable.subscriber_priority,
+            variable.group_order,
+            variable.filter_type,
+            variable.start_group,
+            variable.start_object,
+            variable.end_group,
+            None,
+        );
+
+        let group_ids = vec![0, 1, 2];
+
+        subscription.set_stream_id(group_ids[0], 0, 0);
+        subscription.set_stream_id(group_ids[1], 0, 0);
+        subscription.set_stream_id(group_ids[2], 0, 0);
+
+        let result = subscription.get_all_group_ids();
+
+        assert_eq!(result, group_ids);
     }
 }

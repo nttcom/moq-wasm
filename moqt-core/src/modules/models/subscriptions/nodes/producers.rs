@@ -109,6 +109,10 @@ impl SubscriptionNodeRegistry for Producer {
         })
     }
 
+    fn get_all_subscribe_ids(&self) -> Result<Vec<SubscribeId>> {
+        Ok(self.subscriptions.keys().cloned().collect())
+    }
+
     fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool> {
         let subscription = self.subscriptions.get_mut(&subscribe_id).unwrap();
         let is_activated = subscription.activate();
@@ -198,6 +202,13 @@ impl SubscriptionNodeRegistry for Producer {
         subscription.set_stream_id(group_id, subgroup_id, stream_id);
 
         Ok(())
+    }
+
+    fn get_group_ids_for_subscription(&self, subscribe_id: SubscribeId) -> Result<Vec<u64>> {
+        let subscription = self.subscriptions.get(&subscribe_id).unwrap();
+        let group_ids = subscription.get_all_group_ids();
+
+        Ok(group_ids)
     }
 
     fn get_subgroup_ids_for_group(
