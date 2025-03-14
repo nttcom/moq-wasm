@@ -389,15 +389,11 @@ async fn check_existing_contents(
         .unwrap();
 
     let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
-    let largest_group_id = match object_cache_storage.get_largest_group_id(&cache_key).await {
-        Ok(group_id) => group_id,
-        Err(_) => None,
-    };
+    let largest_group_id =
+        (object_cache_storage.get_largest_group_id(&cache_key).await).unwrap_or_default();
 
-    let largest_object_id = match object_cache_storage.get_largest_object_id(&cache_key).await {
-        Ok(object_id) => object_id,
-        Err(_) => None,
-    };
+    let largest_object_id =
+        (object_cache_storage.get_largest_object_id(&cache_key).await).unwrap_or_default();
 
     // If the largest_group_id or largest_object_id is None, the content does not exist
     let content_exists = largest_group_id.is_some() && largest_object_id.is_some();
