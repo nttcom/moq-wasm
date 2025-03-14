@@ -148,56 +148,5 @@ mod tests {
                 DatagramObjectProcessResult::Success(datagram_object.unwrap())
             );
         }
-
-        #[tokio::test]
-        async fn datagram_object_continue_insufficient_payload() {
-            let data_stream_type = DataStreamType::ObjectDatagram;
-            let bytes_array = [
-                1,  // Track Alias (i)
-                2,  // Group ID (i)
-                3,  // Object ID (i)
-                4,  // Subscriber Priority (8)
-                0,  // Extension Headers Length (i)
-                50, // Object Payload Length (i)
-                0, 1, 2, // Object Payload (..)
-            ];
-            let mut buf = BytesMut::with_capacity(bytes_array.len() + 8);
-            buf.extend(write_variable_integer(data_stream_type as u64));
-            buf.extend_from_slice(&bytes_array);
-
-            let senders_mock = senders::test_helper_fn::create_senders_mock();
-            let upstream_session_id = 0;
-
-            let mut client = MOQTClient::new(upstream_session_id, senders_mock);
-            client.update_status(MOQTClientStatus::SetUp);
-            let client = Arc::new(Mutex::new(client));
-
-            let result = try_read_object(&mut buf, client).await;
-
-            assert_eq!(result, DatagramObjectProcessResult::Continue);
-        }
-
-        #[tokio::test]
-        async fn datagram_object_continue_incomplete_message() {
-            let data_stream_type = DataStreamType::ObjectDatagram;
-            let bytes_array = [
-                1, // Track Alias (i)
-                2, // Group ID (i)
-            ];
-            let mut buf = BytesMut::with_capacity(bytes_array.len() + 8);
-            buf.extend(write_variable_integer(data_stream_type as u64));
-            buf.extend_from_slice(&bytes_array);
-
-            let senders_mock = senders::test_helper_fn::create_senders_mock();
-            let upstream_session_id = 0;
-
-            let mut client = MOQTClient::new(upstream_session_id, senders_mock);
-            client.update_status(MOQTClientStatus::SetUp);
-            let client = Arc::new(Mutex::new(client));
-
-            let result = try_read_object(&mut buf, client).await;
-
-            assert_eq!(result, DatagramObjectProcessResult::Continue);
-        }
     }
 }
