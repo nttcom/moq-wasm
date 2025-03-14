@@ -107,7 +107,6 @@ impl DatagramCache {
                 DatagramObject::ObjectDatagramStatus(obj) => obj.group_id(),
             })
             .max()
-            .unwrap()
     }
 
     pub(crate) fn get_largest_object_id(&mut self) -> Option<u64> {
