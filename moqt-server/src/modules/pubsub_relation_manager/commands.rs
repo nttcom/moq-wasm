@@ -227,6 +227,15 @@ pub(crate) enum PubSubRelationCommand {
         stream_id: u64,
         resp: oneshot::Sender<Result<()>>,
     },
+    GetUpstreamSubscribeIdsForClient {
+        upstream_session_id: usize,
+        resp: oneshot::Sender<Result<Vec<u64>>>,
+    },
+    GetUpstreamGroupIdsForSubscription {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Vec<u64>>>,
+    },
     GetUpstreamSubgroupIdsForGroup {
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
@@ -247,6 +256,15 @@ pub(crate) enum PubSubRelationCommand {
         subgroup_id: u64,
         stream_id: u64,
         resp: oneshot::Sender<Result<()>>,
+    },
+    GetDownstreamSubscribeIdsForClient {
+        downstream_session_id: usize,
+        resp: oneshot::Sender<Result<Vec<u64>>>,
+    },
+    GetDownstreamGroupIdsForSubscription {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Vec<u64>>>,
     },
     GetDownstreamSubgroupIdsForGroup {
         downstream_session_id: usize,
