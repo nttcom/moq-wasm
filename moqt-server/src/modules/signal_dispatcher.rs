@@ -4,9 +4,16 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 type SenderToDataStreamThread = mpsc::Sender<Box<DataStreamThreadSignal>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum DataStreamThreadSignal {
-    Terminate(ObjectStatus),
+    Terminate(TerminateReason),
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) enum TerminateReason {
+    ObjectStatus(ObjectStatus),
+    SessionClosed,
 }
 
 #[derive(Debug)]
