@@ -16,7 +16,7 @@ pub(crate) enum ObjectCacheStorageCommand {
         header: subgroup_stream::Header,
         resp: oneshot::Sender<Result<()>>,
     },
-    ExistDatagramCache {
+    HasDatagramCache {
         cache_key: CacheKey,
         resp: oneshot::Sender<Result<bool>>,
     },
@@ -40,13 +40,13 @@ pub(crate) enum ObjectCacheStorageCommand {
         duration: u64,
         resp: oneshot::Sender<Result<()>>,
     },
-    GetAbsoluteDatagramObject {
+    GetDatagramObject {
         cache_key: CacheKey,
         group_id: u64,
         object_id: u64,
         resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
     },
-    GetAbsoluteSubgroupStreamObject {
+    GetSubgroupStreamObject {
         cache_key: CacheKey,
         group_id: u64,
         subgroup_id: u64,

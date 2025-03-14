@@ -63,7 +63,7 @@ impl ObjectCacheStorageWrapper {
     pub(crate) async fn exist_datagram_cache(&mut self, cache_key: &CacheKey) -> Result<bool> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<bool>>();
 
-        let cmd = ObjectCacheStorageCommand::ExistDatagramCache {
+        let cmd = ObjectCacheStorageCommand::HasDatagramCache {
             cache_key: cache_key.clone(),
             resp: resp_tx,
         };
@@ -165,7 +165,7 @@ impl ObjectCacheStorageWrapper {
     ) -> Result<Option<(CacheId, DatagramObject)>> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, DatagramObject)>>>();
 
-        let cmd = ObjectCacheStorageCommand::GetAbsoluteDatagramObject {
+        let cmd = ObjectCacheStorageCommand::GetDatagramObject {
             cache_key: cache_key.clone(),
             group_id,
             object_id,
@@ -192,7 +192,7 @@ impl ObjectCacheStorageWrapper {
         let (resp_tx, resp_rx) =
             oneshot::channel::<Result<Option<(CacheId, subgroup_stream::Object)>>>();
 
-        let cmd = ObjectCacheStorageCommand::GetAbsoluteSubgroupStreamObject {
+        let cmd = ObjectCacheStorageCommand::GetSubgroupStreamObject {
             cache_key: cache_key.clone(),
             group_id,
             subgroup_id,
