@@ -377,15 +377,16 @@ impl SubgroupStreamObjectForwarder {
 
         match self.filter_type {
             FilterType::LatestGroup => {
-                // Try to obtain the first object in the subgroup stream specified by the arguments.
-                // This operation is the same on the first stream and on subsequent streams.
+                // TODO: Remove LatestGroup since it is not exist in the draft-10
                 object_cache_storage
                     .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
                     .await
             }
             FilterType::LatestObject => {
+                // If the subscriber is the first subscriber for this track, the Relay needs to
+                // start sending from first object for the subscriber to decode the contents.
                 object_cache_storage
-                    .get_latest_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
+                    .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
                     .await
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {

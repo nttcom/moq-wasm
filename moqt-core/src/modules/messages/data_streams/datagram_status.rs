@@ -1,15 +1,15 @@
-use super::extension_header::ExtensionHeader;
+use super::{extension_header::ExtensionHeader, object_status::ObjectStatus};
 use crate::{
     messages::data_streams::DataStreams,
-    variable_bytes::{read_fixed_length_bytes, read_variable_bytes_to_end},
+    variable_bytes::read_fixed_length_bytes,
     variable_integer::{read_variable_integer, write_variable_integer},
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use bytes::{Buf, BytesMut};
 use serde::Serialize;
 
 /// Implementation of object message per QUIC Datagram.
-/// Type of Data Streams: OBJECT_DATAGRAM (0x1)
+/// Type of Data Streams: OBJECT_DATAGRAM_STATUS (0x2)
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Object {
     track_alias: u64,
@@ -18,7 +18,7 @@ pub struct Object {
     publisher_priority: u8,
     extension_headers_length: u64,
     extension_headers: Vec<ExtensionHeader>,
-    object_payload: Vec<u8>,
+    object_status: ObjectStatus,
 }
 
 impl Object {
@@ -28,7 +28,7 @@ impl Object {
         object_id: u64,
         publisher_priority: u8,
         extension_headers: Vec<ExtensionHeader>,
-        object_payload: Vec<u8>,
+        object_status: ObjectStatus,
     ) -> Result<Self> {
         // length of total byte of extension headers
         let mut extension_headers_length = 0;
@@ -43,7 +43,7 @@ impl Object {
             publisher_priority,
             extension_headers_length,
             extension_headers,
-            object_payload,
+            object_status,
         })
     }
 
@@ -67,8 +67,8 @@ impl Object {
         &self.extension_headers
     }
 
-    pub fn object_payload(&self) -> Vec<u8> {
-        self.object_payload.clone()
+    pub fn object_status(&self) -> ObjectStatus {
+        self.object_status
     }
 }
 
@@ -98,7 +98,16 @@ impl DataStreams for Object {
             extension_headers_vec.push(extension_header);
         }
 
-        let object_payload = read_variable_bytes_to_end(read_cur).context("object payload")?;
+        let object_status_u64 = read_variable_integer(read_cur)?;
+        let object_status =
+            match ObjectStatus::try_from(object_status_u64 as u8).context("object status") {
+                Ok(status) => status,
+                Err(err) => {
+                    // Any other value SHOULD be treated as a Protocol Violation and terminate the session with a Protocol Violation
+                    // TODO: return Termination Error Code
+                    bail!(err);
+                }
+            };
 
         tracing::trace!("Depacketized Datagram Object message.");
 
@@ -109,7 +118,7 @@ impl DataStreams for Object {
             publisher_priority,
             extension_headers_length,
             extension_headers: extension_headers_vec,
-            object_payload,
+            object_status,
         })
     }
 
@@ -124,7 +133,7 @@ impl DataStreams for Object {
             header.packetize(buf);
         }
 
-        buf.extend(&self.object_payload);
+        buf.extend(write_variable_integer(u8::from(self.object_status) as u64));
 
         tracing::trace!("Packetized Datagram Object message.");
     }
@@ -134,29 +143,30 @@ impl DataStreams for Object {
 mod tests {
     mod success {
         use crate::messages::data_streams::{
-            datagram,
+            datagram_status,
             extension_header::{ExtensionHeader, ExtensionHeaderValue, Value, ValueWithLength},
+            object_status::ObjectStatus,
             DataStreams,
         };
         use bytes::BytesMut;
         use std::io::Cursor;
 
         #[test]
-        fn packetize_datagram_object_normal() {
+        fn packetize_datagram_status() {
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
             let publisher_priority = 4;
             let extension_headers = vec![];
-            let object_payload = vec![0, 1, 2];
+            let object_status = ObjectStatus::Normal;
 
-            let datagram_object = datagram::Object::new(
+            let datagram_object = datagram_status::Object::new(
                 track_alias,
                 group_id,
                 object_id,
                 publisher_priority,
                 extension_headers,
-                object_payload,
+                object_status,
             )
             .unwrap();
 
@@ -169,42 +179,42 @@ mod tests {
                 3, // Object ID (i)
                 4, // Subscriber Priority (8)
                 0, // Extension Headers Length (i)
-                0, 1, 2, // Object Payload (..)
+                0, // Object Status (i)
             ];
 
             assert_eq!(buf.as_ref(), expected_bytes_array);
         }
 
         #[test]
-        fn depacketize_datagram_object_normal() {
+        fn depacketize_datagram_status() {
             let bytes_array = [
                 1, // Track Alias (i)
                 2, // Group ID (i)
                 3, // Object ID (i)
                 4, // Subscriber Priority (8)
                 0, // Extension Headers Length (i)
-                0, 1, 2, // Object Payload (..)
+                1, // Object Status (i)
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf[..]);
             let depacketized_datagram_object =
-                datagram::Object::depacketize(&mut read_cur).unwrap();
+                datagram_status::Object::depacketize(&mut read_cur).unwrap();
 
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
             let publisher_priority = 4;
             let extension_headers = vec![];
-            let object_payload = vec![0, 1, 2];
+            let object_status = ObjectStatus::DoesNotExist;
 
-            let expected_datagram_object = datagram::Object::new(
+            let expected_datagram_object = datagram_status::Object::new(
                 track_alias,
                 group_id,
                 object_id,
                 publisher_priority,
                 extension_headers,
-                object_payload,
+                object_status,
             )
             .unwrap();
 
@@ -212,7 +222,7 @@ mod tests {
         }
 
         #[test]
-        fn packetize_datagram_stream_object_with_even_type_extension_header() {
+        fn packetize_datagram_status_with_even_type_extension_header() {
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
@@ -222,15 +232,15 @@ mod tests {
             let header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(value));
 
             let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
-            let object_payload = vec![0, 1, 2];
+            let object_status = ObjectStatus::EndOfGroup;
 
-            let datagram_object = datagram::Object::new(
+            let datagram_object = datagram_status::Object::new(
                 track_alias,
                 group_id,
                 object_id,
                 publisher_priority,
                 extension_headers,
-                object_payload,
+                object_status,
             )
             .unwrap();
 
@@ -245,14 +255,14 @@ mod tests {
                 2, // Extension Headers Length (i)
                 4, // Header Type (i)
                 1, // Header Value (i)
-                0, 1, 2, // Object Payload (..)
+                3, // Object Status (i)
             ];
 
             assert_eq!(buf.as_ref(), expected_bytes_array);
         }
 
         #[test]
-        fn packetize_datagram_stream_object_with_odd_type_extension_header() {
+        fn packetize_datagram_status_with_odd_type_extension_header() {
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
@@ -262,15 +272,15 @@ mod tests {
             let header_value = ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(value));
 
             let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
-            let object_payload = vec![0, 1, 2];
+            let object_status = ObjectStatus::EndOfTrackAndGroup;
 
-            let datagram_object = datagram::Object::new(
+            let datagram_object = datagram_status::Object::new(
                 track_alias,
                 group_id,
                 object_id,
                 publisher_priority,
                 extension_headers,
-                object_payload,
+                object_status,
             )
             .unwrap();
 
@@ -286,14 +296,14 @@ mod tests {
                 1, // Header Type (i)
                 3, // Header Value Length (i)
                 1, 2, 3, // Header Value (..)
-                0, 1, 2, // Object Payload (..)
+                4, // Object Status (i)
             ];
 
             assert_eq!(buf.as_ref(), expected_bytes_array);
         }
 
         #[test]
-        fn packetize_datagram_stream_object_with_mixed_type_extension_headers() {
+        fn packetize_datagram_status_with_mixed_type_extension_headers() {
             let track_alias = 1;
             let group_id = 2;
             let object_id = 3;
@@ -310,15 +320,15 @@ mod tests {
                 ExtensionHeader::new(odd_header_type, odd_header_value).unwrap(),
                 ExtensionHeader::new(even_header_type, even_header_value).unwrap(),
             ];
-            let object_payload = vec![0, 1, 2];
+            let object_status = ObjectStatus::EndOfTrack;
 
-            let datagram_object = datagram::Object::new(
+            let datagram_object = datagram_status::Object::new(
                 track_alias,
                 group_id,
                 object_id,
                 publisher_priority,
                 extension_headers,
-                object_payload,
+                object_status,
             )
             .unwrap();
 
@@ -339,14 +349,14 @@ mod tests {
                 12, // Header Type (i)
                 1,  // Header Value (i)
                 // }
-                0, 1, 2, // Object Payload (..)
+                5, // Object Status (i)
             ];
 
             assert_eq!(buf.as_ref(), expected_bytes_array);
         }
 
         #[test]
-        fn depacketize_datagram_stream_object_with_even_type_extension_header() {
+        fn depacketize_datagram_status_with_even_type_extension_header() {
             let bytes_array = [
                 1, // Track Alias (i)
                 2, // Group ID (i)
@@ -355,13 +365,13 @@ mod tests {
                 2, // Extension Headers Length (i)
                 4, // Header Type (i)
                 1, // Header Value (i)
-                0, 1, 2, // Object Payload (..)
+                0, // Object Status (i)
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf[..]);
             let depacketized_datagram_object =
-                datagram::Object::depacketize(&mut read_cur).unwrap();
+                datagram_status::Object::depacketize(&mut read_cur).unwrap();
 
             let track_alias = 1;
             let group_id = 2;
@@ -372,15 +382,15 @@ mod tests {
             let header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(value));
 
             let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
-            let object_payload = vec![0, 1, 2];
+            let object_status = ObjectStatus::Normal;
 
-            let expected_datagram_object = datagram::Object::new(
+            let expected_datagram_object = datagram_status::Object::new(
                 track_alias,
                 group_id,
                 object_id,
                 publisher_priority,
                 extension_headers,
-                object_payload,
+                object_status,
             )
             .unwrap();
 
@@ -388,7 +398,7 @@ mod tests {
         }
 
         #[test]
-        fn depacketize_datagram_stream_object_with_odd_type_extension_header() {
+        fn depacketize_datagram_status_with_odd_type_extension_header() {
             let bytes_array = [
                 1, // Track Alias (i)
                 2, // Group ID (i)
@@ -398,13 +408,13 @@ mod tests {
                 1, // Header Type (i)
                 3, // Header Value Length (i)
                 1, 2, 3, // Header Value (..)
-                0, 1, 2, // Object Payload (..)
+                0, // Object Status (i)
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf[..]);
             let depacketized_datagram_object =
-                datagram::Object::depacketize(&mut read_cur).unwrap();
+                datagram_status::Object::depacketize(&mut read_cur).unwrap();
 
             let track_alias = 1;
             let group_id = 2;
@@ -415,15 +425,15 @@ mod tests {
             let header_value = ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(value));
 
             let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
-            let object_payload = vec![0, 1, 2];
+            let object_status = ObjectStatus::Normal;
 
-            let expected_datagram_object = datagram::Object::new(
+            let expected_datagram_object = datagram_status::Object::new(
                 track_alias,
                 group_id,
                 object_id,
                 publisher_priority,
                 extension_headers,
-                object_payload,
+                object_status,
             )
             .unwrap();
 
@@ -431,7 +441,7 @@ mod tests {
         }
 
         #[test]
-        fn depacketize_datagram_stream_object_with_mixed_type_extension_headers() {
+        fn depacketize_datagram_status_with_mixed_type_extension_headers() {
             let bytes_array = [
                 1, // Track Alias (i)
                 2, // Group ID (i)
@@ -446,13 +456,13 @@ mod tests {
                 12, // Header Type (i)
                 1,  // Header Value (i)
                 // }
-                0, 1, 2, // Object Payload (..)
+                0, // Object Status (i)
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf[..]);
             let depacketized_datagram_object =
-                datagram::Object::depacketize(&mut read_cur).unwrap();
+                datagram_status::Object::depacketize(&mut read_cur).unwrap();
 
             let track_alias = 1;
             let group_id = 2;
@@ -470,15 +480,15 @@ mod tests {
                 ExtensionHeader::new(odd_header_type, odd_header_value).unwrap(),
                 ExtensionHeader::new(even_header_type, even_header_value).unwrap(),
             ];
-            let object_payload = vec![0, 1, 2];
+            let object_status = ObjectStatus::Normal;
 
-            let expected_datagram_object = datagram::Object::new(
+            let expected_datagram_object = datagram_status::Object::new(
                 track_alias,
                 group_id,
                 object_id,
                 publisher_priority,
                 extension_headers,
-                object_payload,
+                object_status,
             )
             .unwrap();
 
@@ -490,21 +500,22 @@ mod tests {
         use bytes::BytesMut;
         use std::io::Cursor;
 
-        use crate::messages::data_streams::{datagram, DataStreams};
+        use crate::messages::data_streams::{datagram_status, DataStreams};
 
         #[test]
-        fn depacketize_datagram_object_with_empty_payload() {
+        fn depacketize_datagram_status_with_unknown_status() {
             let bytes_array = [
-                1, // Track Alias (i)
-                2, // Group ID (i)
-                3, // Object ID (i)
-                4, // Subscriber Priority (8)
-                0, // Extension Headers Length (i)
+                1,  // Track Alias (i)
+                2,  // Group ID (i)
+                3,  // Object ID (i)
+                4,  // Subscriber Priority (8)
+                0,  // Extension Headers Length (i)
+                20, // Object Status (i)
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let mut read_cur = Cursor::new(&buf[..]);
-            let depacketized_datagram_object = datagram::Object::depacketize(&mut read_cur);
+            let depacketized_datagram_object = datagram_status::Object::depacketize(&mut read_cur);
 
             assert!(depacketized_datagram_object.is_err());
         }

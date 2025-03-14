@@ -11,7 +11,9 @@ use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
         control_messages::subscribe::FilterType,
-        data_streams::{datagram, object_status::ObjectStatus, DataStreams},
+        data_streams::{
+            datagram, datagram_status, object_status::ObjectStatus, DataStreams, DatagramObject,
+        },
     },
     models::{range::ObjectRange, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -202,7 +204,10 @@ impl DatagramObjectForwarder {
             let message_buf = self.packetize(&downstream_object).await?;
             self.send(message_buf).await?;
 
-            let is_end = self.is_data_stream_ended(&downstream_object);
+            let mut is_end = false;
+            if let DatagramObject::ObjectDatagramStatus(object) = &downstream_object {
+                is_end = self.is_data_stream_ended(object);
+            }
 
             return Ok((Some(cache_id), is_end));
         }
@@ -212,7 +217,7 @@ impl DatagramObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         cache_id: Option<usize>,
-    ) -> Result<Option<(usize, datagram::Object)>> {
+    ) -> Result<Option<(usize, DatagramObject)>> {
         let cache = match cache_id {
             // Try to get the first object according to Filter Type
             None => self.try_get_first_object(object_cache_storage).await?,
@@ -232,8 +237,9 @@ impl DatagramObjectForwarder {
     async fn try_get_first_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<Option<(usize, datagram::Object)>> {
+    ) -> Result<Option<(usize, DatagramObject)>> {
         match self.filter_type {
+            // TODO: Remove LatestGroup since it is not exist in the draft-10
             FilterType::LatestGroup => {
                 object_cache_storage
                     .get_latest_datagram_group(&self.cache_key)
@@ -259,13 +265,30 @@ impl DatagramObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,
-    ) -> Result<Option<(usize, datagram::Object)>> {
+    ) -> Result<Option<(usize, DatagramObject)>> {
         object_cache_storage
             .get_next_datagram_object(&self.cache_key, object_cache_id)
             .await
     }
 
-    fn generate_downstream_object(&self, upstream_object: &datagram::Object) -> datagram::Object {
+    fn generate_downstream_object(&self, upstream_object: &DatagramObject) -> DatagramObject {
+        match upstream_object {
+            DatagramObject::ObjectDatagram(object) => {
+                let object_datagram = self.generate_downstream_object_datagram(object);
+                DatagramObject::ObjectDatagram(object_datagram)
+            }
+            DatagramObject::ObjectDatagramStatus(object) => {
+                let object_datagram_status =
+                    self.generate_downstream_object_datagram_status(object);
+                DatagramObject::ObjectDatagramStatus(object_datagram_status)
+            }
+        }
+    }
+
+    fn generate_downstream_object_datagram(
+        &self,
+        upstream_object: &datagram::Object,
+    ) -> datagram::Object {
         let extension_headers = upstream_object.extension_headers().clone();
         datagram::Object::new(
             self.downstream_track_alias, // Replace with downstream_track_alias
@@ -273,19 +296,62 @@ impl DatagramObjectForwarder {
             upstream_object.object_id(),
             upstream_object.publisher_priority(),
             extension_headers,
-            upstream_object.object_status(),
             upstream_object.object_payload(),
         )
         .unwrap()
     }
 
-    async fn packetize(&mut self, datagram_object: &datagram::Object) -> Result<BytesMut> {
+    fn generate_downstream_object_datagram_status(
+        &self,
+        upstream_object: &datagram_status::Object,
+    ) -> datagram_status::Object {
+        let extension_headers = upstream_object.extension_headers().clone();
+        datagram_status::Object::new(
+            self.downstream_track_alias, // Replace with downstream_track_alias
+            upstream_object.group_id(),
+            upstream_object.object_id(),
+            upstream_object.publisher_priority(),
+            extension_headers,
+            upstream_object.object_status(),
+        )
+        .unwrap()
+    }
+
+    async fn packetize(&mut self, downstream_object: &DatagramObject) -> Result<BytesMut> {
+        match downstream_object {
+            DatagramObject::ObjectDatagram(object) => self.packetize_object_datagram(object).await,
+            DatagramObject::ObjectDatagramStatus(object) => {
+                self.packetize_object_datagram_status(object).await
+            }
+        }
+    }
+
+    async fn packetize_object_datagram(
+        &mut self,
+        datagram_object: &datagram::Object,
+    ) -> Result<BytesMut> {
         let mut buf = BytesMut::new();
         datagram_object.packetize(&mut buf);
 
         let mut message_buf = BytesMut::with_capacity(buf.len());
         message_buf.extend(write_variable_integer(
             u8::from(DataStreamType::ObjectDatagram) as u64,
+        ));
+        message_buf.extend(buf);
+
+        Ok(message_buf)
+    }
+
+    async fn packetize_object_datagram_status(
+        &mut self,
+        datagram_object: &datagram_status::Object,
+    ) -> Result<BytesMut> {
+        let mut buf = BytesMut::new();
+        datagram_object.packetize(&mut buf);
+
+        let mut message_buf = BytesMut::with_capacity(buf.len());
+        message_buf.extend(write_variable_integer(
+            u8::from(DataStreamType::ObjectDatagramStatus) as u64,
         ));
         message_buf.extend(buf);
 
@@ -305,10 +371,10 @@ impl DatagramObjectForwarder {
     //   A relay MAY treat receipt of EndOfGroup, EndOfTrack, GroupDoesNotExist, or
     //   EndOfTrack objects as a signal to close corresponding streams even if the FIN
     //   has not arrived, as further objects on the stream would be a protocol violation.
-    fn is_data_stream_ended(&self, datagram_object: &datagram::Object) -> bool {
+    fn is_data_stream_ended(&self, object: &datagram_status::Object) -> bool {
         matches!(
-            datagram_object.object_status(),
-            Some(ObjectStatus::EndOfTrackAndGroup)
+            object.object_status(),
+            ObjectStatus::EndOfTrack | ObjectStatus::EndOfTrackAndGroup
         )
     }
 }
