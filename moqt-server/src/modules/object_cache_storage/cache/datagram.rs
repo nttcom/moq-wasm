@@ -78,16 +78,12 @@ impl DatagramCache {
         self.objects.iter().last().map(|(k, v)| (*k, v.clone()))
     }
 
-    pub(crate) fn get_largest_group_id(&mut self) -> u64 {
-        self.objects
-            .iter()
-            .map(|(_, v)| v.group_id())
-            .max()
-            .unwrap()
+    pub(crate) fn get_largest_group_id(&mut self) -> Option<u64> {
+        self.objects.iter().map(|(_, v)| v.group_id()).max()
     }
 
-    pub(crate) fn get_largest_object_id(&mut self) -> u64 {
-        let largest_group_id = self.get_largest_group_id();
+    pub(crate) fn get_largest_object_id(&mut self) -> Option<u64> {
+        let largest_group_id = self.get_largest_group_id()?;
 
         self.objects
             .iter()
@@ -99,6 +95,5 @@ impl DatagramCache {
                 }
             })
             .max()
-            .unwrap()
     }
 }

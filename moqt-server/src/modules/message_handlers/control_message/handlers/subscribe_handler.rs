@@ -330,9 +330,11 @@ async fn start_new_forwarder(
         ForwardingPreference::Subgroup => {
             let data_stream_type = DataStreamType::SubgroupHeader;
             let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
-            let group_id = object_cache_storage
-                .get_largest_group_id(&cache_key)
-                .await?;
+            let group_id = match object_cache_storage.get_largest_group_id(&cache_key).await {
+                Ok(Some(group_id)) => group_id,
+                Ok(None) => bail!("largest group id is none"),
+                Err(err) => bail!("Failed to get largest group id: {:?}", err),
+            };
 
             let start_group = subscribe_message.start_group();
             if start_group.is_some() && start_group.unwrap() > group_id {
@@ -388,12 +390,12 @@ async fn check_existing_contents(
 
     let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
     let largest_group_id = match object_cache_storage.get_largest_group_id(&cache_key).await {
-        Ok(group_id) => Some(group_id),
+        Ok(group_id) => group_id,
         Err(_) => None,
     };
 
     let largest_object_id = match object_cache_storage.get_largest_object_id(&cache_key).await {
-        Ok(object_id) => Some(object_id),
+        Ok(object_id) => object_id,
         Err(_) => None,
     };
 
