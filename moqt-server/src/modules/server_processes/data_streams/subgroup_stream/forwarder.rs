@@ -7,7 +7,7 @@ use crate::{
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         server_processes::senders::Senders,
     },
-    signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher},
+    signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher, TerminateReason},
     SubgroupStreamId,
 };
 use anyhow::{bail, Ok, Result};
@@ -100,8 +100,8 @@ impl SubgroupStreamObjectForwarder {
         tokio::spawn(async move {
             while let Some(signal) = signal_rx.recv().await {
                 match *signal {
-                    DataStreamThreadSignal::Terminate(status) => {
-                        tracing::debug!("Received Terminate signal (status: {:?})", status);
+                    DataStreamThreadSignal::Terminate(reason) => {
+                        tracing::debug!("Received Terminate signal (reason: {:?})", reason);
                         is_terminated_clone.store(true, Ordering::Relaxed);
                     }
                 }
@@ -582,7 +582,8 @@ impl SubgroupStreamObjectForwarder {
             stream_id
         );
 
-        let signal = Box::new(DataStreamThreadSignal::Terminate(object_status));
+        let terminate_reason = TerminateReason::ObjectStatus(object_status);
+        let signal = Box::new(DataStreamThreadSignal::Terminate(terminate_reason));
         signal_dispatcher
             .transfer_signal_to_data_stream_thread(downstream_session_id, stream_id, signal)
             .await?;
