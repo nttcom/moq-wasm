@@ -39,6 +39,7 @@ pub trait SubscriptionNodeRegistry {
         &self,
         track_alias: TrackAlias,
     ) -> Result<Option<SubscribeId>>;
+    fn get_all_subscribe_ids(&self) -> Result<Vec<SubscribeId>>;
     fn has_track(&self, track_namespace: TrackNamespace, track_name: String) -> bool;
     fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool>;
     fn is_requesting(&self, subscribe_id: SubscribeId) -> bool;
@@ -60,6 +61,7 @@ pub trait SubscriptionNodeRegistry {
         subgroup_id: u64,
         stream_id: u64,
     ) -> Result<()>;
+    fn get_group_ids_for_subscription(&self, subscribe_id: SubscribeId) -> Result<Vec<u64>>;
     fn get_subgroup_ids_for_group(
         &self,
         subscribe_id: SubscribeId,

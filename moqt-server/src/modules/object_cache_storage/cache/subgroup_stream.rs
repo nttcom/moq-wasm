@@ -70,17 +70,6 @@ impl SubgroupStreamsCache {
         subgroup_stream_cache.get_next_object_with_cache_id(cache_id)
     }
 
-    pub(crate) fn get_next_larger_object_with_cache_id(
-        &mut self,
-        group_id: u64,
-        subgroup_id: u64,
-        object_id: u64,
-    ) -> Option<(CacheId, subgroup_stream::Object)> {
-        let subgroup_stream_id = (group_id, subgroup_id);
-        let subgroup_stream_cache = self.streams.get_mut(&subgroup_stream_id).unwrap();
-        subgroup_stream_cache.get_next_larger_object_with_cache_id(object_id)
-    }
-
     pub(crate) fn get_first_object_with_cache_id(
         &mut self,
         group_id: u64,
@@ -195,19 +184,6 @@ impl SubgroupStreamCache {
         let next_cache_id = cache_id + 1;
         self.objects.iter().find_map(|(k, v)| {
             if *k == next_cache_id {
-                Some((*k, v.clone()))
-            } else {
-                None
-            }
-        })
-    }
-
-    fn get_next_larger_object_with_cache_id(
-        &mut self,
-        object_id: u64,
-    ) -> Option<(CacheId, subgroup_stream::Object)> {
-        self.objects.iter().find_map(|(k, v)| {
-            if v.object_id() > object_id {
                 Some((*k, v.clone()))
             } else {
                 None

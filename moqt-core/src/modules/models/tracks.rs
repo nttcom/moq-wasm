@@ -58,6 +58,10 @@ impl Track {
             .insert(subgroup_id, stream_id);
     }
 
+    pub fn get_all_group_ids(&self) -> Vec<u64> {
+        self.group_subgroup_stream_map.keys().cloned().collect()
+    }
+
     pub fn get_subgroup_ids_for_group(&self, group_id: u64) -> Vec<u64> {
         self.group_subgroup_stream_map
             .get(&group_id)

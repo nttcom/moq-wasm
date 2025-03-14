@@ -210,27 +210,6 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 );
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
-            ObjectCacheStorageCommand::GetNextLargerSubgroupStreamObject {
-                cache_key,
-                group_id,
-                subgroup_id,
-                object_id,
-                resp,
-            } => {
-                let cache = storage.get_mut(&cache_key);
-                let subgroup_streams_cache = match cache {
-                    Some(Cache::SubgroupStream(subgroup_stream_cache)) => subgroup_stream_cache,
-                    _ => {
-                        resp.send(Err(anyhow::anyhow!("subgroup stream cache not found")))
-                            .unwrap();
-                        continue;
-                    }
-                };
-
-                let object_with_cache_id = subgroup_streams_cache
-                    .get_next_larger_object_with_cache_id(group_id, subgroup_id, object_id);
-                resp.send(Ok(object_with_cache_id)).unwrap();
-            }
             ObjectCacheStorageCommand::GetLatestDatagramGroup { cache_key, resp } => {
                 let cache = storage.get_mut(&cache_key);
                 let datagram_cache = match cache {

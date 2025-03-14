@@ -14,7 +14,7 @@ use crate::{
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         server_processes::senders::Senders,
     },
-    signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher},
+    signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher, TerminateReason},
     TerminationError,
 };
 use anyhow::Result;
@@ -106,8 +106,8 @@ impl SubgroupStreamObjectReceiver {
             },
             Some(signal) = signal_rx.recv() => {
                 match *signal {
-                    DataStreamThreadSignal::Terminate(status) => {
-                        tracing::debug!("Received Terminate signal (status: {:?})", status);
+                    DataStreamThreadSignal::Terminate(reason) => {
+                        tracing::debug!("Received Terminate signal (reason: {:?})", reason);
                         break;
                     }
                 }
@@ -642,7 +642,8 @@ impl SubgroupStreamObjectReceiver {
             stream_id
         );
 
-        let signal = Box::new(DataStreamThreadSignal::Terminate(object_status));
+        let terminate_reason = TerminateReason::ObjectStatus(object_status);
+        let signal = Box::new(DataStreamThreadSignal::Terminate(terminate_reason));
         match signal_dispatcher
             .transfer_signal_to_data_stream_thread(upstream_session_id, stream_id, signal)
             .await

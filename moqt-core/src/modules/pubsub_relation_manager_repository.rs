@@ -213,6 +213,15 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         subgroup_id: u64,
         stream_id: u64,
     ) -> Result<()>;
+    async fn get_upstream_subscribe_ids_for_client(
+        &self,
+        upstream_session_id: usize,
+    ) -> Result<Vec<u64>>;
+    async fn get_upstream_group_ids_for_subscription(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Vec<u64>>;
     async fn get_upstream_subgroup_ids_for_group(
         &self,
         upstream_session_id: usize,
@@ -234,6 +243,15 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         subgroup_id: u64,
         stream_id: u64,
     ) -> Result<()>;
+    async fn get_downstream_subscribe_ids_for_client(
+        &self,
+        downstream_session_id: usize,
+    ) -> Result<Vec<u64>>;
+    async fn get_downstream_group_ids_for_subscription(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<Vec<u64>>;
     async fn get_downstream_subgroup_ids_for_group(
         &self,
         downstream_session_id: usize,

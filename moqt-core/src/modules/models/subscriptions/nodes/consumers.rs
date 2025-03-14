@@ -102,6 +102,10 @@ impl SubscriptionNodeRegistry for Consumer {
             .map(|(subscribe_id, _)| *subscribe_id))
     }
 
+    fn get_all_subscribe_ids(&self) -> Result<Vec<SubscribeId>> {
+        Ok(self.subscriptions.keys().cloned().collect())
+    }
+
     fn has_track(&self, track_namespace: TrackNamespace, track_name: String) -> bool {
         self.subscriptions.values().any(|subscription| {
             subscription.get_track_namespace_and_name()
@@ -192,6 +196,13 @@ impl SubscriptionNodeRegistry for Consumer {
         subscription.set_stream_id(group_id, subgroup_id, stream_id);
 
         Ok(())
+    }
+
+    fn get_group_ids_for_subscription(&self, subscribe_id: SubscribeId) -> Result<Vec<u64>> {
+        let subscription = self.subscriptions.get(&subscribe_id).unwrap();
+        let group_ids = subscription.get_all_group_ids();
+
+        Ok(group_ids)
     }
 
     fn get_subgroup_ids_for_group(
