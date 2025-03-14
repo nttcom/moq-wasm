@@ -379,8 +379,11 @@ impl ObjectCacheStorageWrapper {
         }
     }
 
-    pub(crate) async fn get_largest_group_id(&mut self, cache_key: &CacheKey) -> Result<u64> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<u64>>();
+    pub(crate) async fn get_largest_group_id(
+        &mut self,
+        cache_key: &CacheKey,
+    ) -> Result<Option<u64>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<u64>>>();
 
         let cmd = ObjectCacheStorageCommand::GetLargestGroupId {
             cache_key: cache_key.clone(),
@@ -397,8 +400,11 @@ impl ObjectCacheStorageWrapper {
         }
     }
 
-    pub(crate) async fn get_largest_object_id(&mut self, cache_key: &CacheKey) -> Result<u64> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<u64>>();
+    pub(crate) async fn get_largest_object_id(
+        &mut self,
+        cache_key: &CacheKey,
+    ) -> Result<Option<u64>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<u64>>>();
 
         let cmd = ObjectCacheStorageCommand::GetLargestObjectId {
             cache_key: cache_key.clone(),
@@ -410,7 +416,7 @@ impl ObjectCacheStorageWrapper {
         let result = resp_rx.await.unwrap();
 
         match result {
-            Ok(group_id) => Ok(group_id),
+            Ok(object_id) => Ok(object_id),
             Err(err) => bail!(err),
         }
     }
@@ -1464,14 +1470,14 @@ mod success {
 
         assert!(group_result.is_ok());
 
-        let largest_group_id = group_result.unwrap();
+        let largest_group_id = group_result.unwrap().unwrap();
         assert_eq!(largest_group_id, expected_group_id);
 
         let object_result = object_cache_storage.get_largest_object_id(&cache_key).await;
 
         assert!(object_result.is_ok());
 
-        let largest_object = object_result.unwrap();
+        let largest_object = object_result.unwrap().unwrap();
         assert_eq!(largest_object, expected_object_id);
     }
 
@@ -1543,14 +1549,14 @@ mod success {
 
         assert!(group_result.is_ok());
 
-        let largest_group_id = group_result.unwrap();
+        let largest_group_id = group_result.unwrap().unwrap();
         assert_eq!(largest_group_id, expected_group_id);
 
         let object_result = object_cache_storage.get_largest_object_id(&cache_key).await;
 
         assert!(object_result.is_ok());
 
-        let largest_object = object_result.unwrap();
+        let largest_object = object_result.unwrap().unwrap();
         assert_eq!(largest_object, expected_object_id);
     }
 
