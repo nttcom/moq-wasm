@@ -3307,10 +3307,12 @@ mod success {
             upstream_subscribe_ids.push(upstream_subscribe_id);
         }
 
-        let result_subscribe_ids = pubsub_relation_manager
+        let mut result_subscribe_ids = pubsub_relation_manager
             .get_upstream_subscribe_ids_for_client(upstream_session_id)
             .await
             .unwrap();
+
+        result_subscribe_ids.sort();
 
         assert_eq!(result_subscribe_ids, upstream_subscribe_ids);
     }
@@ -3557,10 +3559,12 @@ mod success {
                 .await;
         }
 
-        let result_subscribe_ids = pubsub_relation_manager
+        let mut result_subscribe_ids = pubsub_relation_manager
             .get_downstream_subscribe_ids_for_client(downstream_session_id)
             .await
             .unwrap();
+
+        result_subscribe_ids.sort();
 
         assert_eq!(result_subscribe_ids, subscribe_ids);
     }
