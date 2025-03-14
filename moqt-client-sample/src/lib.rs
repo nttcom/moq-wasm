@@ -27,7 +27,9 @@ use moqt_core::{
         version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
     },
     messages::{
-        data_streams::{datagram, object_status::ObjectStatus, subgroup_stream, DataStreams},
+        data_streams::{
+            datagram, datagram_status, object_status::ObjectStatus, subgroup_stream, DataStreams,
+        },
         moqt_payload::MOQTPayload,
     },
     models::subscriptions::{
@@ -160,6 +162,13 @@ impl MOQTClient {
         self.callbacks
             .borrow_mut()
             .set_datagram_object_callback(callback);
+    }
+
+    #[wasm_bindgen(js_name = onDatagramObjectStatus)]
+    pub fn set_datagram_object_status_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_datagram_object_status_callback(callback);
     }
 
     #[wasm_bindgen(js_name = onSubgroupStreamHeader)]
@@ -748,6 +757,54 @@ impl MOQTClient {
             // Message Type
             buf.extend(write_variable_integer(
                 u8::from(DataStreamType::ObjectDatagram) as u64,
+            ));
+            buf.extend(datagram_object_buf);
+
+            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
+            buffer.copy_from(&buf);
+            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
+                Ok(ok) => {
+                    log(std::format!("sent: object id: {:#?}", object_id).as_str());
+                    Ok(ok)
+                }
+                Err(e) => {
+                    log(std::format!("err: {:?}", e).as_str());
+                    Err(e)
+                }
+            }
+        } else {
+            Err(JsValue::from_str("datagram_writer is None"))
+        }
+    }
+
+    #[wasm_bindgen(js_name = sendDatagramObjectStatus)]
+    pub async fn send_datagram_object_status(
+        &self,
+        track_alias: u64,
+        group_id: u64,
+        object_id: u64,
+        publisher_priority: u8,
+        object_status: u8,
+    ) -> Result<JsValue, JsValue> {
+        let writer = self.datagram_writer.borrow().clone();
+        if let Some(writer) = writer {
+            let extension_headers = vec![];
+            let datagram_object = datagram_status::Object::new(
+                track_alias,
+                group_id,
+                object_id,
+                publisher_priority,
+                extension_headers,
+                ObjectStatus::try_from(object_status).unwrap(),
+            )
+            .unwrap();
+            let mut datagram_object_buf = BytesMut::new();
+            datagram_object.packetize(&mut datagram_object_buf);
+
+            let mut buf = Vec::new();
+            // Message Type
+            buf.extend(write_variable_integer(
+                u8::from(DataStreamType::ObjectDatagramStatus) as u64,
             ));
             buf.extend(datagram_object_buf);
 
@@ -1387,6 +1444,8 @@ async fn object_header_handler(
 
 #[cfg(feature = "web_sys_unstable_apis")]
 async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut BytesMut) -> Result<()> {
+    use moqt_core::messages::data_streams::datagram_status;
+
     let mut read_cur = Cursor::new(&buf[..]);
     let header_type_value = read_variable_integer(&mut read_cur);
 
@@ -1396,27 +1455,49 @@ async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut Bytes
 
             log(std::format!("data_stream_type_value: {:#x?}", data_stream_type).as_str());
 
-            if data_stream_type == DataStreamType::ObjectDatagram {
-                let datagram_object = match datagram::Object::depacketize(&mut read_cur) {
-                    Ok(v) => {
-                        buf.advance(read_cur.position() as usize);
-                        v
-                    }
-                    Err(e) => {
-                        read_cur.set_position(0);
-                        log(std::format!("retry because: {:#?}", e).as_str());
-                        return Err(e);
-                    }
-                };
+            match data_stream_type {
+                DataStreamType::ObjectDatagram => {
+                    let datagram_object = match datagram::Object::depacketize(&mut read_cur) {
+                        Ok(v) => {
+                            buf.advance(read_cur.position() as usize);
+                            v
+                        }
+                        Err(e) => {
+                            read_cur.set_position(0);
+                            log(std::format!("retry because: {:#?}", e).as_str());
+                            return Err(e);
+                        }
+                    };
 
-                if let Some(callback) = callbacks.borrow().datagram_object_callback() {
-                    let v = serde_wasm_bindgen::to_value(&datagram_object).unwrap();
-                    callback.call1(&JsValue::null(), &(v)).unwrap();
+                    if let Some(callback) = callbacks.borrow().datagram_object_callback() {
+                        let v = serde_wasm_bindgen::to_value(&datagram_object).unwrap();
+                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                    }
                 }
-            } else {
-                let msg = "format error".to_string();
-                log(std::format!("msg: {}", msg).as_str());
-                return Err(anyhow::anyhow!(msg));
+                DataStreamType::ObjectDatagramStatus => {
+                    let datagram_object = match datagram_status::Object::depacketize(&mut read_cur)
+                    {
+                        Ok(v) => {
+                            buf.advance(read_cur.position() as usize);
+                            v
+                        }
+                        Err(e) => {
+                            read_cur.set_position(0);
+                            log(std::format!("retry because: {:#?}", e).as_str());
+                            return Err(e);
+                        }
+                    };
+
+                    if let Some(callback) = callbacks.borrow().datagram_object_status_callback() {
+                        let v = serde_wasm_bindgen::to_value(&datagram_object).unwrap();
+                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                    }
+                }
+                _ => {
+                    let msg = "format error".to_string();
+                    log(std::format!("msg: {}", msg).as_str());
+                    return Err(anyhow::anyhow!(msg));
+                }
             }
         }
         Err(e) => {
@@ -1663,6 +1744,7 @@ struct MOQTCallbacks {
     subscribe_announces_response_callback: Option<js_sys::Function>,
     unsubscribe_callback: Option<js_sys::Function>,
     datagram_object_callback: Option<js_sys::Function>,
+    datagram_object_status_callback: Option<js_sys::Function>,
     subgroup_stream_header_callback: Option<js_sys::Function>,
     subgroup_stream_object_callbacks: HashMap<u64, js_sys::Function>,
 }
@@ -1679,6 +1761,7 @@ impl MOQTCallbacks {
             subscribe_announces_response_callback: None,
             unsubscribe_callback: None,
             datagram_object_callback: None,
+            datagram_object_status_callback: None,
             subgroup_stream_header_callback: None,
             subgroup_stream_object_callbacks: HashMap::new(),
         }
@@ -1742,6 +1825,14 @@ impl MOQTCallbacks {
 
     pub fn set_datagram_object_callback(&mut self, callback: js_sys::Function) {
         self.datagram_object_callback = Some(callback);
+    }
+
+    pub fn datagram_object_status_callback(&self) -> Option<js_sys::Function> {
+        self.datagram_object_status_callback.clone()
+    }
+
+    pub fn set_datagram_object_status_callback(&mut self, callback: js_sys::Function) {
+        self.datagram_object_status_callback = Some(callback);
     }
 
     pub fn subgroup_stream_header_callback(&self) -> Option<js_sys::Function> {
