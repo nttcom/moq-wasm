@@ -1,6 +1,6 @@
 use super::cache::{CacheId, CacheKey, SubgroupId};
 use anyhow::Result;
-use moqt_core::messages::data_streams::{datagram, subgroup_stream};
+use moqt_core::messages::data_streams::{subgroup_stream, DatagramObject};
 use tokio::sync::oneshot;
 
 #[derive(Debug)]
@@ -28,7 +28,7 @@ pub(crate) enum ObjectCacheStorageCommand {
     },
     SetDatagramObject {
         cache_key: CacheKey,
-        datagram_object: datagram::Object,
+        datagram_object: DatagramObject,
         duration: u64,
         resp: oneshot::Sender<Result<()>>,
     },
@@ -44,7 +44,7 @@ pub(crate) enum ObjectCacheStorageCommand {
         cache_key: CacheKey,
         group_id: u64,
         object_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
+        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
     },
     GetAbsoluteSubgroupStreamObject {
         cache_key: CacheKey,
@@ -56,7 +56,7 @@ pub(crate) enum ObjectCacheStorageCommand {
     GetNextDatagramObject {
         cache_key: CacheKey,
         cache_id: CacheId,
-        resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
+        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
     },
     GetNextSubgroupStreamObject {
         cache_key: CacheKey,
@@ -67,11 +67,11 @@ pub(crate) enum ObjectCacheStorageCommand {
     },
     GetLatestDatagramObject {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
+        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
     },
     GetLatestDatagramGroup {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
+        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
     },
     // Since current Forwarder is generated for each Group,
     // LatestGroup is never used for SubgroupCache.
