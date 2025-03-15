@@ -30,7 +30,12 @@
           <label>AuthInfo: <input type="text" name="auth-info" id="" value="secret" /> </label>
           <br />
           <h3>CLIENT_SETUP</h3>
-          <label>Supported Version: <input type="text" name="versions" id="" value="0xff00000A" /></label>
+          Role:
+          <label><input type="radio" name="role" id="" value="1" checked />Publisher</label>
+          <label><input type="radio" name="role" id="" value="2" />Subscriber</label>
+          <label><input type="radio" name="role" id="" value="3" />PubSub</label>
+          <br />
+          <label>Supported Version: <input type="text" name="versions" id="" value="0xff000008" /></label>
           <br />
           Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="1" />
           <br />

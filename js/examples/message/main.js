@@ -110,10 +110,11 @@ init().then(async () => {
     const sendSetupBtn = document.getElementById('sendSetupBtn')
     sendSetupBtn.addEventListener('click', async () => {
       console.log('send setup btn clicked')
+      const role = Array.from(form['role']).filter((elem) => elem.checked)[0].value
       const versions = form['versions'].value.split(',').map(BigInt)
       const maxSubscribeId = form['max-subscribe-id'].value
 
-      await client.sendSetupMessage(versions, BigInt(maxSubscribeId))
+      await client.sendSetupMessage(role, versions, BigInt(maxSubscribeId))
     })
 
     const sendAnnounceBtn = document.getElementById('sendAnnounceBtn')
