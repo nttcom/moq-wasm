@@ -442,11 +442,11 @@ mod success {
         let bytes_array = [
             1,   // Number of Supported Versions (i)
             192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 8, // Supported Version(i): Value(0xff000008) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Subscriber)
+            0, 0, 0, 255, 0, 0, 10, // Supported Version(i): Value(0xff00000a) in 62bit
+            1,  // Number of Parameters (i)
+            0,  // SETUP Parameters (..): Type(Role)
+            1,  // SETUP Parameters (..): Length
+            2,  // SETUP Parameters (..): Role(Subscriber)
         ];
         let client_status = MOQTClientStatus::Connected;
 
@@ -469,11 +469,11 @@ mod success {
         let bytes_array = [
             1,   // Number of Supported Versions (i)
             192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 8, // Supported Version(i): Value(0xff000008) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Subscriber)
+            0, 0, 0, 255, 0, 0, 10, // Supported Version(i): Value(0xff00000a) in 62bit
+            1,  // Number of Parameters (i)
+            0,  // SETUP Parameters (..): Type(Role)
+            1,  // SETUP Parameters (..): Length
+            2,  // SETUP Parameters (..): Role(Subscriber)
         ];
         let client_status = MOQTClientStatus::Connected;
 
@@ -505,11 +505,11 @@ mod failure {
         let bytes_array = [
             1,   // Number of Supported Versions (i)
             192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 8, // Supported Version(i): Value(0xff0008) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Subscriber)
+            0, 0, 0, 255, 0, 0, 10, // Supported Version(i): Value(0xff000a) in 62bit
+            1,  // Number of Parameters (i)
+            0,  // SETUP Parameters (..): Type(Role)
+            1,  // SETUP Parameters (..): Length
+            2,  // SETUP Parameters (..): Role(Subscriber)
         ];
         let wrong_client_status = MOQTClientStatus::SetUp; // Correct Status is Connected
 
