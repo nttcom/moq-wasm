@@ -59,8 +59,7 @@ impl DataStreams for Header {
         let track_alias = read_variable_integer(read_cur).context("track alias")?;
         let group_id = read_variable_integer(read_cur).context("group id")?;
         let subgroup_id = read_variable_integer(read_cur).context("subgroup id")?;
-        let publisher_priority =
-            read_bytes(read_cur, 1).context("publisher priority")?[0];
+        let publisher_priority = read_bytes(read_cur, 1).context("publisher priority")?[0];
 
         tracing::trace!("Depacketized Subgroup Stream Header message.");
 
@@ -151,8 +150,7 @@ impl DataStreams for Object {
 
         let mut extension_headers_vec = vec![];
         let extension_headers =
-            read_bytes(read_cur, extension_headers_length as usize)
-                .context("extension headers")?;
+            read_bytes(read_cur, extension_headers_length as usize).context("extension headers")?;
         let mut extension_headers_cur = std::io::Cursor::new(&extension_headers[..]);
 
         while extension_headers_cur.has_remaining() {
@@ -183,8 +181,7 @@ impl DataStreams for Object {
         };
 
         let object_payload = if object_payload_length > 0 {
-            read_bytes(read_cur, object_payload_length as usize)
-                .context("object payload")?
+            read_bytes(read_cur, object_payload_length as usize).context("object payload")?
         } else {
             vec![]
         };
