@@ -4,7 +4,7 @@ use crate::{
         convert_bytes_to_integer, read_fixed_length_bytes_from_buffer, write_fixed_length_bytes,
     },
     variable_integer::{
-        get_length_from_variable_integer_first_byte, read_variable_integer_from_buffer,
+        get_2msb_length_from_first_byte, get_2msb_value, read_variable_integer_from_buffer,
         write_variable_integer,
     },
 };
@@ -142,12 +142,13 @@ pub struct DeliveryTimeout {
 impl DeliveryTimeout {
     pub fn new(value: u64) -> Self {
         let first_byte = (value & 0xFF) as u8; // 0xFF: Bit mask to get the first byte
-        let length = get_length_from_variable_integer_first_byte(first_byte);
+        let length = get_2msb_length_from_first_byte(first_byte);
+        let first_two_bits_masked_value = get_2msb_value(value);
 
         DeliveryTimeout {
             parameter_type: VersionSpecificParameterType::DeliveryTimeout,
             length,
-            value,
+            value: first_two_bits_masked_value,
         }
     }
 }
@@ -162,12 +163,13 @@ pub struct MaxCacheDuration {
 impl MaxCacheDuration {
     pub fn new(value: u64) -> Self {
         let first_byte = (value & 0xFF) as u8; // 0xFF: Bit mask to get the first byte
-        let length = get_length_from_variable_integer_first_byte(first_byte);
+        let length = get_2msb_length_from_first_byte(first_byte);
+        let first_two_bits_masked_value = get_2msb_value(value);
 
         MaxCacheDuration {
             parameter_type: VersionSpecificParameterType::MaxCacheDuration,
             length,
-            value,
+            value: first_two_bits_masked_value,
         }
     }
 }
