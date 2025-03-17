@@ -60,15 +60,14 @@ impl MOQTPayload for SubscribeDone {
         let status_code = StatusCode::try_from(status_code_u64).context("status code")?;
         let reason_phrase =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
-        let content_exists =
-            match read_bytes_from_buffer(buf, 1).context("content_exists")?[0] {
-                0 => false,
-                1 => true,
-                _ => {
-                    // TODO: return Termination Error Code
-                    bail!("Invalid content_exists value: Protocol Violation");
-                }
-            };
+        let content_exists = match read_bytes_from_buffer(buf, 1).context("content_exists")?[0] {
+            0 => false,
+            1 => true,
+            _ => {
+                // TODO: return Termination Error Code
+                bail!("Invalid content_exists value: Protocol Violation");
+            }
+        };
 
         let (final_group_id, final_object_id) = match content_exists {
             true => {

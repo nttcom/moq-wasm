@@ -170,8 +170,7 @@ impl MOQTPayload for Subscribe {
         }
         let track_name =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track name")?;
-        let subscriber_priority =
-            read_bytes_from_buffer(buf, 1).context("subscriber priority")?[0];
+        let subscriber_priority = read_bytes_from_buffer(buf, 1).context("subscriber priority")?[0];
         let group_order_u8 = read_bytes_from_buffer(buf, 1)?[0];
 
         // Values larger than 0x2 are a Protocol Violation.
