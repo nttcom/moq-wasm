@@ -1,7 +1,7 @@
 use super::extension_header::ExtensionHeader;
 use crate::{
     messages::data_streams::DataStreams,
-    variable_bytes::{read_fixed_length_bytes, read_variable_bytes_to_end},
+    variable_bytes::{read_all_variable_bytes, read_bytes},
     variable_integer::{read_variable_integer, write_variable_integer},
 };
 use anyhow::{Context, Result};
@@ -80,16 +80,14 @@ impl DataStreams for Object {
         let track_alias = read_variable_integer(read_cur).context("track alias")?;
         let group_id = read_variable_integer(read_cur).context("group id")?;
         let object_id = read_variable_integer(read_cur).context("object id")?;
-        let publisher_priority =
-            read_fixed_length_bytes(read_cur, 1).context("publisher priority")?[0];
+        let publisher_priority = read_bytes(read_cur, 1).context("publisher priority")?[0];
 
         let extension_headers_length =
             read_variable_integer(read_cur).context("extension headers length")?;
 
         let mut extension_headers_vec = vec![];
         let extension_headers =
-            read_fixed_length_bytes(read_cur, extension_headers_length as usize)
-                .context("extension headers")?;
+            read_bytes(read_cur, extension_headers_length as usize).context("extension headers")?;
         let mut extension_headers_cur = std::io::Cursor::new(&extension_headers[..]);
 
         while extension_headers_cur.has_remaining() {
@@ -98,7 +96,7 @@ impl DataStreams for Object {
             extension_headers_vec.push(extension_header);
         }
 
-        let object_payload = read_variable_bytes_to_end(read_cur).context("object payload")?;
+        let object_payload = read_all_variable_bytes(read_cur).context("object payload")?;
 
         tracing::trace!("Depacketized Datagram Object message.");
 

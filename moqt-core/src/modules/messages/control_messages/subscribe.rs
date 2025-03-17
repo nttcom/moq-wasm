@@ -6,7 +6,7 @@ use crate::{
         moqt_payload::MOQTPayload,
     },
     variable_bytes::{
-        read_fixed_length_bytes_from_buffer, read_variable_bytes_from_buffer, write_variable_bytes,
+        read_bytes_from_buffer, read_variable_bytes_from_buffer, write_variable_bytes,
     },
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
@@ -171,8 +171,8 @@ impl MOQTPayload for Subscribe {
         let track_name =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("track name")?;
         let subscriber_priority =
-            read_fixed_length_bytes_from_buffer(buf, 1).context("subscriber priority")?[0];
-        let group_order_u8 = read_fixed_length_bytes_from_buffer(buf, 1)?[0];
+            read_bytes_from_buffer(buf, 1).context("subscriber priority")?[0];
+        let group_order_u8 = read_bytes_from_buffer(buf, 1)?[0];
 
         // Values larger than 0x2 are a Protocol Violation.
         let group_order = match GroupOrder::try_from(group_order_u8).context("group order") {

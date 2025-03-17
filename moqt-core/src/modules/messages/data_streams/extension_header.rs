@@ -1,6 +1,6 @@
 use crate::{
     messages::data_streams::DataStreams,
-    variable_bytes::read_fixed_length_bytes,
+    variable_bytes::read_bytes,
     variable_integer::{read_variable_integer, write_variable_integer},
 };
 use anyhow::{bail, Context, Result};
@@ -128,7 +128,7 @@ impl DataStreams for ValueWithLength {
     {
         let header_length = read_variable_integer(read_cur).context("header length")?;
         let header_value = if header_length > 0 {
-            read_fixed_length_bytes(read_cur, header_length as usize).context("header value")?
+            read_bytes(read_cur, header_length as usize).context("header value")?
         } else {
             vec![]
         };
