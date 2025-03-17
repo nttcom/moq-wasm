@@ -24,7 +24,9 @@ use moqt_core::{
         subscribe_ok::SubscribeOk,
         unannounce::UnAnnounce,
         unsubscribe::Unsubscribe,
-        version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        version_specific_parameters::{
+            AuthorizationInfo, DeliveryTimeout, MaxCacheDuration, VersionSpecificParameter,
+        },
     },
     messages::{
         data_streams::{
@@ -427,7 +429,11 @@ impl MOQTClient {
                 FilterType::AbsoluteRange => Some(end_group),
             };
 
-            let version_specific_parameters = vec![auth_info];
+            let max_cache_duration =
+                VersionSpecificParameter::MaxCacheDuration(MaxCacheDuration::new(1000000));
+            let delivery_timeout =
+                VersionSpecificParameter::DeliveryTimeout(DeliveryTimeout::new(100000));
+            let version_specific_parameters = vec![auth_info, max_cache_duration, delivery_timeout];
             let subscribe_message = Subscribe::new(
                 subscribe_id,
                 track_alias,
