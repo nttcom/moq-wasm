@@ -1,7 +1,7 @@
 use super::{extension_header::ExtensionHeader, object_status::ObjectStatus};
 use crate::{
     messages::data_streams::DataStreams,
-    variable_bytes::read_fixed_length_bytes,
+    variable_bytes::read_bytes,
     variable_integer::{read_variable_integer, write_variable_integer},
 };
 use anyhow::{bail, Context, Result};
@@ -60,7 +60,7 @@ impl DataStreams for Header {
         let group_id = read_variable_integer(read_cur).context("group id")?;
         let subgroup_id = read_variable_integer(read_cur).context("subgroup id")?;
         let publisher_priority =
-            read_fixed_length_bytes(read_cur, 1).context("publisher priority")?[0];
+            read_bytes(read_cur, 1).context("publisher priority")?[0];
 
         tracing::trace!("Depacketized Subgroup Stream Header message.");
 
@@ -151,7 +151,7 @@ impl DataStreams for Object {
 
         let mut extension_headers_vec = vec![];
         let extension_headers =
-            read_fixed_length_bytes(read_cur, extension_headers_length as usize)
+            read_bytes(read_cur, extension_headers_length as usize)
                 .context("extension headers")?;
         let mut extension_headers_cur = std::io::Cursor::new(&extension_headers[..]);
 
@@ -183,7 +183,7 @@ impl DataStreams for Object {
         };
 
         let object_payload = if object_payload_length > 0 {
-            read_fixed_length_bytes(read_cur, object_payload_length as usize)
+            read_bytes(read_cur, object_payload_length as usize)
                 .context("object payload")?
         } else {
             vec![]
