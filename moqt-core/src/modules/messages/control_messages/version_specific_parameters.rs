@@ -1,10 +1,8 @@
 use crate::{
     messages::moqt_payload::MOQTPayload,
-    variable_bytes::{
-        convert_bytes_to_integer, read_fixed_length_bytes_from_buffer, write_fixed_length_bytes,
-    },
+    variable_bytes::{bytes_to_integer, read_bytes_from_buffer, write_bytes},
     variable_integer::{
-        get_length_from_variable_integer_first_byte, read_variable_integer_from_buffer,
+        get_2msb_length_from_first_byte, get_2msb_value, read_variable_integer_from_buffer,
         write_variable_integer,
     },
 };
@@ -32,7 +30,7 @@ impl MOQTPayload for VersionSpecificParameter {
             read_variable_integer_from_buffer(buf)?,
         )?);
         let parameter_length = read_variable_integer_from_buffer(buf)?;
-        let parameter_value = read_fixed_length_bytes_from_buffer(buf, parameter_length as usize)?;
+        let parameter_value = read_bytes_from_buffer(buf, parameter_length as usize)?;
 
         if let Err(err) = parameter_type {
             // If it appears in some other type of message, it MUST be ignored.
@@ -53,7 +51,7 @@ impl MOQTPayload for VersionSpecificParameter {
             }
             VersionSpecificParameterType::DeliveryTimeout => {
                 // The value is of type varint.
-                let parameter_value: u64 = convert_bytes_to_integer(parameter_value)?;
+                let parameter_value: u64 = bytes_to_integer(parameter_value)?;
 
                 Ok(VersionSpecificParameter::DeliveryTimeout(
                     DeliveryTimeout::new(parameter_value),
@@ -61,7 +59,7 @@ impl MOQTPayload for VersionSpecificParameter {
             }
             VersionSpecificParameterType::MaxCacheDuration => {
                 // The value is of type varint.
-                let parameter_value: u64 = convert_bytes_to_integer(parameter_value)?;
+                let parameter_value: u64 = bytes_to_integer(parameter_value)?;
 
                 Ok(VersionSpecificParameter::MaxCacheDuration(
                     MaxCacheDuration::new(parameter_value),
@@ -76,7 +74,7 @@ impl MOQTPayload for VersionSpecificParameter {
                 buf.extend(write_variable_integer(u64::from(param.parameter_type)));
                 buf.extend(write_variable_integer(param.length as u64));
                 //   The value is an ASCII string.
-                buf.extend(write_fixed_length_bytes(&param.value.as_bytes().to_vec()));
+                buf.extend(write_bytes(&param.value.as_bytes().to_vec()));
             }
             VersionSpecificParameter::DeliveryTimeout(param) => {
                 buf.extend(write_variable_integer(u64::from(param.parameter_type)));
@@ -142,12 +140,13 @@ pub struct DeliveryTimeout {
 impl DeliveryTimeout {
     pub fn new(value: u64) -> Self {
         let first_byte = (value & 0xFF) as u8; // 0xFF: Bit mask to get the first byte
-        let length = get_length_from_variable_integer_first_byte(first_byte);
+        let length = get_2msb_length_from_first_byte(first_byte);
+        let first_two_bits_masked_value = get_2msb_value(value);
 
         DeliveryTimeout {
             parameter_type: VersionSpecificParameterType::DeliveryTimeout,
             length,
-            value,
+            value: first_two_bits_masked_value,
         }
     }
 }
@@ -162,12 +161,13 @@ pub struct MaxCacheDuration {
 impl MaxCacheDuration {
     pub fn new(value: u64) -> Self {
         let first_byte = (value & 0xFF) as u8; // 0xFF: Bit mask to get the first byte
-        let length = get_length_from_variable_integer_first_byte(first_byte);
+        let length = get_2msb_length_from_first_byte(first_byte);
+        let first_two_bits_masked_value = get_2msb_value(value);
 
         MaxCacheDuration {
             parameter_type: VersionSpecificParameterType::MaxCacheDuration,
             length,
-            value,
+            value: first_two_bits_masked_value,
         }
     }
 }

@@ -2,16 +2,17 @@ use super::senders::{SenderToOtherConnectionThread, SendersToManagementThread};
 use crate::{
     modules::{
         buffer_manager::BufferCommand,
+        control_message_dispatcher::ControlMessageDispatchCommand,
         moqt_client::MOQTClient,
         object_cache_storage::wrapper::ObjectCacheStorageWrapper,
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
-        send_stream_dispatcher::SendStreamDispatchCommand,
         server_processes::{
             senders::{SenderToSelf, Senders},
             thread_starters::select_spawn_thread,
         },
     },
-    SubgroupStreamId,
+    signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher, TerminateReason},
+    SignalDispatchCommand, SubgroupStreamId,
 };
 use anyhow::Result;
 use moqt_core::{
@@ -110,9 +111,24 @@ impl SessionHandler {
         let senders = self.client.lock().await.senders();
         let stable_id = self.client.lock().await.id();
 
-        // Delete pub/sub information related to the client
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(senders.pubsub_relation_tx().clone());
+
+        let stream_ids = self
+            .get_all_stream_ids(&pubsub_relation_manager, stable_id)
+            .await?;
+
+        self.send_terminate_signal_to_data_stream_threads(&senders, stable_id, stream_ids)
+            .await?;
+
+        senders
+            .signal_dispatch_tx()
+            .send(SignalDispatchCommand::Delete {
+                session_id: stable_id,
+            })
+            .await?;
+
+        // Delete pub/sub information related to the client
         let _ = pubsub_relation_manager.delete_client(stable_id).await;
 
         // Delete object cache related to the client
@@ -124,8 +140,8 @@ impl SessionHandler {
 
         // Delete senders to the client
         senders
-            .send_stream_tx()
-            .send(SendStreamDispatchCommand::Delete {
+            .control_message_dispatch_tx()
+            .send(ControlMessageDispatchCommand::Delete {
                 session_id: stable_id,
             })
             .await?;
@@ -138,7 +154,217 @@ impl SessionHandler {
             })
             .await?;
 
+        // Delete senders for data stream threads
+        senders
+            .signal_dispatch_tx()
+            .send(SignalDispatchCommand::Delete {
+                session_id: stable_id,
+            })
+            .await?;
+
         tracing::info!("SessionHandler finished");
+
+        Ok(())
+    }
+
+    async fn get_all_stream_ids(
+        &self,
+        pubsub_relation_manager: &PubSubRelationManagerWrapper,
+        stable_id: usize,
+    ) -> Result<Vec<u64>> {
+        let upstream_stream_ids = self
+            .get_upstream_stream_ids(pubsub_relation_manager, stable_id)
+            .await?;
+        let downstream_stream_ids = self
+            .get_downstream_stream_ids(pubsub_relation_manager, stable_id)
+            .await?;
+
+        let mut stream_ids = Vec::new();
+        stream_ids.extend(upstream_stream_ids);
+        stream_ids.extend(downstream_stream_ids);
+
+        Ok(stream_ids)
+    }
+
+    async fn get_upstream_stream_ids(
+        &self,
+        pubsub_relation_manager: &PubSubRelationManagerWrapper,
+        stable_id: usize,
+    ) -> Result<Vec<u64>> {
+        let upstream_subscribe_ids = pubsub_relation_manager
+            .get_upstream_subscribe_ids_for_client(stable_id)
+            .await?;
+
+        let mut stream_ids = Vec::new();
+
+        for subscribe_id in upstream_subscribe_ids {
+            let stream_ids_for_subscription = self
+                .get_upstream_stream_ids_for_subscription(
+                    pubsub_relation_manager,
+                    stable_id,
+                    subscribe_id,
+                )
+                .await?;
+            stream_ids.extend(stream_ids_for_subscription);
+        }
+
+        Ok(stream_ids)
+    }
+
+    async fn get_upstream_stream_ids_for_subscription(
+        &self,
+        pubsub_relation_manager: &PubSubRelationManagerWrapper,
+        stable_id: usize,
+        subscribe_id: u64,
+    ) -> Result<Vec<u64>> {
+        let group_ids = pubsub_relation_manager
+            .get_upstream_group_ids_for_subscription(stable_id, subscribe_id)
+            .await?;
+
+        let mut stream_ids = Vec::new();
+
+        for group_id in group_ids {
+            let stream_ids_for_group = self
+                .get_upstream_stream_ids_for_group(
+                    pubsub_relation_manager,
+                    stable_id,
+                    subscribe_id,
+                    group_id,
+                )
+                .await?;
+
+            stream_ids.extend(stream_ids_for_group);
+        }
+
+        Ok(stream_ids)
+    }
+
+    async fn get_upstream_stream_ids_for_group(
+        &self,
+        pubsub_relation_manager: &PubSubRelationManagerWrapper,
+        stable_id: usize,
+        subscribe_id: u64,
+        group_id: u64,
+    ) -> Result<Vec<u64>> {
+        let subgroup_ids = pubsub_relation_manager
+            .get_upstream_subgroup_ids_for_group(stable_id, subscribe_id, group_id)
+            .await?;
+
+        let mut stream_ids = Vec::new();
+
+        for subgroup_id in subgroup_ids {
+            let stream_id = pubsub_relation_manager
+                .get_upstream_stream_id_for_subgroup(stable_id, subscribe_id, group_id, subgroup_id)
+                .await?;
+
+            if let Some(stream_id) = stream_id {
+                stream_ids.push(stream_id);
+            }
+        }
+
+        Ok(stream_ids)
+    }
+
+    async fn get_downstream_stream_ids(
+        &self,
+        pubsub_relation_manager: &PubSubRelationManagerWrapper,
+        stable_id: usize,
+    ) -> Result<Vec<u64>> {
+        let downstream_subscribe_ids = pubsub_relation_manager
+            .get_downstream_subscribe_ids_for_client(stable_id)
+            .await?;
+
+        let mut stream_ids = Vec::new();
+
+        for subscribe_id in downstream_subscribe_ids {
+            let stream_ids_for_subscription = self
+                .get_downstream_stream_ids_for_subscription(
+                    pubsub_relation_manager,
+                    stable_id,
+                    subscribe_id,
+                )
+                .await?;
+            stream_ids.extend(stream_ids_for_subscription);
+        }
+
+        Ok(stream_ids)
+    }
+
+    async fn get_downstream_stream_ids_for_subscription(
+        &self,
+        pubsub_relation_manager: &PubSubRelationManagerWrapper,
+        stable_id: usize,
+        subscribe_id: u64,
+    ) -> Result<Vec<u64>> {
+        let group_ids = pubsub_relation_manager
+            .get_downstream_group_ids_for_subscription(stable_id, subscribe_id)
+            .await?;
+
+        let mut stream_ids = Vec::new();
+
+        for group_id in group_ids {
+            let stream_ids_for_group = self
+                .get_downstream_stream_ids_for_group(
+                    pubsub_relation_manager,
+                    stable_id,
+                    subscribe_id,
+                    group_id,
+                )
+                .await?;
+
+            stream_ids.extend(stream_ids_for_group);
+        }
+
+        Ok(stream_ids)
+    }
+
+    async fn get_downstream_stream_ids_for_group(
+        &self,
+        pubsub_relation_manager: &PubSubRelationManagerWrapper,
+        stable_id: usize,
+        subscribe_id: u64,
+        group_id: u64,
+    ) -> Result<Vec<u64>> {
+        let subgroup_ids = pubsub_relation_manager
+            .get_downstream_subgroup_ids_for_group(stable_id, subscribe_id, group_id)
+            .await?;
+
+        let mut stream_ids = Vec::new();
+
+        for subgroup_id in subgroup_ids {
+            let stream_id = pubsub_relation_manager
+                .get_downstream_stream_id_for_subgroup(
+                    stable_id,
+                    subscribe_id,
+                    group_id,
+                    subgroup_id,
+                )
+                .await?;
+
+            if let Some(stream_id) = stream_id {
+                stream_ids.push(stream_id);
+            }
+        }
+
+        Ok(stream_ids)
+    }
+
+    async fn send_terminate_signal_to_data_stream_threads(
+        &self,
+        senders: &Senders,
+        stable_id: usize,
+        stream_ids: Vec<u64>,
+    ) -> Result<()> {
+        let signal_dispatcher = SignalDispatcher::new(senders.signal_dispatch_tx().clone());
+
+        let terminate_reason = TerminateReason::SessionClosed;
+        let signal = Box::new(DataStreamThreadSignal::Terminate(terminate_reason));
+
+        for stream_id in stream_ids {
+            signal_dispatcher
+                .transfer_signal_to_data_stream_thread(stable_id, stream_id, signal.clone())
+                .await?;
+        }
 
         Ok(())
     }

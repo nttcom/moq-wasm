@@ -1,7 +1,7 @@
 use crate::{
     messages::moqt_payload::MOQTPayload,
     variable_bytes::{
-        read_fixed_length_bytes_from_buffer, read_variable_bytes_from_buffer, write_variable_bytes,
+        read_bytes_from_buffer, read_variable_bytes_from_buffer, write_variable_bytes,
     },
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
@@ -60,15 +60,14 @@ impl MOQTPayload for SubscribeDone {
         let status_code = StatusCode::try_from(status_code_u64).context("status code")?;
         let reason_phrase =
             String::from_utf8(read_variable_bytes_from_buffer(buf)?).context("reason phrase")?;
-        let content_exists =
-            match read_fixed_length_bytes_from_buffer(buf, 1).context("content_exists")?[0] {
-                0 => false,
-                1 => true,
-                _ => {
-                    // TODO: return Termination Error Code
-                    bail!("Invalid content_exists value: Protocol Violation");
-                }
-            };
+        let content_exists = match read_bytes_from_buffer(buf, 1).context("content_exists")?[0] {
+            0 => false,
+            1 => true,
+            _ => {
+                // TODO: return Termination Error Code
+                bail!("Invalid content_exists value: Protocol Violation");
+            }
+        };
 
         let (final_group_id, final_object_id) = match content_exists {
             true => {

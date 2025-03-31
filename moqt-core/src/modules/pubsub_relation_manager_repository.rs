@@ -1,10 +1,10 @@
+use super::models::range::{ObjectRange, ObjectStart};
+use crate::{
+    messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
+    models::tracks::ForwardingPreference,
+};
 use anyhow::Result;
 use async_trait::async_trait;
-
-use crate::{
-    messages::control_messages::subscribe::{FilterType, GroupOrder},
-    models::{subscriptions::Subscription, tracks::ForwardingPreference},
-};
 
 #[async_trait]
 pub trait PubSubRelationManagerRepository: Send + Sync {
@@ -48,37 +48,33 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         track_alias: u64,
         downstream_session_id: usize,
     ) -> Result<bool>;
-    async fn is_track_existing(
+    async fn is_upstream_subscribed(
         &self,
         track_namespace: Vec<String>,
         track_name: String,
     ) -> Result<bool>;
-    async fn get_upstream_subscription_by_full_track_name(
-        &self,
-        track_namespace: Vec<String>,
-        track_name: String,
-    ) -> Result<Option<Subscription>>;
-    async fn get_upstream_subscription_by_ids(
-        &self,
-        upstream_session_id: usize,
-        upstream_subscribe_id: u64,
-    ) -> Result<Option<Subscription>>;
-    async fn get_downstream_subscription_by_ids(
-        &self,
-        downstream_session_id: usize,
-        downstream_subscribe_id: u64,
-    ) -> Result<Option<Subscription>>;
     async fn get_upstream_session_id(&self, track_namespace: Vec<String>) -> Result<Option<usize>>;
     async fn get_requesting_downstream_session_ids_and_subscribe_ids(
         &self,
         upstream_subscribe_id: u64,
         upstream_session_id: usize,
     ) -> Result<Option<Vec<(usize, u64)>>>;
+    // TODO: Unify getter methods of subscribe_id
     async fn get_upstream_subscribe_id(
         &self,
         track_namespace: Vec<String>,
         track_name: String,
         upstream_session_id: usize,
+    ) -> Result<Option<u64>>;
+    async fn get_downstream_track_alias(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<Option<u64>>;
+    async fn get_upstream_subscribe_id_by_track_alias(
+        &self,
+        upstream_session_id: usize,
+        upstream_track_alias: u64,
     ) -> Result<Option<u64>>;
     #[allow(clippy::too_many_arguments)]
     async fn set_downstream_subscription(
@@ -94,7 +90,6 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<()>;
     #[allow(clippy::too_many_arguments)]
     async fn set_upstream_subscription(
@@ -108,7 +103,6 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<(u64, u64)>;
     async fn set_pubsub_relation(
         &self,
@@ -180,6 +174,97 @@ pub trait PubSubRelationManagerRepository: Send + Sync {
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
     ) -> Result<Option<ForwardingPreference>>;
+    async fn get_upstream_filter_type(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Option<FilterType>>;
+    async fn get_downstream_filter_type(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<Option<FilterType>>;
+    async fn get_upstream_requested_object_range(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Option<ObjectRange>>;
+    async fn get_downstream_requested_object_range(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<Option<ObjectRange>>;
+    async fn set_downstream_actual_object_start(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        actual_object_start: ObjectStart,
+    ) -> Result<()>;
+    async fn get_downstream_actual_object_start(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<Option<ObjectStart>>;
+    async fn set_upstream_stream_id(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+        stream_id: u64,
+    ) -> Result<()>;
+    async fn get_upstream_subscribe_ids_for_client(
+        &self,
+        upstream_session_id: usize,
+    ) -> Result<Vec<u64>>;
+    async fn get_upstream_group_ids_for_subscription(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+    ) -> Result<Vec<u64>>;
+    async fn get_upstream_subgroup_ids_for_group(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        group_id: u64,
+    ) -> Result<Vec<u64>>;
+    async fn get_upstream_stream_id_for_subgroup(
+        &self,
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+    ) -> Result<Option<u64>>;
+    async fn set_downstream_stream_id(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+        stream_id: u64,
+    ) -> Result<()>;
+    async fn get_downstream_subscribe_ids_for_client(
+        &self,
+        downstream_session_id: usize,
+    ) -> Result<Vec<u64>>;
+    async fn get_downstream_group_ids_for_subscription(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+    ) -> Result<Vec<u64>>;
+    async fn get_downstream_subgroup_ids_for_group(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        group_id: u64,
+    ) -> Result<Vec<u64>>;
+    async fn get_downstream_stream_id_for_subgroup(
+        &self,
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+    ) -> Result<Option<u64>>;
     async fn get_related_subscribers(
         &self,
         upstream_session_id: usize,

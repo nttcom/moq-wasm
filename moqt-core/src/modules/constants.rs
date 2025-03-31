@@ -1,7 +1,7 @@
 use num_enum::IntoPrimitive;
 
-// for draft-ietf-moq-transport-06
-pub const MOQ_TRANSPORT_VERSION: u32 = 0xff000006;
+// for draft-ietf-moq-transport-10
+pub const MOQ_TRANSPORT_VERSION: u32 = 0xff00000a;
 
 #[derive(Debug, IntoPrimitive, PartialEq, Clone, Copy)]
 #[repr(u8)]
@@ -21,10 +21,4 @@ pub enum UnderlayType {
     QUIC,
     WebTransport,
     Both,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StreamDirection {
-    Uni,
-    Bi,
 }

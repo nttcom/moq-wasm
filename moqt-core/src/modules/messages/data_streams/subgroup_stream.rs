@@ -1,19 +1,18 @@
-use super::object_status::ObjectStatus;
+use super::{extension_header::ExtensionHeader, object_status::ObjectStatus};
 use crate::{
     messages::data_streams::DataStreams,
-    variable_bytes::read_fixed_length_bytes,
+    variable_bytes::read_bytes,
     variable_integer::{read_variable_integer, write_variable_integer},
 };
 use anyhow::{bail, Context, Result};
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use serde::Serialize;
 
 /// Implementation of header message on QUIC Stream per Subgroup.
 /// Object messages are sent following this message.
-/// Type of Data Streams:STREAM_HEADER_SUBGROUP (0x4)
+/// Type of Data Streams:SUBGROUP_HEADER (0x4)
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct Header {
-    subscribe_id: u64,
     track_alias: u64,
     group_id: u64,
     subgroup_id: u64,
@@ -22,23 +21,17 @@ pub struct Header {
 
 impl Header {
     pub fn new(
-        subscribe_id: u64,
         track_alias: u64,
         group_id: u64,
         subgroup_id: u64,
         publisher_priority: u8,
     ) -> Result<Self> {
         Ok(Header {
-            subscribe_id,
             track_alias,
             group_id,
             subgroup_id,
             publisher_priority,
         })
-    }
-
-    pub fn subscribe_id(&self) -> u64 {
-        self.subscribe_id
     }
 
     pub fn track_alias(&self) -> u64 {
@@ -63,17 +56,14 @@ impl DataStreams for Header {
     where
         Self: Sized,
     {
-        let subscribe_id = read_variable_integer(read_cur).context("subscribe id")?;
         let track_alias = read_variable_integer(read_cur).context("track alias")?;
         let group_id = read_variable_integer(read_cur).context("group id")?;
         let subgroup_id = read_variable_integer(read_cur).context("subgroup id")?;
-        let publisher_priority =
-            read_fixed_length_bytes(read_cur, 1).context("publisher priority")?[0];
+        let publisher_priority = read_bytes(read_cur, 1).context("publisher priority")?[0];
 
         tracing::trace!("Depacketized Subgroup Stream Header message.");
 
         Ok(Header {
-            subscribe_id,
             track_alias,
             group_id,
             subgroup_id,
@@ -82,7 +72,6 @@ impl DataStreams for Header {
     }
 
     fn packetize(&self, buf: &mut BytesMut) {
-        buf.extend(write_variable_integer(self.subscribe_id));
         buf.extend(write_variable_integer(self.track_alias));
         buf.extend(write_variable_integer(self.group_id));
         buf.extend(write_variable_integer(self.subgroup_id));
@@ -97,6 +86,8 @@ impl DataStreams for Header {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Object {
     object_id: u64,
+    extension_headers_length: u64,
+    extension_headers: Vec<ExtensionHeader>,
     object_payload_length: u64,
     object_status: Option<ObjectStatus>,
     object_payload: Vec<u8>,
@@ -105,6 +96,7 @@ pub struct Object {
 impl Object {
     pub fn new(
         object_id: u64,
+        extension_headers: Vec<ExtensionHeader>,
         object_status: Option<ObjectStatus>,
         object_payload: Vec<u8>,
     ) -> Result<Self> {
@@ -122,8 +114,16 @@ impl Object {
             }
         }
 
+        // length of total byte of extension headers
+        let mut extension_headers_length = 0;
+        for header in &extension_headers {
+            extension_headers_length += header.byte_length() as u64;
+        }
+
         Ok(Object {
             object_id,
+            extension_headers_length,
+            extension_headers,
             object_payload_length,
             object_status,
             object_payload,
@@ -145,6 +145,20 @@ impl DataStreams for Object {
         Self: Sized,
     {
         let object_id = read_variable_integer(read_cur).context("object id")?;
+        let extension_headers_length =
+            read_variable_integer(read_cur).context("extension headers length")?;
+
+        let mut extension_headers_vec = vec![];
+        let extension_headers =
+            read_bytes(read_cur, extension_headers_length as usize).context("extension headers")?;
+        let mut extension_headers_cur = std::io::Cursor::new(&extension_headers[..]);
+
+        while extension_headers_cur.has_remaining() {
+            let extension_header = ExtensionHeader::depacketize(&mut extension_headers_cur)
+                .context("extension header")?;
+            extension_headers_vec.push(extension_header);
+        }
+
         let object_payload_length =
             read_variable_integer(read_cur).context("object payload length")?;
 
@@ -167,8 +181,7 @@ impl DataStreams for Object {
         };
 
         let object_payload = if object_payload_length > 0 {
-            read_fixed_length_bytes(read_cur, object_payload_length as usize)
-                .context("object payload")?
+            read_bytes(read_cur, object_payload_length as usize).context("object payload")?
         } else {
             vec![]
         };
@@ -177,6 +190,8 @@ impl DataStreams for Object {
 
         Ok(Object {
             object_id,
+            extension_headers_length,
+            extension_headers: extension_headers_vec,
             object_payload_length,
             object_status,
             object_payload,
@@ -185,6 +200,12 @@ impl DataStreams for Object {
 
     fn packetize(&self, buf: &mut BytesMut) {
         buf.extend(write_variable_integer(self.object_id));
+
+        buf.extend(write_variable_integer(self.extension_headers_length));
+        for header in &self.extension_headers {
+            header.packetize(buf);
+        }
+
         buf.extend(write_variable_integer(self.object_payload_length));
         if self.object_status.is_some() {
             buf.extend(write_variable_integer(
@@ -200,24 +221,23 @@ impl DataStreams for Object {
 #[cfg(test)]
 mod tests {
     mod success {
+        use crate::messages::data_streams::extension_header::{
+            ExtensionHeader, ExtensionHeaderValue, Value, ValueWithLength,
+        };
+        use crate::messages::data_streams::{
+            object_status::ObjectStatus, subgroup_stream, DataStreams,
+        };
         use bytes::BytesMut;
         use std::io::Cursor;
 
-        use crate::messages::data_streams::{
-            object_status::ObjectStatus,
-            {subgroup_stream, DataStreams},
-        };
-
         #[test]
         fn packetize_subgroup_stream_header() {
-            let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
             let subgroup_id = 3;
             let publisher_priority = 4;
 
             let subgroup_stream_header = subgroup_stream::Header::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 subgroup_id,
@@ -229,7 +249,6 @@ mod tests {
             subgroup_stream_header.packetize(&mut buf);
 
             let expected_bytes_array = [
-                0, // Subscribe ID (i)
                 1, // Track Alias (i)
                 2, // Group ID (i)
                 3, // Subgroup ID (i)
@@ -242,7 +261,6 @@ mod tests {
         #[test]
         fn depacketize_subgroup_stream_header() {
             let bytes_array = [
-                0, // Subscribe ID (i)
                 1, // Track Alias (i)
                 2, // Group ID (i)
                 3, // Subgroup ID (i)
@@ -254,14 +272,12 @@ mod tests {
             let depacketized_subgroup_stream_header =
                 subgroup_stream::Header::depacketize(&mut read_cur).unwrap();
 
-            let subscribe_id = 0;
             let track_alias = 1;
             let group_id = 2;
             let subgroup_id = 3;
             let publisher_priority = 4;
 
             let expected_subgroup_stream_header = subgroup_stream::Header::new(
-                subscribe_id,
                 track_alias,
                 group_id,
                 subgroup_id,
@@ -278,18 +294,25 @@ mod tests {
         #[test]
         fn packetize_subgroup_stream_object_normal() {
             let object_id = 0;
+            let extension_headers = vec![];
             let object_status = None;
             let object_payload = vec![0, 1, 2];
 
-            let subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             let mut buf = BytesMut::new();
             subgroup_stream_object.packetize(&mut buf);
 
             let expected_bytes_array = [
                 0, // Object ID (i)
-                3, // Object Payload Length (i
+                0, // Extension Headers Length (i)
+                3, // Object Payload Length (i)
                 0, 1, 2, // Object Payload (..)
             ];
 
@@ -299,17 +322,24 @@ mod tests {
         #[test]
         fn packetize_subgroup_stream_object_normal_and_empty_payload() {
             let object_id = 0;
+            let extension_headers = vec![];
             let object_status = Some(ObjectStatus::Normal);
             let object_payload = vec![];
 
-            let subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             let mut buf = BytesMut::new();
             subgroup_stream_object.packetize(&mut buf);
 
             let expected_bytes_array = [
                 0, // Object ID (i)
+                0, // Extension Headers Length (i)
                 0, // Object Payload Length (i)
                 0, // Object Status (i)
             ];
@@ -320,17 +350,24 @@ mod tests {
         #[test]
         fn packetize_subgroup_stream_object_not_normal() {
             let object_id = 0;
+            let extension_headers = vec![];
             let object_status = Some(ObjectStatus::EndOfGroup);
             let object_payload = vec![];
 
-            let subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             let mut buf = BytesMut::new();
             subgroup_stream_object.packetize(&mut buf);
 
             let expected_bytes_array = [
                 0, // Object ID (i)
+                0, // Extension Headers Length (i)
                 0, // Object Payload Length (i)
                 3, // Object Status (i)
             ];
@@ -342,6 +379,7 @@ mod tests {
         fn depacketize_subgroup_stream_object_normal() {
             let bytes_array = [
                 0, // Object ID (i)
+                0, // Extension Headers Length (i)
                 0, // Object Payload Length (i)
                 0, // Object Status (i)
             ];
@@ -352,11 +390,17 @@ mod tests {
                 subgroup_stream::Object::depacketize(&mut read_cur).unwrap();
 
             let object_id = 0;
+            let extension_headers = vec![];
             let object_status = Some(ObjectStatus::Normal);
             let object_payload = vec![];
 
-            let expected_subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+            let expected_subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             assert_eq!(
                 depacketized_subgroup_stream_object,
@@ -368,6 +412,7 @@ mod tests {
         fn depacketize_subgroup_stream_object_normal_and_empty_payload() {
             let bytes_array = [
                 0, // Object ID (i)
+                0, // Extension Headers Length (i)
                 0, // Object Payload Length (i)
                 0, // Object Status (i)
             ];
@@ -378,11 +423,17 @@ mod tests {
                 subgroup_stream::Object::depacketize(&mut read_cur).unwrap();
 
             let object_id = 0;
+            let extension_headers = vec![];
             let object_status = Some(ObjectStatus::Normal);
             let object_payload = vec![];
 
-            let expected_subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+            let expected_subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             assert_eq!(
                 depacketized_subgroup_stream_object,
@@ -394,6 +445,7 @@ mod tests {
         fn depacketize_subgroup_stream_object_not_normal() {
             let bytes_array = [
                 0, // Object ID (i)
+                0, // Extension Headers Length (i)
                 0, // Object Payload Length (i)
                 1, // Object Status (i)
             ];
@@ -404,14 +456,286 @@ mod tests {
                 subgroup_stream::Object::depacketize(&mut read_cur).unwrap();
 
             let object_id = 0;
+            let extension_headers = vec![];
             let object_status = Some(ObjectStatus::DoesNotExist);
             let object_payload = vec![];
 
-            let expected_subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload).unwrap();
+            let expected_subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             assert_eq!(
                 depacketized_subgroup_stream_object,
+                expected_subgroup_stream_object
+            );
+        }
+
+        #[test]
+        fn packetize_subgroup_stream_object_with_even_type_extension_header() {
+            let object_id = 0;
+            let header_type = 0;
+            let value = 1;
+            let header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(value));
+
+            let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
+            let object_status = None;
+            let object_payload = vec![1, 2, 3];
+
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
+
+            let mut buf = BytesMut::new();
+            subgroup_stream_object.packetize(&mut buf);
+
+            let expected_bytes_array = [
+                0, // Object ID (i)
+                2, // Extension Headers Length (i)
+                0, // Header Type (i)
+                1, // Header Value (i)
+                3, // Object Payload Length (i)
+                1, 2, 3, // Object Payload (..)
+            ];
+
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
+
+        #[test]
+        fn packetize_subgroup_stream_object_with_odd_type_extension_header() {
+            let object_id = 0;
+            let header_type = 1;
+            let value = vec![116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53, 54];
+            let header_value = ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(value));
+
+            let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
+            let object_status = Some(ObjectStatus::Normal);
+            let object_payload = vec![];
+
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
+
+            let mut buf = BytesMut::new();
+            subgroup_stream_object.packetize(&mut buf);
+
+            let expected_bytes_array = [
+                0,  // Object ID (i)
+                16, // Extension Headers Length (i)
+                1,  // Header Type (i)
+                14, // Header Length (i)
+                116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53,
+                54, // Header Value (..)
+                0,  // Object Payload Length (i)
+                0,  // Object Status (i)
+            ];
+
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
+
+        #[test]
+        fn packetize_subgroup_stream_object_with_mixed_type_extension_headers() {
+            let object_id = 0;
+
+            let even_header_type = 4;
+            let even_value = 3;
+            let even_header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(even_value));
+
+            let odd_header_type = 5;
+            let odd_value = vec![116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53, 54];
+            let odd_header_value =
+                ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(odd_value));
+
+            let extension_headers = vec![
+                ExtensionHeader::new(even_header_type, even_header_value).unwrap(),
+                ExtensionHeader::new(odd_header_type, odd_header_value).unwrap(),
+            ];
+            let object_status = Some(ObjectStatus::Normal);
+            let object_payload = vec![];
+
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
+
+            let mut buf = BytesMut::new();
+            subgroup_stream_object.packetize(&mut buf);
+
+            let expected_bytes_array = [
+                0,  // Object ID (i)
+                18, // Extension Headers Length (i)
+                // {
+                4, // Header Type (i)
+                3, // Header Value (i)
+                // }{
+                5,  // Header Type (i)
+                14, // Header Length (i)
+                116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53,
+                54, // Header Value (..)
+                // }
+                0, // Object Payload Length (i)
+                0, // Object Status (i)
+            ];
+
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
+
+        #[test]
+        fn depacketize_subgroup_stream_object_with_even_type_extension_header() {
+            let bytes_array = [
+                0, // Object ID (i)
+                2, // Extension Headers Length (i)
+                0, // Header Type (i)
+                1, // Header Value (i)
+                0, // Object Payload Length (i)
+                0, // Object Status (i)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let mut read_cur = Cursor::new(&buf[..]);
+            let depacketized_subgroup_stream_object =
+                subgroup_stream::Object::depacketize(&mut read_cur).unwrap();
+
+            let object_id = 0;
+            let header_type = 0;
+            let value = 1;
+            let header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(value));
+
+            let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
+            let object_status = Some(ObjectStatus::Normal);
+            let object_payload = vec![];
+
+            let expected_subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
+
+            assert_eq!(
+                depacketized_subgroup_stream_object,
+                expected_subgroup_stream_object
+            );
+        }
+
+        #[test]
+        fn depacketize_subgroup_stream_object_with_odd_type_extension_header() {
+            let bytes_array = [
+                0,  // Object ID (i)
+                16, // Extension Headers Length (i)
+                1,  // Header Type (i)
+                14, // Header Length (i)
+                116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53,
+                54, // Header Value (..)
+                3,  // Object Payload Length (i)
+                1, 2, 3, // Object Payload (..)
+            ];
+            let mut buf = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let mut read_cur = Cursor::new(&buf[..]);
+            let depacketized_subgroup_stream_object =
+                subgroup_stream::Object::depacketize(&mut read_cur).unwrap();
+
+            let object_id = 0;
+            let header_type = 1;
+            let value = vec![116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53, 54];
+            let header_value = ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(value));
+
+            let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
+            let object_status = None;
+            let object_payload = vec![1, 2, 3];
+
+            let expected_subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
+
+            assert_eq!(
+                depacketized_subgroup_stream_object,
+                expected_subgroup_stream_object
+            );
+        }
+
+        #[test]
+        fn depacketize_subgroup_stream_object_with_mixed_type_extension_headers() {
+            let bytes_array = [
+                0,  // Object ID (i)
+                18, // Extension Headers Length (i)
+                // {
+                4, // Header Type (i)
+                3, // Header Value (i)
+                // }{
+                5,  // Header Type (i)
+                14, // Header Length (i)
+                116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53,
+                54, // Header Value (..)
+                // }
+                0, // Object Payload Length (i)
+                0, // Object Status (i)
+            ];
+
+            let object_id = 0;
+
+            let even_header_type = 4;
+            let even_value = 3;
+            let even_header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(even_value));
+
+            let odd_header_type = 5;
+            let odd_value = vec![116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53, 54];
+            let odd_header_value =
+                ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(odd_value));
+
+            let extension_headers = vec![
+                ExtensionHeader::new(even_header_type, even_header_value).unwrap(),
+                ExtensionHeader::new(odd_header_type, odd_header_value).unwrap(),
+            ];
+            let object_status = Some(ObjectStatus::Normal);
+            let object_payload = vec![];
+
+            let expected_subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            )
+            .unwrap();
+
+            println!(
+                "expected_subgroup_stream_object: {:?}",
+                expected_subgroup_stream_object
+            );
+
+            let mut buf: BytesMut = BytesMut::with_capacity(bytes_array.len());
+            buf.extend_from_slice(&bytes_array);
+            let mut read_cur = Cursor::new(&buf[..]);
+            let depacketized_subgroup_stream_object =
+                subgroup_stream::Object::depacketize(&mut read_cur);
+
+            println!(
+                "depacketized_subgroup_stream_object: {:?}",
+                depacketized_subgroup_stream_object
+            );
+
+            assert_eq!(
+                depacketized_subgroup_stream_object.unwrap(),
                 expected_subgroup_stream_object
             );
         }
@@ -428,11 +752,16 @@ mod tests {
         #[test]
         fn packetize_subgroup_stream_object_not_normal_and_not_empty_payload() {
             let object_id = 0;
+            let extension_headers = vec![];
             let object_status = Some(ObjectStatus::EndOfTrackAndGroup);
             let object_payload = vec![0, 1, 2];
 
-            let subgroup_stream_object =
-                subgroup_stream::Object::new(object_id, object_status, object_payload);
+            let subgroup_stream_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers,
+                object_status,
+                object_payload,
+            );
 
             assert!(subgroup_stream_object.is_err());
         }
@@ -441,6 +770,7 @@ mod tests {
         fn depacketize_subgroup_stream_object_wrong_object_status() {
             let bytes_array = [
                 0, // Object ID (i)
+                0, // Extension Headers Length (i)
                 0, // Object Payload Length (i)
                 2, // Object Status (i)
             ];

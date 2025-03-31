@@ -2,6 +2,7 @@ pub(crate) mod handlers;
 pub(crate) mod server_processes;
 
 use crate::constants::TerminationErrorCode;
+use crate::modules::control_message_dispatcher::ControlMessageDispatcher;
 use crate::modules::moqt_client::MOQTClient;
 use crate::modules::{
     message_handlers::control_message::{
@@ -11,9 +12,9 @@ use crate::modules::{
             announce_message::process_announce_message,
             announce_ok_message::process_announce_ok_message,
             client_setup_message::process_client_setup_message,
+            subscribe_announces_message::process_subscribe_announces_message,
             subscribe_error_message::process_subscribe_error_message,
             subscribe_message::process_subscribe_message,
-            subscribe_namespace_message::process_subscribe_namespace_message,
             subscribe_ok_message::process_subscribe_ok_message,
         },
     },
@@ -29,7 +30,6 @@ use moqt_core::{
     messages::{control_messages::unannounce::UnAnnounce, moqt_payload::MOQTPayload},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::{read_variable_integer, write_variable_integer},
-    SendStreamDispatcherRepository,
 };
 use server_processes::unsubscribe_message::process_unsubscribe_message;
 use std::{collections::HashMap, io::Cursor, sync::Arc};
@@ -66,7 +66,7 @@ pub async fn control_message_handler(
     client: &mut MOQTClient,
     start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
 ) -> MessageProcessResult {
     tracing::trace!("control_message_handler! {}", read_buf.len());
@@ -141,7 +141,7 @@ pub async fn control_message_handler(
                 client,
                 &mut write_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher,
                 object_cache_storage,
                 start_forwarder_txes,
             )
@@ -166,7 +166,7 @@ pub async fn control_message_handler(
             match process_subscribe_ok_message(
                 &mut payload_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher,
                 client,
             )
             .await
@@ -186,7 +186,7 @@ pub async fn control_message_handler(
             match process_subscribe_error_message(
                 &mut payload_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher,
                 client,
             )
             .await
@@ -206,7 +206,7 @@ pub async fn control_message_handler(
             match process_unsubscribe_message(
                 &mut payload_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher,
                 client,
             )
             .await
@@ -228,7 +228,7 @@ pub async fn control_message_handler(
                 client,
                 &mut write_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher,
             )
             .await
             {
@@ -278,18 +278,18 @@ pub async fn control_message_handler(
                 }
             }
         }
-        ControlMessageType::SubscribeNamespace => {
-            match process_subscribe_namespace_message(
+        ControlMessageType::SubscribeAnnounces => {
+            match process_subscribe_announces_message(
                 &mut payload_buf,
                 client,
                 &mut write_buf,
                 pubsub_relation_manager_repository,
-                send_stream_dispatcher_repository,
+                control_message_dispatcher,
             )
             .await
             {
                 Ok(result) => match result {
-                    Some(_) => ControlMessageType::SubscribeNamespaceError,
+                    Some(_) => ControlMessageType::SubscribeAnnouncesError,
                     None => {
                         return MessageProcessResult::SuccessWithoutResponse;
                     }
@@ -350,6 +350,9 @@ pub async fn control_message_handler(
 #[cfg(test)]
 pub(crate) mod test_helper_fn {
     use crate::modules::{
+        control_message_dispatcher::{
+            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+        },
         message_handlers::control_message::{control_message_handler, MessageProcessResult},
         moqt_client::{MOQTClient, MOQTClientStatus},
         object_cache_storage::{
@@ -359,9 +362,6 @@ pub(crate) mod test_helper_fn {
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
             wrapper::PubSubRelationManagerWrapper,
-        },
-        send_stream_dispatcher::{
-            send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
         },
         server_processes::senders,
     };
@@ -394,12 +394,15 @@ pub(crate) mod test_helper_fn {
         let mut pubsub_relation_manager: PubSubRelationManagerWrapper =
             PubSubRelationManagerWrapper::new(track_namespace_tx);
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -418,7 +421,7 @@ pub(crate) mod test_helper_fn {
             &mut client,
             start_forwarder_txes,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
         )
         .await
@@ -439,11 +442,11 @@ mod success {
         let bytes_array = [
             1,   // Number of Supported Versions (i)
             192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Subscriber)
+            0, 0, 0, 255, 0, 0, 10, // Supported Version(i): Value(0xff00000a) in 62bit
+            1,  // Number of Parameters (i)
+            0,  // SETUP Parameters (..): Type(Role)
+            1,  // SETUP Parameters (..): Length
+            2,  // SETUP Parameters (..): Role(Subscriber)
         ];
         let client_status = MOQTClientStatus::Connected;
 
@@ -466,11 +469,11 @@ mod success {
         let bytes_array = [
             1,   // Number of Supported Versions (i)
             192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Subscriber)
+            0, 0, 0, 255, 0, 0, 10, // Supported Version(i): Value(0xff00000a) in 62bit
+            1,  // Number of Parameters (i)
+            0,  // SETUP Parameters (..): Type(Role)
+            1,  // SETUP Parameters (..): Length
+            2,  // SETUP Parameters (..): Role(Subscriber)
         ];
         let client_status = MOQTClientStatus::Connected;
 
@@ -502,11 +505,11 @@ mod failure {
         let bytes_array = [
             1,   // Number of Supported Versions (i)
             192, // Supported Version (i): Length(11 of 2MSB)
-            0, 0, 0, 255, 0, 0, 6, // Supported Version(i): Value(0xff000006) in 62bit
-            1, // Number of Parameters (i)
-            0, // SETUP Parameters (..): Type(Role)
-            1, // SETUP Parameters (..): Length
-            2, // SETUP Parameters (..): Role(Subscriber)
+            0, 0, 0, 255, 0, 0, 10, // Supported Version(i): Value(0xff000a) in 62bit
+            1,  // Number of Parameters (i)
+            0,  // SETUP Parameters (..): Type(Role)
+            1,  // SETUP Parameters (..): Length
+            2,  // SETUP Parameters (..): Role(Subscriber)
         ];
         let wrong_client_status = MOQTClientStatus::SetUp; // Correct Status is Connected
 

@@ -1,17 +1,16 @@
+use crate::modules::{
+    control_message_dispatcher::ControlMessageDispatcher, moqt_client::MOQTClient,
+};
 use anyhow::Result;
 use moqt_core::{
-    constants::StreamDirection,
     messages::{control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    SendStreamDispatcherRepository,
 };
-
-use crate::modules::moqt_client::MOQTClient;
 
 pub(crate) async fn subscribe_ok_handler(
     subscribe_ok_message: SubscribeOk,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     client: &MOQTClient,
 ) -> Result<()> {
     tracing::trace!("subscribe_ok_handler start.");
@@ -49,11 +48,10 @@ pub(crate) async fn subscribe_ok_handler(
                 );
                 let subscribe_ok_message: Box<dyn MOQTPayload> = Box::new(message_payload.clone());
 
-                send_stream_dispatcher_repository
-                    .transfer_message_to_send_stream_thread(
+                control_message_dispatcher
+                    .transfer_message_to_control_message_sender_thread(
                         *downstream_session_id,
                         subscribe_ok_message,
-                        StreamDirection::Bi,
                     )
                     .await?;
 
@@ -90,22 +88,22 @@ pub(crate) async fn subscribe_ok_handler(
 mod success {
     use super::subscribe_ok_handler;
     use crate::modules::{
+        control_message_dispatcher::{
+            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+        },
         moqt_client::MOQTClient,
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
             wrapper::PubSubRelationManagerWrapper,
         },
-        send_stream_dispatcher::{
-            send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-        },
         server_processes::senders,
     };
     use bytes::BytesMut;
     use moqt_core::{
-        constants::StreamDirection,
         messages::{
             control_messages::{
-                subscribe::{FilterType, GroupOrder},
+                group_order::GroupOrder,
+                subscribe::FilterType,
                 subscribe_ok::SubscribeOk,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
@@ -133,7 +131,6 @@ mod success {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -182,7 +179,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -203,7 +199,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
         let _ = pubsub_relation_manager
@@ -215,18 +210,20 @@ mod success {
             )
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: downstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -235,7 +232,7 @@ mod success {
         let result = subscribe_ok_handler(
             subscribe_ok,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &client,
         )
         .await;
@@ -248,22 +245,22 @@ mod success {
 mod failure {
     use super::subscribe_ok_handler;
     use crate::modules::{
+        control_message_dispatcher::{
+            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+        },
         moqt_client::MOQTClient,
         pubsub_relation_manager::{
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
             wrapper::PubSubRelationManagerWrapper,
         },
-        send_stream_dispatcher::{
-            send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-        },
         server_processes::senders,
     };
     use bytes::BytesMut;
     use moqt_core::{
-        constants::StreamDirection,
         messages::{
             control_messages::{
-                subscribe::{FilterType, GroupOrder},
+                group_order::GroupOrder,
+                subscribe::FilterType,
                 subscribe_ok::SubscribeOk,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
@@ -291,7 +288,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -340,7 +336,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -361,7 +356,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
         let _ = pubsub_relation_manager
@@ -373,18 +367,21 @@ mod failure {
             )
             .await;
 
-        // Generate SendStreamDispacher (without set sender)
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher (without set sender)
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         // Execute subscribe_ok_handler and get result
         let result = subscribe_ok_handler(
             subscribe_ok,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &client,
         )
         .await;
@@ -408,7 +405,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -457,23 +453,24 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: downstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -482,7 +479,7 @@ mod failure {
         let result = subscribe_ok_handler(
             subscribe_ok,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &client,
         )
         .await;
@@ -507,7 +504,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -556,7 +552,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -577,7 +572,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
         let _ = pubsub_relation_manager
@@ -593,18 +587,20 @@ mod failure {
             .activate_downstream_subscription(downstream_session_id, downstream_subscribe_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: downstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -613,7 +609,7 @@ mod failure {
         let result = subscribe_ok_handler(
             subscribe_ok,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &client,
         )
         .await;
@@ -638,7 +634,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -687,7 +682,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -708,7 +702,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
         let _ = pubsub_relation_manager
@@ -724,18 +717,20 @@ mod failure {
             .activate_upstream_subscription(upstream_session_id, upstream_subscribe_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: downstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -744,7 +739,7 @@ mod failure {
         let result = subscribe_ok_handler(
             subscribe_ok,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &client,
         )
         .await;

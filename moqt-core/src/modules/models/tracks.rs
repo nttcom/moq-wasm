@@ -1,7 +1,12 @@
+use std::collections::HashMap;
+
+type GroupId = u64;
+type StreamId = u64;
+type SubgroupId = u64;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForwardingPreference {
     Datagram,
-    Track,
     Subgroup,
 }
 
@@ -11,6 +16,7 @@ pub struct Track {
     track_namespace: Vec<String>,
     track_name: String,
     forwarding_preference: Option<ForwardingPreference>,
+    group_subgroup_stream_map: HashMap<GroupId, HashMap<SubgroupId, StreamId>>,
 }
 
 impl Track {
@@ -25,6 +31,7 @@ impl Track {
             track_namespace,
             track_name,
             forwarding_preference,
+            group_subgroup_stream_map: HashMap::new(),
         }
     }
 
@@ -42,6 +49,31 @@ impl Track {
 
     pub fn get_track_alias(&self) -> u64 {
         self.track_alias
+    }
+
+    pub fn set_stream_id(&mut self, group_id: u64, subgroup_id: u64, stream_id: u64) {
+        self.group_subgroup_stream_map
+            .entry(group_id)
+            .or_default()
+            .insert(subgroup_id, stream_id);
+    }
+
+    pub fn get_all_group_ids(&self) -> Vec<u64> {
+        self.group_subgroup_stream_map.keys().cloned().collect()
+    }
+
+    pub fn get_subgroup_ids_for_group(&self, group_id: u64) -> Vec<u64> {
+        self.group_subgroup_stream_map
+            .get(&group_id)
+            .map(|subgroup_stream_map| subgroup_stream_map.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn get_stream_id_for_subgroup(&self, group_id: u64, subgroup_id: u64) -> Option<u64> {
+        self.group_subgroup_stream_map
+            .get(&group_id)
+            .and_then(|subgroup_stream_map| subgroup_stream_map.get(&subgroup_id))
+            .cloned()
     }
 }
 
