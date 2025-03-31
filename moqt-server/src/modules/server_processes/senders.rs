@@ -1,8 +1,9 @@
 use crate::{
     modules::{
-        buffer_manager::BufferCommand, object_cache_storage::commands::ObjectCacheStorageCommand,
+        buffer_manager::BufferCommand, control_message_dispatcher::ControlMessageDispatchCommand,
+        object_cache_storage::commands::ObjectCacheStorageCommand,
         pubsub_relation_manager::commands::PubSubRelationCommand,
-        send_stream_dispatcher::SendStreamDispatchCommand,
+        signal_dispatcher::SignalDispatchCommand,
     },
     SenderToOpenSubscription,
 };
@@ -39,7 +40,8 @@ impl SenderToOtherConnectionThread {
 pub(crate) struct SendersToManagementThread {
     buffer_tx: mpsc::Sender<BufferCommand>,
     pubsub_relation_tx: mpsc::Sender<PubSubRelationCommand>,
-    send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
+    control_message_dispatch_tx: mpsc::Sender<ControlMessageDispatchCommand>,
+    signal_dispatch_tx: mpsc::Sender<SignalDispatchCommand>,
     object_cache_tx: mpsc::Sender<ObjectCacheStorageCommand>,
 }
 
@@ -47,13 +49,15 @@ impl SendersToManagementThread {
     pub(crate) fn new(
         buffer_tx: mpsc::Sender<BufferCommand>,
         pubsub_relation_tx: mpsc::Sender<PubSubRelationCommand>,
-        send_stream_tx: mpsc::Sender<SendStreamDispatchCommand>,
+        control_message_dispatch_tx: mpsc::Sender<ControlMessageDispatchCommand>,
+        signal_dispatch_tx: mpsc::Sender<SignalDispatchCommand>,
         object_cache_tx: mpsc::Sender<ObjectCacheStorageCommand>,
     ) -> Self {
         SendersToManagementThread {
             buffer_tx,
             pubsub_relation_tx,
-            send_stream_tx,
+            control_message_dispatch_tx,
+            signal_dispatch_tx,
             object_cache_tx,
         }
     }
@@ -97,8 +101,16 @@ impl Senders {
         &self.senders_to_management_thread.pubsub_relation_tx
     }
 
-    pub(crate) fn send_stream_tx(&self) -> &mpsc::Sender<SendStreamDispatchCommand> {
-        &self.senders_to_management_thread.send_stream_tx
+    pub(crate) fn control_message_dispatch_tx(
+        &self,
+    ) -> &mpsc::Sender<ControlMessageDispatchCommand> {
+        &self
+            .senders_to_management_thread
+            .control_message_dispatch_tx
+    }
+
+    pub(crate) fn signal_dispatch_tx(&self) -> &mpsc::Sender<SignalDispatchCommand> {
+        &self.senders_to_management_thread.signal_dispatch_tx
     }
 
     pub(crate) fn object_cache_tx(&self) -> &mpsc::Sender<ObjectCacheStorageCommand> {
@@ -122,12 +134,14 @@ pub(crate) mod test_helper_fn {
 
         let (buffer_tx, _) = tokio::sync::mpsc::channel(1);
         let (pubsub_relation_tx, _) = tokio::sync::mpsc::channel(1);
-        let (send_stream_tx, _) = tokio::sync::mpsc::channel(1);
+        let (control_message_dispatch_tx, _) = tokio::sync::mpsc::channel(1);
+        let (signal_dispatch_tx, _) = tokio::sync::mpsc::channel(1);
         let (object_cache_tx, _) = tokio::sync::mpsc::channel(1);
         let senders_to_management_thread = super::SendersToManagementThread::new(
             buffer_tx,
             pubsub_relation_tx,
-            send_stream_tx,
+            control_message_dispatch_tx,
+            signal_dispatch_tx,
             object_cache_tx,
         );
 

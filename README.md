@@ -17,8 +17,8 @@ Supported version: draft-ietf-moq-transport-06
   - [x] ANNOUNCE_ERROR
   - [ ] ANNOUNCE_CANCEL
   - [ ] TRACK_STATUS_REQUEST
-  - [x] SUBSCRIBE_NAMESPACE
-  - [ ] UNSUBSCRIBE_NAMESPACE
+  - [x] SUBSCRIBE_ANNOUNCES
+  - [ ] UNSUBSCRIBE_ANNOUNCES
   - [x] SUBSCRIBE_OK
   - [x] SUBSCRIBE_ERROR
   - [ ] SUBSCRIBE_DONE
@@ -26,11 +26,14 @@ Supported version: draft-ietf-moq-transport-06
   - [x] ANNOUNCE
   - [ ] UNANNOUNCE
   - [ ] TRACK_STATUS
-  - [x] SUBSCRIBE_NAMESPACE_OK
-  - [x] SUBSCRIBE_NAMESPACE_ERROR
+  - [x] SUBSCRIBE_ANNOUNCES_OK
+  - [x] SUBSCRIBE_ANNOUNCES_ERROR
+  - [ ] FETCH
+  - [ ] FETCH_OK
+  - [ ] FETCH_ERROR
+  - [ ] FETCH_CANCEL
 - [x] Data Streams
   - [x] Datagram
-  - [x] Track Stream
   - [x] Subgroup Stream
 - [ ] Features
   - [x] Manage Publisher / Subscriber

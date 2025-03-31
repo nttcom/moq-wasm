@@ -1,9 +1,12 @@
-use anyhow::Result;
-
 use crate::{
-    messages::control_messages::subscribe::{FilterType, GroupOrder},
-    models::{subscriptions::Subscription, tracks::ForwardingPreference},
+    messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
+    models::{
+        range::{ObjectRange, ObjectStart},
+        subscriptions::Subscription,
+        tracks::ForwardingPreference,
+    },
 };
+use anyhow::Result;
 
 type SubscribeId = u64;
 type TrackNamespace = Vec<String>;
@@ -23,19 +26,20 @@ pub trait SubscriptionNodeRegistry {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<()>;
     fn get_subscription(&self, subscribe_id: SubscribeId) -> Result<Option<Subscription>>;
-    fn get_subscription_by_full_track_name(
-        &self,
-        track_namespace: TrackNamespace,
-        track_name: String,
-    ) -> Result<Option<Subscription>>;
+    // TODO: Unify getter methods of subscribe_id
     fn get_subscribe_id(
         &self,
         track_namespace: TrackNamespace,
         track_name: String,
     ) -> Result<Option<SubscribeId>>;
+    fn get_track_alias(&self, subscribe_id: SubscribeId) -> Result<Option<TrackAlias>>;
+    fn get_subscribe_id_by_track_alias(
+        &self,
+        track_alias: TrackAlias,
+    ) -> Result<Option<SubscribeId>>;
+    fn get_all_subscribe_ids(&self) -> Result<Vec<SubscribeId>>;
     fn has_track(&self, track_namespace: TrackNamespace, track_name: String) -> bool;
     fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool>;
     fn is_requesting(&self, subscribe_id: SubscribeId) -> bool;
@@ -49,9 +53,33 @@ pub trait SubscriptionNodeRegistry {
         &self,
         subscribe_id: SubscribeId,
     ) -> Result<Option<ForwardingPreference>>;
-    fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<FilterType>;
-    fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
-    fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)>;
+    fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<Option<FilterType>>;
+    fn set_stream_id(
+        &mut self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+        subgroup_id: u64,
+        stream_id: u64,
+    ) -> Result<()>;
+    fn get_group_ids_for_subscription(&self, subscribe_id: SubscribeId) -> Result<Vec<u64>>;
+    fn get_subgroup_ids_for_group(
+        &self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+    ) -> Result<Vec<u64>>;
+    fn get_stream_id_for_subgroup(
+        &self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+        subgroup_id: u64,
+    ) -> Result<Option<u64>>;
+    fn get_requested_object_range(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectRange>>;
+    fn set_actual_object_start(
+        &mut self,
+        subscribe_id: SubscribeId,
+        actual_object_start: ObjectStart,
+    ) -> Result<()>;
+    fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectStart>>;
 
     fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool;
     fn is_subscribe_id_less_than_max(&self, subscribe_id: SubscribeId) -> bool;

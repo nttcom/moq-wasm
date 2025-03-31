@@ -1,13 +1,13 @@
-use anyhow::{bail, Result};
-use std::collections::HashMap;
-
 use crate::{
-    messages::control_messages::subscribe::{FilterType, GroupOrder},
+    messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
     models::{
+        range::{ObjectRange, ObjectStart},
         subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription},
         tracks::ForwardingPreference,
     },
 };
+use anyhow::{bail, Result};
+use std::collections::HashMap;
 
 type SubscribeId = u64;
 type TrackNamespace = Vec<String>;
@@ -45,7 +45,6 @@ impl SubscriptionNodeRegistry for Producer {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
     ) -> Result<()> {
         // Publisher can define forwarding preference when it publishes track.
         let subscription = Subscription::new(
@@ -58,7 +57,6 @@ impl SubscriptionNodeRegistry for Producer {
             start_group,
             start_object,
             end_group,
-            end_object,
             None,
         );
 
@@ -69,21 +67,6 @@ impl SubscriptionNodeRegistry for Producer {
 
     fn get_subscription(&self, subscribe_id: SubscribeId) -> Result<Option<Subscription>> {
         Ok(self.subscriptions.get(&subscribe_id).cloned())
-    }
-
-    fn get_subscription_by_full_track_name(
-        &self,
-        track_namespace: TrackNamespace,
-        track_name: String,
-    ) -> Result<Option<Subscription>> {
-        Ok(self
-            .subscriptions
-            .values()
-            .find(|subscription| {
-                subscription.get_track_namespace_and_name()
-                    == (track_namespace.clone(), track_name.clone())
-            })
-            .cloned())
     }
 
     fn get_subscribe_id(
@@ -101,11 +84,33 @@ impl SubscriptionNodeRegistry for Producer {
             .map(|(subscribe_id, _)| *subscribe_id))
     }
 
+    fn get_track_alias(&self, subscribe_id: SubscribeId) -> Result<Option<TrackAlias>> {
+        Ok(self
+            .subscriptions
+            .get(&subscribe_id)
+            .map(|subscription| subscription.get_track_alias()))
+    }
+
+    fn get_subscribe_id_by_track_alias(
+        &self,
+        track_alias: TrackAlias,
+    ) -> Result<Option<SubscribeId>> {
+        Ok(self
+            .subscriptions
+            .iter()
+            .find(|(_, subscription)| subscription.get_track_alias() == track_alias)
+            .map(|(subscribe_id, _)| *subscribe_id))
+    }
+
     fn has_track(&self, track_namespace: TrackNamespace, track_name: String) -> bool {
         self.subscriptions.values().any(|subscription| {
             subscription.get_track_namespace_and_name()
                 == (track_namespace.clone(), track_name.clone())
         })
+    }
+
+    fn get_all_subscribe_ids(&self) -> Result<Vec<SubscribeId>> {
+        Ok(self.subscriptions.keys().cloned().collect())
     }
 
     fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool> {
@@ -145,34 +150,88 @@ impl SubscriptionNodeRegistry for Producer {
         unimplemented!("subscribe_id: {}", subscribe_id)
     }
 
-    fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<FilterType> {
+    fn get_filter_type(&self, subscribe_id: SubscribeId) -> Result<Option<FilterType>> {
         let filter_type = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_filter_type())
-            .unwrap();
+            .map(|subscription| subscription.get_filter_type());
 
         Ok(filter_type)
     }
 
-    fn get_absolute_start(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
-        let (start_group, start_object) = self
+    fn get_requested_object_range(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectRange>> {
+        let requested_object_range = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_absolute_start())
-            .unwrap();
+            .map(|subscription| subscription.get_requested_object_range());
 
-        Ok((start_group, start_object))
+        Ok(requested_object_range)
     }
 
-    fn get_absolute_end(&self, subscribe_id: SubscribeId) -> Result<(Option<u64>, Option<u64>)> {
-        let (end_group, end_object) = self
+    fn set_actual_object_start(
+        &mut self,
+        subscribe_id: SubscribeId,
+        actual_object_start: ObjectStart,
+    ) -> Result<()> {
+        self.subscriptions
+            .get_mut(&subscribe_id)
+            .unwrap()
+            .set_actual_object_start(actual_object_start);
+
+        Ok(())
+    }
+
+    fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectStart>> {
+        let actual_object_start = self
             .subscriptions
             .get(&subscribe_id)
-            .map(|subscription| subscription.get_absolute_end())
+            .map(|subscription| subscription.get_actual_object_start())
             .unwrap();
 
-        Ok((end_group, end_object))
+        Ok(actual_object_start)
+    }
+
+    fn set_stream_id(
+        &mut self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+        subgroup_id: u64,
+        stream_id: u64,
+    ) -> Result<()> {
+        let subscription = self.subscriptions.get_mut(&subscribe_id).unwrap();
+        subscription.set_stream_id(group_id, subgroup_id, stream_id);
+
+        Ok(())
+    }
+
+    fn get_group_ids_for_subscription(&self, subscribe_id: SubscribeId) -> Result<Vec<u64>> {
+        let subscription = self.subscriptions.get(&subscribe_id).unwrap();
+        let group_ids = subscription.get_all_group_ids();
+
+        Ok(group_ids)
+    }
+
+    fn get_subgroup_ids_for_group(
+        &self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+    ) -> Result<Vec<u64>> {
+        let subscriprion = self.subscriptions.get(&subscribe_id).unwrap();
+        let subgroup_ids = subscriprion.get_subgroup_ids_for_group(group_id);
+
+        Ok(subgroup_ids)
+    }
+
+    fn get_stream_id_for_subgroup(
+        &self,
+        subscribe_id: SubscribeId,
+        group_id: u64,
+        subgroup_id: u64,
+    ) -> Result<Option<u64>> {
+        let subscription = self.subscriptions.get(&subscribe_id).unwrap();
+        let stream_id = subscription.get_stream_id_for_subgroup(group_id, subgroup_id);
+
+        Ok(stream_id)
     }
 
     fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool {
@@ -335,6 +394,7 @@ pub(crate) mod test_helper_fn {
 #[cfg(test)]
 mod success {
     use crate::models::{
+        range::ObjectStart,
         subscriptions::{
             nodes::{
                 producers::{test_helper_fn, Producer},
@@ -361,7 +421,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         assert!(result.is_ok());
@@ -384,7 +443,6 @@ mod success {
             variables_clone.start_group,
             variables_clone.start_object,
             variables_clone.end_group,
-            variables_clone.end_object,
         );
 
         let subscription = variables_clone
@@ -402,52 +460,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
-            None,
-        ));
-
-        assert_eq!(subscription, expected_subscription);
-    }
-
-    #[test]
-    fn get_subscription_by_full_track_name() {
-        let subscribe_id = 0;
-        let variables = test_helper_fn::common_subscription_variable(subscribe_id);
-
-        let mut variables_clone = variables.clone();
-        let _ = variables_clone.producer.set_subscription(
-            variables_clone.subscribe_id,
-            variables_clone.track_alias,
-            variables_clone.track_namespace,
-            variables_clone.track_name,
-            variables_clone.subscriber_priority,
-            variables_clone.group_order,
-            variables_clone.filter_type,
-            variables_clone.start_group,
-            variables_clone.start_object,
-            variables_clone.end_group,
-            variables_clone.end_object,
-        );
-
-        let subscription = variables_clone
-            .producer
-            .get_subscription_by_full_track_name(
-                variables.track_namespace.clone(),
-                variables.track_name.clone(),
-            )
-            .unwrap();
-
-        let expected_subscription = Some(Subscription::new(
-            variables.track_alias,
-            variables.track_namespace,
-            variables.track_name,
-            variables.subscriber_priority,
-            variables.group_order,
-            variables.filter_type,
-            variables.start_group,
-            variables.start_object,
-            variables.end_group,
-            variables.end_object,
             None,
         ));
 
@@ -470,7 +482,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let expected_subscribe_id = variables.subscribe_id;
@@ -478,6 +489,64 @@ mod success {
         let result_subscribe_id = variables
             .producer
             .get_subscribe_id(variables.track_namespace, variables.track_name)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result_subscribe_id, expected_subscribe_id);
+    }
+
+    #[test]
+    fn get_track_alias() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+        );
+
+        let expected_track_alias = variables.track_alias;
+
+        let result_track_alias = variables
+            .producer
+            .get_track_alias(variables.subscribe_id)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result_track_alias, expected_track_alias);
+    }
+
+    #[test]
+    fn get_subscribe_id_by_track_alias() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+        );
+
+        let expected_subscribe_id = variables.subscribe_id;
+
+        let result_subscribe_id = variables
+            .producer
+            .get_subscribe_id_by_track_alias(variables.track_alias)
             .unwrap()
             .unwrap();
 
@@ -500,7 +569,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -526,7 +594,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -553,7 +620,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables.producer.is_requesting(variables.subscribe_id);
@@ -577,7 +643,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -603,7 +668,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let forwarding_preference = ForwardingPreference::Datagram;
@@ -632,7 +696,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let forwarding_preference = ForwardingPreference::Datagram;
@@ -664,19 +727,19 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
-        let result = variables
+        let result_filter_type = variables
             .producer
             .get_filter_type(variables.subscribe_id)
+            .unwrap()
             .unwrap();
 
-        assert_eq!(result, variables.filter_type);
+        assert_eq!(result_filter_type, variables.filter_type);
     }
 
     #[test]
-    fn get_absolute_start() {
+    fn get_requested_object_range() {
         let subscribe_id = 0;
         let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
@@ -691,21 +754,22 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
-        let result = variables
+        let result_range = variables
             .producer
-            .get_absolute_start(variables.subscribe_id)
+            .get_requested_object_range(variables.subscribe_id)
+            .unwrap()
             .unwrap();
 
-        let expected_result = (variables.start_group, variables.start_object);
-
-        assert_eq!(result, expected_result);
+        assert_eq!(result_range.start_group(), variables.start_group);
+        assert_eq!(result_range.start_object(), variables.start_object);
+        assert_eq!(result_range.end_group(), variables.end_group);
+        assert_eq!(result_range.end_object(), variables.end_object);
     }
 
     #[test]
-    fn get_absolute_end() {
+    fn set_actual_object_start() {
         let subscribe_id = 0;
         let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
 
@@ -720,17 +784,48 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
+
+        let actual_object_start = ObjectStart::new(0, 0);
 
         let result = variables
             .producer
-            .get_absolute_end(variables.subscribe_id)
+            .set_actual_object_start(variables.subscribe_id, actual_object_start);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn get_actual_object_start() {
+        let subscribe_id = 0;
+        let mut variables = test_helper_fn::common_subscription_variable(subscribe_id);
+
+        let actual_object_start = ObjectStart::new(0, 0);
+
+        let _ = variables.producer.set_subscription(
+            variables.subscribe_id,
+            variables.track_alias,
+            variables.track_namespace.clone(),
+            variables.track_name.clone(),
+            variables.subscriber_priority,
+            variables.group_order,
+            variables.filter_type,
+            variables.start_group,
+            variables.start_object,
+            variables.end_group,
+        );
+
+        let _ = variables
+            .producer
+            .set_actual_object_start(variables.subscribe_id, actual_object_start.clone());
+
+        let result = variables
+            .producer
+            .get_actual_object_start(variables.subscribe_id)
+            .unwrap()
             .unwrap();
 
-        let expected_result = (variables.end_group, variables.end_object);
-
-        assert_eq!(result, expected_result);
+        assert_eq!(result, actual_object_start);
     }
 
     #[test]
@@ -749,7 +844,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -781,7 +875,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -812,7 +905,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables
@@ -844,7 +936,6 @@ mod success {
             variables.start_group,
             variables.start_object,
             variables.end_group,
-            variables.end_object,
         );
 
         let result = variables.producer.create_valid_track_alias();

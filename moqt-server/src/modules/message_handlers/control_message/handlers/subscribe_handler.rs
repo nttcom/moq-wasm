@@ -1,5 +1,6 @@
 use crate::{
     modules::{
+        control_message_dispatcher::ControlMessageDispatcher,
         moqt_client::MOQTClient,
         object_cache_storage::{cache::CacheKey, wrapper::ObjectCacheStorageWrapper},
     },
@@ -7,19 +8,17 @@ use crate::{
 };
 use anyhow::{bail, Result};
 use moqt_core::{
-    constants::StreamDirection,
     data_stream_type::DataStreamType,
     messages::{
         control_messages::{
-            subscribe::Subscribe,
+            subscribe::{FilterType, Subscribe},
             subscribe_error::{SubscribeError, SubscribeErrorCode},
             subscribe_ok::SubscribeOk,
         },
         moqt_payload::MOQTPayload,
     },
-    models::tracks::ForwardingPreference,
+    models::{range::ObjectStart, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    SendStreamDispatcherRepository,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
@@ -28,7 +27,7 @@ pub(crate) async fn subscribe_handler(
     subscribe_message: Subscribe,
     client: &MOQTClient,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
     start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
 ) -> Result<Option<SubscribeError>> {
@@ -76,18 +75,26 @@ pub(crate) async fn subscribe_handler(
 
     // If the track already exists, return the track as it is
     if pubsub_relation_manager_repository
-        .is_track_existing(
+        .is_upstream_subscribed(
             subscribe_message.track_namespace().to_vec(),
             subscribe_message.track_name().to_string(),
         )
         .await
         .unwrap()
     {
-        // Generate message -> Set subscription -> Send message
-        let subscribe_ok_message = match generate_subscribe_ok_message(
+        let (content_exists, largest_group_id, largest_object_id) = check_existing_contents(
+            &subscribe_message,
             pubsub_relation_manager_repository,
             object_cache_storage,
+        )
+        .await?;
+
+        // Generate message -> Set subscription -> Send message
+        let subscribe_ok_message = match generate_subscribe_ok_message(
             &subscribe_message,
+            content_exists,
+            largest_group_id,
+            largest_object_id,
         )
         .await
         {
@@ -139,15 +146,24 @@ pub(crate) async fn subscribe_handler(
         let subscribe_ok_payload: Box<dyn MOQTPayload> = Box::new(subscribe_ok_message.clone());
 
         // TODO: Unify the method to send a message to the opposite client itself
-        send_stream_dispatcher_repository
-            .transfer_message_to_send_stream_thread(
-                client.id(),
-                subscribe_ok_payload,
-                StreamDirection::Bi,
-            )
+        control_message_dispatcher
+            .transfer_message_to_control_message_sender_thread(client.id(), subscribe_ok_payload)
             .await?;
 
-        if subscribe_ok_message.content_exists() {
+        if content_exists {
+            // Store Largest Group/Object ID to culculate the Joining FETCH range
+            if subscribe_message.filter_type() == FilterType::LatestObject {
+                let actual_object_start =
+                    ObjectStart::new(largest_group_id.unwrap(), largest_object_id.unwrap());
+                pubsub_relation_manager_repository
+                    .set_downstream_actual_object_start(
+                        downstream_session_id,
+                        downstream_subscribe_id,
+                        actual_object_start,
+                    )
+                    .await?;
+            }
+
             start_new_forwarder(
                 pubsub_relation_manager_repository,
                 object_cache_storage,
@@ -206,7 +222,6 @@ pub(crate) async fn subscribe_handler(
                 subscribe_message.start_group(),
                 subscribe_message.start_object(),
                 subscribe_message.end_group(),
-                subscribe_message.end_object(),
                 subscribe_message.subscribe_parameters().clone(),
             )
             .unwrap();
@@ -217,11 +232,10 @@ pub(crate) async fn subscribe_handler(
             // Notify to the publisher about the SUBSCRIBE message
             // TODO: Wait for the SUBSCRIBE_OK message to be returned on a transaction
             // TODO: validate Timeout
-            match send_stream_dispatcher_repository
-                .transfer_message_to_send_stream_thread(
+            match control_message_dispatcher
+                .transfer_message_to_control_message_sender_thread(
                     session_id,
                     forwarding_subscribe_message,
-                    StreamDirection::Bi,
                 )
                 .await
             {
@@ -293,11 +307,6 @@ async fn start_new_forwarder(
         .await?
         .unwrap();
 
-    let upstream_subscription = pubsub_relation_manager_repository
-        .get_upstream_subscription_by_ids(upstream_session_id, upstream_subscribe_id)
-        .await?
-        .unwrap();
-
     let start_forwarder_tx = start_forwarder_txes
         .lock()
         .await
@@ -305,7 +314,11 @@ async fn start_new_forwarder(
         .unwrap()
         .clone();
 
-    let forwarding_preference = upstream_subscription.get_forwarding_preference().unwrap();
+    let forwarding_preference = pubsub_relation_manager_repository
+        .get_upstream_forwarding_preference(upstream_session_id, upstream_subscribe_id)
+        .await?
+        .unwrap();
+
     match forwarding_preference {
         ForwardingPreference::Datagram => {
             let data_stream_type = DataStreamType::ObjectDatagram;
@@ -313,25 +326,26 @@ async fn start_new_forwarder(
                 .send((downstream_subscribe_id, data_stream_type, None))
                 .await;
         }
-        ForwardingPreference::Track => {
-            let data_stream_type = DataStreamType::StreamHeaderTrack;
-            let _ = start_forwarder_tx
-                .send((downstream_subscribe_id, data_stream_type, None))
-                .await;
-        }
-
         // If SUBSCRIBE message does not handle past objects, it is only necessary to open forwarders for subgroups of the current group
         ForwardingPreference::Subgroup => {
-            let data_stream_type = DataStreamType::StreamHeaderSubgroup;
+            let data_stream_type = DataStreamType::SubgroupHeader;
             let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
-            let group_id = object_cache_storage
-                .get_largest_group_id(&cache_key)
-                .await?;
+            let group_id = match object_cache_storage.get_largest_group_id(&cache_key).await {
+                Ok(Some(group_id)) => group_id,
+                Ok(None) => bail!("largest group id is none"),
+                Err(err) => bail!("Failed to get largest group id: {:?}", err),
+            };
 
             let start_group = subscribe_message.start_group();
             if start_group.is_some() && start_group.unwrap() > group_id {
                 // If the start_group is larger than the largest group_id, there is no need to open forwarders
                 // because these will be opend by the receivers in the future
+                return Ok(());
+            }
+
+            let end_group = subscribe_message.end_group();
+            if end_group.is_some() && end_group.unwrap() < group_id {
+                // If the end_group is smaller than the largest group_id, there is no need to open forwarders
                 return Ok(());
             }
 
@@ -355,11 +369,11 @@ async fn start_new_forwarder(
     Ok(())
 }
 
-async fn generate_subscribe_ok_message(
+async fn check_existing_contents(
+    subscribe_message: &Subscribe,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
     object_cache_storage: &mut ObjectCacheStorageWrapper,
-    subscribe_message: &Subscribe,
-) -> Result<SubscribeOk> {
+) -> Result<(bool, Option<u64>, Option<u64>)> {
     let upstream_session_id = pubsub_relation_manager_repository
         .get_upstream_session_id(subscribe_message.track_namespace().clone())
         .await?
@@ -375,20 +389,26 @@ async fn generate_subscribe_ok_message(
         .unwrap();
 
     let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
-    let largest_group_id = match object_cache_storage.get_largest_group_id(&cache_key).await {
-        Ok(group_id) => Some(group_id),
-        Err(_) => None,
-    };
+    let largest_group_id =
+        (object_cache_storage.get_largest_group_id(&cache_key).await).unwrap_or_default();
 
-    let largest_object_id = match object_cache_storage.get_largest_object_id(&cache_key).await {
-        Ok(object_id) => Some(object_id),
-        Err(_) => None,
-    };
+    let largest_object_id =
+        (object_cache_storage.get_largest_object_id(&cache_key).await).unwrap_or_default();
 
-    // TODO: check cache duration
-    let expires = 0;
     // If the largest_group_id or largest_object_id is None, the content does not exist
     let content_exists = largest_group_id.is_some() && largest_object_id.is_some();
+
+    Ok((content_exists, largest_group_id, largest_object_id))
+}
+
+async fn generate_subscribe_ok_message(
+    subscribe_message: &Subscribe,
+    content_exists: bool,
+    largest_group_id: Option<u64>,
+    largest_object_id: Option<u64>,
+) -> Result<SubscribeOk> {
+    // TODO: check cache duration
+    let expires = 0;
     // TODO: check DELIVERY TIMEOUT
     let subscribe_parameters = vec![];
     // TODO: accurate group_order
@@ -423,16 +443,6 @@ async fn set_downstream_subscription(
     let downstream_start_group = subscribe_message.start_group();
     let downstream_start_object = subscribe_message.start_object();
     let downstream_end_group = subscribe_message.end_group();
-    let downstream_end_object = subscribe_message.end_object();
-
-    // Get publisher subscription already exists
-    let upstream_subscription = pubsub_relation_manager_repository
-        .get_upstream_subscription_by_full_track_name(
-            downstream_track_namespace.clone(),
-            downstream_track_name.clone(),
-        )
-        .await?
-        .unwrap();
 
     pubsub_relation_manager_repository
         .set_downstream_subscription(
@@ -447,17 +457,16 @@ async fn set_downstream_subscription(
             downstream_start_group,
             downstream_start_object,
             downstream_end_group,
-            downstream_end_object,
         )
         .await?;
 
     let upstream_session_id = pubsub_relation_manager_repository
-        .get_upstream_session_id(downstream_track_namespace)
+        .get_upstream_session_id(downstream_track_namespace.clone())
         .await?
         .unwrap();
 
-    let (upstream_track_namespace, upstream_track_name) =
-        upstream_subscription.get_track_namespace_and_name();
+    let upstream_track_namespace = downstream_track_namespace;
+    let upstream_track_name = downstream_track_name;
 
     // Get publisher subscribe id to register pubsub relation
     let upstream_subscribe_id = pubsub_relation_manager_repository
@@ -502,7 +511,6 @@ async fn set_downstream_and_upstream_subscription(
     let downstream_start_group = subscribe_message.start_group();
     let downstream_start_object = subscribe_message.start_object();
     let downstream_end_group = subscribe_message.end_group();
-    let downstream_end_object = subscribe_message.end_object();
 
     pubsub_relation_manager_repository
         .set_downstream_subscription(
@@ -517,7 +525,6 @@ async fn set_downstream_and_upstream_subscription(
             downstream_start_group,
             downstream_start_object,
             downstream_end_group,
-            downstream_end_object,
         )
         .await?;
 
@@ -532,7 +539,6 @@ async fn set_downstream_and_upstream_subscription(
             downstream_start_group,
             downstream_start_object,
             downstream_end_group,
-            downstream_end_object,
         )
         .await?;
 
@@ -554,6 +560,9 @@ mod success {
     use crate::SenderToOpenSubscription;
     use crate::{
         modules::{
+            control_message_dispatcher::{
+                control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+            },
             moqt_client::MOQTClient,
             object_cache_storage::{
                 cache::CacheKey, commands::ObjectCacheStorageCommand,
@@ -564,23 +573,20 @@ mod success {
                 manager::pubsub_relation_manager,
                 wrapper::{test_helper_fn, PubSubRelationManagerWrapper},
             },
-            send_stream_dispatcher::{
-                send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-            },
             server_processes::senders,
         },
         SubgroupStreamId,
     };
+    use moqt_core::messages::data_streams::subgroup_stream;
     use moqt_core::models::tracks::ForwardingPreference;
     use moqt_core::{
-        constants::StreamDirection,
         data_stream_type::DataStreamType,
         messages::{
             control_messages::{
-                subscribe::{FilterType, GroupOrder, Subscribe},
+                group_order::GroupOrder,
+                subscribe::{FilterType, Subscribe},
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
-            data_streams::track_stream,
             moqt_payload::MOQTPayload,
         },
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -602,7 +608,6 @@ mod success {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -618,7 +623,6 @@ mod success {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -650,18 +654,20 @@ mod success {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -681,7 +687,7 @@ mod success {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -711,6 +717,7 @@ mod success {
     }
 
     #[tokio::test]
+    // Return SUBSCRIBE_OK immediately but its ContentExists is false
     async fn normal_case_track_exists_and_content_not_exists() {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
@@ -723,7 +730,6 @@ mod success {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -739,7 +745,6 @@ mod success {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -777,7 +782,6 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
@@ -786,25 +790,26 @@ mod success {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx.clone(),
             })
             .await;
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: downstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -824,7 +829,7 @@ mod success {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -852,6 +857,9 @@ mod success {
     }
 
     #[tokio::test]
+    // Return SUBSCRIBE_OK immediately
+    // ContentExists is true
+    // If, FilterType is LatestObject, the largest group_id and object_id are stored as actual_object_start
     async fn normal_case_track_exists_and_content_exists() {
         // Generate SUBSCRIBE message
         let subscribe_id = 0;
@@ -860,11 +868,10 @@ mod success {
         let track_name = "track_name".to_string();
         let subscriber_priority = 0;
         let group_order = GroupOrder::Ascending;
-        let filter_type = FilterType::LatestGroup;
+        let filter_type = FilterType::LatestObject;
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -880,7 +887,6 @@ mod success {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -918,11 +924,10 @@ mod success {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await
             .unwrap();
-        let forwarding_preference = ForwardingPreference::Track;
+        let forwarding_preference = ForwardingPreference::Subgroup;
         let _ = pubsub_relation_manager
             .set_upstream_forwarding_preference(
                 upstream_session_id,
@@ -935,25 +940,26 @@ mod success {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx.clone(),
             })
             .await;
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: downstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -965,28 +971,41 @@ mod success {
         let mut object_cache_storage = ObjectCacheStorageWrapper::new(cache_tx);
 
         let group_id = 0;
+        let subgroup_id = 0;
         let object_status = None;
         let duration = 1000;
         let publisher_priority = 0;
+        let extension_headers = vec![];
 
-        let track_header =
-            track_stream::Header::new(subscribe_id, track_alias, publisher_priority).unwrap();
+        let subgroup_header =
+            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
+                .unwrap();
 
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
         let _ = object_cache_storage
-            .create_track_stream_cache(&cache_key, track_header)
+            .create_subgroup_stream_cache(&cache_key, group_id, subgroup_id, subgroup_header)
             .await;
 
         for i in 0..10 {
             let object_payload: Vec<u8> = vec![i, i + 1, i + 2, i + 3];
             let object_id = i as u64;
 
-            let track_object =
-                track_stream::Object::new(group_id, object_id, object_status, object_payload)
-                    .unwrap();
+            let subgroup_object = subgroup_stream::Object::new(
+                object_id,
+                extension_headers.clone(),
+                object_status,
+                object_payload,
+            )
+            .unwrap();
 
             let _ = object_cache_storage
-                .set_track_stream_object(&cache_key, track_object, duration)
+                .set_subgroup_stream_object(
+                    &cache_key,
+                    group_id,
+                    subgroup_id,
+                    subgroup_object,
+                    duration,
+                )
                 .await;
         }
 
@@ -1009,7 +1028,7 @@ mod success {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -1034,6 +1053,15 @@ mod success {
 
         assert_eq!(downstream_session_id, downstream_session_id);
         assert_eq!(downstream_subscribe_id, downstream_subscribe_id);
+
+        let actual_object_start = pubsub_relation_manager
+            .get_downstream_actual_object_start(*downstream_session_id, *downstream_subscribe_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(actual_object_start.group_id(), group_id);
+        assert_eq!(actual_object_start.object_id(), 9);
     }
 }
 
@@ -1041,6 +1069,9 @@ mod success {
 mod failure {
     use super::subscribe_handler;
     use crate::modules::{
+        control_message_dispatcher::{
+            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+        },
         moqt_client::MOQTClient,
         object_cache_storage::{
             commands::ObjectCacheStorageCommand, storage::object_cache_storage,
@@ -1050,17 +1081,14 @@ mod failure {
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
             wrapper::PubSubRelationManagerWrapper,
         },
-        send_stream_dispatcher::{
-            send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-        },
         server_processes::senders,
     };
     use crate::SenderToOpenSubscription;
     use moqt_core::{
-        constants::StreamDirection,
         messages::{
             control_messages::{
-                subscribe::{FilterType, GroupOrder, Subscribe},
+                group_order::GroupOrder,
+                subscribe::{FilterType, Subscribe},
                 subscribe_error::SubscribeErrorCode,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
@@ -1084,7 +1112,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -1100,7 +1127,6 @@ mod failure {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -1143,22 +1169,23 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
             )
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -1178,7 +1205,7 @@ mod failure {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -1201,7 +1228,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -1217,7 +1243,6 @@ mod failure {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -1248,12 +1273,15 @@ mod failure {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher (without set sender)
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher (without set sender)
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         // start object cache storage thread
         let (cache_tx, mut cache_rx) = mpsc::channel::<ObjectCacheStorageCommand>(1024);
@@ -1270,7 +1298,7 @@ mod failure {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -1299,7 +1327,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -1315,7 +1342,6 @@ mod failure {
             start_group,
             start_object,
             end_group,
-            end_object,
             subscribe_parameters,
         )
         .unwrap();
@@ -1339,18 +1365,20 @@ mod failure {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -1370,7 +1398,7 @@ mod failure {
             subscribe,
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -1399,7 +1427,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -1418,7 +1445,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters.clone(),
             )
             .unwrap();
@@ -1453,18 +1479,20 @@ mod failure {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -1484,7 +1512,7 @@ mod failure {
             subscribes[0].clone(),
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes.clone(),
         )
@@ -1494,7 +1522,7 @@ mod failure {
             subscribes[1].clone(),
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )
@@ -1516,7 +1544,6 @@ mod failure {
         let start_group = None;
         let start_object = None;
         let end_group = None;
-        let end_object = None;
         let version_specific_parameter =
             VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new("test".to_string()));
         let subscribe_parameters = vec![version_specific_parameter];
@@ -1535,7 +1562,6 @@ mod failure {
                 start_group,
                 start_object,
                 end_group,
-                end_object,
                 subscribe_parameters.clone(),
             )
             .unwrap();
@@ -1570,18 +1596,20 @@ mod failure {
             .setup_subscriber(max_subscribe_id, downstream_session_id)
             .await;
 
-        // Generate SendStreamDispacher
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
+        // Generate ControlMessageDispacher
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
 
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let mut send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let mut control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
 
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_tx
-            .send(SendStreamDispatchCommand::Set {
+        let _ = control_message_dispatch_tx
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -1601,7 +1629,7 @@ mod failure {
             subscribes[0].clone(),
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes.clone(),
         )
@@ -1611,7 +1639,7 @@ mod failure {
             subscribes[1].clone(),
             &client,
             &mut pubsub_relation_manager,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &mut object_cache_storage,
             start_forwarder_txes,
         )

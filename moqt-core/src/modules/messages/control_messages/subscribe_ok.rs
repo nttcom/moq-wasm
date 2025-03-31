@@ -1,11 +1,11 @@
 use crate::{
     messages::{
         control_messages::{
-            subscribe::GroupOrder, version_specific_parameters::VersionSpecificParameter,
+            group_order::GroupOrder, version_specific_parameters::VersionSpecificParameter,
         },
         moqt_payload::MOQTPayload,
     },
-    variable_bytes::read_fixed_length_bytes_from_buffer,
+    variable_bytes::read_bytes_from_buffer,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 use anyhow::bail;
@@ -85,7 +85,7 @@ impl MOQTPayload for SubscribeOk {
     {
         let subscribe_id = read_variable_integer_from_buffer(buf).context("subscribe_id")?;
         let expires = read_variable_integer_from_buffer(buf).context("expires")?;
-        let group_order_u8 = read_fixed_length_bytes_from_buffer(buf, 1)?[0];
+        let group_order_u8 = read_bytes_from_buffer(buf, 1)?[0];
 
         // Values larger than 0x2 are a Protocol Violation.
         let group_order = match GroupOrder::try_from(group_order_u8).context("group order") {
@@ -96,15 +96,14 @@ impl MOQTPayload for SubscribeOk {
             }
         };
 
-        let content_exists =
-            match read_fixed_length_bytes_from_buffer(buf, 1).context("content_exists")?[0] {
-                0 => false,
-                1 => true,
-                _ => {
-                    // TODO: return Termination Error Code
-                    bail!("Invalid content_exists value: Protocol Violation");
-                }
-            };
+        let content_exists = match read_bytes_from_buffer(buf, 1).context("content_exists")?[0] {
+            0 => false,
+            1 => true,
+            _ => {
+                // TODO: return Termination Error Code
+                bail!("Invalid content_exists value: Protocol Violation");
+            }
+        };
 
         let (largest_group_id, largest_object_id) = if content_exists {
             let largest_group_id =

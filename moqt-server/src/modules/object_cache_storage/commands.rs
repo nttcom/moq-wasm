@@ -1,17 +1,12 @@
 use super::cache::{CacheId, CacheKey, SubgroupId};
 use anyhow::Result;
-use moqt_core::messages::data_streams::{datagram, subgroup_stream, track_stream};
+use moqt_core::messages::data_streams::{subgroup_stream, DatagramObject};
 use tokio::sync::oneshot;
 
 #[derive(Debug)]
 pub(crate) enum ObjectCacheStorageCommand {
     CreateDatagramCache {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    CreateTrackStreamCache {
-        cache_key: CacheKey,
-        header: track_stream::Header,
         resp: oneshot::Sender<Result<()>>,
     },
     CreateSubgroupStreamCache {
@@ -21,13 +16,9 @@ pub(crate) enum ObjectCacheStorageCommand {
         header: subgroup_stream::Header,
         resp: oneshot::Sender<Result<()>>,
     },
-    ExistDatagramCache {
+    HasDatagramCache {
         cache_key: CacheKey,
         resp: oneshot::Sender<Result<bool>>,
-    },
-    GetTrackStreamHeader {
-        cache_key: CacheKey,
-        resp: oneshot::Sender<Result<track_stream::Header>>,
     },
     GetSubgroupStreamHeader {
         cache_key: CacheKey,
@@ -37,13 +28,7 @@ pub(crate) enum ObjectCacheStorageCommand {
     },
     SetDatagramObject {
         cache_key: CacheKey,
-        datagram_object: datagram::Object,
-        duration: u64,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    SetTrackStreamObject {
-        cache_key: CacheKey,
-        track_stream_object: track_stream::Object,
+        datagram_object: DatagramObject,
         duration: u64,
         resp: oneshot::Sender<Result<()>>,
     },
@@ -55,19 +40,13 @@ pub(crate) enum ObjectCacheStorageCommand {
         duration: u64,
         resp: oneshot::Sender<Result<()>>,
     },
-    GetAbsoluteDatagramObject {
+    GetDatagramObject {
         cache_key: CacheKey,
         group_id: u64,
         object_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
+        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
     },
-    GetAbsoluteTrackStreamObject {
-        cache_key: CacheKey,
-        group_id: u64,
-        object_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, track_stream::Object)>>>,
-    },
-    GetAbsoluteSubgroupStreamObject {
+    GetSubgroupStreamObject {
         cache_key: CacheKey,
         group_id: u64,
         subgroup_id: u64,
@@ -77,12 +56,7 @@ pub(crate) enum ObjectCacheStorageCommand {
     GetNextDatagramObject {
         cache_key: CacheKey,
         cache_id: CacheId,
-        resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
-    },
-    GetNextTrackStreamObject {
-        cache_key: CacheKey,
-        cache_id: CacheId,
-        resp: oneshot::Sender<Result<Option<(CacheId, track_stream::Object)>>>,
+        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
     },
     GetNextSubgroupStreamObject {
         cache_key: CacheKey,
@@ -93,24 +67,24 @@ pub(crate) enum ObjectCacheStorageCommand {
     },
     GetLatestDatagramObject {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
-    },
-    GetLatestTrackStreamObject {
-        cache_key: CacheKey,
-        resp: oneshot::Sender<Result<Option<(CacheId, track_stream::Object)>>>,
+        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
     },
     GetLatestDatagramGroup {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<Option<(CacheId, datagram::Object)>>>,
-    },
-    GetLatestTrackStreamGroup {
-        cache_key: CacheKey,
-        resp: oneshot::Sender<Result<Option<(CacheId, track_stream::Object)>>>,
+        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
     },
     // Since current Forwarder is generated for each Group,
     // LatestGroup is never used for SubgroupCache.
     // Use a method to get the first object of each Group instead.
     GetFirstSubgroupStreamObject {
+        cache_key: CacheKey,
+        group_id: u64,
+        subgroup_id: u64,
+        resp: oneshot::Sender<Result<Option<(CacheId, subgroup_stream::Object)>>>,
+    },
+    // TODO: Remove LatestGroup since it is not exist in the draft-10
+    #[allow(dead_code)]
+    GetLatestSubgroupStreamObject {
         cache_key: CacheKey,
         group_id: u64,
         subgroup_id: u64,
@@ -123,11 +97,11 @@ pub(crate) enum ObjectCacheStorageCommand {
     },
     GetLargestGroupId {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<u64>>,
+        resp: oneshot::Sender<Result<Option<u64>>>,
     },
     GetLargestObjectId {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<u64>>,
+        resp: oneshot::Sender<Result<Option<u64>>>,
     },
     DeleteClient {
         session_id: usize,

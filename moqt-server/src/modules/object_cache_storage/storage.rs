@@ -1,7 +1,6 @@
 use super::commands::ObjectCacheStorageCommand;
 use crate::modules::object_cache_storage::cache::{
-    datagram::DatagramCache, subgroup_stream::SubgroupStreamsCache, track_stream::TrackStreamCache,
-    Cache, CacheKey,
+    datagram::DatagramCache, subgroup_stream::SubgroupStreamsCache, Cache, CacheKey,
 };
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -26,19 +25,6 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
 
                 resp.send(Ok(())).unwrap();
             }
-            ObjectCacheStorageCommand::CreateTrackStreamCache {
-                cache_key,
-                header,
-                resp,
-            } => {
-                let track_stream_cache = TrackStreamCache::new(header, max_cache_size);
-                let cache = Cache::TrackStream(track_stream_cache);
-
-                // Insert the TrackStreamCache into the ObjectCacheStorage
-                storage.insert(cache_key.clone(), cache);
-
-                resp.send(Ok(())).unwrap();
-            }
             ObjectCacheStorageCommand::CreateSubgroupStreamCache {
                 cache_key,
                 group_id,
@@ -57,7 +43,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 };
 
                 // Add a new SubgroupStream to the SubgroupCache
-                subgroup_stream_cache.add_subgroup_stream(
+                subgroup_stream_cache.set_subgroup_stream(
                     group_id,
                     subgroup_id,
                     header,
@@ -66,7 +52,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
 
                 resp.send(Ok(())).unwrap();
             }
-            ObjectCacheStorageCommand::ExistDatagramCache { cache_key, resp } => {
+            ObjectCacheStorageCommand::HasDatagramCache { cache_key, resp } => {
                 let cache = storage.get(&cache_key);
                 match cache {
                     Some(Cache::Datagram(_)) => {
@@ -76,20 +62,6 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         resp.send(Ok(false)).unwrap();
                     }
                 }
-            }
-            ObjectCacheStorageCommand::GetTrackStreamHeader { cache_key, resp } => {
-                let cache = storage.get(&cache_key);
-                let track_stream_cache = match cache {
-                    Some(Cache::TrackStream(track_stream_cache)) => track_stream_cache,
-                    _ => {
-                        resp.send(Err(anyhow::anyhow!("track stream cache not found")))
-                            .unwrap();
-                        continue;
-                    }
-                };
-
-                let header = track_stream_cache.get_header();
-                resp.send(Ok(header)).unwrap();
             }
             ObjectCacheStorageCommand::GetSubgroupStreamHeader {
                 cache_key,
@@ -129,25 +101,6 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 datagram_cache.insert_object(datagram_object, duration);
                 resp.send(Ok(())).unwrap();
             }
-            ObjectCacheStorageCommand::SetTrackStreamObject {
-                cache_key,
-                track_stream_object,
-                duration,
-                resp,
-            } => {
-                let cache = storage.get_mut(&cache_key);
-                let track_stream_cache = match cache {
-                    Some(Cache::TrackStream(track_stream_cache)) => track_stream_cache,
-                    _ => {
-                        resp.send(Err(anyhow::anyhow!("track stream cache not found")))
-                            .unwrap();
-                        continue;
-                    }
-                };
-
-                track_stream_cache.insert_object(track_stream_object, duration);
-                resp.send(Ok(())).unwrap();
-            }
             ObjectCacheStorageCommand::SetSubgroupStreamObject {
                 cache_key,
                 group_id,
@@ -174,7 +127,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 );
                 resp.send(Ok(())).unwrap();
             }
-            ObjectCacheStorageCommand::GetAbsoluteDatagramObject {
+            ObjectCacheStorageCommand::GetDatagramObject {
                 cache_key,
                 group_id,
                 object_id,
@@ -190,31 +143,10 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     }
                 };
 
-                let object_with_cache_id =
-                    datagram_cache.get_absolute_object_with_cache_id(group_id, object_id);
+                let object_with_cache_id = datagram_cache.get_object(group_id, object_id);
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
-            ObjectCacheStorageCommand::GetAbsoluteTrackStreamObject {
-                cache_key,
-                group_id,
-                object_id,
-                resp,
-            } => {
-                let cache = storage.get_mut(&cache_key);
-                let track_stream_cache = match cache {
-                    Some(Cache::TrackStream(track_stream_cache)) => track_stream_cache,
-                    _ => {
-                        resp.send(Err(anyhow::anyhow!("track stream cache not found")))
-                            .unwrap();
-                        continue;
-                    }
-                };
-
-                let object_with_cache_id =
-                    track_stream_cache.get_absolute_object_with_cache_id(group_id, object_id);
-                resp.send(Ok(object_with_cache_id)).unwrap();
-            }
-            ObjectCacheStorageCommand::GetAbsoluteSubgroupStreamObject {
+            ObjectCacheStorageCommand::GetSubgroupStreamObject {
                 cache_key,
                 group_id,
                 subgroup_id,
@@ -231,8 +163,8 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     }
                 };
 
-                let object_with_cache_id = subgroup_streams_cache
-                    .get_absolute_object_with_cache_id(group_id, subgroup_id, object_id);
+                let object_with_cache_id =
+                    subgroup_streams_cache.get_object(group_id, subgroup_id, object_id);
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
             ObjectCacheStorageCommand::GetNextDatagramObject {
@@ -250,26 +182,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     }
                 };
 
-                let object_with_cache_id = datagram_cache.get_next_object_with_cache_id(cache_id);
-                resp.send(Ok(object_with_cache_id)).unwrap();
-            }
-            ObjectCacheStorageCommand::GetNextTrackStreamObject {
-                cache_key,
-                cache_id,
-                resp,
-            } => {
-                let cache = storage.get_mut(&cache_key);
-                let track_stream_cache = match cache {
-                    Some(Cache::TrackStream(track_stream_cache)) => track_stream_cache,
-                    _ => {
-                        resp.send(Err(anyhow::anyhow!("track stream cache not found")))
-                            .unwrap();
-                        continue;
-                    }
-                };
-
-                let object_with_cache_id =
-                    track_stream_cache.get_next_object_with_cache_id(cache_id);
+                let object_with_cache_id = datagram_cache.get_next_object(cache_id);
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
             ObjectCacheStorageCommand::GetNextSubgroupStreamObject {
@@ -289,11 +202,8 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     }
                 };
 
-                let object_with_cache_id = subgroup_streams_cache.get_next_object_with_cache_id(
-                    group_id,
-                    subgroup_id,
-                    cache_id,
-                );
+                let object_with_cache_id =
+                    subgroup_streams_cache.get_next_object(group_id, subgroup_id, cache_id);
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
             ObjectCacheStorageCommand::GetLatestDatagramGroup { cache_key, resp } => {
@@ -307,21 +217,21 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     }
                 };
 
-                let object_with_cache_id = datagram_cache.get_latest_group_with_cache_id();
+                let object_with_cache_id = datagram_cache.get_latest_group();
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
-            ObjectCacheStorageCommand::GetLatestTrackStreamGroup { cache_key, resp } => {
+            ObjectCacheStorageCommand::GetLatestDatagramObject { cache_key, resp } => {
                 let cache = storage.get_mut(&cache_key);
-                let track_stream_cache = match cache {
-                    Some(Cache::TrackStream(track_stream_cache)) => track_stream_cache,
+                let datagram_cache = match cache {
+                    Some(Cache::Datagram(datagram_cache)) => datagram_cache,
                     _ => {
-                        resp.send(Err(anyhow::anyhow!("track stream cache not found")))
+                        resp.send(Err(anyhow::anyhow!("datagram cache not found")))
                             .unwrap();
                         continue;
                     }
                 };
 
-                let object_with_cache_id = track_stream_cache.get_latest_group_with_cache_id();
+                let object_with_cache_id = datagram_cache.get_latest_object();
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
             ObjectCacheStorageCommand::GetFirstSubgroupStreamObject {
@@ -341,35 +251,27 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 };
 
                 let object_with_cache_id =
-                    subgroup_streams_cache.get_first_object_with_cache_id(group_id, subgroup_id);
+                    subgroup_streams_cache.get_first_object(group_id, subgroup_id);
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
-            ObjectCacheStorageCommand::GetLatestDatagramObject { cache_key, resp } => {
+            ObjectCacheStorageCommand::GetLatestSubgroupStreamObject {
+                cache_key,
+                group_id,
+                subgroup_id,
+                resp,
+            } => {
                 let cache = storage.get_mut(&cache_key);
-                let datagram_cache = match cache {
-                    Some(Cache::Datagram(datagram_cache)) => datagram_cache,
+                let subgroup_streams_cache = match cache {
+                    Some(Cache::SubgroupStream(subgroup_stream_cache)) => subgroup_stream_cache,
                     _ => {
-                        resp.send(Err(anyhow::anyhow!("datagram cache not found")))
+                        resp.send(Err(anyhow::anyhow!("subgroup stream cache not found")))
                             .unwrap();
                         continue;
                     }
                 };
 
-                let object_with_cache_id = datagram_cache.get_latest_object_with_cache_id();
-                resp.send(Ok(object_with_cache_id)).unwrap();
-            }
-            ObjectCacheStorageCommand::GetLatestTrackStreamObject { cache_key, resp } => {
-                let cache = storage.get_mut(&cache_key);
-                let track_stream_cache = match cache {
-                    Some(Cache::TrackStream(track_stream_cache)) => track_stream_cache,
-                    _ => {
-                        resp.send(Err(anyhow::anyhow!("track stream cache not found")))
-                            .unwrap();
-                        continue;
-                    }
-                };
-
-                let object_with_cache_id = track_stream_cache.get_latest_object_with_cache_id();
+                let object_with_cache_id =
+                    subgroup_streams_cache.get_latest_object(group_id, subgroup_id);
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
             ObjectCacheStorageCommand::GetAllSubgroupIds {
@@ -393,11 +295,8 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             ObjectCacheStorageCommand::GetLargestGroupId { cache_key, resp } => {
                 let cache = storage.get_mut(&cache_key);
                 if let Some(cache) = cache {
-                    let largest_group_id: u64 = match cache {
+                    let largest_group_id = match cache {
                         Cache::Datagram(datagram_cache) => datagram_cache.get_largest_group_id(),
-                        Cache::TrackStream(track_stream_cache) => {
-                            track_stream_cache.get_largest_group_id()
-                        }
                         Cache::SubgroupStream(subgroup_stream_cache) => {
                             subgroup_stream_cache.get_largest_group_id()
                         }
@@ -411,11 +310,8 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             ObjectCacheStorageCommand::GetLargestObjectId { cache_key, resp } => {
                 let cache = storage.get_mut(&cache_key);
                 if let Some(cache) = cache {
-                    let largest_object_id: u64 = match cache {
+                    let largest_object_id = match cache {
                         Cache::Datagram(datagram_cache) => datagram_cache.get_largest_object_id(),
-                        Cache::TrackStream(track_stream_cache) => {
-                            track_stream_cache.get_largest_object_id()
-                        }
                         Cache::SubgroupStream(subgroup_stream_cache) => {
                             subgroup_stream_cache.get_largest_object_id()
                         }

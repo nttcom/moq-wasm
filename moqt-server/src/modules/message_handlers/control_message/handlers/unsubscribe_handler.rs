@@ -1,19 +1,19 @@
-use crate::modules::moqt_client::MOQTClient;
+use crate::modules::{
+    control_message_dispatcher::ControlMessageDispatcher, moqt_client::MOQTClient,
+};
 use anyhow::Result;
 use moqt_core::{
-    constants::StreamDirection,
     messages::control_messages::{
         subscribe_done::{StatusCode, SubscribeDone},
         unsubscribe::Unsubscribe,
     },
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    SendStreamDispatcherRepository,
 };
 
 pub(crate) async fn unsubscribe_handler(
     unsubscribe_message: Unsubscribe,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     client: &MOQTClient,
 ) -> Result<()> {
     tracing::trace!("unsubscribe_handler start.");
@@ -47,12 +47,8 @@ pub(crate) async fn unsubscribe_handler(
         None,
         None,
     ));
-    send_stream_dispatcher_repository
-        .transfer_message_to_send_stream_thread(
-            client.id(),
-            subscribe_done_message,
-            StreamDirection::Bi,
-        )
+    control_message_dispatcher
+        .transfer_message_to_control_message_sender_thread(client.id(), subscribe_done_message)
         .await?;
 
     // 3. If the number of DownStream Subscriptions is zero, send UNSUBSCRIBE to the Original Publisher.
@@ -61,11 +57,10 @@ pub(crate) async fn unsubscribe_handler(
         .await?;
     if downstream_subscribers.is_empty() {
         let unsubscribe_message = Box::new(Unsubscribe::new(upstream_subscribe_id));
-        send_stream_dispatcher_repository
-            .transfer_message_to_send_stream_thread(
+        control_message_dispatcher
+            .transfer_message_to_control_message_sender_thread(
                 upstream_session_id,
                 unsubscribe_message,
-                StreamDirection::Bi,
             )
             .await?;
     }
@@ -80,6 +75,9 @@ mod success {
 
     use super::unsubscribe_handler;
     use crate::modules::{
+        control_message_dispatcher::{
+            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+        },
         moqt_client::MOQTClient,
         object_cache_storage::{
             commands::ObjectCacheStorageCommand, storage::object_cache_storage,
@@ -89,16 +87,12 @@ mod success {
             commands::PubSubRelationCommand, manager::pubsub_relation_manager,
             wrapper::PubSubRelationManagerWrapper,
         },
-        send_stream_dispatcher::{
-            send_stream_dispatcher, SendStreamDispatchCommand, SendStreamDispatcher,
-        },
         server_processes::senders,
     };
     use crate::SenderToOpenSubscription;
-    use moqt_core::constants::StreamDirection;
     use moqt_core::{
         messages::{
-            control_messages::subscribe::{FilterType, GroupOrder},
+            control_messages::{group_order::GroupOrder, subscribe::FilterType},
             moqt_payload::MOQTPayload,
         },
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -115,12 +109,15 @@ mod success {
         pubsub_relation_manager_wrapper
     }
 
-    async fn spawn_send_stream_dispatcher() -> SendStreamDispatcher {
-        let (send_stream_tx, mut send_stream_rx) = mpsc::channel::<SendStreamDispatchCommand>(1024);
-        tokio::spawn(async move { send_stream_dispatcher(&mut send_stream_rx).await });
-        let send_stream_dispatcher: SendStreamDispatcher =
-            SendStreamDispatcher::new(send_stream_tx.clone());
-        send_stream_dispatcher
+    async fn spawn_control_message_dispatcher() -> ControlMessageDispatcher {
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
+        tokio::spawn(
+            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+        );
+        let control_message_dispatcher: ControlMessageDispatcher =
+            ControlMessageDispatcher::new(control_message_dispatch_tx.clone());
+        control_message_dispatcher
     }
 
     async fn spawn_object_cache_storage() -> ObjectCacheStorageWrapper {
@@ -143,12 +140,12 @@ mod success {
 
     async fn initialize() -> (
         PubSubRelationManagerWrapper,
-        SendStreamDispatcher,
+        ControlMessageDispatcher,
         ObjectCacheStorageWrapper,
         Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>>,
         MOQTClient,
     ) {
-        let send_stream_dispatcher = spawn_send_stream_dispatcher().await;
+        let control_message_dispatcher = spawn_control_message_dispatcher().await;
         let object_cache_storage_wrapper = spawn_object_cache_storage().await;
         let pubsub_relation_manager_wrapper = spawn_pubsub_relation_manager().await;
         let start_forwarder_txes = create_start_fowarder_txes().await;
@@ -156,7 +153,7 @@ mod success {
 
         (
             pubsub_relation_manager_wrapper,
-            send_stream_dispatcher,
+            control_message_dispatcher,
             object_cache_storage_wrapper,
             start_forwarder_txes,
             client,
@@ -165,17 +162,16 @@ mod success {
 
     async fn setup_upstream_subscription(
         pubsub_relation_manager_wrapper: PubSubRelationManagerWrapper,
-        send_stream_dispatcher: SendStreamDispatcher,
+        control_message_dispatcher: ControlMessageDispatcher,
         upstream_session_id: usize,
         track_namespace: Vec<String>,
         track_name: String,
     ) -> u64 {
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_dispatcher
+        let _ = control_message_dispatcher
             .get_tx()
-            .send(SendStreamDispatchCommand::Set {
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: upstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -196,7 +192,6 @@ mod success {
                 None,
                 None,
                 None,
-                None,
             )
             .await
             .unwrap();
@@ -206,18 +201,17 @@ mod success {
 
     async fn setup_downstream_subscription(
         pubsub_relation_manager_wrapper: PubSubRelationManagerWrapper,
-        send_stream_dispatcher: SendStreamDispatcher,
+        control_message_dispatcher: ControlMessageDispatcher,
         downstream_session_id: usize,
         downstream_subscribe_id: u64,
         track_namespace: Vec<String>,
         track_name: String,
     ) {
         let (message_tx, _) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
-        let _ = send_stream_dispatcher
+        let _ = control_message_dispatcher
             .get_tx()
-            .send(SendStreamDispatchCommand::Set {
+            .send(ControlMessageDispatchCommand::Set {
                 session_id: downstream_session_id,
-                stream_direction: StreamDirection::Bi,
                 sender: message_tx,
             })
             .await;
@@ -237,14 +231,13 @@ mod success {
                 None,
                 None,
                 None,
-                None,
             )
             .await;
     }
 
     async fn setup_e2e_subscription(
         pubsub_relation_manager_wrapper: PubSubRelationManagerWrapper,
-        send_stream_dispatcher: SendStreamDispatcher,
+        control_message_dispatcher: ControlMessageDispatcher,
     ) -> (usize, u64, usize, u64) {
         let upstream_session_id = 0;
         let downstream_session_id = 10;
@@ -254,7 +247,7 @@ mod success {
 
         let upstream_subscribe_id = setup_upstream_subscription(
             pubsub_relation_manager_wrapper.clone(),
-            send_stream_dispatcher.clone(),
+            control_message_dispatcher.clone(),
             upstream_session_id,
             track_namespace.clone(),
             track_name.clone(),
@@ -262,7 +255,7 @@ mod success {
         .await;
         setup_downstream_subscription(
             pubsub_relation_manager_wrapper.clone(),
-            send_stream_dispatcher.clone(),
+            control_message_dispatcher.clone(),
             downstream_session_id,
             downstream_subscribe_id,
             track_namespace,
@@ -295,7 +288,7 @@ mod success {
 
         let (
             mut pubsub_relation_manager_wrapper,
-            mut send_stream_dispatcher,
+            mut control_message_dispatcher,
             _object_cache_storage,
             _start_forwarder_txes,
             client,
@@ -307,14 +300,14 @@ mod success {
             _downstream_subscribe_id,
         ) = setup_e2e_subscription(
             pubsub_relation_manager_wrapper.clone(),
-            send_stream_dispatcher.clone(),
+            control_message_dispatcher.clone(),
         )
         .await;
 
         let result = unsubscribe_handler(
             unsubscribe,
             &mut pubsub_relation_manager_wrapper,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &client,
         )
         .await;
@@ -334,7 +327,7 @@ mod success {
 
         let (
             mut pubsub_relation_manager_wrapper,
-            mut send_stream_dispatcher,
+            mut control_message_dispatcher,
             _object_cache_storage,
             _start_forwarder_txes,
             client,
@@ -347,7 +340,7 @@ mod success {
             _downstream_subscribe_id,
         ) = setup_e2e_subscription(
             pubsub_relation_manager_wrapper.clone(),
-            send_stream_dispatcher.clone(),
+            control_message_dispatcher.clone(),
         )
         .await;
 
@@ -356,7 +349,7 @@ mod success {
 
         setup_downstream_subscription(
             pubsub_relation_manager_wrapper.clone(),
-            send_stream_dispatcher.clone(),
+            control_message_dispatcher.clone(),
             second_downstream_session_id,
             second_downstream_subscribe_id,
             Vec::from(["test".to_string(), "test".to_string()]),
@@ -376,7 +369,7 @@ mod success {
         let result = unsubscribe_handler(
             unsubscribe,
             &mut pubsub_relation_manager_wrapper,
-            &mut send_stream_dispatcher,
+            &mut control_message_dispatcher,
             &client,
         )
         .await;

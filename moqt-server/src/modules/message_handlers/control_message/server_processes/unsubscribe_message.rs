@@ -1,4 +1,5 @@
 use crate::modules::{
+    control_message_dispatcher::ControlMessageDispatcher,
     message_handlers::control_message::handlers::unsubscribe_handler::unsubscribe_handler,
     moqt_client::MOQTClient,
 };
@@ -7,13 +8,12 @@ use bytes::BytesMut;
 use moqt_core::{
     messages::{control_messages::unsubscribe::Unsubscribe, moqt_payload::MOQTPayload},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    SendStreamDispatcherRepository,
 };
 
 pub(crate) async fn process_unsubscribe_message(
     payload_buf: &mut BytesMut,
     pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
-    send_stream_dispatcher_repository: &mut dyn SendStreamDispatcherRepository,
+    control_message_dispatcher: &mut ControlMessageDispatcher,
     client: &MOQTClient,
 ) -> Result<()> {
     let unsubscribe_message = match Unsubscribe::depacketize(payload_buf) {
@@ -27,7 +27,7 @@ pub(crate) async fn process_unsubscribe_message(
     unsubscribe_handler(
         unsubscribe_message,
         pubsub_relation_manager_repository,
-        send_stream_dispatcher_repository,
+        control_message_dispatcher,
         client,
     )
     .await

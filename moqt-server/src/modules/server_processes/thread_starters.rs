@@ -4,21 +4,21 @@ use super::{
     },
     data_streams::{
         datagram::{forwarder::DatagramObjectForwarder, receiver::DatagramObjectReceiver},
-        stream::{
-            forwarder::StreamObjectForwarder,
-            receiver::StreamObjectReceiver,
+        subgroup_stream::{
+            forwarder::SubgroupStreamObjectForwarder,
+            receiver::SubgroupStreamObjectReceiver,
             uni_stream::{UniRecvStream, UniSendStream},
         },
     },
 };
 use crate::{
-    modules::{moqt_client::MOQTClient, send_stream_dispatcher::SendStreamDispatchCommand},
-    SubgroupStreamId,
+    modules::{control_message_dispatcher::ControlMessageDispatchCommand, moqt_client::MOQTClient},
+    signal_dispatcher::DataStreamThreadSignal,
+    SignalDispatchCommand, SubgroupStreamId,
 };
 use anyhow::{bail, Result};
 use moqt_core::{
-    constants::{StreamDirection, TerminationErrorCode},
-    data_stream_type::DataStreamType,
+    constants::TerminationErrorCode, data_stream_type::DataStreamType,
     messages::moqt_payload::MOQTPayload,
 };
 use std::sync::Arc;
@@ -55,10 +55,9 @@ async fn spawn_control_stream_threads(
 
     let (message_tx, message_rx) = mpsc::channel::<Arc<Box<dyn MOQTPayload>>>(1024);
     senders
-        .send_stream_tx()
-        .send(SendStreamDispatchCommand::Set {
+        .control_message_dispatch_tx()
+        .send(ControlMessageDispatchCommand::Set {
             session_id: stable_id,
-            stream_direction: StreamDirection::Bi,
             sender: message_tx,
         })
         .await?;
@@ -95,7 +94,7 @@ async fn spawn_control_stream_threads(
     Ok(())
 }
 
-async fn spawn_stream_object_receiver_thread(
+async fn spawn_subgroup_stream_object_receiver_thread(
     client: Arc<Mutex<MOQTClient>>,
     recv_stream: RecvStream,
 ) -> Result<()> {
@@ -105,14 +104,27 @@ async fn spawn_stream_object_receiver_thread(
         tracing::info!("Accepted uni-directional recv stream");
     });
     let stream_id = recv_stream.id().into_u64();
+    let (signal_tx, signal_rx) = mpsc::channel::<Box<DataStreamThreadSignal>>(1024);
+
+    let senders = client.lock().await.senders();
+    senders
+        .signal_dispatch_tx()
+        .send(SignalDispatchCommand::Set {
+            session_id: stable_id,
+            stream_id,
+            sender: signal_tx,
+        })
+        .await
+        .unwrap();
 
     tokio::spawn(
         async move {
             let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
             let senders = client.lock().await.senders();
-            let mut stream_object_receiver = StreamObjectReceiver::init(stream, client)
-                .instrument(session_span.clone())
-                .await;
+            let mut stream_object_receiver =
+                SubgroupStreamObjectReceiver::init(stream, client, signal_rx)
+                    .instrument(session_span.clone())
+                    .await;
 
             match stream_object_receiver
                 .start()
@@ -140,34 +152,42 @@ async fn spawn_stream_object_receiver_thread(
     Ok(())
 }
 
-async fn spawn_stream_object_forwarder_thread(
+async fn spawn_subgroup_stream_object_forwarder_thread(
     client: Arc<Mutex<MOQTClient>>,
     send_stream: SendStream,
     subscribe_id: u64,
-    data_stream_type: DataStreamType,
-    subgroup_stream_id: Option<SubgroupStreamId>,
+    subgroup_stream_id: SubgroupStreamId,
 ) -> Result<()> {
     let stable_id = client.lock().await.id();
     let session_span = tracing::info_span!("Session", stable_id);
     session_span.in_scope(|| {
-        tracing::info!(
-            "Open uni-directional send for stream type: {:?}",
-            data_stream_type
-        );
+        tracing::info!("Open uni-directional send for subgroup stream",);
     });
     let stream_id = send_stream.id().into_u64();
+    let (signal_tx, signal_rx) = mpsc::channel::<Box<DataStreamThreadSignal>>(1024);
+
+    let senders = client.lock().await.senders();
+    senders
+        .signal_dispatch_tx()
+        .send(SignalDispatchCommand::Set {
+            session_id: stable_id,
+            stream_id,
+            sender: signal_tx,
+        })
+        .await
+        .unwrap();
 
     tokio::spawn(
         async move {
             let stream = UniSendStream::new(stable_id, stream_id, send_stream);
             let senders = client.lock().await.senders();
 
-            let mut stream_object_forwarder = StreamObjectForwarder::init(
+            let mut stream_object_forwarder = SubgroupStreamObjectForwarder::init(
                 stream,
                 subscribe_id,
                 client,
-                data_stream_type,
                 subgroup_stream_id,
+                signal_rx,
             )
             .instrument(session_span.clone())
             .await
@@ -306,7 +326,7 @@ pub(crate) async fn select_spawn_thread(
         },
         stream = session.accept_uni() => {
             let recv_stream = stream?;
-            spawn_stream_object_receiver_thread(client.clone(), recv_stream).await?;
+            spawn_subgroup_stream_object_receiver_thread(client.clone(), recv_stream).await?;
         },
         datagram = session.receive_datagram() => {
             let datagram = datagram?;
@@ -315,14 +335,18 @@ pub(crate) async fn select_spawn_thread(
         // Waiting for requests to open a new data stream thread
         Some((subscribe_id, data_stream_type, subgroup_stream_id)) = start_forwarder_rx.recv() => {
             match data_stream_type {
-                DataStreamType::StreamHeaderTrack | DataStreamType::StreamHeaderSubgroup => {
+                DataStreamType::SubgroupHeader => {
                     let send_stream = session.open_uni().await?.await?;
-                    spawn_stream_object_forwarder_thread(client.clone(), send_stream, subscribe_id, data_stream_type, subgroup_stream_id).await?;
+                    let subgroup_stream_id = subgroup_stream_id.unwrap();
+                    spawn_subgroup_stream_object_forwarder_thread(client.clone(), send_stream, subscribe_id, subgroup_stream_id).await?;
                 }
-                DataStreamType::ObjectDatagram => {
+                DataStreamType::ObjectDatagram | DataStreamType::ObjectDatagramStatus => {
                     let session = session.clone();
                     spawn_datagram_object_forwarder_thread(client.clone(), session, subscribe_id).await?;
 
+                }
+                DataStreamType::FetchHeader => {
+                    unimplemented!();
                 }
             }
         },

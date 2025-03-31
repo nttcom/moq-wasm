@@ -2,8 +2,11 @@ use anyhow::Result;
 use tokio::sync::oneshot;
 
 use moqt_core::{
-    messages::control_messages::subscribe::{FilterType, GroupOrder},
-    models::{subscriptions::Subscription, tracks::ForwardingPreference},
+    messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
+    models::{
+        range::{ObjectRange, ObjectStart},
+        tracks::ForwardingPreference,
+    },
 };
 
 #[cfg(test)]
@@ -54,26 +57,12 @@ pub(crate) enum PubSubRelationCommand {
         downstream_session_id: usize,
         resp: oneshot::Sender<Result<bool>>,
     },
-    IsTrackExisting {
+    IsUpstreamSubscribed {
         track_namespace: Vec<String>,
         track_name: String,
         resp: oneshot::Sender<Result<bool>>,
     },
-    GetUpstreamSubscriptionByFullTrackName {
-        track_namespace: Vec<String>,
-        track_name: String,
-        resp: oneshot::Sender<Result<Option<Subscription>>>,
-    },
-    GetUpstreamSubscriptionBySessionIdAndSubscribeId {
-        upstream_session_id: usize,
-        upstream_subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<Subscription>>>,
-    },
-    GetDownstreamSubscriptionBySessionIdAndSubscribeId {
-        downstream_session_id: usize,
-        downstream_subscribe_id: u64,
-        resp: oneshot::Sender<Result<Option<Subscription>>>,
-    },
+    // TODO: Unify getter methods of subscribe_id
     GetUpstreamSessionId {
         track_namespace: Vec<String>,
         resp: oneshot::Sender<Result<Option<usize>>>,
@@ -90,6 +79,16 @@ pub(crate) enum PubSubRelationCommand {
         upstream_session_id: usize,
         resp: oneshot::Sender<Result<Option<u64>>>,
     },
+    GetDownstreamTrackAlias {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<u64>>>,
+    },
+    GetUpstreamSubscribeIdByTrackAlias {
+        upstream_session_id: usize,
+        upstream_track_alias: u64,
+        resp: oneshot::Sender<Result<Option<u64>>>,
+    },
     SetDownstreamSubscription {
         downstream_session_id: usize,
         subscribe_id: u64,
@@ -102,7 +101,6 @@ pub(crate) enum PubSubRelationCommand {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
         resp: oneshot::Sender<Result<()>>,
     },
     SetUpstreamSubscription {
@@ -115,7 +113,6 @@ pub(crate) enum PubSubRelationCommand {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-        end_object: Option<u64>,
         resp: oneshot::Sender<Result<(u64, u64)>>,
     },
     SetPubSubRelation {
@@ -190,6 +187,97 @@ pub(crate) enum PubSubRelationCommand {
         upstream_session_id: usize,
         upstream_subscribe_id: u64,
         resp: oneshot::Sender<Result<Option<ForwardingPreference>>>,
+    },
+    GetUpstreamFilterType {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<FilterType>>>,
+    },
+    GetDownstreamFilterType {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<FilterType>>>,
+    },
+    GetUpstreamRequestedObjectRange {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<ObjectRange>>>,
+    },
+    GetDownstreamRequestedObjectRange {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<ObjectRange>>>,
+    },
+    SetDownstreamActualObjectStart {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        actual_object_start: ObjectStart,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    GetDownstreamActualObjectStart {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Option<ObjectStart>>>,
+    },
+    SetUpstreamStreamId {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+        stream_id: u64,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    GetUpstreamSubscribeIdsForClient {
+        upstream_session_id: usize,
+        resp: oneshot::Sender<Result<Vec<u64>>>,
+    },
+    GetUpstreamGroupIdsForSubscription {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Vec<u64>>>,
+    },
+    GetUpstreamSubgroupIdsForGroup {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        group_id: u64,
+        resp: oneshot::Sender<Result<Vec<u64>>>,
+    },
+    GetUpstreamStreamIdForSubgroup {
+        upstream_session_id: usize,
+        upstream_subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+        resp: oneshot::Sender<Result<Option<u64>>>,
+    },
+    SetDownstreamStreamId {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+        stream_id: u64,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    GetDownstreamSubscribeIdsForClient {
+        downstream_session_id: usize,
+        resp: oneshot::Sender<Result<Vec<u64>>>,
+    },
+    GetDownstreamGroupIdsForSubscription {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        resp: oneshot::Sender<Result<Vec<u64>>>,
+    },
+    GetDownstreamSubgroupIdsForGroup {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        group_id: u64,
+        resp: oneshot::Sender<Result<Vec<u64>>>,
+    },
+    GetDownstreamStreamIdForSubgroup {
+        downstream_session_id: usize,
+        downstream_subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+        resp: oneshot::Sender<Result<Option<u64>>>,
     },
     GetRelatedSubscribers {
         upstream_session_id: usize,
