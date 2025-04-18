@@ -4,7 +4,7 @@ Both server and browser client are written in Rust.
 
 ## Implementation
 
-Supported version: draft-ietf-moq-transport-06
+Supported version: draft-ietf-moq-transport-10
 
 - [ ] Control Messages
   - [x] CLIENT_SETUP / SERVER_SETUP
@@ -39,7 +39,7 @@ Supported version: draft-ietf-moq-transport-06
   - [x] Manage Publisher / Subscriber
   - [x] Forword Messages
   - [ ] Priorities
-  - [ ] Object Cache
+  - [x] Object Cache
 
 ## Modules
 
