@@ -2,9 +2,9 @@ let videoEncoder: VideoEncoder | undefined
 let keyframeInterval: number
 const VIDEO_ENCODER_CONFIG = {
   codec: 'av01.0.04M.08',
-  width: 640,
-  height: 480,
-  bitrate: 2_000_000, // 2 Mbps
+  width: 1920,
+  height: 1080,
+  bitrate: 10_000_000, //10 Mbps
   scalabilityMode: 'L1T3',
   framerate: 30
 }
