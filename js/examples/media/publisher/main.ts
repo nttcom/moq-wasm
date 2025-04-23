@@ -9,7 +9,10 @@ function setUpStartGetUserMediaButton() {
   startGetUserMediaBtn.addEventListener('click', async () => {
     const constraints = {
       audio: true,
-      video: true
+      video: {
+        width: 1920,
+        height: 1080
+      }
     }
     mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
     const video = document.getElementById('video') as HTMLVideoElement
