@@ -67,7 +67,7 @@ impl DatagramCache {
         let latest_group_id = self
             .objects
             .iter()
-            .last()
+            .next_back()
             .map(|(_, v)| match v {
                 DatagramObject::ObjectDatagram(obj) => obj.group_id(),
                 DatagramObject::ObjectDatagramStatus(obj) => obj.group_id(),
@@ -96,7 +96,10 @@ impl DatagramCache {
     }
 
     pub(crate) fn get_latest_object(&mut self) -> Option<(CacheId, DatagramObject)> {
-        self.objects.iter().last().map(|(k, v)| (*k, v.clone()))
+        self.objects
+            .iter()
+            .next_back()
+            .map(|(k, v)| (*k, v.clone()))
     }
 
     pub(crate) fn get_largest_group_id(&mut self) -> Option<u64> {
