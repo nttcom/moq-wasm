@@ -190,7 +190,10 @@ impl SubgroupStreamCache {
     }
 
     fn get_latest_object(&mut self) -> Option<(CacheId, subgroup_stream::Object)> {
-        self.objects.iter().last().map(|(k, v)| (*k, v.clone()))
+        self.objects
+            .iter()
+            .next_back()
+            .map(|(k, v)| (*k, v.clone()))
     }
 
     fn get_largest_object_id(&mut self) -> u64 {
