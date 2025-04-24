@@ -8,7 +8,7 @@ pub enum SubgroupStreamObjectProcessResult {
     Continue,
 }
 
-pub async fn try_read_object(buf: &mut BytesMut) -> SubgroupStreamObjectProcessResult {
+pub async fn read_object(buf: &mut BytesMut) -> SubgroupStreamObjectProcessResult {
     let payload_length = buf.len();
     tracing::trace!("stream_object_handler! {}", payload_length);
 
@@ -38,7 +38,7 @@ pub async fn try_read_object(buf: &mut BytesMut) -> SubgroupStreamObjectProcessR
 mod tests {
     mod success {
         use crate::modules::message_handlers::subgroup_stream_object::{
-            try_read_object, SubgroupStreamObjectProcessResult,
+            read_object, SubgroupStreamObjectProcessResult,
         };
         use bytes::BytesMut;
         use moqt_core::messages::data_streams::{subgroup_stream, DataStreams};
@@ -56,7 +56,7 @@ mod tests {
             buf.extend_from_slice(&bytes_array);
             let buf_clone = buf.clone();
 
-            let result = try_read_object(&mut buf).await;
+            let result = read_object(&mut buf).await;
 
             let mut read_cur = Cursor::new(&buf_clone[..]);
             let object = subgroup_stream::Object::depacketize(&mut read_cur).unwrap();
@@ -75,7 +75,7 @@ mod tests {
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
 
-            let result = try_read_object(&mut buf).await;
+            let result = read_object(&mut buf).await;
 
             assert_eq!(result, SubgroupStreamObjectProcessResult::Continue);
         }
@@ -88,7 +88,7 @@ mod tests {
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
 
-            let result = try_read_object(&mut buf).await;
+            let result = read_object(&mut buf).await;
 
             assert_eq!(result, SubgroupStreamObjectProcessResult::Continue);
         }
