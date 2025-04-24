@@ -198,8 +198,10 @@ impl SubgroupStreamObjectReceiver {
     async fn read_header_from_buf(
         &self,
     ) -> Result<Option<subgroup_stream::Header>, TerminationError> {
-        let result = self.try_read_header_from_buf().await;
+        let mut process_buf = self.buf.lock().await;
+        let client = self.client.clone();
 
+        let result = subgroup_stream_header::read_header(&mut process_buf, client).await;
         match result {
             SubgroupStreamHeaderProcessResult::Success(stream_header) => Ok(Some(stream_header)),
             SubgroupStreamHeaderProcessResult::Continue => Ok(None),
@@ -208,13 +210,6 @@ impl SubgroupStreamObjectReceiver {
                 Err((code, msg))
             }
         }
-    }
-
-    async fn try_read_header_from_buf(&self) -> SubgroupStreamHeaderProcessResult {
-        let mut process_buf = self.buf.lock().await;
-        let client = self.client.clone();
-
-        subgroup_stream_header::try_read_header(&mut process_buf, client).await
     }
 
     async fn get_subscribe_id(
@@ -509,18 +504,14 @@ impl SubgroupStreamObjectReceiver {
     async fn read_object_from_buf(
         &self,
     ) -> Result<Option<subgroup_stream::Object>, TerminationError> {
-        let result = self.try_read_object_from_buf().await;
+        let mut buf = self.buf.lock().await;
+
+        let result = subgroup_stream_object::read_object(&mut buf).await;
 
         match result {
             SubgroupStreamObjectProcessResult::Success(stream_object) => Ok(Some(stream_object)),
             SubgroupStreamObjectProcessResult::Continue => Ok(None),
         }
-    }
-
-    async fn try_read_object_from_buf(&self) -> SubgroupStreamObjectProcessResult {
-        let mut buf = self.buf.lock().await;
-
-        subgroup_stream_object::try_read_object(&mut buf).await
     }
 
     async fn store_object(

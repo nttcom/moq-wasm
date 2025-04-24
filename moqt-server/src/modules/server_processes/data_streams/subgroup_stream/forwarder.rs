@@ -266,7 +266,7 @@ impl SubgroupStreamObjectForwarder {
             }
 
             let (cache_id, stream_object) =
-                match self.try_get_object(object_cache_storage, cache_id).await? {
+                match self.get_object(object_cache_storage, cache_id).await? {
                     Some((id, object)) => (id, object),
                     None => {
                         // If there is no object in the cache storage, sleep for a while and try again
@@ -303,23 +303,23 @@ impl SubgroupStreamObjectForwarder {
         }
     }
 
-    async fn try_get_object(
+    async fn get_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         cache_id: Option<usize>,
     ) -> Result<Option<(usize, subgroup_stream::Object)>> {
         match cache_id {
             // Try to get the first object according to Filter Type
-            None => self.try_get_first_object(object_cache_storage).await,
+            None => self.get_first_object(object_cache_storage).await,
             Some(cache_id) => {
                 // Try to get the subsequent object with cache_id
-                self.try_get_subsequent_object(object_cache_storage, cache_id)
+                self.get_subsequent_object(object_cache_storage, cache_id)
                     .await
             }
         }
     }
 
-    async fn try_get_first_object(
+    async fn get_first_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<(usize, subgroup_stream::Object)>> {
@@ -336,7 +336,7 @@ impl SubgroupStreamObjectForwarder {
             None => {
                 // If there is no actual start, it means that this is the first forwarder on this subscription.
                 let object_with_cache_id = self
-                    .try_get_first_object_for_first_stream(object_cache_storage)
+                    .get_first_object_for_first_stream(object_cache_storage)
                     .await?;
 
                 if object_with_cache_id.is_none() {
@@ -360,7 +360,7 @@ impl SubgroupStreamObjectForwarder {
             }
             Some(actual_object_start) => {
                 // If there is an actual start, it means that this is the second or later forwarder on this subscription.
-                self.try_get_first_object_for_subsequent_stream(
+                self.get_first_object_for_subsequent_stream(
                     object_cache_storage,
                     actual_object_start,
                 )
@@ -369,7 +369,7 @@ impl SubgroupStreamObjectForwarder {
         }
     }
 
-    async fn try_get_first_object_for_first_stream(
+    async fn get_first_object_for_first_stream(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<(usize, subgroup_stream::Object)>> {
@@ -411,7 +411,7 @@ impl SubgroupStreamObjectForwarder {
         }
     }
 
-    async fn try_get_first_object_for_subsequent_stream(
+    async fn get_first_object_for_subsequent_stream(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         actual_object_start: ObjectStart,
@@ -439,7 +439,7 @@ impl SubgroupStreamObjectForwarder {
         }
     }
 
-    async fn try_get_subsequent_object(
+    async fn get_subsequent_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,

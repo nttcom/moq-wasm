@@ -106,7 +106,10 @@ impl DatagramObjectReceiver {
     }
 
     async fn read_object_from_buf(&self) -> Result<Option<DatagramObject>, TerminationError> {
-        let result = self.try_read_object_from_buf().await;
+        let mut buf = self.buf.lock().await;
+        let client = self.client.clone();
+
+        let result = datagram_object::read_object(&mut buf, client).await;
 
         match result {
             DatagramObjectProcessResult::Success(datagram_object) => Ok(Some(datagram_object)),
@@ -117,13 +120,6 @@ impl DatagramObjectReceiver {
                 Err((code, reason))
             }
         }
-    }
-
-    async fn try_read_object_from_buf(&self) -> DatagramObjectProcessResult {
-        let mut buf = self.buf.lock().await;
-        let client = self.client.clone();
-
-        datagram_object::try_read_object(&mut buf, client).await
     }
 
     async fn get_subscribe_id(

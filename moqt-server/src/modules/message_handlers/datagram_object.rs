@@ -53,7 +53,7 @@ fn depacketize_object_datagram_status(
     }
 }
 
-pub(crate) async fn try_read_object(
+pub(crate) async fn read_object(
     buf: &mut BytesMut,
     client: Arc<Mutex<MOQTClient>>,
 ) -> DatagramObjectProcessResult {
@@ -120,7 +120,7 @@ pub(crate) async fn try_read_object(
 mod tests {
     mod success {
         use crate::modules::{
-            message_handlers::datagram_object::{try_read_object, DatagramObjectProcessResult},
+            message_handlers::datagram_object::{read_object, DatagramObjectProcessResult},
             moqt_client::{MOQTClient, MOQTClientStatus},
             server_processes::senders,
         };
@@ -156,7 +156,7 @@ mod tests {
             client.update_status(MOQTClientStatus::SetUp);
             let client = Arc::new(Mutex::new(client));
 
-            let result = try_read_object(&mut buf, client).await;
+            let result = read_object(&mut buf, client).await;
 
             println!("{:?}", result);
 
@@ -195,7 +195,7 @@ mod tests {
             client.update_status(MOQTClientStatus::SetUp);
             let client = Arc::new(Mutex::new(client));
 
-            let result = try_read_object(&mut buf, client).await;
+            let result = read_object(&mut buf, client).await;
 
             println!("{:?}", result);
 
