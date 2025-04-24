@@ -145,25 +145,6 @@ impl SubgroupStreamObjectForwarder {
         Ok(())
     }
 
-    pub(crate) async fn finish(&mut self) -> Result<()> {
-        let downstream_session_id = self.stream.stable_id();
-        let downstream_stream_id = self.stream.stream_id();
-        self.senders
-            .buffer_tx()
-            .send(BufferCommand::ReleaseStream {
-                session_id: downstream_session_id,
-                stream_id: downstream_stream_id,
-            })
-            .await?;
-
-        // Send RESET_STREAM frame to the subscriber
-        self.stream.finish().await?;
-
-        tracing::info!("SubgroupStreamObjectForwarder finished");
-
-        Ok(())
-    }
-
     async fn get_upstream_forwarding_preference(&self) -> Result<Option<ForwardingPreference>> {
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
@@ -588,6 +569,25 @@ impl SubgroupStreamObjectForwarder {
         signal_dispatcher
             .transfer_signal_to_data_stream_thread(downstream_session_id, stream_id, signal)
             .await?;
+
+        Ok(())
+    }
+
+    pub(crate) async fn finish(&mut self) -> Result<()> {
+        let downstream_session_id = self.stream.stable_id();
+        let downstream_stream_id = self.stream.stream_id();
+        self.senders
+            .buffer_tx()
+            .send(BufferCommand::ReleaseStream {
+                session_id: downstream_session_id,
+                stream_id: downstream_stream_id,
+            })
+            .await?;
+
+        // Send RESET_STREAM frame to the subscriber
+        self.stream.finish().await?;
+
+        tracing::info!("SubgroupStreamObjectForwarder finished");
 
         Ok(())
     }
