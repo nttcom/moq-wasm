@@ -101,22 +101,6 @@ impl DatagramObjectForwarder {
         Ok(())
     }
 
-    pub(crate) async fn finish(&self) -> Result<()> {
-        let downstream_session_id = self.session.stable_id();
-        let downstream_stream_id = 0; // stream_id of datagram does not exist (TODO: delete buffer manager)
-        self.senders
-            .buffer_tx()
-            .send(BufferCommand::ReleaseStream {
-                session_id: downstream_session_id,
-                stream_id: downstream_stream_id,
-            })
-            .await?;
-
-        tracing::info!("DatagramObjectForwarder finished");
-
-        Ok(())
-    }
-
     async fn get_upstream_forwarding_preference(&self) -> Result<Option<ForwardingPreference>> {
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
@@ -376,5 +360,21 @@ impl DatagramObjectForwarder {
             object.object_status(),
             ObjectStatus::EndOfTrack | ObjectStatus::EndOfTrackAndGroup
         )
+    }
+
+    pub(crate) async fn finish(&self) -> Result<()> {
+        let downstream_session_id = self.session.stable_id();
+        let downstream_stream_id = 0; // stream_id of datagram does not exist (TODO: delete buffer manager)
+        self.senders
+            .buffer_tx()
+            .send(BufferCommand::ReleaseStream {
+                session_id: downstream_session_id,
+                stream_id: downstream_stream_id,
+            })
+            .await?;
+
+        tracing::info!("DatagramObjectForwarder finished");
+
+        Ok(())
     }
 }
