@@ -188,7 +188,7 @@ impl DatagramObjectForwarder {
         // Do loop until get an object from the cache storage
         loop {
             let (cache_id, upstream_object) = match self
-                .try_get_upstream_object(object_cache_storage, cache_id)
+                .get_upstream_object(object_cache_storage, cache_id)
                 .await?
             {
                 Some((id, object)) => (id, object),
@@ -213,17 +213,17 @@ impl DatagramObjectForwarder {
         }
     }
 
-    async fn try_get_upstream_object(
+    async fn get_upstream_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         cache_id: Option<usize>,
     ) -> Result<Option<(usize, DatagramObject)>> {
         let cache = match cache_id {
             // Try to get the first object according to Filter Type
-            None => self.try_get_first_object(object_cache_storage).await?,
+            None => self.get_first_object(object_cache_storage).await?,
             Some(cache_id) => {
                 // Try to get the subsequent object with cache_id
-                self.try_get_subsequent_object(object_cache_storage, cache_id)
+                self.get_subsequent_object(object_cache_storage, cache_id)
                     .await?
             }
         };
@@ -234,7 +234,7 @@ impl DatagramObjectForwarder {
         }
     }
 
-    async fn try_get_first_object(
+    async fn get_first_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<Option<(usize, DatagramObject)>> {
@@ -261,7 +261,7 @@ impl DatagramObjectForwarder {
         }
     }
 
-    async fn try_get_subsequent_object(
+    async fn get_subsequent_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,
