@@ -32,7 +32,7 @@ fn read_data_stream_type(read_cur: &mut std::io::Cursor<&[u8]>) -> Result<DataSt
     Ok(data_stream_type)
 }
 
-pub async fn try_read_header(
+pub async fn read_header(
     buf: &mut BytesMut,
     client: Arc<Mutex<MOQTClient>>,
 ) -> SubgroupStreamHeaderProcessResult {
@@ -98,7 +98,7 @@ mod tests {
     mod success {
         use crate::modules::{
             message_handlers::subgroup_stream_header::{
-                try_read_header, SubgroupStreamHeaderProcessResult,
+                read_header, SubgroupStreamHeaderProcessResult,
             },
             moqt_client::{MOQTClient, MOQTClientStatus},
             server_processes::senders,
@@ -133,7 +133,7 @@ mod tests {
             client.update_status(MOQTClientStatus::SetUp);
             let client = Arc::new(Mutex::new(client));
 
-            let result = try_read_header(&mut buf, client).await;
+            let result = read_header(&mut buf, client).await;
 
             let mut buf_without_type = BytesMut::with_capacity(bytes_array.len());
             buf_without_type.extend_from_slice(&bytes_array);
@@ -160,7 +160,7 @@ mod tests {
             client.update_status(MOQTClientStatus::SetUp);
             let client = Arc::new(Mutex::new(client));
 
-            let result = try_read_header(&mut buf, client).await;
+            let result = read_header(&mut buf, client).await;
 
             assert_eq!(result, SubgroupStreamHeaderProcessResult::Continue);
         }
