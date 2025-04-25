@@ -96,7 +96,7 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
     setupVideoDecoderWorker()
   }
   client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject: any) => {
-    // WARNNING: Use only debug for memory usage
+    // WARNING: Use only debug for memory usage
     // console.log(subgroupStreamObject)
     if (type === 'video') {
       if (
