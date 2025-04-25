@@ -38,7 +38,7 @@ const LatestMediaTrackInfo: {
 } = {
   video: {
     objectId: 0n,
-    groupId: 0n,
+    groupId: -1n,
     subgroups: {
       0: {},
       1: {},

@@ -96,7 +96,8 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
     setupVideoDecoderWorker()
   }
   client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject: any) => {
-    console.log(subgroupStreamObject)
+    // WARNING: Use only debug for memory usage
+    // console.log(subgroupStreamObject)
     if (type === 'video') {
       if (
         subgroupStreamObject.objectPayloadLength === 0 ||
@@ -104,7 +105,8 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
         subgroupStreamObject.object_status === 'EndOfTrackAndGroup' ||
         subgroupStreamObject.object_status === 'EndOfTrack'
       ) {
-        console.log(subgroupStreamObject)
+        // WARNING: Use only debug for memory usage
+        // console.log(subgroupStreamObject)
         return
       }
       videoDecoderWorker.postMessage({ subgroupStreamObject })
