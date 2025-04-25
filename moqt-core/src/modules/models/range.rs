@@ -23,22 +23,22 @@ impl ObjectRange {
         Self { start, end }
     }
 
-    pub fn start_group(&self) -> Option<u64> {
+    pub fn start_group_id(&self) -> Option<u64> {
         let start = self.start.as_ref()?;
         Some(start.group_id())
     }
 
-    pub fn start_object(&self) -> Option<u64> {
+    pub fn start_object_id(&self) -> Option<u64> {
         let start = self.start.as_ref()?;
         Some(start.object_id())
     }
 
-    pub fn end_group(&self) -> Option<u64> {
+    pub fn end_group_id(&self) -> Option<u64> {
         let end = self.end.as_ref()?;
         Some(end.group_id())
     }
 
-    pub fn end_object(&self) -> Option<u64> {
+    pub fn end_object_id(&self) -> Option<u64> {
         let end = self.end.as_ref()?;
         end.object_id()
     }

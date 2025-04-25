@@ -19,8 +19,8 @@ use moqt_core::{
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::write_variable_integer,
 };
-use std::{sync::Arc, thread, time::Duration};
-use tokio::sync::Mutex;
+use std::{sync::Arc, time::Duration};
+use tokio::{sync::Mutex, time::sleep};
 use tracing::{self};
 use wtransport::Connection;
 
@@ -97,22 +97,6 @@ impl DatagramObjectForwarder {
             .await?;
 
         self.forward_objects(&mut object_cache_storage).await?;
-
-        Ok(())
-    }
-
-    pub(crate) async fn finish(&self) -> Result<()> {
-        let downstream_session_id = self.session.stable_id();
-        let downstream_stream_id = 0; // stream_id of datagram does not exist (TODO: delete buffer manager)
-        self.senders
-            .buffer_tx()
-            .send(BufferCommand::ReleaseStream {
-                session_id: downstream_session_id,
-                stream_id: downstream_stream_id,
-            })
-            .await?;
-
-        tracing::info!("DatagramObjectForwarder finished");
 
         Ok(())
     }
@@ -194,7 +178,7 @@ impl DatagramObjectForwarder {
                 Some((id, object)) => (id, object),
                 None => {
                     // If there is no object in the cache storage, sleep for a while and try again
-                    thread::sleep(self.sleep_time);
+                    sleep(self.sleep_time).await;
                     continue;
                 }
             };
@@ -251,8 +235,8 @@ impl DatagramObjectForwarder {
                     .await
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
-                let start_group = self.requested_object_range.start_group().unwrap();
-                let start_object = self.requested_object_range.start_object().unwrap();
+                let start_group = self.requested_object_range.start_group_id().unwrap();
+                let start_object = self.requested_object_range.start_object_id().unwrap();
 
                 object_cache_storage
                     .get_absolute_datagram_object(&self.cache_key, start_group, start_object)
@@ -376,5 +360,21 @@ impl DatagramObjectForwarder {
             object.object_status(),
             ObjectStatus::EndOfTrack | ObjectStatus::EndOfTrackAndGroup
         )
+    }
+
+    pub(crate) async fn finish(&self) -> Result<()> {
+        let downstream_session_id = self.session.stable_id();
+        let downstream_stream_id = 0; // stream_id of datagram does not exist (TODO: delete buffer manager)
+        self.senders
+            .buffer_tx()
+            .send(BufferCommand::ReleaseStream {
+                session_id: downstream_session_id,
+                stream_id: downstream_stream_id,
+            })
+            .await?;
+
+        tracing::info!("DatagramObjectForwarder finished");
+
+        Ok(())
     }
 }

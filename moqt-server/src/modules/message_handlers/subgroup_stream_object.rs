@@ -9,11 +9,10 @@ pub enum SubgroupStreamObjectProcessResult {
 }
 
 pub async fn read_object(buf: &mut BytesMut) -> SubgroupStreamObjectProcessResult {
-    let payload_length = buf.len();
-    tracing::trace!("stream_object_handler! {}", payload_length);
+    let buffer_length = buf.len();
 
     // Check if the data is exist
-    if payload_length == 0 {
+    if buffer_length == 0 {
         return SubgroupStreamObjectProcessResult::Continue;
     }
 

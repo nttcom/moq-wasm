@@ -218,14 +218,17 @@ mod success {
         assert_eq!(subscription.group_order, group_order);
         assert_eq!(subscription.filter_type, filter_type);
         assert_eq!(
-            subscription.requested_object_range.start_group(),
+            subscription.requested_object_range.start_group_id(),
             start_group
         );
         assert_eq!(
-            subscription.requested_object_range.start_object(),
+            subscription.requested_object_range.start_object_id(),
             start_object
         );
-        assert_eq!(subscription.requested_object_range.end_group(), end_group);
+        assert_eq!(
+            subscription.requested_object_range.end_group_id(),
+            end_group
+        );
     }
 
     #[test]
@@ -470,9 +473,9 @@ mod success {
 
         let result = subscription.get_requested_object_range();
 
-        assert_eq!(result.start_group(), variable.start_group);
-        assert_eq!(result.start_object(), variable.start_object);
-        assert_eq!(result.end_group(), variable.end_group);
+        assert_eq!(result.start_group_id(), variable.start_group);
+        assert_eq!(result.start_object_id(), variable.start_object);
+        assert_eq!(result.end_group_id(), variable.end_group);
     }
 
     #[test]

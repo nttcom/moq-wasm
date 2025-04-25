@@ -182,7 +182,7 @@ impl ObjectCacheStorageWrapper {
         }
     }
 
-    pub(crate) async fn get_absolute_subgroup_stream_object(
+    pub(crate) async fn get_absolute_or_next_subgroup_stream_object(
         &mut self,
         cache_key: &CacheKey,
         group_id: u64,
@@ -192,7 +192,7 @@ impl ObjectCacheStorageWrapper {
         let (resp_tx, resp_rx) =
             oneshot::channel::<Result<Option<(CacheId, subgroup_stream::Object)>>>();
 
-        let cmd = ObjectCacheStorageCommand::GetSubgroupStreamObject {
+        let cmd = ObjectCacheStorageCommand::GetAbsoluteOrNextSubgroupStreamObject {
             cache_key: cache_key.clone(),
             group_id,
             subgroup_id,
@@ -795,7 +795,12 @@ mod success {
         .unwrap();
 
         let result = object_cache_storage
-            .get_absolute_subgroup_stream_object(&cache_key, group_id, subgroup_id, object_id)
+            .get_absolute_or_next_subgroup_stream_object(
+                &cache_key,
+                group_id,
+                subgroup_id,
+                object_id,
+            )
             .await;
 
         assert!(result.is_ok());
