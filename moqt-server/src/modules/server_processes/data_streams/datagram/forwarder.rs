@@ -235,8 +235,8 @@ impl DatagramObjectForwarder {
                     .await
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
-                let start_group = self.requested_object_range.start_group().unwrap();
-                let start_object = self.requested_object_range.start_object().unwrap();
+                let start_group = self.requested_object_range.start_group_id().unwrap();
+                let start_object = self.requested_object_range.start_object_id().unwrap();
 
                 object_cache_storage
                     .get_absolute_datagram_object(&self.cache_key, start_group, start_object)

@@ -22,10 +22,10 @@ impl SubgroupStreamsCache {
         header: subgroup_stream::Header,
         max_cache_size: usize,
     ) {
-        let stream = SubgroupStreamCache::new(header, max_cache_size);
+        let cache = SubgroupStreamCache::new(header, max_cache_size);
         let subgroup_stream_id = (group_id, subgroup_id);
 
-        self.streams.insert(subgroup_stream_id, stream);
+        self.streams.insert(subgroup_stream_id, cache);
     }
 
     pub(crate) fn insert_object(
@@ -48,7 +48,7 @@ impl SubgroupStreamsCache {
             .unwrap()
     }
 
-    pub(crate) fn get_object(
+    pub(crate) fn get_absolute_or_next_object(
         &mut self,
         group_id: u64,
         subgroup_id: u64,
@@ -56,7 +56,7 @@ impl SubgroupStreamsCache {
     ) -> Option<(CacheId, subgroup_stream::Object)> {
         let subgroup_stream_id = (group_id, subgroup_id);
         let subgroup_stream_cache = self.streams.get_mut(&subgroup_stream_id).unwrap();
-        subgroup_stream_cache.get_object(object_id)
+        subgroup_stream_cache.get_absolute_or_next_object(object_id)
     }
 
     pub(crate) fn get_next_object(
@@ -164,9 +164,12 @@ impl SubgroupStreamCache {
         self.header.clone()
     }
 
-    fn get_object(&mut self, object_id: u64) -> Option<(CacheId, subgroup_stream::Object)> {
+    fn get_absolute_or_next_object(
+        &mut self,
+        object_id: u64,
+    ) -> Option<(CacheId, subgroup_stream::Object)> {
         self.objects.iter().find_map(|(k, v)| {
-            if v.object_id() == object_id {
+            if v.object_id() >= object_id {
                 Some((*k, v.clone()))
             } else {
                 None
