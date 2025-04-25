@@ -105,7 +105,7 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
         subgroupStreamObject.object_status === 'EndOfTrackAndGroup' ||
         subgroupStreamObject.object_status === 'EndOfTrack'
       ) {
-        // WARNNING: Use only debug for memory usage
+        // WARNING: Use only debug for memory usage
         // console.log(subgroupStreamObject)
         return
       }
