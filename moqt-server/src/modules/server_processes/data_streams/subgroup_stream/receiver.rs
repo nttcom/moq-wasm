@@ -30,7 +30,10 @@ use moqt_core::{
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
 use std::{sync::Arc, thread, time::Duration};
-use tokio::sync::{mpsc, Mutex};
+use tokio::{
+    sync::{mpsc, Mutex},
+    time::sleep,
+};
 use tracing::{self};
 
 pub(crate) struct SubgroupStreamObjectReceiver {
@@ -484,7 +487,7 @@ impl SubgroupStreamObjectReceiver {
 
             // Wait to forward rest of the objects on other receivers in the same group
             let send_delay_ms = Duration::from_millis(50); // FIXME: Temporary threshold
-            thread::sleep(send_delay_ms);
+            sleep(send_delay_ms).await;
 
             for stream_id in stream_ids {
                 // Skip the stream of this receiver

@@ -27,10 +27,12 @@ use moqt_core::{
 };
 use std::{
     sync::{atomic::AtomicBool, atomic::Ordering, Arc},
-    thread,
     time::Duration,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::{
+    sync::{mpsc, Mutex},
+    time::sleep,
+};
 use tracing::{self};
 
 pub(crate) struct SubgroupStreamObjectForwarder {
@@ -254,7 +256,7 @@ impl SubgroupStreamObjectForwarder {
                 Some((id, object)) => (id, object),
                 None => {
                     // If there is no object in the cache storage, sleep for a while and try again
-                    thread::sleep(self.sleep_time);
+                    sleep(self.sleep_time).await;
                     continue;
                 }
             };
@@ -269,7 +271,7 @@ impl SubgroupStreamObjectForwarder {
 
                 // Wait to forward rest of the objects on other forwarders in the same group
                 let send_delay_ms = Duration::from_millis(50); // FIXME: Temporary threshold
-                thread::sleep(send_delay_ms);
+                sleep(send_delay_ms).await;
 
                 for stream_id in stream_ids {
                     // Skip the stream of this forwarder
@@ -304,7 +306,7 @@ impl SubgroupStreamObjectForwarder {
                 Some((id, object)) => (id, object),
                 None => {
                     // If there is no object in the cache storage, sleep for a while and try again
-                    thread::sleep(self.sleep_time);
+                    sleep(self.sleep_time).await;
                     continue;
                 }
             };

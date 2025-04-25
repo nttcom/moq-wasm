@@ -19,8 +19,8 @@ use moqt_core::{
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     variable_integer::write_variable_integer,
 };
-use std::{sync::Arc, thread, time::Duration};
-use tokio::sync::Mutex;
+use std::{sync::Arc, time::Duration};
+use tokio::{sync::Mutex, time::sleep};
 use tracing::{self};
 use wtransport::Connection;
 
@@ -178,7 +178,7 @@ impl DatagramObjectForwarder {
                 Some((id, object)) => (id, object),
                 None => {
                     // If there is no object in the cache storage, sleep for a while and try again
-                    thread::sleep(self.sleep_time);
+                    sleep(self.sleep_time).await;
                     continue;
                 }
             };
