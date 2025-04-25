@@ -146,7 +146,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 let object_with_cache_id = datagram_cache.get_object(group_id, object_id);
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
-            ObjectCacheStorageCommand::GetSubgroupStreamObject {
+            ObjectCacheStorageCommand::GetAbsoluteOrNextSubgroupStreamObject {
                 cache_key,
                 group_id,
                 subgroup_id,
@@ -163,8 +163,11 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     }
                 };
 
-                let object_with_cache_id =
-                    subgroup_streams_cache.get_object(group_id, subgroup_id, object_id);
+                let object_with_cache_id = subgroup_streams_cache.get_absolute_or_next_object(
+                    group_id,
+                    subgroup_id,
+                    object_id,
+                );
                 resp.send(Ok(object_with_cache_id)).unwrap();
             }
             ObjectCacheStorageCommand::GetNextDatagramObject {

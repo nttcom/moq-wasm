@@ -3079,9 +3079,9 @@ mod success {
             .unwrap()
             .unwrap();
 
-        assert_eq!(result_range.start_group(), start_group);
-        assert_eq!(result_range.start_object(), start_object);
-        assert_eq!(result_range.end_group(), end_group);
+        assert_eq!(result_range.start_group_id(), start_group);
+        assert_eq!(result_range.start_object_id(), start_object);
+        assert_eq!(result_range.end_group_id(), end_group);
     }
 
     #[tokio::test]
@@ -3128,9 +3128,9 @@ mod success {
             .unwrap()
             .unwrap();
 
-        assert_eq!(result_range.start_group(), start_group);
-        assert_eq!(result_range.start_object(), start_object);
-        assert_eq!(result_range.end_group(), end_group);
+        assert_eq!(result_range.start_group_id(), start_group);
+        assert_eq!(result_range.start_object_id(), start_object);
+        assert_eq!(result_range.end_group_id(), end_group);
     }
 
     #[tokio::test]

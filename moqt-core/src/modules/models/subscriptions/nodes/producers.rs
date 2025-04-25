@@ -762,10 +762,10 @@ mod success {
             .unwrap()
             .unwrap();
 
-        assert_eq!(result_range.start_group(), variables.start_group);
-        assert_eq!(result_range.start_object(), variables.start_object);
-        assert_eq!(result_range.end_group(), variables.end_group);
-        assert_eq!(result_range.end_object(), variables.end_object);
+        assert_eq!(result_range.start_group_id(), variables.start_group);
+        assert_eq!(result_range.start_object_id(), variables.start_object);
+        assert_eq!(result_range.end_group_id(), variables.end_group);
+        assert_eq!(result_range.end_object_id(), variables.end_object);
     }
 
     #[test]
