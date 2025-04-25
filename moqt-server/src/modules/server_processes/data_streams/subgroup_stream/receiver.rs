@@ -29,7 +29,7 @@ use moqt_core::{
     models::{range::ObjectRange, tracks::ForwardingPreference},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
-use std::{sync::Arc, thread, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, Mutex},
     time::sleep,
