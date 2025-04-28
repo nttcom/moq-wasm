@@ -1,3 +1,4 @@
+use tracing_appender::rolling;
 use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
 pub fn init_logging(log_level: String) {
     let level_filter: LevelFilter = match log_level.to_uppercase().as_str() {
@@ -19,9 +20,14 @@ pub fn init_logging(log_level: String) {
         .with_default_directive(level_filter.into())
         .from_env_lossy();
 
+    let file_appender = rolling::hourly("./log", "output.log");
+
     tracing_subscriber::fmt()
         .with_target(true)
         .with_level(true)
+        .with_writer(file_appender) // Writerをファイルに向ける
+        .with_ansi(false) // ファイルなので色コードはOFF
+        .with_thread_names(true) // スレッド名も入れる
         .with_env_filter(env_filter)
         .init();
 
