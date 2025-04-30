@@ -1,35 +1,39 @@
+use console_subscriber::ConsoleLayer;
 use tracing_appender::rolling;
-use tracing_subscriber::{self, filter::LevelFilter, EnvFilter};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{self, filter::LevelFilter, fmt, EnvFilter, Layer, Registry};
 pub fn init_logging(log_level: String) {
-    let level_filter: LevelFilter = match log_level.to_uppercase().as_str() {
-        "OFF" => LevelFilter::OFF,
-        "TRACE" => LevelFilter::TRACE,
-        "DEBUG" => LevelFilter::DEBUG,
-        "INFO" => LevelFilter::INFO,
-        "WARN" => LevelFilter::WARN,
-        "ERROR" => LevelFilter::ERROR,
-        _ => {
-            panic!(
-                "Invalid log level: '{}'.\n  Valid log levels: [OFF, TRACE, DEBUG, INFO, WARN, ERROR]",
-                log_level
-            );
-        }
-    };
-
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(level_filter.into())
+    // tokio-console用のレイヤーとフィルタ
+    let console_filter = EnvFilter::builder()
+        .with_default_directive("trace".parse().unwrap())
         .from_env_lossy();
+    let console_layer = ConsoleLayer::builder().spawn().with_filter(console_filter);
 
-    let file_appender = rolling::hourly("./log", "output.log");
+    // 標準出力用のレイヤーとフィルタ
+    let stdout_layer = fmt::layer()
+        .with_writer(std::io::stdout)
+        .with_ansi(true)
+        .with_filter(
+            EnvFilter::builder()
+                .with_default_directive(log_level.parse().unwrap())
+                .from_env_lossy(),
+        );
 
-    tracing_subscriber::fmt()
-        .with_target(true)
-        .with_level(true)
-        .with_writer(file_appender) // Writerをファイルに向ける
-        .with_ansi(false) // ファイルなので色コードはOFF
-        .with_thread_names(true) // スレッド名も入れる
-        .with_env_filter(env_filter)
+    // ログファイル用のレイヤーとフィルタ
+    let file_layer = fmt::layer()
+        .with_writer(rolling::hourly("./log", "output"))
+        // Multi Writer with_ansi option doesn't work https://github.com/tokio-rs/tracing/issues/3116
+        // .with_ansi(false)
+        .with_filter(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::DEBUG.into())
+                .from_env_lossy(),
+        );
+
+    Registry::default()
+        .with(console_layer)
+        .with(stdout_layer)
+        .with(file_layer)
         .init();
-
-    tracing::info!("Logging initialized. (Level: {})", log_level);
 }
