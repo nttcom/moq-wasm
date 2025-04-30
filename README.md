@@ -78,7 +78,7 @@ openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -out cert.pem -subj '/
 
 ### Run moqt-server-sample
 
-- `RUSTFLAGS="--cfg tokio_unstable" cargo run -p moqt-server-sample`
+- `cargo run -p moqt-server-sample`
 
 if you want to watch tokio tasks, use tokio-console
 
@@ -89,7 +89,7 @@ tokio-console
 
 #### Specify the log level
 
-- `RUSTFLAGS="--cfg tokio_unstable" cargo run -p moqt-server-sample -- --log <Log Level>`
+- `cargo run -p moqt-server-sample -- --log <Log Level>`
   - Default setting is `DEBUG`
 
 ### Run moqt-client-sample
