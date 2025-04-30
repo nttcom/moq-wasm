@@ -16,3 +16,5 @@ js/node_modules/*
 
 *.pem
 .DS_Store
+
+log/*
