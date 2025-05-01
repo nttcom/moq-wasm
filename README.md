@@ -107,6 +107,6 @@ make client
 - Add a certificate and Enable WebTransport feature in Chrome
 
 ```shell
-// For Mac users
+# For Mac users
 make chrome
 ```
