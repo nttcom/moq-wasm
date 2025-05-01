@@ -78,7 +78,7 @@ openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -out cert.pem -subj '/
 
 ### Run moqt-server-sample
 
-- `cargo run -p moqt-server-sample`
+- `make server`
 
 if you want to watch tokio tasks, use tokio-console
 
@@ -89,20 +89,24 @@ tokio-console
 
 #### Specify the log level
 
-- `cargo run -p moqt-server-sample -- --log <Log Level>`
-  - Default setting is `DEBUG`
+```shell
+make server-trace
+
+or
+
+# Default setting is `DEBUG`
+cargo run -p moqt-server-sample -- --log <Log Level>
+```
 
 ### Run moqt-client-sample
 
 ```shell
-cd js
-npm install
-npm run dev
+make client
 ```
 
 - Add a certificate and Enable WebTransport feature in Chrome
 
 ```shell
-For Mac users
-./scripts/start-localhost-test-chrome.sh
+# For Mac users
+make chrome
 ```
