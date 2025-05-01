@@ -94,7 +94,7 @@ make server-trace
 
 or
 
-// Default setting is `DEBUG`
+# Default setting is `DEBUG`
 cargo run -p moqt-server-sample -- --log <Log Level>
 ```
 
