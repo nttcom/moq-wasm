@@ -857,7 +857,10 @@ impl MOQTClient {
         // step 3: return writer
         let writer = {
             let stream_writers = self.stream_writers.borrow();
-            stream_writers.get(&writer_key).unwrap().clone()
+            stream_writers
+                .get(&writer_key)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Writer not found for key: {:?}", writer_key))?
         };
 
         Ok(writer)
