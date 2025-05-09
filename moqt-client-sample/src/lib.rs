@@ -841,8 +841,11 @@ impl MOQTClient {
                 transport.as_ref().unwrap().create_unidirectional_stream()
             };
             let send_uni_stream =
-                WritableStream::from(JsFuture::from(uni_stream_future).await.unwrap());
-            let send_uni_stream_writer = send_uni_stream.get_writer().unwrap();
+                WritableStream::from(JsFuture::from(uni_stream_future).await?);
+            let send_uni_stream_writer = match send_uni_stream.get_writer() {
+                Ok(writer) => writer,
+                Err(e) => return Err(anyhow::anyhow!("Failed to get writer: {:?}", e)),
+            };
 
             self.stream_writers
                 .borrow_mut()
