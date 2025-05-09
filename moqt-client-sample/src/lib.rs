@@ -563,7 +563,9 @@ impl MOQTClient {
                                 .get_writer()?;
                             *self.datagram_writer.borrow_mut() = Some(datagram_writer);
                         }
-                        "track" => {}
+                        "track" => {
+                            // Writer will be generated when sending in a new Subgroup Stream
+                        }
                         "subgroup" => {
                             // Writer will be generated when sending in a new Subgroup Stream
                         }
