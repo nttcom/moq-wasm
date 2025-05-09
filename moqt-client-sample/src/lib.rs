@@ -823,7 +823,7 @@ impl MOQTClient {
         subscribe_id: u64,
         group_id: u64,
         subgroup_id: u64,
-    ) -> WritableStreamDefaultWriter {
+    ) -> Result<WritableStreamDefaultWriter> {
         let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
         let mut need_create = false;
 
@@ -840,8 +840,11 @@ impl MOQTClient {
                 let transport = self.transport.borrow();
                 transport.as_ref().unwrap().create_unidirectional_stream()
             };
-            let send_uni_stream =
-                WritableStream::from(JsFuture::from(uni_stream_future).await?);
+            let send_uni_stream = WritableStream::from(
+                JsFuture::from(uni_stream_future)
+                    .await
+                    .map_err(|e| anyhow::Error::msg(format!("{:?}", e)))?,
+            );
             let send_uni_stream_writer = match send_uni_stream.get_writer() {
                 Ok(writer) => writer,
                 Err(e) => return Err(anyhow::anyhow!("Failed to get writer: {:?}", e)),
@@ -857,7 +860,7 @@ impl MOQTClient {
             stream_writers.get(&writer_key).unwrap().clone()
         };
 
-        writer
+        Ok(writer)
     }
 
     #[wasm_bindgen(js_name = sendSubgroupStreamHeaderMessage)]
@@ -876,7 +879,8 @@ impl MOQTClient {
 
         let writer = self
             .get_or_create_stream_writer(subscribe_id, group_id, subgroup_id)
-            .await;
+            .await
+            .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
 
         let subgroup_stream_header_message =
             subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
