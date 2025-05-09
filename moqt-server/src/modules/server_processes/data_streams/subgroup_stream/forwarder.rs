@@ -31,6 +31,7 @@ use std::{
 };
 use tokio::{
     sync::{mpsc, Mutex},
+    task,
     time::sleep,
 };
 use tracing::{self};
@@ -99,16 +100,22 @@ impl SubgroupStreamObjectForwarder {
         // Task to receive termination signal
         let is_terminated = Arc::new(AtomicBool::new(false));
         let is_terminated_clone = is_terminated.clone();
-        tokio::spawn(async move {
-            while let Some(signal) = signal_rx.recv().await {
-                match *signal {
-                    DataStreamThreadSignal::Terminate(reason) => {
-                        tracing::debug!("Received Terminate signal (reason: {:?})", reason);
-                        is_terminated_clone.store(true, Ordering::Relaxed);
+        task::Builder::new()
+            .name(&format!(
+                "Object Stream Forwarder Terminator-{}-{}",
+                client.lock().await.id(),
+                stream_id
+            ))
+            .spawn(async move {
+                while let Some(signal) = signal_rx.recv().await {
+                    match *signal {
+                        DataStreamThreadSignal::Terminate(reason) => {
+                            tracing::debug!("Received Terminate signal (reason: {:?})", reason);
+                            is_terminated_clone.store(true, Ordering::Relaxed);
+                        }
                     }
                 }
-            }
-        });
+            })?;
 
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 

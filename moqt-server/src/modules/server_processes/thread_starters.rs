@@ -23,6 +23,7 @@ use moqt_core::{
 };
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tokio::task;
 use tracing::{self, Instrument};
 use wtransport::{datagram::Datagram, Connection, RecvStream, SendStream};
 
@@ -69,27 +70,37 @@ async fn spawn_control_stream_threads(
     let send_stream = Arc::clone(&shared_send_stream);
     let session_span = session_span.clone();
     let stream_id = recv_stream.id().into_u64();
-    tokio::spawn(
-        async move {
-            let mut stream = BiStream::new(stable_id, stream_id, recv_stream, send_stream);
-            handle_control_stream(&mut stream, client)
-                .instrument(session_span)
-                .await
-        }
-        .in_current_span(),
-    );
+    task::Builder::new()
+        .name(&format!(
+            "WT Receive Control Stream-{}-{}",
+            stable_id, stream_id
+        ))
+        .spawn(
+            async move {
+                let mut stream = BiStream::new(stable_id, stream_id, recv_stream, send_stream);
+                handle_control_stream(&mut stream, client)
+                    .instrument(session_span)
+                    .await
+            }
+            .in_current_span(),
+        )?;
 
     // Spawn a thread to send control messages: respond to the client or forward to the other client
     let send_stream = Arc::clone(&shared_send_stream);
-    tokio::spawn(
-        async move {
-            let session_span = tracing::info_span!("Session", stable_id);
-            send_control_stream(send_stream, message_rx)
-                .instrument(session_span)
-                .await;
-        }
-        .in_current_span(),
-    );
+    task::Builder::new()
+        .name(&format!(
+            "WT Send Control Stream-{}-{}",
+            stable_id, stream_id
+        ))
+        .spawn(
+            async move {
+                let session_span = tracing::info_span!("Session", stable_id);
+                send_control_stream(send_stream, message_rx)
+                    .instrument(session_span)
+                    .await;
+            }
+            .in_current_span(),
+        )?;
 
     Ok(())
 }
@@ -117,38 +128,44 @@ async fn spawn_subgroup_stream_object_receiver_thread(
         .await
         .unwrap();
 
-    tokio::spawn(
-        async move {
-            let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
-            let senders = client.lock().await.senders();
-            let mut stream_object_receiver =
-                SubgroupStreamObjectReceiver::init(stream, client, signal_rx)
-                    .instrument(session_span.clone())
-                    .await;
-
-            match stream_object_receiver
-                .start()
-                .instrument(session_span.clone())
-                .await
-            {
-                Ok(_) => {}
-                Err((code, reason)) => {
-                    tracing::error!(reason);
-
-                    let _ = senders
-                        .close_session_tx()
-                        .send((u8::from(code) as u64, reason.to_string()))
+    task::Builder::new()
+        .name(&format!(
+            "Object Stream Receiver-{}-{}",
+            stable_id, stream_id
+        ))
+        .spawn(
+            async move {
+                let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
+                tracing::debug!("tokio::spawn stream_id: {}", stream_id);
+                let senders = client.lock().await.senders();
+                let mut stream_object_receiver =
+                    SubgroupStreamObjectReceiver::init(stream, client, signal_rx)
+                        .instrument(session_span.clone())
                         .await;
-                }
-            }
 
-            let _ = stream_object_receiver
-                .finish()
-                .instrument(session_span)
-                .await;
-        }
-        .in_current_span(),
-    );
+                match stream_object_receiver
+                    .start()
+                    .instrument(session_span.clone())
+                    .await
+                {
+                    Ok(_) => {}
+                    Err((code, reason)) => {
+                        tracing::error!(reason);
+
+                        let _ = senders
+                            .close_session_tx()
+                            .send((u8::from(code) as u64, reason.to_string()))
+                            .await;
+                    }
+                }
+
+                let _ = stream_object_receiver
+                    .finish()
+                    .instrument(session_span)
+                    .await;
+            }
+            .in_current_span(),
+        )?;
     Ok(())
 }
 
@@ -177,48 +194,53 @@ async fn spawn_subgroup_stream_object_forwarder_thread(
         .await
         .unwrap();
 
-    tokio::spawn(
-        async move {
-            let stream = UniSendStream::new(stable_id, stream_id, send_stream);
-            let senders = client.lock().await.senders();
+    task::Builder::new()
+        .name(&format!(
+            "Object Stream Forwarder-{}-{}",
+            stable_id, stream_id
+        ))
+        .spawn(
+            async move {
+                let stream = UniSendStream::new(stable_id, stream_id, send_stream);
+                let senders = client.lock().await.senders();
 
-            let mut stream_object_forwarder = SubgroupStreamObjectForwarder::init(
-                stream,
-                subscribe_id,
-                client,
-                subgroup_stream_id,
-                signal_rx,
-            )
-            .instrument(session_span.clone())
-            .await
-            .unwrap();
-
-            match stream_object_forwarder
-                .start()
+                let mut stream_object_forwarder = SubgroupStreamObjectForwarder::init(
+                    stream,
+                    subscribe_id,
+                    client,
+                    subgroup_stream_id,
+                    signal_rx,
+                )
                 .instrument(session_span.clone())
                 .await
-            {
-                Ok(_) => {}
-                Err(e) => {
-                    let code = TerminationErrorCode::InternalError;
-                    let reason = format!("StreamObjectForwarder: {:?}", e);
+                .unwrap();
 
-                    tracing::error!(reason);
+                match stream_object_forwarder
+                    .start()
+                    .instrument(session_span.clone())
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(e) => {
+                        let code = TerminationErrorCode::InternalError;
+                        let reason = format!("StreamObjectForwarder: {:?}", e);
 
-                    let _ = senders
-                        .close_session_tx()
-                        .send((u8::from(code) as u64, reason.to_string()))
-                        .await;
+                        tracing::error!(reason);
+
+                        let _ = senders
+                            .close_session_tx()
+                            .send((u8::from(code) as u64, reason.to_string()))
+                            .await;
+                    }
                 }
-            }
 
-            let _ = stream_object_forwarder
-                .finish()
-                .instrument(session_span)
-                .await;
-        }
-        .in_current_span(),
-    );
+                let _ = stream_object_forwarder
+                    .finish()
+                    .instrument(session_span)
+                    .await;
+            }
+            .in_current_span(),
+        )?;
     Ok(())
 }
 
@@ -233,31 +255,33 @@ async fn spawn_datagram_object_receiver_thread(
     });
 
     // No loop: End after receiving once
-    tokio::spawn(
-        async move {
-            let senders = client.lock().await.senders();
-            let mut datagram_object_receiver = DatagramObjectReceiver::init(datagram, client)
-                .instrument(session_span.clone())
-                .await;
+    task::Builder::new()
+        .name(&format!("Object Datagram Receiver-{}", stable_id))
+        .spawn(
+            async move {
+                let senders = client.lock().await.senders();
+                let mut datagram_object_receiver = DatagramObjectReceiver::init(datagram, client)
+                    .instrument(session_span.clone())
+                    .await;
 
-            match datagram_object_receiver
-                .start()
-                .instrument(session_span)
-                .await
-            {
-                Ok(_) => {}
-                Err((code, reason)) => {
-                    tracing::error!(reason);
+                match datagram_object_receiver
+                    .start()
+                    .instrument(session_span)
+                    .await
+                {
+                    Ok(_) => {}
+                    Err((code, reason)) => {
+                        tracing::error!(reason);
 
-                    let _ = senders
-                        .close_session_tx()
-                        .send((u8::from(code) as u64, reason.to_string()))
-                        .await;
+                        let _ = senders
+                            .close_session_tx()
+                            .send((u8::from(code) as u64, reason.to_string()))
+                            .await;
+                    }
                 }
             }
-        }
-        .in_current_span(),
-    );
+            .in_current_span(),
+        )?;
     Ok(())
 }
 
@@ -272,41 +296,43 @@ async fn spawn_datagram_object_forwarder_thread(
         tracing::info!("Open datagrams send thread");
     });
 
-    tokio::spawn(
-        async move {
-            let senders = client.lock().await.senders();
-            let mut datagram_object_forwarder =
-                DatagramObjectForwarder::init(session, subscribe_id, client)
+    task::Builder::new()
+        .name(&format!("Object Datagram Forwarder-{}", stable_id))
+        .spawn(
+            async move {
+                let senders = client.lock().await.senders();
+                let mut datagram_object_forwarder =
+                    DatagramObjectForwarder::init(session, subscribe_id, client)
+                        .instrument(session_span.clone())
+                        .await
+                        .unwrap();
+
+                match datagram_object_forwarder
+                    .start()
                     .instrument(session_span.clone())
                     .await
-                    .unwrap();
+                {
+                    Ok(_) => {}
+                    Err(e) => {
+                        let code = TerminationErrorCode::InternalError;
+                        let reason = format!("DatagramObjectForwarder: {:?}", e);
 
-            match datagram_object_forwarder
-                .start()
-                .instrument(session_span.clone())
-                .await
-            {
-                Ok(_) => {}
-                Err(e) => {
-                    let code = TerminationErrorCode::InternalError;
-                    let reason = format!("DatagramObjectForwarder: {:?}", e);
+                        tracing::error!(reason);
 
-                    tracing::error!(reason);
-
-                    let _ = senders
-                        .close_session_tx()
-                        .send((u8::from(code) as u64, reason.to_string()))
-                        .await;
+                        let _ = senders
+                            .close_session_tx()
+                            .send((u8::from(code) as u64, reason.to_string()))
+                            .await;
+                    }
                 }
-            }
 
-            let _ = datagram_object_forwarder
-                .finish()
-                .instrument(session_span)
-                .await;
-        }
-        .in_current_span(),
-    );
+                let _ = datagram_object_forwarder
+                    .finish()
+                    .instrument(session_span)
+                    .await;
+            }
+            .in_current_span(),
+        )?;
 
     Ok(())
 }
