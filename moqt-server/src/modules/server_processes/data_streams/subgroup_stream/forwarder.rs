@@ -104,8 +104,7 @@ impl SubgroupStreamObjectForwarder {
         task::Builder::new()
             .name(&format!(
                 "Object Stream Forwarder Terminator-{}-{}",
-                client_id,
-                stream_id
+                client_id, stream_id
             ))
             .spawn(async move {
                 while let Some(signal) = signal_rx.recv().await {
