@@ -563,22 +563,7 @@ impl MOQTClient {
                                 .get_writer()?;
                             *self.datagram_writer.borrow_mut() = Some(datagram_writer);
                         }
-                        "track" => {
-                            let send_uni_stream = self
-                                .transport
-                                .borrow()
-                                .as_ref()
-                                .unwrap()
-                                .create_unidirectional_stream();
-                            let send_uni_stream =
-                                WritableStream::from(JsFuture::from(send_uni_stream).await?);
-                            let send_uni_stream_writer = send_uni_stream.get_writer()?;
-
-                            let writer_key = (subscribe_id, None);
-                            self.stream_writers
-                                .borrow_mut()
-                                .insert(writer_key, send_uni_stream_writer);
-                        }
+                        "track" => {}
                         "subgroup" => {
                             // Writer will be generated when sending in a new Subgroup Stream
                         }
@@ -831,6 +816,45 @@ impl MOQTClient {
         }
     }
 
+    async fn get_or_create_stream_writer(
+        &self,
+        subscribe_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+    ) -> WritableStreamDefaultWriter {
+        let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
+        let mut need_create = false;
+
+        // step 1: writer exists check
+        {
+            let stream_writers = self.stream_writers.borrow();
+            if !stream_writers.contains_key(&writer_key) {
+                need_create = true;
+            }
+        }
+        // step 2: create if needed
+        if need_create {
+            let uni_stream_future = {
+                let transport = self.transport.borrow();
+                transport.as_ref().unwrap().create_unidirectional_stream()
+            };
+            let send_uni_stream =
+                WritableStream::from(JsFuture::from(uni_stream_future).await.unwrap());
+            let send_uni_stream_writer = send_uni_stream.get_writer().unwrap();
+
+            self.stream_writers
+                .borrow_mut()
+                .insert(writer_key, send_uni_stream_writer);
+        }
+        // step 3: return writer
+        let writer = {
+            let stream_writers = self.stream_writers.borrow();
+            stream_writers.get(&writer_key).unwrap().clone()
+        };
+
+        writer
+    }
+
     #[wasm_bindgen(js_name = sendSubgroupStreamHeaderMessage)]
     pub async fn send_subgroup_stream_header_message(
         &self,
@@ -844,36 +868,10 @@ impl MOQTClient {
             .borrow()
             .get_publishing_subscribe_id_by_track_alias(track_alias)
             .unwrap();
-        let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
 
-        let writer = {
-            let stream_writers = self.stream_writers.borrow_mut();
-
-            if !stream_writers.contains_key(&writer_key) {
-                // 新しいwriterを作成
-                let _ = {
-                    let transport = self.transport.borrow();
-                    transport.as_ref().unwrap().create_unidirectional_stream()
-                };
-            };
-            stream_writers.get(&writer_key).cloned()
-        };
-        let writer = if let Some(writer) = writer {
-            writer
-        } else {
-            let uni_stream_future = {
-                let transport = self.transport.borrow();
-                transport.as_ref().unwrap().create_unidirectional_stream()
-            };
-            let send_uni_stream = WritableStream::from(JsFuture::from(uni_stream_future).await?);
-            let send_uni_stream_writer = send_uni_stream.get_writer()?;
-
-            // 作成したwriterを保存
-            self.stream_writers
-                .borrow_mut()
-                .insert(writer_key, send_uni_stream_writer.clone());
-            send_uni_stream_writer
-        };
+        let writer = self
+            .get_or_create_stream_writer(subscribe_id, group_id, subgroup_id)
+            .await;
 
         let subgroup_stream_header_message =
             subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
