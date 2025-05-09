@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, mpsc::Sender, Mutex};
+use tokio::task;
 use tracing::{self, Instrument};
 use wtransport::quinn::TransportConfig;
 use wtransport::{Endpoint, Identity, ServerConfig};
@@ -87,22 +88,32 @@ impl MOQTServer {
 
         // Spawn management thread
         let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
-        tokio::spawn(async move { buffer_manager(&mut buffer_rx).await });
+        task::Builder::new()
+            .name("Buffer Manager")
+            .spawn(async move { buffer_manager(&mut buffer_rx).await })?;
         let (pubsub_relation_tx, mut pubsub_relation_rx) =
             mpsc::channel::<PubSubRelationCommand>(1024);
-        tokio::spawn(async move { pubsub_relation_manager(&mut pubsub_relation_rx).await });
+        task::Builder::new()
+            .name("PubSub Relation Manager")
+            .spawn(async move { pubsub_relation_manager(&mut pubsub_relation_rx).await })?;
         let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
             mpsc::channel::<ControlMessageDispatchCommand>(1024);
-        tokio::spawn(
-            async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
-        );
+        task::Builder::new()
+            .name("Control Message Dispatcher")
+            .spawn(
+                async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+            )?;
         let (signal_dispatch_tx, mut signal_dispatch_rx) =
             mpsc::channel::<SignalDispatchCommand>(1024);
-        tokio::spawn(async move { signal_dispatcher(&mut signal_dispatch_rx).await });
+        task::Builder::new()
+            .name("Signal Dispatcher")
+            .spawn(async move { signal_dispatcher(&mut signal_dispatch_rx).await })?;
 
         let (object_cache_tx, mut object_cache_rx) =
             mpsc::channel::<ObjectCacheStorageCommand>(1024);
-        tokio::spawn(async move { object_cache_storage(&mut object_cache_rx).await });
+        task::Builder::new()
+            .name("Object Cache Storage")
+            .spawn(async move { object_cache_storage(&mut object_cache_rx).await })?;
 
         let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -122,29 +133,31 @@ impl MOQTServer {
             let session_span = tracing::info_span!("Session", id);
 
             // Create a thread for each session
-            tokio::spawn(async move {
-                let mut session_handler = SessionHandler::init(
-                    sender_to_other_connection_thread,
-                    senders_to_management_thread,
-                    incoming_session,
-                )
-                .instrument(session_span.clone())
-                .await
-                .unwrap();
-
-                match session_handler
-                    .start()
+            task::Builder::new()
+                .name("WT Session Handler")
+                .spawn(async move {
+                    let mut session_handler = SessionHandler::init(
+                        sender_to_other_connection_thread,
+                        senders_to_management_thread,
+                        incoming_session,
+                    )
                     .instrument(session_span.clone())
                     .await
-                {
-                    Ok(_) => {}
-                    Err(err) => {
-                        tracing::error!("{:#?}", err);
-                    }
-                }
+                    .unwrap();
 
-                let _ = session_handler.finish().instrument(session_span).await;
-            });
+                    match session_handler
+                        .start()
+                        .instrument(session_span.clone())
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(err) => {
+                            tracing::error!("{:#?}", err);
+                        }
+                    }
+
+                    let _ = session_handler.finish().instrument(session_span).await;
+                })?;
         }
 
         Ok(())

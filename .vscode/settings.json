@@ -10,7 +10,7 @@
   "rust-analyzer.checkOnSave": true,
   "rust-analyzer.check.command": "clippy",
   "rust-analyzer.cargo.extraEnv": {
-    "RUSTFLAGS": "--cfg web_sys_unstable_apis"
+    "RUSTFLAGS": "--cfg web_sys_unstable_apis --cfg tokio_unstable"
   },
   "rust-analyzer.cargo.features": ["web_sys_unstable_apis"]
 }
