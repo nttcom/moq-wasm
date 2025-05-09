@@ -100,10 +100,11 @@ impl SubgroupStreamObjectForwarder {
         // Task to receive termination signal
         let is_terminated = Arc::new(AtomicBool::new(false));
         let is_terminated_clone = is_terminated.clone();
+        let client_id = client.lock().await.id();
         task::Builder::new()
             .name(&format!(
                 "Object Stream Forwarder Terminator-{}-{}",
-                client.lock().await.id(),
+                client_id,
                 stream_id
             ))
             .spawn(async move {
