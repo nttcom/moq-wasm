@@ -72,7 +72,7 @@ async fn spawn_control_stream_threads(
     let stream_id = recv_stream.id().into_u64();
     task::Builder::new()
         .name(&format!(
-            "WT Receive Control Stream-{}-{}",
+            "Control Stream Receiver-{}-{}",
             stable_id, stream_id
         ))
         .spawn(
@@ -89,7 +89,7 @@ async fn spawn_control_stream_threads(
     let send_stream = Arc::clone(&shared_send_stream);
     task::Builder::new()
         .name(&format!(
-            "WT Send Control Stream-{}-{}",
+            "Control Stream Sender-{}-{}",
             stable_id, stream_id
         ))
         .spawn(
