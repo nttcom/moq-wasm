@@ -31,7 +31,7 @@ use std::{
 };
 use tokio::{
     sync::{mpsc, Mutex},
-    task,
+    task::{self, JoinHandle},
     time::sleep,
 };
 use tracing::{self};
@@ -47,6 +47,7 @@ pub(crate) struct SubgroupStreamObjectForwarder {
     is_terminated: Arc<AtomicBool>,
     requested_object_range: ObjectRange,
     sleep_time: Duration,
+    termination_task: Option<JoinHandle<()>>,
 }
 
 impl SubgroupStreamObjectForwarder {
@@ -101,13 +102,13 @@ impl SubgroupStreamObjectForwarder {
         let is_terminated = Arc::new(AtomicBool::new(false));
         let is_terminated_clone = is_terminated.clone();
         let client_id = client.lock().await.id();
-        task::Builder::new()
+        let termination_task = task::Builder::new()
             .name(&format!(
                 "Object Stream Forwarder Terminator-{}-{}",
                 client_id, stream_id
             ))
             .spawn(async move {
-                while let Some(signal) = signal_rx.recv().await {
+                if let Some(signal) = signal_rx.recv().await {
                     match *signal {
                         DataStreamThreadSignal::Terminate(reason) => {
                             tracing::debug!("Received Terminate signal (reason: {:?})", reason);
@@ -130,6 +131,7 @@ impl SubgroupStreamObjectForwarder {
             requested_object_range,
             is_terminated,
             sleep_time,
+            termination_task: Some(termination_task),
         };
 
         Ok(stream_object_forwarder)
@@ -596,6 +598,17 @@ impl SubgroupStreamObjectForwarder {
     }
 
     pub(crate) async fn finish(&mut self) -> Result<()> {
+        if let Some(termination_task) = self.termination_task.take() {
+            termination_task.abort();
+            if let Err(e) = termination_task.await {
+                if e.is_cancelled() {
+                    tracing::debug!("Termination task was aborted.");
+                } else {
+                    tracing::error!("Unexpected error while awaiting termination task: {:?}", e);
+                }
+            }
+        }
+
         let downstream_session_id = self.stream.stable_id();
         let downstream_stream_id = self.stream.stream_id();
         self.senders
