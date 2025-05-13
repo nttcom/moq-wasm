@@ -601,7 +601,11 @@ impl SubgroupStreamObjectForwarder {
         if let Some(termination_task) = self.termination_task.take() {
             termination_task.abort();
             if let Err(e) = termination_task.await {
-                tracing::error!("Failed to join termination task: {:?}", e);
+                if e.is_cancelled() {
+                    tracing::debug!("Termination task was aborted.");
+                } else {
+                    tracing::error!("Unexpected error while awaiting termination task: {:?}", e);
+                }
             }
         }
 
