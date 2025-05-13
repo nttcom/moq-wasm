@@ -274,21 +274,8 @@ impl SubgroupStreamObjectForwarder {
 
             // Check if the data stream has ended
             if self.is_data_stream_ended(&stream_object) {
-                let stream_ids = self.get_stream_ids_for_same_group().await?;
-
-                // Wait to forward rest of the objects on other forwarders in the same group
-                let send_delay_ms = Duration::from_millis(50); // FIXME: Temporary threshold
-                sleep(send_delay_ms).await;
-
-                for stream_id in stream_ids {
-                    // Skip the stream of this forwarder
-                    if stream_id == self.stream.stream_id() {
-                        continue;
-                    }
-                    self.send_termination_signal_to_forwarder(&stream_object, stream_id)
-                        .await?;
-                }
-
+                self.send_termination_signal_to_forwarders(stream_object.object_status().unwrap())
+                    .await?;
                 return Ok((true, None));
             }
             break cache_id;
@@ -325,6 +312,8 @@ impl SubgroupStreamObjectForwarder {
 
             // Check if the data stream has ended
             if self.is_data_stream_ended(&stream_object) {
+                self.send_termination_signal_to_forwarders(stream_object.object_status().unwrap())
+                    .await?;
                 return Ok(());
             }
         }
@@ -575,27 +564,33 @@ impl SubgroupStreamObjectForwarder {
         Ok(stream_ids)
     }
 
-    async fn send_termination_signal_to_forwarder(
-        &self,
-        object: &subgroup_stream::Object,
-        stream_id: u64,
-    ) -> Result<()> {
-        let downstream_session_id = self.stream.stable_id();
-        let object_status = object.object_status().unwrap();
-
+    async fn send_termination_signal_to_forwarders(&self, reason: ObjectStatus) -> Result<()> {
         let signal_dispatcher = SignalDispatcher::new(self.senders.signal_dispatch_tx().clone());
-
-        tracing::debug!(
-            "Send termination signal to downstream session: {}, stream: {}",
-            downstream_session_id,
-            stream_id
-        );
-
-        let terminate_reason = TerminateReason::ObjectStatus(object_status);
+        let terminate_reason = TerminateReason::ObjectStatus(reason);
         let signal = Box::new(DataStreamThreadSignal::Terminate(terminate_reason));
-        signal_dispatcher
-            .transfer_signal_to_data_stream_thread(downstream_session_id, stream_id, signal)
-            .await?;
+
+        let downstream_session_id = self.stream.stable_id();
+        let stream_ids: Vec<u64> = {
+            let same_group_stream_ids = self.get_stream_ids_for_same_group().await?;
+            same_group_stream_ids
+                .into_iter()
+                .filter(|&stream_id| stream_id != self.stream.stream_id())
+                .collect()
+        };
+
+        // Wait to forward rest of the objects on other forwarders in the same group
+        let send_delay_ms = Duration::from_millis(50); // FIXME: Temporary threshold
+        sleep(send_delay_ms).await;
+
+        for stream_id in stream_ids {
+            signal_dispatcher
+                .transfer_signal_to_data_stream_thread(
+                    downstream_session_id,
+                    stream_id,
+                    signal.clone(),
+                )
+                .await?;
+        }
 
         Ok(())
     }
