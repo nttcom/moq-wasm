@@ -89,32 +89,35 @@ impl SubgroupStreamObjectReceiver {
             let mut signal_rx = signal_rx.lock().await;
 
             tokio::select! {
-                    read_bytes = self.read_stream() => {
+                read_bytes = self.read_stream() => {
+                    self.add_to_buf(read_bytes?).await;
 
-                let read_bytes = read_bytes?;
-
-                self.add_to_buf(read_bytes).await;
-
-                if !self.has_received_header() {
-                    self.receive_header(session_id, &mut object_cache_storage)
-                        .await?;
-
-                    // If the header has not been received, continue to receive the header.
                     if !self.has_received_header() {
-                        continue;
-                    }
-                }
+                        self.receive_header(session_id, &mut object_cache_storage)
+                            .await?;
 
-                is_end = self.receive_objects(&mut object_cache_storage).await?;
-            },
-            Some(signal) = signal_rx.recv() => {
-                match *signal {
-                    DataStreamThreadSignal::Terminate(reason) => {
-                        tracing::debug!("Received Terminate signal (reason: {:?})", reason);
-                        break;
+                        // If the header has not been received, continue to receive the header.
+                        if !self.has_received_header() {
+                            continue;
+                        }
+                    }
+
+                    is_end = self.receive_objects(&mut object_cache_storage).await?;
+                },
+                Some(signal) = signal_rx.recv() => {
+                    match *signal {
+                        DataStreamThreadSignal::Terminate(reason) => {
+                            tracing::debug!(
+                                "Received Terminate signal stream_id: {:?}, group_id: {:?}, subgroup_id: {:?} (reason: {:?})",
+                                self.stream.stream_id(),
+                                self.subgroup_stream_id.unwrap().0,
+                                self.subgroup_stream_id.unwrap().1,
+                                reason
+                            );
+                            break;
+                        }
                     }
                 }
-            }
             }
         }
 
