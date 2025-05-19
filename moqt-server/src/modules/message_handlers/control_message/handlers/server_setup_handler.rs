@@ -14,9 +14,7 @@ use crate::{
 };
 
 fn is_requested_version_supported(supported_versions: Vec<u32>) -> bool {
-    supported_versions
-        .iter()
-        .any(|v| *v == constants::MOQ_TRANSPORT_VERSION)
+    supported_versions.contains(&constants::MOQ_TRANSPORT_VERSION)
 }
 
 fn handle_setup_parameter(
