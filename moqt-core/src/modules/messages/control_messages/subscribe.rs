@@ -10,7 +10,7 @@ use crate::{
     },
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use bytes::BytesMut;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;

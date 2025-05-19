@@ -1,13 +1,13 @@
 use crate::constants::TerminationErrorCode;
 use crate::modules::moqt_client::MOQTClient;
 use crate::modules::moqt_client::MOQTClientStatus;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use bytes::{Buf, BytesMut};
-use moqt_core::messages::data_streams::datagram_status;
 use moqt_core::messages::data_streams::DatagramObject;
+use moqt_core::messages::data_streams::datagram_status;
 use moqt_core::{
     data_stream_type::DataStreamType,
-    messages::data_streams::{datagram, DataStreams},
+    messages::data_streams::{DataStreams, datagram},
     variable_integer::read_variable_integer,
 };
 use std::io::Cursor;
@@ -120,14 +120,14 @@ pub(crate) async fn read_object(
 mod tests {
     mod success {
         use crate::modules::{
-            message_handlers::datagram_object::{read_object, DatagramObjectProcessResult},
+            message_handlers::datagram_object::{DatagramObjectProcessResult, read_object},
             moqt_client::{MOQTClient, MOQTClientStatus},
             server_processes::senders,
         };
         use bytes::BytesMut;
         use moqt_core::{
             data_stream_type::DataStreamType,
-            messages::data_streams::{datagram, datagram_status, DataStreams, DatagramObject},
+            messages::data_streams::{DataStreams, DatagramObject, datagram, datagram_status},
             variable_integer::write_variable_integer,
         };
         use std::{io::Cursor, sync::Arc};

@@ -1,12 +1,12 @@
 use crate::{
+    SenderToOpenSubscription,
     modules::{
         control_message_dispatcher::ControlMessageDispatcher,
         moqt_client::MOQTClient,
         object_cache_storage::{cache::CacheKey, wrapper::ObjectCacheStorageWrapper},
     },
-    SenderToOpenSubscription,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use moqt_core::{
     data_stream_type::DataStreamType,
     messages::{
@@ -559,9 +559,10 @@ mod success {
     use super::subscribe_handler;
     use crate::SenderToOpenSubscription;
     use crate::{
+        SubgroupStreamId,
         modules::{
             control_message_dispatcher::{
-                control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+                ControlMessageDispatchCommand, ControlMessageDispatcher, control_message_dispatcher,
             },
             moqt_client::MOQTClient,
             object_cache_storage::{
@@ -571,11 +572,10 @@ mod success {
             pubsub_relation_manager::{
                 commands::PubSubRelationCommand,
                 manager::pubsub_relation_manager,
-                wrapper::{test_helper_fn, PubSubRelationManagerWrapper},
+                wrapper::{PubSubRelationManagerWrapper, test_helper_fn},
             },
             server_processes::senders,
         },
-        SubgroupStreamId,
     };
     use moqt_core::messages::data_streams::subgroup_stream;
     use moqt_core::models::tracks::ForwardingPreference;
@@ -592,7 +592,7 @@ mod success {
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     };
     use std::{collections::HashMap, sync::Arc};
-    use tokio::sync::{mpsc, Mutex};
+    use tokio::sync::{Mutex, mpsc};
 
     #[tokio::test]
     async fn normal_case_track_not_exists() {
@@ -1068,9 +1068,10 @@ mod success {
 #[cfg(test)]
 mod failure {
     use super::subscribe_handler;
+    use crate::SenderToOpenSubscription;
     use crate::modules::{
         control_message_dispatcher::{
-            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+            ControlMessageDispatchCommand, ControlMessageDispatcher, control_message_dispatcher,
         },
         moqt_client::MOQTClient,
         object_cache_storage::{
@@ -1083,7 +1084,6 @@ mod failure {
         },
         server_processes::senders,
     };
-    use crate::SenderToOpenSubscription;
     use moqt_core::{
         messages::{
             control_messages::{
@@ -1097,7 +1097,7 @@ mod failure {
         pubsub_relation_manager_repository::PubSubRelationManagerRepository,
     };
     use std::{collections::HashMap, sync::Arc};
-    use tokio::sync::{mpsc, Mutex};
+    use tokio::sync::{Mutex, mpsc};
 
     #[tokio::test]
     async fn cannot_register() {

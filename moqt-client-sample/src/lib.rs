@@ -30,13 +30,13 @@ use moqt_core::{
     },
     messages::{
         data_streams::{
-            datagram, datagram_status, object_status::ObjectStatus, subgroup_stream, DataStreams,
+            DataStreams, datagram, datagram_status, object_status::ObjectStatus, subgroup_stream,
         },
         moqt_payload::MOQTPayload,
     },
     models::subscriptions::{
-        nodes::{consumers::Consumer, producers::Producer, registry::SubscriptionNodeRegistry},
         Subscription,
+        nodes::{consumers::Consumer, producers::Producer, registry::SubscriptionNodeRegistry},
     },
     variable_integer::{
         read_variable_integer, read_variable_integer_from_buffer, write_variable_integer,
@@ -1863,8 +1863,7 @@ impl MOQTCallbacks {
         &self,
         track_alias: u64,
     ) -> Option<&js_sys::Function> {
-        let callback = self.subgroup_stream_object_callbacks.get(&track_alias);
-        callback
+        self.subgroup_stream_object_callbacks.get(&track_alias)
     }
 
     pub fn set_subgroup_stream_object_callback(

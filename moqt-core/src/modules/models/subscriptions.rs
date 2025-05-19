@@ -178,7 +178,7 @@ mod success {
         messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
         models::{
             range::ObjectStart,
-            subscriptions::{test_helper_fn, Subscription},
+            subscriptions::{Subscription, test_helper_fn},
             tracks::ForwardingPreference,
         },
     };

@@ -12,7 +12,7 @@ use moqt_core::{
     variable_integer::write_variable_integer,
 };
 use std::sync::Arc;
-use tokio::sync::{mpsc::Receiver, Mutex};
+use tokio::sync::{Mutex, mpsc::Receiver};
 use tracing::{self};
 use wtransport::SendStream;
 

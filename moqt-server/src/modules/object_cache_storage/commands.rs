@@ -1,6 +1,6 @@
 use super::cache::{CacheId, CacheKey, SubgroupId};
 use anyhow::Result;
-use moqt_core::messages::data_streams::{subgroup_stream, DatagramObject};
+use moqt_core::messages::data_streams::{DatagramObject, subgroup_stream};
 use tokio::sync::oneshot;
 
 #[derive(Debug)]

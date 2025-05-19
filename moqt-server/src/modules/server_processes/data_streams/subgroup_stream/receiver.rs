@@ -1,7 +1,8 @@
 use super::uni_stream::UniRecvStream;
 use crate::{
+    TerminationError,
     modules::{
-        buffer_manager::{request_buffer, BufferCommand},
+        buffer_manager::{BufferCommand, request_buffer},
         message_handlers::{
             subgroup_stream_header::{self, SubgroupStreamHeaderProcessResult},
             subgroup_stream_object::{self, SubgroupStreamObjectProcessResult},
@@ -15,7 +16,6 @@ use crate::{
         server_processes::senders::Senders,
     },
     signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher, TerminateReason},
-    TerminationError,
 };
 use anyhow::Result;
 use bytes::BytesMut;
@@ -31,7 +31,7 @@ use moqt_core::{
 };
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{mpsc, Mutex},
+    sync::{Mutex, mpsc},
     time::sleep,
 };
 use tracing::{self};

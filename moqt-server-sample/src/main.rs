@@ -1,6 +1,6 @@
 use anyhow::{Ok, Result};
 use clap::Parser;
-use moqt_server::{constants::UnderlayType, MOQTConfig, MOQTServer};
+use moqt_server::{MOQTConfig, MOQTServer, constants::UnderlayType};
 
 #[derive(Debug, Parser)]
 struct Arg {

@@ -2,7 +2,7 @@ use console_subscriber::ConsoleLayer;
 use tracing_appender::rolling;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{self, filter::LevelFilter, fmt, EnvFilter, Layer, Registry};
+use tracing_subscriber::{self, EnvFilter, Layer, Registry, filter::LevelFilter, fmt};
 pub fn init_logging(log_level: String) {
     // tokio-console用のレイヤーとフィルタ(For Development)
     let console_filter = EnvFilter::new("tokio::task=trace");

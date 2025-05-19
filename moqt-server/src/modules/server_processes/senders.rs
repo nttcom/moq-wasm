@@ -1,14 +1,14 @@
 use crate::{
+    SenderToOpenSubscription,
     modules::{
         buffer_manager::BufferCommand, control_message_dispatcher::ControlMessageDispatchCommand,
         object_cache_storage::commands::ObjectCacheStorageCommand,
         pubsub_relation_manager::commands::PubSubRelationCommand,
         signal_dispatcher::SignalDispatchCommand,
     },
-    SenderToOpenSubscription,
 };
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 #[derive(Debug)]
 pub(crate) struct SenderToSelf {

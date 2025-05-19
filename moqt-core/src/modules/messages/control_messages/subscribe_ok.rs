@@ -8,8 +8,8 @@ use crate::{
     variable_bytes::read_bytes_from_buffer,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
 use bytes::BytesMut;
 use serde::Serialize;
 use std::any::Any;

@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use bytes::{Buf, BytesMut};
 use std::io::Cursor;
 

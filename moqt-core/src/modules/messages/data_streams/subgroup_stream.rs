@@ -4,7 +4,7 @@ use crate::{
     variable_bytes::read_bytes,
     variable_integer::{read_variable_integer, write_variable_integer},
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bytes::{Buf, BytesMut};
 use serde::Serialize;
 
@@ -225,7 +225,7 @@ mod tests {
             ExtensionHeader, ExtensionHeaderValue, Value, ValueWithLength,
         };
         use crate::messages::data_streams::{
-            object_status::ObjectStatus, subgroup_stream, DataStreams,
+            DataStreams, object_status::ObjectStatus, subgroup_stream,
         };
         use bytes::BytesMut;
         use std::io::Cursor;
@@ -746,7 +746,7 @@ mod tests {
         use std::io::Cursor;
 
         use crate::messages::data_streams::{
-            object_status::ObjectStatus, subgroup_stream, DataStreams,
+            DataStreams, object_status::ObjectStatus, subgroup_stream,
         };
 
         #[test]

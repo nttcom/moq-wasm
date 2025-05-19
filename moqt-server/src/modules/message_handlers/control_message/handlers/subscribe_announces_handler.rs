@@ -102,7 +102,7 @@ mod success {
     use super::subscribe_announces_handler;
     use crate::modules::{
         control_message_dispatcher::{
-            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+            ControlMessageDispatchCommand, ControlMessageDispatcher, control_message_dispatcher,
         },
         moqt_client::MOQTClient,
         pubsub_relation_manager::{
@@ -202,7 +202,7 @@ mod failure {
     use super::subscribe_announces_handler;
     use crate::modules::{
         control_message_dispatcher::{
-            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+            ControlMessageDispatchCommand, ControlMessageDispatcher, control_message_dispatcher,
         },
         moqt_client::MOQTClient,
         pubsub_relation_manager::{

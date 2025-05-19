@@ -122,11 +122,7 @@ impl SubgroupStreamsCache {
             .iter()
             .filter_map(
                 |((gid, sgid), _)| {
-                    if *gid == group_id {
-                        Some(*sgid)
-                    } else {
-                        None
-                    }
+                    if *gid == group_id { Some(*sgid) } else { None }
                 },
             )
             .collect();
