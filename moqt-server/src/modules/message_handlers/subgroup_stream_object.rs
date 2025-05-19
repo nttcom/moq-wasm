@@ -1,5 +1,5 @@
 use bytes::{Buf, BytesMut};
-use moqt_core::messages::data_streams::{subgroup_stream, DataStreams};
+use moqt_core::messages::data_streams::{DataStreams, subgroup_stream};
 use std::io::Cursor;
 
 #[derive(Debug, PartialEq)]
@@ -37,10 +37,10 @@ pub async fn read_object(buf: &mut BytesMut) -> SubgroupStreamObjectProcessResul
 mod tests {
     mod success {
         use crate::modules::message_handlers::subgroup_stream_object::{
-            read_object, SubgroupStreamObjectProcessResult,
+            SubgroupStreamObjectProcessResult, read_object,
         };
         use bytes::BytesMut;
-        use moqt_core::messages::data_streams::{subgroup_stream, DataStreams};
+        use moqt_core::messages::data_streams::{DataStreams, subgroup_stream};
         use std::io::Cursor;
 
         #[tokio::test]

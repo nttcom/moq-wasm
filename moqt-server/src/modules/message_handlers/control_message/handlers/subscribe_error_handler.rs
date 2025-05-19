@@ -1,7 +1,7 @@
 use crate::modules::{
     control_message_dispatcher::ControlMessageDispatcher, moqt_client::MOQTClient,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use moqt_core::{
     messages::{control_messages::subscribe_error::SubscribeError, moqt_payload::MOQTPayload},
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
@@ -115,7 +115,7 @@ mod success {
     use super::subscribe_error_handler;
     use crate::modules::{
         control_message_dispatcher::{
-            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+            ControlMessageDispatchCommand, ControlMessageDispatcher, control_message_dispatcher,
         },
         moqt_client::MOQTClient,
         pubsub_relation_manager::{
@@ -259,7 +259,7 @@ mod failure {
     use super::subscribe_error_handler;
     use crate::modules::{
         control_message_dispatcher::{
-            control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+            ControlMessageDispatchCommand, ControlMessageDispatcher, control_message_dispatcher,
         },
         moqt_client::MOQTClient,
         pubsub_relation_manager::{

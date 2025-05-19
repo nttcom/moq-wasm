@@ -12,20 +12,20 @@ use super::{
     },
 };
 use crate::{
+    SignalDispatchCommand, SubgroupStreamId,
     modules::{control_message_dispatcher::ControlMessageDispatchCommand, moqt_client::MOQTClient},
     signal_dispatcher::DataStreamThreadSignal,
-    SignalDispatchCommand, SubgroupStreamId,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use moqt_core::{
     constants::TerminationErrorCode, data_stream_type::DataStreamType,
     messages::moqt_payload::MOQTPayload,
 };
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::task;
 use tracing::{self, Instrument};
-use wtransport::{datagram::Datagram, Connection, RecvStream, SendStream};
+use wtransport::{Connection, RecvStream, SendStream, datagram::Datagram};
 
 async fn spawn_control_stream_threads(
     client: Arc<Mutex<MOQTClient>>,

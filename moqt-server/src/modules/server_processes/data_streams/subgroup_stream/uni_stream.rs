@@ -1,6 +1,6 @@
 use wtransport::{
-    error::{StreamReadError, StreamWriteError},
     RecvStream, SendStream, VarInt,
+    error::{StreamReadError, StreamWriteError},
 };
 
 pub(crate) struct UniRecvStream {

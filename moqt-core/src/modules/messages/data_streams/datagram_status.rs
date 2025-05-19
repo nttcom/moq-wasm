@@ -4,7 +4,7 @@ use crate::{
     variable_bytes::read_bytes,
     variable_integer::{read_variable_integer, write_variable_integer},
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bytes::{Buf, BytesMut};
 use serde::Serialize;
 
@@ -141,10 +141,9 @@ impl DataStreams for Object {
 mod tests {
     mod success {
         use crate::messages::data_streams::{
-            datagram_status,
+            DataStreams, datagram_status,
             extension_header::{ExtensionHeader, ExtensionHeaderValue, Value, ValueWithLength},
             object_status::ObjectStatus,
-            DataStreams,
         };
         use bytes::BytesMut;
         use std::io::Cursor;
@@ -498,7 +497,7 @@ mod tests {
         use bytes::BytesMut;
         use std::io::Cursor;
 
-        use crate::messages::data_streams::{datagram_status, DataStreams};
+        use crate::messages::data_streams::{DataStreams, datagram_status};
 
         #[test]
         fn depacketize_datagram_status_with_unknown_status() {

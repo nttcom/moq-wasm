@@ -3,7 +3,7 @@ use crate::modules::{
     message_handlers::control_message::handlers::announce_handler::announce_handler,
     moqt_client::MOQTClient,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use bytes::BytesMut;
 use moqt_core::{
     messages::{

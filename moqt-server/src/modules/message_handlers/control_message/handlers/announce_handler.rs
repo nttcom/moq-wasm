@@ -104,7 +104,7 @@ pub(crate) async fn announce_handler(
 mod success {
     use super::announce_handler;
     use crate::modules::control_message_dispatcher::{
-        control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+        ControlMessageDispatchCommand, ControlMessageDispatcher, control_message_dispatcher,
     };
     use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{
@@ -288,7 +288,7 @@ mod success {
 mod failure {
     use super::announce_handler;
     use crate::modules::control_message_dispatcher::{
-        control_message_dispatcher, ControlMessageDispatchCommand, ControlMessageDispatcher,
+        ControlMessageDispatchCommand, ControlMessageDispatcher, control_message_dispatcher,
     };
     use crate::modules::moqt_client::MOQTClient;
     use crate::modules::pubsub_relation_manager::{

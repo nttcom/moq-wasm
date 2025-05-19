@@ -3,7 +3,7 @@ use crate::{
     variable_bytes::read_bytes,
     variable_integer::{read_variable_integer, write_variable_integer},
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bytes::BytesMut;
 use serde::Serialize;
 

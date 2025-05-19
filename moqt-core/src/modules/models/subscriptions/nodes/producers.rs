@@ -2,11 +2,11 @@ use crate::{
     messages::control_messages::{group_order::GroupOrder, subscribe::FilterType},
     models::{
         range::{ObjectRange, ObjectStart},
-        subscriptions::{nodes::registry::SubscriptionNodeRegistry, Subscription},
+        subscriptions::{Subscription, nodes::registry::SubscriptionNodeRegistry},
         tracks::ForwardingPreference,
     },
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::collections::HashMap;
 
 type SubscribeId = u64;
@@ -396,11 +396,11 @@ mod success {
     use crate::models::{
         range::ObjectStart,
         subscriptions::{
+            Subscription,
             nodes::{
-                producers::{test_helper_fn, Producer},
+                producers::{Producer, test_helper_fn},
                 registry::SubscriptionNodeRegistry,
             },
-            Subscription,
         },
         tracks::ForwardingPreference,
     };

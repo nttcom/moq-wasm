@@ -1,7 +1,7 @@
 [package]
 name = "moqt-server"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -9,7 +9,7 @@ edition = "2021"
 anyhow = { version = "1.0.75", features = ["backtrace"] }
 moqt-core = {path = "../moqt-core"}
 tokio = { version = "1.45.0", features = ["full", "tracing"] }
-console-subscriber = "0.2"
+console-subscriber = "0.4"
 tracing = "0.1.37"
 once_cell = "1.21.3"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
