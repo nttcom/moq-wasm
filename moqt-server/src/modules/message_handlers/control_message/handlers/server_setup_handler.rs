@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use moqt_core::{
     constants::UnderlayType,
     messages::control_messages::{

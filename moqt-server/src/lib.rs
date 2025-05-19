@@ -1,6 +1,6 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::sync::{mpsc, mpsc::Sender, Mutex};
+use tokio::sync::{Mutex, mpsc, mpsc::Sender};
 use tokio::task;
 use tracing::{self, Instrument};
 use wtransport::quinn::TransportConfig;
@@ -8,8 +8,8 @@ use wtransport::{Endpoint, Identity, ServerConfig};
 mod modules;
 pub use modules::config::MOQTConfig;
 use modules::{
-    buffer_manager::{buffer_manager, BufferCommand},
-    control_message_dispatcher::{control_message_dispatcher, ControlMessageDispatchCommand},
+    buffer_manager::{BufferCommand, buffer_manager},
+    control_message_dispatcher::{ControlMessageDispatchCommand, control_message_dispatcher},
     logging::init_logging,
     object_cache_storage::{
         cache::SubgroupStreamId, commands::ObjectCacheStorageCommand, storage::object_cache_storage,
@@ -27,7 +27,7 @@ use moqt_core::{
     data_stream_type::DataStreamType,
 };
 
-use crate::signal_dispatcher::{signal_dispatcher, SignalDispatchCommand};
+use crate::signal_dispatcher::{SignalDispatchCommand, signal_dispatcher};
 
 type SubscribeId = u64;
 pub(crate) type SenderToOpenSubscription =

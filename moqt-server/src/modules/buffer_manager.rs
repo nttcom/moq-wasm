@@ -1,6 +1,6 @@
 use bytes::BytesMut;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 pub(crate) async fn buffer_manager(rx: &mut mpsc::Receiver<BufferCommand>) {
     tracing::trace!("buffer_manager start");

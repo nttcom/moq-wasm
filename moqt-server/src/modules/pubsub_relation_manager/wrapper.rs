@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use tokio::sync::{mpsc, oneshot};
 
@@ -1112,13 +1112,13 @@ pub(crate) mod test_helper_fn {
 #[cfg(test)]
 mod success {
     use crate::modules::pubsub_relation_manager::{
-        commands::PubSubRelationCommand, manager::pubsub_relation_manager, wrapper::test_helper_fn,
-        wrapper::PubSubRelationManagerWrapper,
+        commands::PubSubRelationCommand, manager::pubsub_relation_manager,
+        wrapper::PubSubRelationManagerWrapper, wrapper::test_helper_fn,
     };
     use moqt_core::messages::control_messages::{group_order::GroupOrder, subscribe::FilterType};
     use moqt_core::models::range::ObjectStart;
     use moqt_core::models::subscriptions::{
-        nodes::registry::SubscriptionNodeRegistry, Subscription,
+        Subscription, nodes::registry::SubscriptionNodeRegistry,
     };
     use moqt_core::models::tracks::ForwardingPreference;
     use moqt_core::pubsub_relation_manager_repository::PubSubRelationManagerRepository;

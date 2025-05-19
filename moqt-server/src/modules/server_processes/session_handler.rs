@@ -1,5 +1,6 @@
 use super::senders::{SenderToOtherConnectionThread, SendersToManagementThread};
 use crate::{
+    SignalDispatchCommand, SubgroupStreamId,
     modules::{
         buffer_manager::BufferCommand,
         control_message_dispatcher::ControlMessageDispatchCommand,
@@ -12,7 +13,6 @@ use crate::{
         },
     },
     signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher, TerminateReason},
-    SignalDispatchCommand, SubgroupStreamId,
 };
 use anyhow::Result;
 use moqt_core::{
@@ -20,9 +20,9 @@ use moqt_core::{
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
 };
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tracing::{self};
-use wtransport::{endpoint::IncomingSession, Connection};
+use wtransport::{Connection, endpoint::IncomingSession};
 
 pub(crate) struct SessionHandler {
     session: Arc<Connection>,

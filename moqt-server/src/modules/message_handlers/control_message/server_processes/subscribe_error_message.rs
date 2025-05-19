@@ -3,7 +3,7 @@ use crate::modules::{
     message_handlers::control_message::handlers::subscribe_error_handler::subscribe_error_handler,
     moqt_client::MOQTClient,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use bytes::BytesMut;
 use moqt_core::{
     messages::{control_messages::subscribe_error::SubscribeError, moqt_payload::MOQTPayload},

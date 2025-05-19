@@ -2,11 +2,11 @@ use crate::{
     constants::TerminationErrorCode,
     modules::moqt_client::{MOQTClient, MOQTClientStatus},
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use bytes::{Buf, BytesMut};
 use moqt_core::{
     data_stream_type::DataStreamType,
-    messages::data_streams::{subgroup_stream, DataStreams},
+    messages::data_streams::{DataStreams, subgroup_stream},
     variable_integer::read_variable_integer,
 };
 use std::{io::Cursor, sync::Arc};
@@ -98,7 +98,7 @@ mod tests {
     mod success {
         use crate::modules::{
             message_handlers::subgroup_stream_header::{
-                read_header, SubgroupStreamHeaderProcessResult,
+                SubgroupStreamHeaderProcessResult, read_header,
             },
             moqt_client::{MOQTClient, MOQTClientStatus},
             server_processes::senders,
@@ -106,7 +106,7 @@ mod tests {
         use bytes::BytesMut;
         use moqt_core::{
             data_stream_type::DataStreamType,
-            messages::data_streams::{subgroup_stream, DataStreams},
+            messages::data_streams::{DataStreams, subgroup_stream},
             variable_integer::write_variable_integer,
         };
         use std::{io::Cursor, sync::Arc};

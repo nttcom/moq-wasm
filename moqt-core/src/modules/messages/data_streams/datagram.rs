@@ -132,9 +132,8 @@ impl DataStreams for Object {
 mod tests {
     mod success {
         use crate::messages::data_streams::{
-            datagram,
+            DataStreams, datagram,
             extension_header::{ExtensionHeader, ExtensionHeaderValue, Value, ValueWithLength},
-            DataStreams,
         };
         use bytes::BytesMut;
         use std::io::Cursor;
@@ -488,7 +487,7 @@ mod tests {
         use bytes::BytesMut;
         use std::io::Cursor;
 
-        use crate::messages::data_streams::{datagram, DataStreams};
+        use crate::messages::data_streams::{DataStreams, datagram};
 
         #[test]
         fn depacketize_datagram_object_with_empty_payload() {
