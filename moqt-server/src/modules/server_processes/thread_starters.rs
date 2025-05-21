@@ -72,7 +72,7 @@ async fn spawn_control_stream_threads(
     let stream_id = recv_stream.id().into_u64();
     task::Builder::new()
         .name(&format!(
-            "Control Stream Receiver-{}-{}",
+            "ControlStreamReceiver-{}-{}",
             stable_id, stream_id
         ))
         .spawn(
@@ -88,10 +88,7 @@ async fn spawn_control_stream_threads(
     // Spawn a thread to send control messages: respond to the client or forward to the other client
     let send_stream = Arc::clone(&shared_send_stream);
     task::Builder::new()
-        .name(&format!(
-            "Control Stream Sender-{}-{}",
-            stable_id, stream_id
-        ))
+        .name(&format!("ControlStreamSender-{}-{}", stable_id, stream_id))
         .spawn(
             async move {
                 let session_span = tracing::info_span!("Session", stable_id);
@@ -129,10 +126,7 @@ async fn spawn_subgroup_stream_object_receiver_thread(
         .unwrap();
 
     task::Builder::new()
-        .name(&format!(
-            "Object Stream Receiver-{}-{}",
-            stable_id, stream_id
-        ))
+        .name(&format!("ObjectStreamReceiver-{}-{}", stable_id, stream_id))
         .spawn(
             async move {
                 let stream = UniRecvStream::new(stable_id, stream_id, recv_stream);
@@ -196,8 +190,8 @@ async fn spawn_subgroup_stream_object_forwarder_thread(
 
     task::Builder::new()
         .name(&format!(
-            "Object Stream Forwarder-{}-{}",
-            stable_id, stream_id
+            "ObjectStreamForwarder-client:{} stream:{} group:{} subgroup:{}",
+            stable_id, stream_id, subgroup_stream_id.0, subgroup_stream_id.1
         ))
         .spawn(
             async move {
@@ -256,7 +250,7 @@ async fn spawn_datagram_object_receiver_thread(
 
     // No loop: End after receiving once
     task::Builder::new()
-        .name(&format!("Object Datagram Receiver-{}", stable_id))
+        .name(&format!("ObjectDatagramReceiver-{}", stable_id))
         .spawn(
             async move {
                 let senders = client.lock().await.senders();
@@ -297,7 +291,7 @@ async fn spawn_datagram_object_forwarder_thread(
     });
 
     task::Builder::new()
-        .name(&format!("Object Datagram Forwarder-{}", stable_id))
+        .name(&format!("ObjectDatagramForwarder-{}", stable_id))
         .spawn(
             async move {
                 let senders = client.lock().await.senders();

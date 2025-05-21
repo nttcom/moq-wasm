@@ -98,22 +98,17 @@ impl SubgroupStreamsCache {
         let largest_group_id = self.get_largest_group_id()?;
 
         let subgroup_ids = self.get_all_subgroup_ids(largest_group_id);
+        let subgroup_largest_object_ids: Vec<u64> = subgroup_ids
+            .iter()
+            .filter_map(|subgroup_id| {
+                let subgroup_stream_id = (largest_group_id, *subgroup_id);
+                self.streams
+                    .get_mut(&subgroup_stream_id)
+                    .map(|cache| cache.get_largest_object_id())
+            })
+            .collect();
 
-        let mut largest_object_id = None;
-        for subgroup_id in subgroup_ids.iter().rev() {
-            let subgroup_stream_id = (largest_group_id, *subgroup_id);
-            let object_id = self
-                .streams
-                .get_mut(&subgroup_stream_id)
-                .unwrap()
-                .get_largest_object_id();
-
-            if largest_object_id.is_none() || object_id > largest_object_id.unwrap() {
-                largest_object_id = Some(object_id);
-            }
-        }
-
-        largest_object_id
+        subgroup_largest_object_ids.into_iter().max()
     }
 
     pub(crate) fn get_all_subgroup_ids(&mut self, group_id: u64) -> Vec<SubgroupId> {
@@ -175,13 +170,9 @@ impl SubgroupStreamCache {
 
     fn get_next_object(&mut self, cache_id: CacheId) -> Option<(CacheId, subgroup_stream::Object)> {
         let next_cache_id = cache_id + 1;
-        self.objects.iter().find_map(|(k, v)| {
-            if *k == next_cache_id {
-                Some((*k, v.clone()))
-            } else {
-                None
-            }
-        })
+        self.objects
+            .get(&next_cache_id)
+            .map(|v| (next_cache_id, v.clone()))
     }
 
     fn get_first_object(&mut self) -> Option<(CacheId, subgroup_stream::Object)> {
