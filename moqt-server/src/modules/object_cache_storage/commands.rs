@@ -1,4 +1,4 @@
-use super::cache::{CacheId, CacheKey, SubgroupId};
+use super::cache::{CacheKey, SubgroupId};
 use anyhow::Result;
 use moqt_core::messages::data_streams::{DatagramObject, subgroup_stream};
 use tokio::sync::oneshot;
@@ -44,34 +44,35 @@ pub(crate) enum ObjectCacheStorageCommand {
         cache_key: CacheKey,
         group_id: u64,
         object_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
+        resp: oneshot::Sender<Result<Option<DatagramObject>>>,
     },
     GetAbsoluteOrNextSubgroupStreamObject {
         cache_key: CacheKey,
         group_id: u64,
         subgroup_id: u64,
         object_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, subgroup_stream::Object)>>>,
+        resp: oneshot::Sender<Result<Option<subgroup_stream::Object>>>,
     },
     GetNextDatagramObject {
         cache_key: CacheKey,
-        cache_id: CacheId,
-        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
+        group_id: u64,
+        current_object_id: u64,
+        resp: oneshot::Sender<Result<Option<DatagramObject>>>,
     },
     GetNextSubgroupStreamObject {
         cache_key: CacheKey,
         group_id: u64,
         subgroup_id: u64,
-        cache_id: CacheId,
-        resp: oneshot::Sender<Result<Option<(CacheId, subgroup_stream::Object)>>>,
+        current_object_id: u64,
+        resp: oneshot::Sender<Result<Option<subgroup_stream::Object>>>,
     },
     GetLatestDatagramObject {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
+        resp: oneshot::Sender<Result<Option<DatagramObject>>>,
     },
     GetLatestDatagramGroup {
         cache_key: CacheKey,
-        resp: oneshot::Sender<Result<Option<(CacheId, DatagramObject)>>>,
+        resp: oneshot::Sender<Result<Option<DatagramObject>>>,
     },
     // Since current Forwarder is generated for each Group,
     // LatestGroup is never used for SubgroupCache.
@@ -80,7 +81,7 @@ pub(crate) enum ObjectCacheStorageCommand {
         cache_key: CacheKey,
         group_id: u64,
         subgroup_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, subgroup_stream::Object)>>>,
+        resp: oneshot::Sender<Result<Option<subgroup_stream::Object>>>,
     },
     // TODO: Remove LatestGroup since it is not exist in the draft-10
     #[allow(dead_code)]
@@ -88,7 +89,7 @@ pub(crate) enum ObjectCacheStorageCommand {
         cache_key: CacheKey,
         group_id: u64,
         subgroup_id: u64,
-        resp: oneshot::Sender<Result<Option<(CacheId, subgroup_stream::Object)>>>,
+        resp: oneshot::Sender<Result<Option<subgroup_stream::Object>>>,
     },
     GetAllSubgroupIds {
         cache_key: CacheKey,

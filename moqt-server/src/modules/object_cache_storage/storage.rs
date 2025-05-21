@@ -172,7 +172,8 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
             }
             ObjectCacheStorageCommand::GetNextDatagramObject {
                 cache_key,
-                cache_id,
+                group_id,
+                current_object_id,
                 resp,
             } => {
                 let cache = storage.get_mut(&cache_key);
@@ -185,14 +186,14 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     }
                 };
 
-                let object_with_cache_id = datagram_cache.get_next_object(cache_id);
-                resp.send(Ok(object_with_cache_id)).unwrap();
+                let object_option = datagram_cache.get_next_object(group_id, current_object_id);
+                resp.send(Ok(object_option)).unwrap();
             }
             ObjectCacheStorageCommand::GetNextSubgroupStreamObject {
                 cache_key,
                 group_id,
                 subgroup_id,
-                cache_id,
+                current_object_id,
                 resp,
             } => {
                 let cache = storage.get_mut(&cache_key);
@@ -205,9 +206,12 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                     }
                 };
 
-                let object_with_cache_id =
-                    subgroup_streams_cache.get_next_object(group_id, subgroup_id, cache_id);
-                resp.send(Ok(object_with_cache_id)).unwrap();
+                let object_option = subgroup_streams_cache.get_next_object(
+                    group_id,
+                    subgroup_id,
+                    current_object_id,
+                );
+                resp.send(Ok(object_option)).unwrap();
             }
             ObjectCacheStorageCommand::GetLatestDatagramGroup { cache_key, resp } => {
                 let cache = storage.get_mut(&cache_key);

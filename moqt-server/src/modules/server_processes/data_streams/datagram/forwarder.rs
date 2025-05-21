@@ -152,12 +152,12 @@ impl DatagramObjectForwarder {
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<()> {
-        let mut object_cache_id = None;
+        let mut last_sent_key: Option<(u64, u64)> = None;
         let mut is_end = false;
 
         while !is_end {
-            (object_cache_id, is_end) = self
-                .forward_object(object_cache_storage, object_cache_id)
+            (last_sent_key, is_end) = self
+                .forward_object(object_cache_storage, last_sent_key)
                 .await?;
         }
 
@@ -167,15 +167,15 @@ impl DatagramObjectForwarder {
     async fn forward_object(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-        cache_id: Option<usize>,
-    ) -> Result<(Option<usize>, bool)> {
+        last_sent_key: Option<(u64, u64)>,
+    ) -> Result<(Option<(u64, u64)>, bool)> {
         // Do loop until get an object from the cache storage
         loop {
-            let (cache_id, upstream_object) = match self
-                .get_upstream_object(object_cache_storage, cache_id)
+            let upstream_object = match self
+                .get_upstream_object(object_cache_storage, last_sent_key)
                 .await?
             {
-                Some((id, object)) => (id, object),
+                Some(object) => object,
                 None => {
                     // If there is no object in the cache storage, sleep for a while and try again
                     sleep(self.sleep_time).await;
@@ -192,36 +192,36 @@ impl DatagramObjectForwarder {
             if let DatagramObject::ObjectDatagramStatus(object) = &downstream_object {
                 is_end = self.is_data_stream_ended(object);
             }
+            
+            let current_key = match &upstream_object {
+                DatagramObject::ObjectDatagram(obj) => (obj.group_id(), obj.object_id()),
+                DatagramObject::ObjectDatagramStatus(obj) => (obj.group_id(), obj.object_id()),
+            };
 
-            return Ok((Some(cache_id), is_end));
+            return Ok((Some(current_key), is_end));
         }
     }
 
     async fn get_upstream_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-        cache_id: Option<usize>,
-    ) -> Result<Option<(usize, DatagramObject)>> {
-        let cache = match cache_id {
+        last_sent_key: Option<(u64, u64)>,
+    ) -> Result<Option<DatagramObject>> {
+        match last_sent_key {
             // Try to get the first object according to Filter Type
-            None => self.get_first_object(object_cache_storage).await?,
-            Some(cache_id) => {
-                // Try to get the subsequent object with cache_id
-                self.get_subsequent_object(object_cache_storage, cache_id)
-                    .await?
+            None => self.get_first_object(object_cache_storage).await,
+            Some((group_id, object_id)) => {
+                // Try to get the subsequent object
+                self.get_subsequent_object(object_cache_storage, group_id, object_id)
+                    .await
             }
-        };
-
-        match cache {
-            None => Ok(None),
-            Some(object_with_cache_id) => Ok(Some(object_with_cache_id)),
         }
     }
 
     async fn get_first_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<Option<(usize, DatagramObject)>> {
+    ) -> Result<Option<DatagramObject>> {
         match self.filter_type {
             // TODO: Remove LatestGroup since it is not exist in the draft-10
             FilterType::LatestGroup => {
@@ -248,10 +248,11 @@ impl DatagramObjectForwarder {
     async fn get_subsequent_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-        object_cache_id: usize,
-    ) -> Result<Option<(usize, DatagramObject)>> {
+        group_id: u64,
+        current_object_id: u64,
+    ) -> Result<Option<DatagramObject>> {
         object_cache_storage
-            .get_next_datagram_object(&self.cache_key, object_cache_id)
+            .get_next_datagram_object(&self.cache_key, group_id, current_object_id)
             .await
     }
 
