@@ -232,10 +232,10 @@ impl SubgroupStreamObjectForwarder {
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
     ) -> Result<()> {
-        let (is_end, first_object_cache_id) =
+        let (is_end, first_object_id_option) =
             self.forward_first_object(object_cache_storage).await?;
         tracing::debug!(
-            "Forwarded first object: group_id: {:?}, subgroupid: {:?}",
+            "Forwarded first object: group_id: {:?}, subgroup_id: {:?}",
             self.subgroup_stream_id.0,
             self.subgroup_stream_id.1
         );
@@ -245,8 +245,12 @@ impl SubgroupStreamObjectForwarder {
             return Ok(());
         }
 
-        self.forward_subsequent_objects(object_cache_storage, first_object_cache_id.unwrap())
-            .await?;
+        if let Some(first_object_id) = first_object_id_option {
+            self.forward_subsequent_objects(object_cache_storage, first_object_id)
+                .await?;
+        }
+        // If first_object_id_option is None here, it means no object was found,
+        // which shouldn't happen if is_end is false. Or it means the stream ended with the first object.
 
         Ok(())
     }
@@ -254,15 +258,15 @@ impl SubgroupStreamObjectForwarder {
     async fn forward_first_object(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<(bool, Option<usize>)> {
-        let object_cache_id = loop {
+    ) -> Result<(bool, Option<u64>)> { // Returns Option<object_id>
+        let first_object_id = loop {
             if self.is_terminated.load(Ordering::Relaxed) {
                 return Ok((true, None));
             }
 
-            let first_stream_object = self.get_first_object(object_cache_storage).await?;
-            let (cache_id, stream_object) = match first_stream_object {
-                Some((id, object)) => (id, object),
+            let stream_object_option = self.get_first_object(object_cache_storage).await?;
+            let stream_object = match stream_object_option {
+                Some(object) => object,
                 None => {
                     // If there is no object in the cache storage, sleep for a while and try again
                     sleep(self.sleep_time).await;
@@ -278,35 +282,35 @@ impl SubgroupStreamObjectForwarder {
             if self.is_data_stream_ended(&stream_object) {
                 self.send_termination_signal_to_forwarders(stream_object.object_status().unwrap())
                     .await?;
-                return Ok((true, None));
+                return Ok((true, None)); // No specific object_id to return if stream ends here
             }
-            break cache_id;
+            break stream_object.object_id();
         };
-        Ok((false, Some(object_cache_id)))
+        Ok((false, Some(first_object_id)))
     }
 
     async fn forward_subsequent_objects(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-        mut object_cache_id: usize,
+        mut current_object_id: u64,
     ) -> Result<()> {
         loop {
             if self.is_terminated.load(Ordering::Relaxed) {
                 break;
             }
 
-            let stream_object = self
-                .get_subsequent_object(object_cache_storage, object_cache_id)
+            let stream_object_option = self
+                .get_subsequent_object(object_cache_storage, current_object_id)
                 .await?;
-            let (cache_id, stream_object) = match stream_object {
-                Some((id, object)) => (id, object),
+            let stream_object = match stream_object_option {
+                Some(object) => object,
                 None => {
                     // If there is no object in the cache storage, sleep for a while and try again
                     sleep(self.sleep_time).await;
                     continue;
                 }
             };
-            object_cache_id = cache_id;
+            current_object_id = stream_object.object_id();
 
             // Packetize and send the object
             let message_buf = self.packetize_object(&stream_object).await?;
@@ -326,7 +330,7 @@ impl SubgroupStreamObjectForwarder {
     async fn get_first_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<Option<(usize, subgroup_stream::Object)>> {
+    ) -> Result<Option<subgroup_stream::Object>> {
         let downstream_session_id = self.stream.stable_id();
         let downstream_subscribe_id = self.downstream_subscribe_id;
 
@@ -339,15 +343,15 @@ impl SubgroupStreamObjectForwarder {
         match actual_object_start {
             None => {
                 // If there is no actual start, it means that this is the first forwarder on this subscription.
-                let object_with_cache_id = self
+                let stream_object_option = self
                     .get_first_object_for_first_stream(object_cache_storage)
                     .await?;
 
-                if object_with_cache_id.is_none() {
+                if stream_object_option.is_none() {
                     return Ok(None);
                 }
 
-                let (cache_id, stream_object) = object_with_cache_id.unwrap();
+                let stream_object = stream_object_option.as_ref().unwrap(); // We know it's Some
                 let group_id = self.subgroup_stream_id.0;
                 let object_id = stream_object.object_id();
                 let actual_object_start = ObjectStart::new(group_id, object_id);
@@ -360,7 +364,7 @@ impl SubgroupStreamObjectForwarder {
                     )
                     .await?;
 
-                Ok(Some((cache_id, stream_object)))
+                Ok(stream_object_option)
             }
             Some(actual_object_start) => {
                 // If there is an actual start, it means that this is the second or later forwarder on this subscription.
@@ -376,7 +380,7 @@ impl SubgroupStreamObjectForwarder {
     async fn get_first_object_for_first_stream(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<Option<(usize, subgroup_stream::Object)>> {
+    ) -> Result<Option<subgroup_stream::Object>> {
         let (group_id, subgroup_id) = self.subgroup_stream_id;
 
         match self.filter_type {
@@ -419,7 +423,7 @@ impl SubgroupStreamObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         actual_object_start: ObjectStart,
-    ) -> Result<Option<(usize, subgroup_stream::Object)>> {
+    ) -> Result<Option<subgroup_stream::Object>> {
         let (group_id, subgroup_id) = self.subgroup_stream_id;
 
         if group_id == actual_object_start.group_id() {
@@ -441,15 +445,15 @@ impl SubgroupStreamObjectForwarder {
     async fn get_subsequent_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-        object_cache_id: usize,
-    ) -> Result<Option<(usize, subgroup_stream::Object)>> {
+        current_object_id: u64,
+    ) -> Result<Option<subgroup_stream::Object>> {
         let (group_id, subgroup_id) = self.subgroup_stream_id;
         object_cache_storage
             .get_next_subgroup_stream_object(
                 &self.cache_key,
                 group_id,
                 subgroup_id,
-                object_cache_id,
+                current_object_id,
             )
             .await
     }

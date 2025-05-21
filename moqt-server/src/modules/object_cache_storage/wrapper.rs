@@ -1,7 +1,4 @@
-use super::{
-    cache::{CacheId, CacheKey},
-    commands::ObjectCacheStorageCommand,
-};
+use super::{cache::CacheKey, commands::ObjectCacheStorageCommand};
 use anyhow::{Result, bail};
 use moqt_core::messages::data_streams::{DatagramObject, subgroup_stream};
 use tokio::sync::{mpsc, oneshot};
@@ -162,8 +159,8 @@ impl ObjectCacheStorageWrapper {
         cache_key: &CacheKey,
         group_id: u64,
         object_id: u64,
-    ) -> Result<Option<(CacheId, DatagramObject)>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, DatagramObject)>>>();
+    ) -> Result<Option<DatagramObject>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<DatagramObject>>>();
 
         let cmd = ObjectCacheStorageCommand::GetDatagramObject {
             cache_key: cache_key.clone(),
@@ -188,9 +185,9 @@ impl ObjectCacheStorageWrapper {
         group_id: u64,
         subgroup_id: u64,
         object_id: u64,
-    ) -> Result<Option<(CacheId, subgroup_stream::Object)>> {
+    ) -> Result<Option<subgroup_stream::Object>> {
         let (resp_tx, resp_rx) =
-            oneshot::channel::<Result<Option<(CacheId, subgroup_stream::Object)>>>();
+            oneshot::channel::<Result<Option<subgroup_stream::Object>>>();
 
         let cmd = ObjectCacheStorageCommand::GetAbsoluteOrNextSubgroupStreamObject {
             cache_key: cache_key.clone(),
@@ -213,13 +210,15 @@ impl ObjectCacheStorageWrapper {
     pub(crate) async fn get_next_datagram_object(
         &mut self,
         cache_key: &CacheKey,
-        cache_id: usize,
-    ) -> Result<Option<(CacheId, DatagramObject)>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, DatagramObject)>>>();
+        group_id: u64,
+        current_object_id: u64,
+    ) -> Result<Option<DatagramObject>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<DatagramObject>>>();
 
         let cmd = ObjectCacheStorageCommand::GetNextDatagramObject {
             cache_key: cache_key.clone(),
-            cache_id,
+            group_id,
+            current_object_id,
             resp: resp_tx,
         };
 
@@ -238,16 +237,16 @@ impl ObjectCacheStorageWrapper {
         cache_key: &CacheKey,
         group_id: u64,
         subgroup_id: u64,
-        cache_id: usize,
-    ) -> Result<Option<(CacheId, subgroup_stream::Object)>> {
+        current_object_id: u64,
+    ) -> Result<Option<subgroup_stream::Object>> {
         let (resp_tx, resp_rx) =
-            oneshot::channel::<Result<Option<(CacheId, subgroup_stream::Object)>>>();
+            oneshot::channel::<Result<Option<subgroup_stream::Object>>>();
 
         let cmd = ObjectCacheStorageCommand::GetNextSubgroupStreamObject {
             cache_key: cache_key.clone(),
             group_id,
             subgroup_id,
-            cache_id,
+            current_object_id,
             resp: resp_tx,
         };
 
@@ -264,8 +263,8 @@ impl ObjectCacheStorageWrapper {
     pub(crate) async fn get_latest_datagram_object(
         &mut self,
         cache_key: &CacheKey,
-    ) -> Result<Option<(CacheId, DatagramObject)>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, DatagramObject)>>>();
+    ) -> Result<Option<DatagramObject>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<DatagramObject>>>();
 
         let cmd = ObjectCacheStorageCommand::GetLatestDatagramObject {
             cache_key: cache_key.clone(),
@@ -285,8 +284,8 @@ impl ObjectCacheStorageWrapper {
     pub(crate) async fn get_latest_datagram_group(
         &mut self,
         cache_key: &CacheKey,
-    ) -> Result<Option<(CacheId, DatagramObject)>> {
-        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<(CacheId, DatagramObject)>>>();
+    ) -> Result<Option<DatagramObject>> {
+        let (resp_tx, resp_rx) = oneshot::channel::<Result<Option<DatagramObject>>>();
 
         let cmd = ObjectCacheStorageCommand::GetLatestDatagramGroup {
             cache_key: cache_key.clone(),
@@ -308,9 +307,9 @@ impl ObjectCacheStorageWrapper {
         cache_key: &CacheKey,
         group_id: u64,
         subgroup_id: u64,
-    ) -> Result<Option<(CacheId, subgroup_stream::Object)>> {
+    ) -> Result<Option<subgroup_stream::Object>> {
         let (resp_tx, resp_rx) =
-            oneshot::channel::<Result<Option<(CacheId, subgroup_stream::Object)>>>();
+            oneshot::channel::<Result<Option<subgroup_stream::Object>>>();
 
         let cmd = ObjectCacheStorageCommand::GetFirstSubgroupStreamObject {
             cache_key: cache_key.clone(),
@@ -335,9 +334,9 @@ impl ObjectCacheStorageWrapper {
         cache_key: &CacheKey,
         group_id: u64,
         subgroup_id: u64,
-    ) -> Result<Option<(CacheId, subgroup_stream::Object)>> {
+    ) -> Result<Option<subgroup_stream::Object>> {
         let (resp_tx, resp_rx) =
-            oneshot::channel::<Result<Option<(CacheId, subgroup_stream::Object)>>>();
+            oneshot::channel::<Result<Option<subgroup_stream::Object>>>();
 
         let cmd = ObjectCacheStorageCommand::GetLatestSubgroupStreamObject {
             cache_key: cache_key.clone(),
@@ -711,7 +710,6 @@ mod success {
         }
 
         let object_id = 5;
-        let expected_cache_id = 5;
         let expected_object_payload = vec![5, 6, 7, 8];
         let expected_object = datagram::Object::new(
             track_alias,
@@ -730,8 +728,7 @@ mod success {
 
         assert!(result.is_ok());
 
-        let (result_cache_id, result_object) = result.unwrap().unwrap();
-        assert_eq!(result_cache_id, expected_cache_id);
+        let result_object = result.unwrap().unwrap();
         assert_eq!(result_object, expected_object);
     }
 
@@ -784,7 +781,6 @@ mod success {
         }
 
         let object_id = 9;
-        let expected_cache_id = 9;
         let expected_object_payload = vec![9, 10, 11, 12];
         let expected_object = subgroup_stream::Object::new(
             object_id,
@@ -805,8 +801,7 @@ mod success {
 
         assert!(result.is_ok());
 
-        let (result_cache_id, result_object) = result.unwrap().unwrap();
-        assert_eq!(result_cache_id, expected_cache_id);
+        let result_object = result.unwrap().unwrap();
         assert_eq!(result_object, expected_object);
     }
 
@@ -848,9 +843,9 @@ mod success {
                 .await;
         }
 
-        let cache_id = 2;
+        let current_object_id = 2; // Corresponds to previous cache_id = 2
         let expected_object_id = 3;
-        let expected_cache_id = 3;
+        // let expected_cache_id = 3; // CacheId no longer returned
         let expected_object_payload = vec![3, 4, 5, 6];
         let expected_object = datagram::Object::new(
             track_alias,
@@ -864,13 +859,13 @@ mod success {
         let expected_object = DatagramObject::ObjectDatagram(expected_object);
 
         let result = object_cache_storage
-            .get_next_datagram_object(&cache_key, cache_id)
+            .get_next_datagram_object(&cache_key, group_id, current_object_id)
             .await;
 
         assert!(result.is_ok());
 
-        let (result_cache_id, result_object) = result.unwrap().unwrap();
-        assert_eq!(result_cache_id, expected_cache_id);
+        let result_object = result.unwrap().unwrap();
+        // assert_eq!(result_cache_id, expected_cache_id); // CacheId no longer returned
         assert_eq!(result_object, expected_object);
     }
 
@@ -912,9 +907,9 @@ mod success {
                 .await;
         }
 
-        let cache_id = 2;
+        let current_object_id = 2; // Corresponds to previous cache_id = 2
         let expected_object_id = 3;
-        let expected_cache_id = 3;
+        // let expected_cache_id = 3; // CacheId no longer returned
         let expected_object_status = ObjectStatus::DoesNotExist;
         let expected_object = datagram_status::Object::new(
             track_alias,
@@ -928,13 +923,13 @@ mod success {
         let expected_object = DatagramObject::ObjectDatagramStatus(expected_object);
 
         let result = object_cache_storage
-            .get_next_datagram_object(&cache_key, cache_id)
+            .get_next_datagram_object(&cache_key, group_id, current_object_id)
             .await;
 
         assert!(result.is_ok());
 
-        let (result_cache_id, result_object) = result.unwrap().unwrap();
-        assert_eq!(result_cache_id, expected_cache_id);
+        let result_object = result.unwrap().unwrap();
+        // assert_eq!(result_cache_id, expected_cache_id); // CacheId no longer returned
         assert_eq!(result_object, expected_object);
     }
 
@@ -986,9 +981,9 @@ mod success {
                 .await;
         }
 
-        let cache_id = 0;
+        let current_object_id = 0; // Corresponds to previous cache_id = 0
         let expected_object_id = 1;
-        let expected_cache_id = 1;
+        // let expected_cache_id = 1; // CacheId no longer returned
         let expected_object_payload = vec![1, 2, 3, 4];
         let expected_object = subgroup_stream::Object::new(
             expected_object_id,
@@ -999,13 +994,18 @@ mod success {
         .unwrap();
 
         let result = object_cache_storage
-            .get_next_subgroup_stream_object(&cache_key, group_id, subgroup_id, cache_id)
+            .get_next_subgroup_stream_object(
+                &cache_key,
+                group_id,
+                subgroup_id,
+                current_object_id,
+            )
             .await;
 
         assert!(result.is_ok());
 
-        let (result_cache_id, result_object) = result.unwrap().unwrap();
-        assert_eq!(result_cache_id, expected_cache_id);
+        let result_object = result.unwrap().unwrap();
+        // assert_eq!(result_cache_id, expected_cache_id); // CacheId no longer returned
         assert_eq!(result_object, expected_object);
     }
 
@@ -1048,7 +1048,7 @@ mod success {
         }
 
         let expected_object_id = 5;
-        let expected_cache_id = 5;
+        // let expected_cache_id = 5; // CacheId no longer returned
         let expected_object_payload = vec![5, 6, 7, 8];
         let expected_object = datagram::Object::new(
             track_alias,
@@ -1067,8 +1067,8 @@ mod success {
 
         assert!(result.is_ok());
 
-        let (result_cache_id, result_object) = result.unwrap().unwrap();
-        assert_eq!(result_cache_id, expected_cache_id);
+        let result_object = result.unwrap().unwrap();
+        // assert_eq!(result_cache_id, expected_cache_id); // CacheId no longer returned
         assert_eq!(result_object, expected_object);
     }
 
@@ -1132,7 +1132,7 @@ mod success {
         )
         .unwrap();
         let expected_object = DatagramObject::ObjectDatagram(expected_object);
-        let expected_cache_id = group_size * expected_group_id as u8 + expected_object_id as u8;
+        // let expected_cache_id = group_size * expected_group_id as u8 + expected_object_id as u8; // CacheId no longer returned
 
         let result = object_cache_storage
             .get_latest_datagram_group(&cache_key)
@@ -1140,8 +1140,8 @@ mod success {
 
         assert!(result.is_ok());
 
-        let (result_cache_id, result_object) = result.unwrap().unwrap();
-        assert_eq!(result_cache_id, expected_cache_id as usize);
+        let result_object = result.unwrap().unwrap();
+        // assert_eq!(result_cache_id, expected_cache_id as usize); // CacheId no longer returned
         assert_eq!(result_object, expected_object);
     }
 
@@ -1194,7 +1194,7 @@ mod success {
 
         let expected_object_id = 0;
         let expected_group_id = 2;
-        let expected_cache_id = 49;
+        // let expected_cache_id = 49; // CacheId no longer returned
         let expected_object_payload = vec![14, 15, 16, 17];
         let expected_object = datagram::Object::new(
             track_alias,
@@ -1213,8 +1213,8 @@ mod success {
 
         assert!(result.is_ok());
 
-        let (result_cache_id, result_object) = result.unwrap().unwrap();
-        assert_eq!(result_cache_id, expected_cache_id);
+        let result_object = result.unwrap().unwrap();
+        // assert_eq!(result_cache_id, expected_cache_id); // CacheId no longer returned
         assert_eq!(result_object, expected_object);
     }
 
@@ -1267,7 +1267,7 @@ mod success {
         }
 
         let expected_object_id = 0;
-        let expected_cache_id = 0;
+        // let expected_cache_id = 0; // CacheId no longer returned
         let expected_object_payload = vec![0, 1, 2, 3];
         let expected_object = subgroup_stream::Object::new(
             expected_object_id,
@@ -1283,8 +1283,8 @@ mod success {
 
         assert!(result.is_ok());
 
-        let (result_cache_id, result_object) = result.unwrap().unwrap();
-        assert_eq!(result_cache_id, expected_cache_id);
+        let result_object = result.unwrap().unwrap();
+        // assert_eq!(result_cache_id, expected_cache_id); // CacheId no longer returned
         assert_eq!(result_object, expected_object);
     }
 
@@ -1337,7 +1337,7 @@ mod success {
         }
 
         let expected_object_id = 19;
-        let expected_cache_id = 19;
+        // let expected_cache_id = 19; // CacheId no longer returned
         let expected_object_payload = vec![19, 20, 21, 22];
         let expected_object = subgroup_stream::Object::new(
             expected_object_id,
@@ -1353,8 +1353,8 @@ mod success {
 
         assert!(result.is_ok());
 
-        let (result_cache_id, result_object) = result.unwrap().unwrap();
-        assert_eq!(result_cache_id, expected_cache_id);
+        let result_object = result.unwrap().unwrap();
+        // assert_eq!(result_cache_id, expected_cache_id); // CacheId no longer returned
         assert_eq!(result_object, expected_object);
     }
 

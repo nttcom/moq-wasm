@@ -4,7 +4,6 @@ pub(crate) mod subgroup_stream;
 use datagram::DatagramCache;
 use subgroup_stream::SubgroupStreamsCache;
 
-pub(crate) type CacheId = usize;
 type GroupId = u64;
 pub(crate) type SubgroupId = u64;
 pub(crate) type SubgroupStreamId = (GroupId, SubgroupId);
