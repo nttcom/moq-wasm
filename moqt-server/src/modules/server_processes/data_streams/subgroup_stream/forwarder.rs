@@ -59,7 +59,6 @@ impl SubgroupStreamObjectForwarder {
         mut signal_rx: mpsc::Receiver<Box<DataStreamThreadSignal>>,
     ) -> Result<Self> {
         let senders = client.lock().await.senders();
-        let sleep_time = Duration::from_millis(10);
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(senders.pubsub_relation_tx().clone());
 
@@ -120,6 +119,7 @@ impl SubgroupStreamObjectForwarder {
 
         let cache_key = CacheKey::new(upstream_session_id, upstream_subscribe_id);
 
+        let sleep_time = Duration::from_millis(5);
         let stream_object_forwarder = SubgroupStreamObjectForwarder {
             stream,
             senders,
