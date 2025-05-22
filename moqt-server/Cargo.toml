@@ -18,3 +18,12 @@ bytes = "1"
 async-trait = "0.1.74"
 ttl_cache = "0.5.1"
 tracing-appender = "0.2.3"
+
+[profile.release]
+opt-level = 3           # 高速化重視の最適化（デフォルトだが明示してOK）
+lto = "fat"             # Link Time Optimization（全体最適化）
+codegen-units = 1      # 単一ユニットでのコード生成（より最適化される）
+incremental = false     # 増分コンパイル無効（最適化のため）
+debug = false           # デバッグ情報除去（サイズ削減、ただし省略可能）
+strip = "symbols"       # デバッグシンボルの除去（Rust 1.70+）
+panic = "abort"         # パニック時に即終了（コードサイズ小・速度↑）

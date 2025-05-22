@@ -63,7 +63,7 @@ pub fn get_2msb_value(value: u64) -> u64 {
 }
 
 pub fn write_variable_integer(value: u64) -> BytesMut {
-    let mut buf = BytesMut::with_capacity(0);
+    let mut buf = BytesMut::with_capacity(8);
 
     if value < 0x40 {
         buf.put_u8(value as u8)
