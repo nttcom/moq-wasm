@@ -93,9 +93,10 @@ pub fn read_all_variable_bytes(buf: &mut std::io::Cursor<&[u8]>) -> Result<Vec<u
 pub fn write_variable_bytes(value: &Vec<u8>) -> BytesMut {
     //!  this function is used for x (b) format.
     //!  x (b) : Indicates that x consists of a variable length integer, followed by that many bytes of binary data.
-    let mut buf = BytesMut::with_capacity(0);
     let len = value.len();
-    buf.extend(write_variable_integer(len as u64));
+    let varint = write_variable_integer(len as u64);
+    let mut buf = BytesMut::with_capacity(varint.len() + len);
+    buf.extend(varint);
     buf.extend(value);
 
     buf
@@ -104,7 +105,7 @@ pub fn write_variable_bytes(value: &Vec<u8>) -> BytesMut {
 pub fn write_bytes(value: &Vec<u8>) -> BytesMut {
     //! this function is used for x (A) format.
     //! x (A): Indicates that x is A bits long
-    let mut buf = BytesMut::with_capacity(0);
+    let mut buf = BytesMut::with_capacity(value.len());
     buf.extend(value);
 
     buf
