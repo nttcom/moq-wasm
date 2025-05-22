@@ -10,6 +10,12 @@ server:
 server-trace:
 	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-server-sample -- --log trace
 
+server-warn:
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-server-sample -- --log warn
+
+server-release:
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-server-sample --release
+
 client:
 	cd js && npm run dev
 

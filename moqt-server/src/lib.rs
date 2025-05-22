@@ -63,6 +63,7 @@ impl MOQTServer {
         let mut transport_config = TransportConfig::default();
         // 単方向ストリーム数を100000に設定
         transport_config.max_concurrent_uni_streams(100000u32.into());
+        // transport_config.send_window(100 * 1024 * 1024);
         // transport_config.time_threshold(1.5);
         // transport_config.packet_threshold(5);
         // transport_config.stream_receive_window(VarInt::from_u32(10 * 1024 * 1024)); // initial_max_stream_data_uniと同義。デフォルトは65,536 バイト (64KB)なので1MBにする

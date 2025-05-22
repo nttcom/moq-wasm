@@ -486,14 +486,11 @@ impl SubgroupStreamObjectForwarder {
         )
         .unwrap();
 
-        let mut buf = BytesMut::new();
-        header.packetize(&mut buf);
-
-        let mut message_buf = BytesMut::with_capacity(buf.len() + 8);
+        let mut message_buf = BytesMut::new();
         message_buf.extend(write_variable_integer(
             u8::from(DataStreamType::SubgroupHeader) as u64,
         ));
-        message_buf.extend(buf);
+        header.packetize(&mut message_buf);
 
         Ok(message_buf)
     }
@@ -505,10 +502,7 @@ impl SubgroupStreamObjectForwarder {
         let mut buf = BytesMut::new();
         stream_object.packetize(&mut buf);
 
-        let mut message_buf = BytesMut::with_capacity(buf.len());
-        message_buf.extend(buf);
-
-        Ok(message_buf)
+        Ok(buf)
     }
 
     async fn send(&mut self, message_buf: BytesMut) -> Result<()> {
