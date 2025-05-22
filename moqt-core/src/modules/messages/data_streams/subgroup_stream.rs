@@ -137,6 +137,18 @@ impl Object {
     pub fn object_status(&self) -> Option<ObjectStatus> {
         self.object_status
     }
+
+    pub fn object_payload_length(&self) -> u64 {
+        self.object_payload_length
+    }
+
+    pub fn extension_headers_length(&self) -> u64 {
+        self.extension_headers_length
+    }
+
+    pub fn extension_headers(&self) -> &Vec<ExtensionHeader> {
+        &self.extension_headers
+    }
 }
 
 impl DataStreams for Object {
@@ -207,10 +219,8 @@ impl DataStreams for Object {
         }
 
         buf.extend(write_variable_integer(self.object_payload_length));
-        if self.object_status.is_some() {
-            buf.extend(write_variable_integer(
-                u8::from(self.object_status.unwrap()) as u64,
-            ));
+        if let Some(status) = self.object_status {
+            buf.extend(write_variable_integer(u8::from(status) as u64));
         }
         buf.extend(&self.object_payload);
 
