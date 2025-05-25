@@ -1,6 +1,7 @@
 import init, { MOQTClient } from '../../../pkg/moqt_client_sample'
 import { AUTH_INFO } from './const'
 import { getFormElement } from './utils'
+import { JitterBuffer } from './jitterBuffer'
 
 function setupClientCallbacks(client: MOQTClient) {
   client.onSetup(async (serverSetup: any) => {
@@ -54,6 +55,8 @@ function sendSubscribeButtonClickHandler(client: MOQTClient) {
       BigInt(10000), // endGroup
       AUTH_INFO
     )
+
+    form['jitter-buffer-delay'].disabled = true
   })
 }
 
@@ -85,17 +88,33 @@ function setupVideoDecoderWorker() {
   }
 }
 
+function setPostInterval( worker: Worker, jitterBuffer: JitterBuffer, interval: number) {
+  setInterval(() => {
+    const subgroupStreamObject = jitterBuffer.pop()
+    if (subgroupStreamObject) {
+      worker.postMessage({ subgroupStreamObject })
+    }
+  }, interval)
+}
+
 function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio', trackAlias: number) {
   client.onSubgroupStreamHeader(async (subgroupStreamHeader: any) => {
     console.log({ subgroupStreamHeader })
   })
 
+  const form = getFormElement()
+  const delay = form['jitter-buffer-delay'].value.split('/')
+
+  const jitterBuffer = new JitterBuffer(delay)
+
   if (type === 'audio') {
     setupAudioDecoderWorker()
+    setPostInterval(audioDecoderWorker, jitterBuffer, 10)
   } else {
     setupVideoDecoderWorker()
+    setPostInterval(videoDecoderWorker, jitterBuffer, 15)
   }
-  client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject: any) => {
+  client.onSubgroupStreamObject(BigInt(trackAlias), async (groupId: number, subgroupStreamObject: any) => {
     // WARNING: Use only debug for memory usage
     // console.log(subgroupStreamObject)
     if (type === 'video') {
@@ -108,11 +127,14 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
         // WARNING: Use only debug for memory usage
         // console.log(subgroupStreamObject)
         return
-      }
-      videoDecoderWorker.postMessage({ subgroupStreamObject })
-    } else {
-      audioDecoderWorker.postMessage({ subgroupStreamObject })
+      }    
     }
+
+    jitterBuffer.push(
+      groupId,
+      subgroupStreamObject.object_id,
+      subgroupStreamObject
+    )
   })
 }
 
