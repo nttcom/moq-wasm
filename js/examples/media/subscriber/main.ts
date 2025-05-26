@@ -88,7 +88,7 @@ function setupVideoDecoderWorker() {
   }
 }
 
-function setPostInterval( worker: Worker, jitterBuffer: JitterBuffer, interval: number) {
+function setPostInterval(worker: Worker, jitterBuffer: JitterBuffer, interval: number) {
   setInterval(() => {
     const subgroupStreamObject = jitterBuffer.pop()
     if (subgroupStreamObject) {
@@ -127,14 +127,10 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
         // WARNING: Use only debug for memory usage
         // console.log(subgroupStreamObject)
         return
-      }    
+      }
     }
 
-    jitterBuffer.push(
-      groupId,
-      subgroupStreamObject.object_id,
-      subgroupStreamObject
-    )
+    jitterBuffer.push(groupId, subgroupStreamObject.object_id, subgroupStreamObject)
   })
 }
 
