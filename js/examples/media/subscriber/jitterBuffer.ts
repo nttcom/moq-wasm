@@ -24,7 +24,7 @@ export class JitterBuffer<T> {
   }
 
   push(groupId: number, objectId: number, object: T) {
-    const timestamp = Date.now()
+    const timestamp = performance.now()
     const entry = { groupId, objectId, timestamp, object }
 
     const insertPosition = this._findInsertPosition(groupId, objectId)
@@ -46,7 +46,7 @@ export class JitterBuffer<T> {
     }
 
     const buffer = this._buffer[0]
-    const delayMs = Date.now() - buffer.timestamp
+    const delayMs = performance.now() - buffer.timestamp
 
     if (delayMs < this._min_delay_ms) {
       return null
