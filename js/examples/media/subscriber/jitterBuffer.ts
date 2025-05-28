@@ -24,7 +24,7 @@ export class JitterBuffer<T> {
     const timestamp = performance.now()
     const entry = { groupId, objectId, timestamp, object }
 
-    const pos = this._findInsertPos(groupId, objectId)
+    const pos = this.findInsertPos(groupId, objectId)
     this.buffer.splice(pos, 0, entry)
 
     // remove the oldest element if the buffer is full
@@ -53,7 +53,7 @@ export class JitterBuffer<T> {
     return buffer.object
   }
 
-  private _findInsertPos(groupId: number, objectId: number): number {
+  private findInsertPos(groupId: number, objectId: number): number {
     // Most of the time, the newest object will be received, so search from the end of the buffer
     for (let i = this.buffer.length - 1; i >= 0; i--) {
       const buffer = this.buffer[i]
