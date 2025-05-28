@@ -18,3 +18,5 @@ js/node_modules/*
 .DS_Store
 
 log/*
+
+cargo-flamegraph.trace/*

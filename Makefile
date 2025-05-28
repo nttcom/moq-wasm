@@ -16,6 +16,9 @@ server-warn:
 server-release:
 	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-server-sample --release
 
+server-flamegraph:
+	RUSTFLAGS="$(RUSTFLAGS)" cargo flamegraph -p moqt-server-sample --release
+
 client:
 	cd js && npm run dev
 
