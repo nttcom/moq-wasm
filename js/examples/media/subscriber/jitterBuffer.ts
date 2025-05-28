@@ -1,10 +1,10 @@
 const DEFAULT_JITTER_BUFFER_SIZE = 30
 
-type JitterBufferEntry = {
+type JitterBufferEntry<T> = {
   groupId: number
   objectId: number
   timestamp: number
-  object: any
+  object: T
 }
 
 /**
@@ -12,8 +12,8 @@ type JitterBufferEntry = {
  * It stores objects in a sorted order based on groupId and objectId.
  * When reordering, groupId takes precedence over objectID.
  */
-export class JitterBuffer {
-  private _buffer: Array<JitterBufferEntry>
+export class JitterBuffer<T> {
+  private _buffer: Array<JitterBufferEntry<T>>
   private _min_delay_ms: number
   private _max_buffer_size: number
 
@@ -23,9 +23,9 @@ export class JitterBuffer {
     this._max_buffer_size = max_buffer_size ? max_buffer_size : DEFAULT_JITTER_BUFFER_SIZE
   }
 
-  push(groupId: number, objectId: number, object: any) {
+  push(groupId: number, objectId: number, object: T) {
     const timestamp = Date.now()
-    const entry: JitterBufferEntry = { groupId, objectId, timestamp, object }
+    const entry = { groupId, objectId, timestamp, object }
 
     const insertPosition = this._findInsertPosition(groupId, objectId)
     this._buffer.splice(insertPosition, 0, entry)
@@ -40,7 +40,7 @@ export class JitterBuffer {
   /**
    * @returns the oldest object in the buffer if it is older than the minimum delay, otherwise null.
    */
-  pop(): any | null {
+  pop(): T | null {
     if (this._buffer.length === 0) {
       return null
     }
