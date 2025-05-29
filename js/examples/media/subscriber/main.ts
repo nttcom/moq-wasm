@@ -88,7 +88,7 @@ function setupVideoDecoderWorker() {
   }
 }
 
-function setPostInterval(worker: Worker, jitterBuffer: JitterBuffer, interval: number) {
+function setPostInterval(worker: Worker, jitterBuffer: JitterBuffer<object>, interval: number) {
   setInterval(() => {
     const subgroupStreamObject = jitterBuffer.pop()
     if (subgroupStreamObject) {
@@ -103,9 +103,9 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
   })
 
   const form = getFormElement()
-  const delay = form['jitter-buffer-delay'].value.split('/')
+  const delay = form['jitter-buffer-delay'].value.split('/').map((value: string) => Number.parseFloat(value))
 
-  const jitterBuffer = new JitterBuffer(delay)
+  const jitterBuffer: JitterBuffer<object> = new JitterBuffer(delay)
 
   if (type === 'audio') {
     setupAudioDecoderWorker()
