@@ -1549,7 +1549,8 @@ async fn subgroup_stream_object_handler(
         .get_subgroup_stream_object_callback(subgroup_stream_header.track_alias())
     {
         let v = serde_wasm_bindgen::to_value(&subgroup_stream_object).unwrap();
-        callback.call1(&JsValue::null(), &(v)).unwrap();
+        let group_id = serde_wasm_bindgen::to_value(&subgroup_stream_header.group_id()).unwrap();
+        callback.call2(&JsValue::null(), &(group_id), &(v)).unwrap();
     }
 
     Ok(subgroup_stream_object)
