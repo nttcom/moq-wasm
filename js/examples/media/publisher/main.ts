@@ -42,9 +42,9 @@ const LatestMediaTrackInfo: {
     objectId: 0n,
     groupId: -1n,
     subgroups: {
-      0: {},
-      1: {},
-      2: {}
+      0: {}
+      // 1: {},
+      // 2: {}
     }
   },
   audio: {
@@ -224,10 +224,10 @@ function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
       keyframeInterval: KEYFRAME_INTERVAL
     })
     videoEncoderWorker.postMessage({ type: 'videoStream', videoStream: videoStream }, [videoStream])
-    const [audioTrack] = mediaStream.getAudioTracks()
-    const audioProcessor = new MediaStreamTrackProcessor({ track: audioTrack })
-    const audioStream = audioProcessor.readable
-    audioEncoderWorker.postMessage({ type: 'audioStream', audioStream: audioStream }, [audioStream])
+    // const [audioTrack] = mediaStream.getAudioTracks()
+    // const audioProcessor = new MediaStreamTrackProcessor({ track: audioTrack })
+    // const audioStream = audioProcessor.readable
+    // audioEncoderWorker.postMessage({ type: 'audioStream', audioStream: audioStream }, [audioStream])
   })
 }
 
