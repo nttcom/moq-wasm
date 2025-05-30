@@ -3,7 +3,7 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches:
-      - master # mainブランチにpushされたときに実行
+      - master
 
 permissions:
   contents: write
@@ -27,10 +27,9 @@ jobs:
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      # 3. wasm-pack build（例：rust/ に Rust クレートがある場合）
+      # 3. wasm-pack build
       - name: Build wasm with wasm-pack
-        run: wasm-pack build --target web
-        working-directory: rust
+        run: wasm-pack build ../moqt-client-sample --target web --out-dir=../js/pkg --features web_sys_unstable_apis
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
