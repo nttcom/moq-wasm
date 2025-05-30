@@ -29,7 +29,7 @@ jobs:
 
       # 3. wasm-pack build
       - name: Build wasm with wasm-pack
-        run: wasm-pack build ../moqt-client-sample --target web --out-dir=../js/pkg --features web_sys_unstable_apis
+        run: wasm-pack build moqt-client-sample --target web --out-dir=js/pkg --features web_sys_unstable_apis
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
