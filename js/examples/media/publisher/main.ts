@@ -10,8 +10,10 @@ function setUpStartGetUserMediaButton() {
     const constraints = {
       audio: true,
       video: {
-        width: 1920,
-        height: 1080
+        width: { exact: 1920 },
+        height: { exact: 1080 }
+        //   width: 3840,
+        //   height: 2160,
       }
     }
     mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
@@ -63,6 +65,9 @@ async function handleVideoChunkMessage(
   const form = getFormElement()
   const trackAlias = form['video-object-track-alias'].value
   const publisherPriority = form['video-publisher-priority'].value
+  // if (LatestMediaTrackInfo['video'].objectId >= 5n) {
+  //   return
+  // }
 
   // Increment the groupId and reset the objectId at the timing of the keyframe
   // Then, resend the SubgroupStreamHeader
@@ -208,7 +213,7 @@ function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
         chunk: EncodedAudioChunk
         metadata: EncodedAudioChunkMetadata | undefined
       }
-      handleAudioChunkMessage(chunk, metadata, client)
+      // handleAudioChunkMessage(chunk, metadata, client)
     }
 
     const [videoTrack] = mediaStream.getVideoTracks()

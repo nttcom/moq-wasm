@@ -37,6 +37,7 @@ export async function sendVideoObjectMessage(
   const encoder = new TextEncoder()
   const jsonString = JSON.stringify({ chunk: chunkData })
   const objectPayload = encoder.encode(jsonString)
+  // console.log(chunkData)
 
   await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, objectPayload)
   // If this object is end of group, send the ObjectStatus=EndOfGroupMessage.

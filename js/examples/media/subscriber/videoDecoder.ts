@@ -4,6 +4,25 @@ function sendVideoFrameMessage(frame: VideoFrame): void {
 }
 
 let videoDecoder: VideoDecoder | undefined
+
+const HW_VIDEO_DECODER_CONFIG = {
+  // codec: 'av01.0.04M.08',
+  codec: 'avc1.640028',
+  avc: {
+    format: 'annexb'
+  } as any,
+  hardwareAcceleration: 'prefer-hardware' as any,
+  width: 1920,
+  height: 1080,
+  scalabilityMode: 'L1T1'
+}
+
+// const SW_VIDEO_DECODER_CONFIG = {
+//   codec: 'av01.0.08M.08',
+//   width: 1920,
+//   height: 1080,
+//   scalabilityMode: 'L1T3'
+// }
 async function initializeVideoDecoder() {
   const init: VideoDecoderInit = {
     output: sendVideoFrameMessage,
@@ -12,14 +31,11 @@ async function initializeVideoDecoder() {
       videoDecoder = undefined
     }
   }
-  const config = {
-    codec: 'av01.0.04M.08',
-    width: 1920,
-    height: 1080,
-    scalabilityMode: 'L1T3'
-  }
+
+  // console.log('isDecoderConfig Supported', await VideoDecoder.isConfigSupported(HW_VIDEO_DECODER_CONFIG))
+
   const decoder = new VideoDecoder(init)
-  decoder.configure(config)
+  await decoder.configure(HW_VIDEO_DECODER_CONFIG)
   return decoder
 }
 

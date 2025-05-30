@@ -1,4 +1,4 @@
-const DEFAULT_JITTER_BUFFER_SIZE = 30
+const DEFAULT_JITTER_BUFFER_SIZE = 300
 
 type JitterBufferEntry<T> = {
   groupId: number
