@@ -8,7 +8,8 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["@types/dom-mediacapture-transform"]
+    "types": ["@types/dom-mediacapture-transform"],
+    "lib": ["esnext", "webworker", "dom"]
   },
   "include": ["examples/**/*.ts", "examples/**/*.tsx"],
   "exclude": ["node_modules"]

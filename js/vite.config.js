@@ -1,11 +1,12 @@
 import { defineConfig } from 'vite'
 
 export default defineConfig({
+  base: '/moq-wasm/',
   build: {
+    outDir: 'dist',
     rollupOptions: {
       input: {
-        main: 'src/pages/index.html',
-        about: 'src/pages/about.html'
+        main: 'examples/media/index.html'
       }
     }
   }

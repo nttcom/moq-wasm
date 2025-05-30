@@ -19,6 +19,9 @@ server-release:
 client:
 	cd js && npm run dev
 
+client-prod:
+	cd js && npm run prod
+
 chrome:
 	./scripts/start-localhost-test-chrome.sh
 
