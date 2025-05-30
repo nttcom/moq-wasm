@@ -1,13 +1,36 @@
 let videoEncoder: VideoEncoder | undefined
 let keyframeInterval: number
-const VIDEO_ENCODER_CONFIG = {
-  codec: 'av01.0.04M.08',
+
+// H264 プロファイル
+// Baseline: 42 Main: 4D High: 64
+// H264 Level
+// 4.0: 28 4.1: 29 4.2: 2A
+// 5.0: 32 5.1: 33 5.2: 34
+// M1 macではHWEncoderがL1T1しかサポートしていない
+
+const HW_VIDEO_ENCODER_CONFIG = {
+  codec: 'avc1.640028',
+  avc: {
+    format: 'annexb'
+  } as any,
+  hardwareAcceleration: 'prefer-hardware' as any,
   width: 1920,
   height: 1080,
-  bitrate: 10_000_000, //10 Mbps
-  scalabilityMode: 'L1T3',
-  framerate: 30
+  bitrate: 15_000_000, //25 Mbps
+  scalabilityMode: 'L1T1',
+  framerate: 30,
+  latencyMode: 'realtime' as any
+  // latencyMode: 'quality' as any
 }
+
+// const SW_VIDEO_ENCODER_CONFIG = {
+//   codec: 'av01.0.08M.08',
+//   width: 1920,
+//   height: 1080,
+//   bitrate: 25_000_000, //10 Mbps
+//   scalabilityMode: 'L1T3',
+//   framerate: 30
+// }
 
 function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoChunkMetadata | undefined) {
   self.postMessage({ chunk, metadata })
@@ -20,9 +43,9 @@ async function initializeVideoEncoder() {
       console.log(e.message)
     }
   }
-
+  console.log('isEncoderConfig Supported', await VideoEncoder.isConfigSupported(HW_VIDEO_ENCODER_CONFIG))
   const encoder = new VideoEncoder(init)
-  encoder.configure(VIDEO_ENCODER_CONFIG)
+  encoder.configure(HW_VIDEO_ENCODER_CONFIG)
   return encoder
 }
 

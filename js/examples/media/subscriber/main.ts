@@ -99,7 +99,7 @@ function setPostInterval(worker: Worker, jitterBuffer: JitterBuffer<object>, int
 
 function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio', trackAlias: number) {
   client.onSubgroupStreamHeader(async (subgroupStreamHeader: any) => {
-    console.log({ subgroupStreamHeader })
+    // console.log({ subgroupStreamHeader })
   })
 
   const form = getFormElement()
@@ -116,7 +116,7 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
   }
   client.onSubgroupStreamObject(BigInt(trackAlias), async (groupId: number, subgroupStreamObject: any) => {
     // WARNING: Use only debug for memory usage
-    // console.log(subgroupStreamObject)
+    // console.log(subgroupStreamObject.object_id)
     if (type === 'video') {
       if (
         subgroupStreamObject.objectPayloadLength === 0 ||
