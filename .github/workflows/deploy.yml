@@ -24,6 +24,7 @@ jobs:
 
       - name: Build with Vite
         run: npm run build
+        working-directory: js
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
