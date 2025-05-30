@@ -10,6 +10,8 @@ target/
 *.pdb
 
 js/node_modules/*
+js/dist/*
+js/pkg/*
 # Added by cargo
 
 /target
