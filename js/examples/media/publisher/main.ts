@@ -196,6 +196,7 @@ function sendAnnounceButtonClickHandler(client: MOQTClient): void {
 function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
   const sendSubgroupObjectBtn = document.getElementById('sendSubgroupObjectBtn') as HTMLButtonElement
   sendSubgroupObjectBtn.addEventListener('click', async () => {
+    console.log('clicked sendSubgroupObjectBtn')
     if (mediaStream == null) {
       console.error('mediaStream is null')
       return
