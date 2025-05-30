@@ -60,7 +60,7 @@ function sendSubscribeButtonClickHandler(client: MOQTClient) {
   })
 }
 
-const audioDecoderWorker = new Worker('audioDecoder.ts')
+const audioDecoderWorker = new Worker(new URL('./audioDecoder.ts', import.meta.url), { type: 'module' })
 function setupAudioDecoderWorker() {
   const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
   const audioWriter = audioGenerator.writable.getWriter()
@@ -73,7 +73,7 @@ function setupAudioDecoderWorker() {
     await audioElement.play()
   }
 }
-const videoDecoderWorker = new Worker('videoDecoder.ts')
+const videoDecoderWorker = new Worker(new URL('./videoDecoder.ts', import.meta.url), { type: 'module' })
 function setupVideoDecoderWorker() {
   const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
   const videoWriter = videoGenerator.writable.getWriter()

@@ -56,7 +56,7 @@ const LatestMediaTrackInfo: {
   }
 }
 
-const videoEncoderWorker = new Worker('videoEncoder.ts')
+const videoEncoderWorker = new Worker(new URL('./videoEncoder.ts', import.meta.url), { type: 'module' })
 async function handleVideoChunkMessage(
   chunk: EncodedVideoChunk,
   metadata: EncodedVideoChunkMetadata | undefined,
@@ -101,7 +101,7 @@ async function handleVideoChunkMessage(
   LatestMediaTrackInfo['video'].objectId++
 }
 
-const audioEncoderWorker = new Worker('audioEncoder.ts')
+const audioEncoderWorker = new Worker(new URL('./audioEncoder.ts', import.meta.url), { type: 'module' })
 async function handleAudioChunkMessage(
   chunk: EncodedAudioChunk,
   metadata: EncodedAudioChunkMetadata | undefined,
