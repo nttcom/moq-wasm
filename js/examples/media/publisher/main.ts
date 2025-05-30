@@ -206,7 +206,7 @@ function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
         chunk: EncodedVideoChunk
         metadata: EncodedVideoChunkMetadata | undefined
       }
-      console.log(chunk, metadata)
+      // console.log(chunk, metadata)
       handleVideoChunkMessage(chunk, metadata, client)
     }
     audioEncoderWorker.onmessage = async (e: MessageEvent) => {
