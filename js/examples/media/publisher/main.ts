@@ -8,7 +8,7 @@ function setUpStartGetUserMediaButton() {
   const startGetUserMediaBtn = document.getElementById('startGetUserMediaBtn') as HTMLButtonElement
   startGetUserMediaBtn.addEventListener('click', async () => {
     const constraints = {
-      audio: true,
+      audio: false,
       video: {
         width: { exact: 1920 },
         height: { exact: 1080 }
