@@ -55,8 +55,6 @@ function sendSubscribeButtonClickHandler(client: MOQTClient) {
       BigInt(10000), // endGroup
       AUTH_INFO
     )
-
-    form['jitter-buffer-delay'].disabled = true
   })
 }
 
@@ -101,11 +99,6 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
   client.onSubgroupStreamHeader(async (subgroupStreamHeader: any) => {
     // console.log({ subgroupStreamHeader })
   })
-
-  const form = getFormElement()
-  const delay = form['jitter-buffer-delay'].value.split('/').map((value: string) => Number.parseFloat(value))
-
-  const jitterBuffer: JitterBuffer<object> = new JitterBuffer(delay)
 
   if (type === 'audio') {
     setupAudioDecoderWorker()
