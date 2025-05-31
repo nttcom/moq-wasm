@@ -1,3 +1,5 @@
+import { JitterBuffer } from './jitterBuffer'
+
 function sendVideoFrameMessage(frame: VideoFrame): void {
   self.postMessage({ frame })
   frame.close()
@@ -48,6 +50,17 @@ namespace VideoDecoder {
   }
 }
 
+const JITTER_BUFFER_DELAY_MS = 20
+const POP_INTERVAL_MS = 15
+const jitterBuffer: JitterBuffer<VideoDecoder.SubgroupStreamObject> = new JitterBuffer(JITTER_BUFFER_DELAY_MS)
+
+setInterval(() => {
+  const subgroupStreamObject = jitterBuffer.pop()
+  if (subgroupStreamObject) {
+    decode(subgroupStreamObject)
+  }
+}, POP_INTERVAL_MS)
+
 let keyframeDecoded = false
 self.onmessage = async (event) => {
   const subgroupStreamObject: VideoDecoder.SubgroupStreamObject = {
@@ -57,6 +70,14 @@ self.onmessage = async (event) => {
     objectStatus: event.data.subgroupStreamObject.object_status
   }
 
+  jitterBuffer.push(
+    event.data.groupId,
+    subgroupStreamObject.objectId,
+    subgroupStreamObject
+  )
+}
+
+async function decode(subgroupStreamObject: VideoDecoder.SubgroupStreamObject) {
   const chunkArray = new Uint8Array(subgroupStreamObject.objectPayload)
   const decoder = new TextDecoder()
   const jsonString = decoder.decode(chunkArray)
