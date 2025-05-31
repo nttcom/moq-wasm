@@ -17,9 +17,7 @@ export class JitterBuffer<T> {
   private buffer: JitterBufferEntry<T>[] = []
   private minDelayMs: number = DEFAULT_MIN_DELAY_MS
 
-  constructor(
-    private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE
-  ) { }
+  constructor(private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE) {}
 
   push(groupId: number, objectId: number, object: T) {
     const timestamp = performance.now()
