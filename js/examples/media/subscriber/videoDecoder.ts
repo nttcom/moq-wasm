@@ -50,9 +50,8 @@ namespace VideoDecoder {
   }
 }
 
-const JITTER_BUFFER_DELAY_MS = 20
 const POP_INTERVAL_MS = 15
-const jitterBuffer: JitterBuffer<VideoDecoder.SubgroupStreamObject> = new JitterBuffer(JITTER_BUFFER_DELAY_MS)
+const jitterBuffer: JitterBuffer<VideoDecoder.SubgroupStreamObject> = new JitterBuffer()
 
 setInterval(() => {
   const subgroupStreamObject = jitterBuffer.pop()
