@@ -52,11 +52,7 @@ self.onmessage = async (event) => {
     objectStatus: event.data.subgroupStreamObject.object_status
   }
 
-  jitterBuffer.push(
-    event.data.groupId,
-    subgroupStreamObject.objectId,
-    subgroupStreamObject
-  )
+  jitterBuffer.push(event.data.groupId, subgroupStreamObject.objectId, subgroupStreamObject)
 }
 
 async function decode(subgroupStreamObject: AudioDecoder.SubgroupStreamObject) {
