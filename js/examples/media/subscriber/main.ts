@@ -84,7 +84,6 @@ function setupVideoDecoderWorker() {
     videoFrame.close()
     await videoElement.play()
   }
-
 }
 
 function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio', trackAlias: number) {
