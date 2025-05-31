@@ -84,15 +84,7 @@ function setupVideoDecoderWorker() {
     videoFrame.close()
     await videoElement.play()
   }
-}
 
-function setPostInterval(worker: Worker, jitterBuffer: JitterBuffer<object>, interval: number) {
-  setInterval(() => {
-    const subgroupStreamObject = jitterBuffer.pop()
-    if (subgroupStreamObject) {
-      worker.postMessage({ subgroupStreamObject })
-    }
-  }, interval)
 }
 
 function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio', trackAlias: number) {
@@ -102,11 +94,10 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
 
   if (type === 'audio') {
     setupAudioDecoderWorker()
-    setPostInterval(audioDecoderWorker, jitterBuffer, 10)
   } else {
     setupVideoDecoderWorker()
-    setPostInterval(videoDecoderWorker, jitterBuffer, 15)
   }
+
   client.onSubgroupStreamObject(BigInt(trackAlias), async (groupId: number, subgroupStreamObject: any) => {
     // WARNING: Use only debug for memory usage
     // console.log(subgroupStreamObject.object_id)
@@ -121,9 +112,17 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
         // console.log(subgroupStreamObject)
         return
       }
-    }
 
-    jitterBuffer.push(groupId, subgroupStreamObject.object_id, subgroupStreamObject)
+      videoDecoderWorker.postMessage({
+        groupId,
+        subgroupStreamObject
+      })
+    } else {
+      audioDecoderWorker.postMessage({
+        groupId,
+        subgroupStreamObject
+      })
+    }
   })
 }
 
