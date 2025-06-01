@@ -33,9 +33,8 @@ namespace AudioDecoder {
   }
 }
 
-const JITTER_BUFFER_DELAY_MS = 20
 const POP_INTERVAL_MS = 10
-const jitterBuffer: JitterBuffer<AudioDecoder.SubgroupStreamObject> = new JitterBuffer(JITTER_BUFFER_DELAY_MS)
+const jitterBuffer: JitterBuffer<AudioDecoder.SubgroupStreamObject> = new JitterBuffer()
 
 setInterval(() => {
   const subgroupStreamObject = jitterBuffer.pop()
