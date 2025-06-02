@@ -61,8 +61,8 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     const videoFrame = videoResult.value
 
     // Too many frames in flight, encoder is overwhelmed. let's drop this frame.
-    if (videoEncoder.encodeQueueSize > 2) {
-      console.error('videoEncoder.encodeQueueSize > 2', videoEncoder.encodeQueueSize)
+    if (videoEncoder.encodeQueueSize > 10) {
+      console.error('videoEncoder.encodeQueueSize > 10', videoEncoder.encodeQueueSize)
       videoFrame.close()
     } else {
       const keyFrame = frameCounter % keyframeInterval == 0
