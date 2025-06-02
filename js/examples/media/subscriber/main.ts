@@ -1,7 +1,6 @@
 import init, { MOQTClient } from '../../../pkg/moqt_client_sample'
 import { AUTH_INFO } from './const'
 import { getFormElement } from './utils'
-import { JitterBuffer } from './jitterBuffer'
 
 function setupClientCallbacks(client: MOQTClient) {
   client.onSetup(async (serverSetup: any) => {

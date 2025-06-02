@@ -16,7 +16,7 @@ const HW_VIDEO_ENCODER_CONFIG = {
   hardwareAcceleration: 'prefer-hardware' as any,
   width: 1920,
   height: 1080,
-  bitrate: 5_000_000, //5 Mbps
+  bitrate: 15_000_000, //5 Mbps
   scalabilityMode: 'L1T1',
   framerate: 30,
   latencyMode: 'realtime' as any
