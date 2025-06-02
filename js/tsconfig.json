@@ -11,6 +11,6 @@
     "types": ["@types/dom-mediacapture-transform"],
     "lib": ["esnext", "webworker", "dom"]
   },
-  "include": ["examples/**/*.ts", "examples/**/*.tsx"],
+  "include": ["examples/**/*.ts", "examples/**/*.tsx", "examples/media/publisher/files/decoder.js"],
   "exclude": ["node_modules"]
 }

@@ -16,7 +16,7 @@ const HW_VIDEO_ENCODER_CONFIG = {
   hardwareAcceleration: 'prefer-hardware' as any,
   width: 1920,
   height: 1080,
-  bitrate: 15_000_000, //25 Mbps
+  bitrate: 5_000_000, //5 Mbps
   scalabilityMode: 'L1T1',
   framerate: 30,
   latencyMode: 'realtime' as any
@@ -32,7 +32,28 @@ const HW_VIDEO_ENCODER_CONFIG = {
 //   framerate: 30
 // }
 
+// Mbps計測用の関数
+function createBitrateLogger() {
+  let bytesThisSecond = 0
+  let lastLogTime = performance.now()
+  return {
+    addBytes(byteLength: number) {
+      bytesThisSecond += byteLength
+      const now = performance.now()
+      if (now - lastLogTime >= 1000) {
+        const mbps = (bytesThisSecond * 8) / 1_000_000
+        console.log(`Encoded bitrate: ${mbps.toFixed(2)} Mbps`)
+        bytesThisSecond = 0
+        lastLogTime = now
+      }
+    }
+  }
+}
+
+const bitrateLogger = createBitrateLogger()
+
 function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoChunkMetadata | undefined) {
+  bitrateLogger.addBytes(chunk.byteLength)
   self.postMessage({ chunk, metadata })
 }
 
