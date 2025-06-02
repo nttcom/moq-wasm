@@ -17,6 +17,6 @@ opt-level = 3           # 高速化重視の最適化（デフォルトだが明
 lto = "fat"             # Link Time Optimization（全体最適化）
 codegen-units = 1      # 単一ユニットでのコード生成（より最適化される）
 incremental = false     # 増分コンパイル無効（最適化のため）
-debug = true           # デバッグ情報除去（サイズ削減、ただし省略可能）
+debug = false          # デバッグ情報除去（サイズ削減、ただし省略可能）
 strip = "symbols"       # デバッグシンボルの除去（Rust 1.70+）
 panic = "abort"         # パニック時に即終了（コードサイズ小・速度↑）
