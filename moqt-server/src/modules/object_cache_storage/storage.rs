@@ -346,7 +346,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 tracing::trace!("interval ticked");
                 for (_, cache) in storage.iter_mut() {
                     match cache {
-                        Cache::Datagram(datagram_cache) => {
+                        Cache::Datagram(_datagram_cache) => {
                             // datagram_cache.purge();
                         }
                         Cache::SubgroupStream(subgroup_stream_cache) => {
