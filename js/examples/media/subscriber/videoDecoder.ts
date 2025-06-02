@@ -60,7 +60,6 @@ setInterval(() => {
   }
 }, POP_INTERVAL_MS)
 
-let keyframeDecoded = false
 self.onmessage = async (event) => {
   const subgroupStreamObject: VideoDecoder.SubgroupStreamObject = {
     objectId: event.data.subgroupStreamObject.object_id,
