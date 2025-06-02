@@ -28,6 +28,12 @@ impl SubgroupStreamsCache {
         self.streams.insert(subgroup_stream_id, cache);
     }
 
+    pub(crate) fn purge_subgroup_streams(&mut self) {
+        for (_, subgroup_stream_cache) in self.streams.iter_mut() {
+            subgroup_stream_cache.objects.iter().count();
+        }
+    }
+
     pub(crate) fn insert_object(
         &mut self,
         group_id: u64,

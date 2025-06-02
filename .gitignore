@@ -20,3 +20,5 @@ js/pkg/*
 .DS_Store
 
 log/*
+
+cargo-flamegraph.trace/*
