@@ -1,9 +1,10 @@
 use anyhow::{Context, Result, bail};
+use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, mpsc, mpsc::Sender};
 use tokio::task;
 use tracing::{self, Instrument};
-use wtransport::quinn::TransportConfig;
+use wtransport::quinn::{TransportConfig, VarInt};
 use wtransport::{Endpoint, Identity, ServerConfig};
 mod modules;
 pub use modules::config::MOQTConfig;
@@ -63,12 +64,17 @@ impl MOQTServer {
         let mut transport_config = TransportConfig::default();
         // 単方向ストリーム数を100000に設定
         transport_config.max_concurrent_uni_streams(100000u32.into());
-        // transport_config.send_window(100 * 1024 * 1024);
+        // initial_max_stream_data_uniと同義。デフォルトは65,536 バイト (64KB) 大きくするとACKを待たずに送信するため、輻輳が発生する可能性が高まる
+        transport_config.send_window(64 * 1024);
+        // パケロス判定して再送を要求するまでの時間(RTTの倍数)を指定する。小さくすると再送が増える Default(RFC推奨値): 1.125
         // transport_config.time_threshold(1.5);
-        // transport_config.packet_threshold(5);
-        // transport_config.stream_receive_window(VarInt::from_u32(10 * 1024 * 1024)); // initial_max_stream_data_uniと同義。デフォルトは65,536 バイト (64KB)なので1MBにする
-        let config = ServerConfig::builder()
-            .with_bind_default(self.port)
+        // パケロス判定して再送を要求するまでのパケット間隔を指定する。小さくすると再送が増える Default(RFC推奨値): 3
+        transport_config.packet_threshold(5);
+        transport_config.stream_receive_window(VarInt::from_u32(1024 * 1024)); // initial_max_stream_data_uniと同義。デフォルトは65,536 バイト (64KB)なので1MBにする
+
+        let mut config = ServerConfig::builder()
+            .with_bind_address(SocketAddr::from(([0, 0, 0, 0], self.port)))
+            // .with_bind_default(self.port)
             .with_custom_transport(
                 Identity::load_pemfiles(&self.cert_path, &self.key_path)
                     .await
@@ -82,7 +88,7 @@ impl MOQTServer {
             )
             .keep_alive_interval(Some(Duration::from_secs(self.keep_alive_interval_sec)))
             .build();
-        // let _ = config.quic_endpoint_config_mut().max_udp_payload_size(1350);
+        let _ = config.quic_endpoint_config_mut().max_udp_payload_size(1280); // Default: 1472
 
         let server = Endpoint::server(config)?;
         tracing::info!("Server ready!");
