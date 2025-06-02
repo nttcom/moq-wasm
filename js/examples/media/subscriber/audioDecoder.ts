@@ -1,3 +1,5 @@
+import { JitterBuffer } from './jitterBuffer'
+
 function sendAudioDataMessage(audioData: AudioData): void {
   self.postMessage({ audioData })
   audioData.close()
@@ -31,17 +33,28 @@ namespace AudioDecoder {
   }
 }
 
-self.onmessage = async (event) => {
-  if (!audioDecoder) {
-    audioDecoder = await initializeAudioDecoder()
-  }
+const POP_INTERVAL_MS = 10
+const jitterBuffer: JitterBuffer<AudioDecoder.SubgroupStreamObject> = new JitterBuffer()
 
+setInterval(() => {
+  const subgroupStreamObject = jitterBuffer.pop()
+  if (subgroupStreamObject) {
+    decode(subgroupStreamObject)
+  }
+}, POP_INTERVAL_MS)
+
+self.onmessage = async (event) => {
   const subgroupStreamObject: AudioDecoder.SubgroupStreamObject = {
     objectId: event.data.subgroupStreamObject.object_id,
     objectPayloadLength: event.data.subgroupStreamObject.object_payload_length,
     objectPayload: event.data.subgroupStreamObject.object_payload,
     objectStatus: event.data.subgroupStreamObject.object_status
   }
+
+  jitterBuffer.push(event.data.groupId, subgroupStreamObject.objectId, subgroupStreamObject)
+}
+
+async function decode(subgroupStreamObject: AudioDecoder.SubgroupStreamObject) {
   // Rustから渡された時点ではUint8ArrayではなくArrayなので変換が必要
   const chunkArray = new Uint8Array(subgroupStreamObject.objectPayload)
   const decoder = new TextDecoder()
@@ -54,6 +67,10 @@ self.onmessage = async (event) => {
     duration: objectPayload.chunk.duration,
     data: new Uint8Array(objectPayload.chunk.data)
   })
+
+  if (!audioDecoder) {
+    audioDecoder = await initializeAudioDecoder()
+  }
 
   await audioDecoder.decode(encodedAudioChunk)
 }
