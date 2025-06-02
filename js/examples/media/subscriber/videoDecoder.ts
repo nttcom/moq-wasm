@@ -50,7 +50,7 @@ namespace VideoDecoder {
   }
 }
 
-const POP_INTERVAL_MS = 15
+const POP_INTERVAL_MS = 5
 const jitterBuffer: JitterBuffer<VideoDecoder.SubgroupStreamObject> = new JitterBuffer()
 
 setInterval(() => {
