@@ -1,5 +1,5 @@
 const DEFAULT_MIN_DELAY_MS = 200
-const DEFAULT_JITTER_BUFFER_SIZE = 300
+const DEFAULT_JITTER_BUFFER_SIZE = 900
 
 type JitterBufferEntry<T> = {
   groupId: number
