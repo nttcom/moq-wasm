@@ -343,7 +343,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                 }
             }
             _ = interval.tick() => {
-                tracing::warn!("interval ticked");
+                tracing::trace!("interval ticked");
                 for (_, cache) in storage.iter_mut() {
                     match cache {
                         Cache::Datagram(datagram_cache) => {
