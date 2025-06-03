@@ -8,29 +8,30 @@ let keyframeInterval: number
 // 5.0: 32 5.1: 33 5.2: 34
 // M1 macではHWEncoderがL1T1しかサポートしていない
 
-const HW_VIDEO_ENCODER_CONFIG = {
-  codec: 'avc1.640028',
-  avc: {
-    format: 'annexb'
-  } as any,
-  hardwareAcceleration: 'prefer-hardware' as any,
-  width: 1920,
-  height: 1080,
-  bitrate: 15_000_000, //5 Mbps
-  scalabilityMode: 'L1T1',
-  framerate: 30,
-  latencyMode: 'realtime' as any
-  // latencyMode: 'quality' as any
-}
-
-// const SW_VIDEO_ENCODER_CONFIG = {
-//   codec: 'av01.0.08M.08',
+// const HW_VIDEO_ENCODER_CONFIG = {
+//   codec: 'avc1.640028',
+//   avc: {
+//     format: 'annexb'
+//   } as any,
+//   hardwareAcceleration: 'prefer-hardware' as any,
 //   width: 1920,
 //   height: 1080,
-//   bitrate: 25_000_000, //10 Mbps
-//   scalabilityMode: 'L1T3',
-//   framerate: 30
+//   bitrate: 5_000_000, //5 Mbps
+//   scalabilityMode: 'L1T1',
+//   framerate: 30,
+//   latencyMode: 'realtime' as any
+//   // latencyMode: 'quality' as any
 // }
+
+const SW_VIDEO_ENCODER_CONFIG = {
+  codec: 'av01.0.08M.08',
+  width: 1920,
+  height: 1080,
+  bitrate: 2_500_000, //10 Mbps
+  // scalabilityMode: 'L1T3',
+  scalabilityMode: 'L1T1',
+  framerate: 30
+}
 
 // Mbps計測用の関数
 function createBitrateLogger() {
@@ -64,9 +65,9 @@ async function initializeVideoEncoder() {
       console.log(e.message)
     }
   }
-  console.log('isEncoderConfig Supported', await VideoEncoder.isConfigSupported(HW_VIDEO_ENCODER_CONFIG))
+  console.log('isEncoderConfig Supported', await VideoEncoder.isConfigSupported(SW_VIDEO_ENCODER_CONFIG))
   const encoder = new VideoEncoder(init)
-  encoder.configure(HW_VIDEO_ENCODER_CONFIG)
+  encoder.configure(SW_VIDEO_ENCODER_CONFIG)
   return encoder
 }
 
