@@ -26,7 +26,7 @@ client-prod:
 	cd js && npm run prod
 
 chrome:
-	./scripts/start-localhost-test-chrome.sh
+	./scripts/chrome_mac.sh
 
 
 test:
