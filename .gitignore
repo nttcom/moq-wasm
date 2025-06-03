@@ -16,7 +16,6 @@ js/pkg/*
 
 /target
 
-*.pem
 .DS_Store
 
 log/*
