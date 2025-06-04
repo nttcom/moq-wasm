@@ -27,7 +27,7 @@ const SW_VIDEO_ENCODER_CONFIG = {
   codec: 'av01.0.08M.08',
   width: 1920,
   height: 1080,
-  bitrate: 2_500_000, //10 Mbps
+  bitrate: 15_000_000, //10 Mbps
   // scalabilityMode: 'L1T3',
   scalabilityMode: 'L1T1',
   framerate: 30
