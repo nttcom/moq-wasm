@@ -95,7 +95,6 @@ async function handleVideoChunkMessage(
     BigInt(metadata?.svc.temporalLayerId), // = subgroupId
     LatestMediaTrackInfo['video'].objectId,
     chunk,
-    metadata,
     client
   )
   LatestMediaTrackInfo['video'].objectId++
@@ -129,7 +128,6 @@ async function handleAudioChunkMessage(
     BigInt(subgroupId),
     LatestMediaTrackInfo['audio'].objectId,
     chunk,
-    metadata,
     client
   )
   LatestMediaTrackInfo['audio'].objectId++

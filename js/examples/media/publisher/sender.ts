@@ -1,3 +1,46 @@
+function packMetaAndChunk(chunk: {
+  type: string
+  timestamp: number
+  duration: number | null
+  byteLength: number
+  copyTo: (dest: Uint8Array) => void
+}): Uint8Array {
+  const meta = { type: chunk.type, timestamp: chunk.timestamp, duration: chunk.duration ?? 0 }
+  const metaJson = JSON.stringify(meta)
+  const metaBytes = new TextEncoder().encode(metaJson)
+  const metaLen = metaBytes.length
+
+  // chunkデータをUint8Arrayに変換
+  const chunkArray = new Uint8Array(chunk.byteLength)
+  chunk.copyTo(chunkArray)
+
+  const totalLen = 4 + metaLen + chunkArray.length
+  const payload = new Uint8Array(totalLen)
+  const view = new DataView(payload.buffer)
+  view.setUint32(0, metaLen) // 先頭4バイトにメタデータ長
+  payload.set(metaBytes, 4)
+  payload.set(chunkArray, 4 + metaLen)
+  return payload
+}
+// chunkDataのビットレート計測用
+function createChunkDataBitrateLogger() {
+  let bytesThisSecond = 0
+  let lastLogTime = performance.now()
+  return {
+    addBytes(byteLength: number) {
+      bytesThisSecond += byteLength
+      const now = performance.now()
+      if (now - lastLogTime >= 1000) {
+        const mbps = (bytesThisSecond * 8) / 1_000_000
+        console.log(`chunkData bitrate: ${mbps.toFixed(2)} Mbps`)
+        bytesThisSecond = 0
+        lastLogTime = now
+      }
+    }
+  }
+}
+
+const chunkDataBitrateLogger = createChunkDataBitrateLogger()
 import { MOQTClient } from '../../../pkg/moqt_client_sample'
 import { KEYFRAME_INTERVAL } from './const'
 
@@ -7,39 +50,11 @@ export async function sendVideoObjectMessage(
   subgroupId: bigint,
   objectId: bigint,
   chunk: EncodedVideoChunk,
-  metadata: EncodedVideoChunkMetadata | undefined,
   client: MOQTClient
 ) {
-  // `EncodedVideoChunk` のデータを Uint8Array に変換
-  const chunkArray = new Uint8Array(chunk.byteLength)
-  chunk.copyTo(chunkArray)
-
-  const chunkData = {
-    type: chunk.type,
-    timestamp: chunk.timestamp,
-    duration: chunk.duration,
-    byteLength: chunk.byteLength,
-    data: Array.from(chunkArray),
-    decoderConfig: {
-      codec: metadata?.decoderConfig?.codec,
-      codedHeight: metadata?.decoderConfig?.codedHeight,
-      codedWidth: metadata?.decoderConfig?.codedWidth,
-      colorSpace: metadata?.decoderConfig?.colorSpace,
-      description: metadata?.decoderConfig?.description,
-      displayAspectHeight: metadata?.decoderConfig?.displayAspectHeight,
-      displayAspectWidth: metadata?.decoderConfig?.displayAspectWidth,
-      hardwareAcceleration: metadata?.decoderConfig?.hardwareAcceleration,
-      optimizeForLatency: metadata?.decoderConfig?.optimizeForLatency
-    },
-    temporalLayer: metadata?.temporalLayerId
-  }
-
-  const encoder = new TextEncoder()
-  const jsonString = JSON.stringify({ chunk: chunkData })
-  const objectPayload = encoder.encode(jsonString)
-  // console.log(chunkData)
-
-  await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, objectPayload)
+  chunkDataBitrateLogger.addBytes(chunk.byteLength)
+  const payload = packMetaAndChunk(chunk)
+  await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, payload)
   // If this object is end of group, send the ObjectStatus=EndOfGroupMessage.
   // And delete unnecessary streams.
   if (objectId === BigInt(KEYFRAME_INTERVAL - 1)) {
@@ -61,28 +76,10 @@ export async function sendAudioObjectMessage(
   subgroupId: bigint,
   objectId: bigint,
   chunk: EncodedAudioChunk,
-  metadata: EncodedAudioChunkMetadata | undefined,
   client: MOQTClient
 ) {
   // `EncodedAudioChunk` のデータを Uint8Array に変換
-  const chunkArray = new Uint8Array(chunk.byteLength)
-  chunk.copyTo(chunkArray)
+  const payload = packMetaAndChunk(chunk)
 
-  const chunkData = {
-    type: chunk.type,
-    timestamp: chunk.timestamp,
-    duration: chunk.duration,
-    byteLength: chunk.byteLength,
-    data: Array.from(chunkArray),
-    decoderConfig: {
-      codec: metadata?.decoderConfig?.codec,
-      numberOfChannels: metadata?.decoderConfig?.numberOfChannels,
-      sampleRate: metadata?.decoderConfig?.sampleRate
-    }
-  }
-
-  const encoder = new TextEncoder()
-  const jsonString = JSON.stringify({ chunk: chunkData })
-  const objectPayload = encoder.encode(jsonString)
-  await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, objectPayload)
+  await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, payload)
 }
