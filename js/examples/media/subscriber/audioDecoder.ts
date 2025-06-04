@@ -1,3 +1,12 @@
+function unpackMetaAndChunk(payload: Uint8Array): { meta: any; chunkArray: Uint8Array } {
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+  const metaLen = view.getUint32(0)
+  const metaBytes = payload.slice(4, 4 + metaLen)
+  const metaJson = new TextDecoder().decode(metaBytes)
+  const meta = JSON.parse(metaJson)
+  const chunkArray = payload.slice(4 + metaLen)
+  return { meta, chunkArray }
+}
 import { JitterBuffer } from './jitterBuffer'
 
 function sendAudioDataMessage(audioData: AudioData): void {
@@ -55,17 +64,13 @@ self.onmessage = async (event) => {
 }
 
 async function decode(subgroupStreamObject: AudioDecoder.SubgroupStreamObject) {
-  // Rustから渡された時点ではUint8ArrayではなくArrayなので変換が必要
-  const chunkArray = new Uint8Array(subgroupStreamObject.objectPayload)
-  const decoder = new TextDecoder()
-  const jsonString = decoder.decode(chunkArray)
-  const objectPayload = JSON.parse(jsonString)
+  const { meta, chunkArray } = unpackMetaAndChunk(subgroupStreamObject.objectPayload)
 
   const encodedAudioChunk = new EncodedAudioChunk({
-    type: objectPayload.chunk.type,
-    timestamp: objectPayload.chunk.timestamp,
-    duration: objectPayload.chunk.duration,
-    data: new Uint8Array(objectPayload.chunk.data)
+    type: meta.type,
+    timestamp: meta.timestamp,
+    duration: meta.duration,
+    data: chunkArray
   })
 
   if (!audioDecoder) {
