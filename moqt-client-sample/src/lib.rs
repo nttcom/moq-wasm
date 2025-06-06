@@ -874,11 +874,14 @@ impl MOQTClient {
         subgroup_id: u64,
         publisher_priority: u8,
     ) -> Result<JsValue, JsValue> {
-        let subscribe_id = self
+        let subscribe_id = match self
             .subscription_node
             .borrow()
             .get_publishing_subscribe_id_by_track_alias(track_alias)
-            .unwrap();
+        {
+            Some(id) => id,
+            None => return Err(JsValue::from_str("subscribe_id not found for track_alias")),
+        };
 
         let writer = self
             .get_or_create_stream_writer(subscribe_id, group_id, subgroup_id)
@@ -913,11 +916,14 @@ impl MOQTClient {
         object_status: Option<u8>,
         object_payload: Vec<u8>,
     ) -> Result<JsValue, JsValue> {
-        let subscribe_id = self
+        let subscribe_id = match self
             .subscription_node
             .borrow()
             .get_publishing_subscribe_id_by_track_alias(track_alias)
-            .unwrap();
+        {
+            Some(id) => id,
+            None => return Err(JsValue::from_str("subscribe_id not found for track_alias")),
+        };
         let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
         let writer = {
             let stream_writers = self.stream_writers.borrow();
