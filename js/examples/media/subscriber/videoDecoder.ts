@@ -113,7 +113,8 @@ async function decode(subgroupStreamObject: VideoDecoder.SubgroupStreamObject) {
     data: chunkArray
   })
 
-  if (!videoDecoder) {
+  if (!videoDecoder || videoDecoder.state === 'closed') {
+    console.log('initializeVideoDecoder')
     videoDecoder = await initializeVideoDecoder()
     // The first frame after initializing the decoder must be a keyframe
     if (meta.type !== 'key') {

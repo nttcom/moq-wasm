@@ -73,9 +73,8 @@ async function initializeVideoEncoder() {
 
 async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>) {
   let frameCounter = 0
-  if (!videoEncoder) {
-    videoEncoder = await initializeVideoEncoder()
-  }
+  console.log('initializeVideoEncoder')
+  videoEncoder = await initializeVideoEncoder()
   const videoReader = videoReadableStream.getReader()
   while (true) {
     const videoResult = await videoReader.read()
@@ -86,12 +85,17 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     if (videoEncoder.encodeQueueSize > 10) {
       console.error('videoEncoder.encodeQueueSize > 10', videoEncoder.encodeQueueSize)
       videoFrame.close()
-    } else {
-      const keyFrame = frameCounter % keyframeInterval == 0
-      videoEncoder.encode(videoFrame, { keyFrame })
-      frameCounter++
-      videoFrame.close()
+      continue
     }
+    if (!videoEncoder || videoEncoder.state === 'closed') {
+      console.log('Re-initialize video encoder')
+      videoEncoder = await initializeVideoEncoder()
+      frameCounter = 0
+    }
+    const keyFrame = frameCounter % keyframeInterval == 0
+    videoEncoder.encode(videoFrame, { keyFrame })
+    frameCounter++
+    videoFrame.close()
   }
 }
 
