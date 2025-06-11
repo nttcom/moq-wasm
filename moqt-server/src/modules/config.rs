@@ -22,7 +22,7 @@ impl MOQTConfig {
             port: 4433,
             cert_path: "./cert.pem".to_string(),
             key_path: "./key.pem".to_string(),
-            keep_alive_interval_sec: 3,
+            keep_alive_interval_sec: 30,
             underlay: UnderlayType::Both,
             log_level: "DEBUG".to_string(),
         }
