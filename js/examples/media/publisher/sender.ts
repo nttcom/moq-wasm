@@ -44,6 +44,12 @@ const chunkDataBitrateLogger = createChunkDataBitrateLogger()
 import { MOQTClient } from '../../../pkg/moqt_client_sample'
 import { KEYFRAME_INTERVAL } from './const'
 
+let currentVideoId = {
+  groupId: BigInt(0),
+  subgroupId: BigInt(0),
+  objectId: BigInt(0)
+}
+
 export async function sendVideoObjectMessage(
   trackAlias: bigint,
   groupId: bigint,
@@ -55,19 +61,22 @@ export async function sendVideoObjectMessage(
   chunkDataBitrateLogger.addBytes(chunk.byteLength)
   const payload = packMetaAndChunk(chunk)
   await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, payload)
-  // If this object is end of group, send the ObjectStatus=EndOfGroupMessage.
-  // And delete unnecessary streams.
-  if (objectId === BigInt(KEYFRAME_INTERVAL - 1)) {
+
+  // groupIdが変わったら、EndOfGroupを送信
+  // subgroupIdはなんでも良いが0とする
+  if (groupId > currentVideoId.groupId) {
     await client.sendSubgroupStreamObject(
       BigInt(trackAlias),
-      groupId,
-      subgroupId,
+      currentVideoId.groupId,
+      BigInt(0),
       BigInt(KEYFRAME_INTERVAL),
       3, // 0x3: EndOfGroup
       Uint8Array.from([])
     )
     console.log('send Object(ObjectStatus=EndOfGroup)')
   }
+
+  currentVideoId = { groupId, subgroupId, objectId }
 }
 
 export async function sendAudioObjectMessage(
