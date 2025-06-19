@@ -14,8 +14,9 @@ async fn main() -> Result<()> {
 
     let mut config = MOQTConfig::new();
     config.underlay = UnderlayType::WebTransport;
-    config.key_path = "./moqt-server-sample/keys/key.pem".to_string();
-    config.cert_path = "./moqt-server-sample/keys/cert.pem".to_string();
+    let current_path = std::env::current_dir().expect("failed to get current path");
+    config.key_path = format!("{}{}", current_path.to_str().unwrap(), "/keys/key.pem");
+    config.cert_path = format!("{}{}", current_path.to_str().unwrap(), "/keys/cert.pem");
     config.log_level = args.log_level.to_string();
 
     let moqt_server = MOQTServer::new(config);
