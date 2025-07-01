@@ -102,6 +102,79 @@ impl MOQTServer {
         let endpoint = quinn::Endpoint::server(server_config, address)?;
         tracing::info!("Server ready! for QUIC");
 
+        let (buffer_tx, mut buffer_rx) = mpsc::channel::<BufferCommand>(1024);
+        task::Builder::new()
+            .name("Buffer Manager")
+            .spawn(async move { buffer_manager(&mut buffer_rx).await })?;
+        let (pubsub_relation_tx, mut pubsub_relation_rx) =
+            mpsc::channel::<PubSubRelationCommand>(1024);
+        task::Builder::new()
+            .name("PubSub Relation Manager")
+            .spawn(async move { pubsub_relation_manager(&mut pubsub_relation_rx).await })?;
+        let (control_message_dispatch_tx, mut control_message_dispatch_rx) =
+            mpsc::channel::<ControlMessageDispatchCommand>(1024);
+        task::Builder::new()
+            .name("Control Message Dispatcher")
+            .spawn(
+                async move { control_message_dispatcher(&mut control_message_dispatch_rx).await },
+            )?;
+        let (signal_dispatch_tx, mut signal_dispatch_rx) =
+            mpsc::channel::<SignalDispatchCommand>(1024);
+        task::Builder::new()
+            .name("Signal Dispatcher")
+            .spawn(async move { signal_dispatcher(&mut signal_dispatch_rx).await })?;
+
+        let (object_cache_tx, mut object_cache_rx) =
+            mpsc::channel::<ObjectCacheStorageCommand>(1024);
+        task::Builder::new()
+            .name("Object Cache Storage")
+            .spawn(async move { object_cache_storage(&mut object_cache_rx).await })?;
+
+        let start_forwarder_txes: Arc<Mutex<HashMap<usize, SenderToOpenSubscription>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        for id in 0.. {
+            let sender_to_other_connection_thread =
+                SenderToOtherConnectionThread::new(start_forwarder_txes.clone());
+            let senders_to_management_thread = SendersToManagementThread::new(
+                buffer_tx.clone(),
+                pubsub_relation_tx.clone(),
+                control_message_dispatch_tx.clone(),
+                signal_dispatch_tx.clone(),
+                object_cache_tx.clone(),
+            );
+
+            let incoming_session = endpoint.accept().await;
+            let session_span = tracing::info_span!("Session", id);
+
+            // Create a thread for each session
+            task::Builder::new()
+                .name("WT Session Handler")
+                .spawn(async move {
+                    let mut session_handler = SessionHandler::init(
+                        sender_to_other_connection_thread,
+                        senders_to_management_thread,
+                        incoming_session,
+                    )
+                    .instrument(session_span.clone())
+                    .await
+                    .unwrap();
+
+                    match session_handler
+                        .start()
+                        .instrument(session_span.clone())
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(err) => {
+                            tracing::error!("{:#?}", err);
+                        }
+                    }
+
+                    let _ = session_handler.finish().instrument(session_span).await;
+                })?;
+        }
+
         Ok(())
     }
 
