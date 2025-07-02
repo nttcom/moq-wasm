@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::modules::server_processes::session_handlers::bi_stream::BiStreamTrait;
+use crate::modules::session_handlers::bi_stream::BiStreamTrait;
 
 #[async_trait]
 pub(crate) trait SessionHandlerTrait {

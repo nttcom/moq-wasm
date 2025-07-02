@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::modules::server_processes::session_handlers::session_handler_trait::SessionHandlerTrait;
+use crate::modules::session_handlers::session_handler_trait::SessionHandlerTrait;
 
 struct SessionHandler {
     _handler: Arc<dyn SessionHandlerTrait>,
