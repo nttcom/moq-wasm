@@ -30,7 +30,6 @@ use moqt_core::{
 };
 
 use crate::signal_dispatcher::{SignalDispatchCommand, signal_dispatcher};
-use wtransport::tls::rustls;
 
 type SubscribeId = u64;
 pub(crate) type SenderToOpenSubscription =
