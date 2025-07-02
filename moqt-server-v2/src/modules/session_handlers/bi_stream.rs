@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use wtransport::quinn;
+use quinn::{self, RecvStream};
 
 pub(crate) trait BiStreamTrait {}
 
@@ -17,7 +17,7 @@ impl QuicBiStream {
     pub(super) fn new(
         stable_id: usize,
         stream_id: u64,
-        recv_stream: quinn::RecvStream,
+        recv_stream: RecvStream,
         send_stream: Arc<Mutex<quinn::SendStream>>,
     ) -> Self {
         Self { stable_id, stream_id, recv_stream, shared_send_stream: send_stream }
