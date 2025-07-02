@@ -9,13 +9,16 @@ use rustls::{
 };
 use tokio::sync::Mutex;
 
-use crate::modules::session_handlers::{bi_stream::{BiStreamTrait, QuicBiStream}, session_handler_trait::SessionHandlerTrait};
+use crate::modules::session_handlers::{
+    bi_stream::{BiStreamTrait, QuicBiStream},
+    protocol_handler_trait::ProtocolHandlerTrait,
+};
 
-struct QuicSessionHandler {
+pub(crate) struct QuicHandler {
     _endpoint: quinn::Endpoint,
 }
 
-impl QuicSessionHandler {
+impl QuicHandler {
     fn config_builder(
         cert_path: String,
         key_path: String,
@@ -66,14 +69,14 @@ impl QuicSessionHandler {
         let address = SocketAddr::from(([0, 0, 0, 0], port_num));
         let endpoint = quinn::Endpoint::server(server_config, address)?;
         tracing::info!("Server ready! for QUIC");
-        Ok(QuicSessionHandler {
+        Ok(QuicHandler {
             _endpoint: endpoint,
         })
     }
 }
 
 #[async_trait]
-impl SessionHandlerTrait for QuicSessionHandler {
+impl ProtocolHandlerTrait for QuicHandler {
     async fn start(&self) -> anyhow::Result<Arc<Mutex<dyn BiStreamTrait>>> {
         let incoming = self._endpoint.accept().await.expect("failed to accept");
         let connection = incoming.await.expect("failed to create connection");

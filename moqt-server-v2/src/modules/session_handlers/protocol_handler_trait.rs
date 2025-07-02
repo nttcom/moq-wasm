@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use crate::modules::session_handlers::bi_stream::BiStreamTrait;
 
 #[async_trait]
-pub(crate) trait SessionHandlerTrait {
+pub(crate) trait ProtocolHandlerTrait: Send + Sync {
     async fn start(&self)->anyhow::Result<Arc<Mutex<dyn BiStreamTrait>>>;
     fn finish(&self)->anyhow::Result<()>;
 }
