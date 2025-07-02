@@ -1,19 +1,15 @@
-use std::sync::Arc;
+use crate::modules::session_handlers::protocol_handler_trait::ProtocolHandlerTrait;
 
-use crate::modules::session_handlers::session_handler_trait::SessionHandlerTrait;
-
-struct SessionHandler {
-    _handler: Arc<dyn SessionHandlerTrait>,
+pub(crate) struct SessionHandler {
+    _handler: Box<dyn ProtocolHandlerTrait>,
 }
 
 impl SessionHandler {
-    pub fn new(handler: Arc<dyn SessionHandlerTrait>) -> Self {
+    pub fn new(handler: Box<dyn ProtocolHandlerTrait>) -> Self {
         Self { _handler: handler }
     }
 
     pub fn start(&self) {
-        for i in 0.. {
-
-        }
+        for i in 0.. {}
     }
 }
