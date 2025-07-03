@@ -1,15 +1,11 @@
-use crate::modules::session_handlers::protocol_handler_trait::ProtocolHandlerTrait;
+use crate::modules::session_handlers::bi_stream::BiStreamTrait;
 
-pub(crate) struct SessionHandler {
-    _handler: Box<dyn ProtocolHandlerTrait>,
+struct SessionHandler {
+    control_stream: Box<dyn BiStreamTrait>,
 }
 
 impl SessionHandler {
-    pub fn new(handler: Box<dyn ProtocolHandlerTrait>) -> Self {
-        Self { _handler: handler }
-    }
-
-    pub fn start(&self) {
-        for i in 0.. {}
+    pub(crate) fn new(control_stream: Box<dyn BiStreamTrait>) -> Self {
+        Self { control_stream }
     }
 }
