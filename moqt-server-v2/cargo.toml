@@ -19,3 +19,5 @@ ttl_cache = "0.5.1"
 tracing-appender = "0.2.3"
 rustls = "0.23.28"
 rustls-pki-types = "1.7"
+serde = { version = "1.0.188", features = ["derive"] }
+num_enum = "0.7.0"
