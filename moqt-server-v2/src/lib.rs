@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::modules::session_handlers::{
-    quic_handler::QuicHandler, session_handler::SessionHandler,
+    quic_handler::QuicHandler, underlay_protocol_handler::UnderlayProtocolHandler,
 };
 use anyhow::Ok;
 use tokio::sync::Mutex;
@@ -38,7 +38,7 @@ impl MOQTConfig {
 }
 
 pub struct MOQTClient {
-    session_handler: Arc<Mutex<SessionHandler>>,
+    underlay_handler: Arc<Mutex<UnderlayProtocolHandler>>,
 }
 
 impl MOQTClient {
@@ -50,8 +50,12 @@ impl MOQTClient {
             config.keep_alive_interval_sec,
         )
         .expect("failed to create MOQT client");
-        let session_handler = Arc::new(Mutex::new(SessionHandler::new(Box::new(handler))));
+        let underlay_handler = Arc::new(Mutex::new(UnderlayProtocolHandler::new(Box::new(handler))));
 
-        Ok(Self { session_handler })
+        Ok(Self { underlay_handler })
+    }
+
+    pub async fn start(&self) {
+        self.underlay_handler.lock().await.start();
     }
 }

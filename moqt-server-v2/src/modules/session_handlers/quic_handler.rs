@@ -93,6 +93,10 @@ impl ProtocolHandlerTrait for QuicHandler {
         Ok(Arc::new(Mutex::new(bi_stream)))
     }
 
+    async fn start_listen(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     fn finish(&self) -> anyhow::Result<()> {
         Ok(())
     }
