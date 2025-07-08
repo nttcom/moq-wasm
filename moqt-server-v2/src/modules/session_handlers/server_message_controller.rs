@@ -21,7 +21,7 @@ impl ServerMessageController {
         Self { bi_stream }
     }
 
-    pub fn handle_recv_message(&self, read_buffer: &mut BytesMut) -> anyhow::Result<()> {
+    pub async fn handle_recv_message(&self, read_buffer: &mut BytesMut) -> anyhow::Result<()> {
         tracing::trace!("control_message_handler! {}", read_buffer.len());
 
         let mut read_cur = Cursor::new(&read_buffer[..]);
@@ -47,7 +47,7 @@ impl ServerMessageController {
         read_buffer.advance(read_cur.position() as usize);
         let mut payload_buf = read_buffer.split_to(payload_length as usize);
 
-        Self::handle_control_message(&self, message_type, &mut payload_buf)
+        self.handle_control_message(message_type, &mut payload_buf).await
     }
 
     fn read_message_type(
@@ -71,7 +71,7 @@ impl ServerMessageController {
         Ok(message_type)
     }
 
-    fn handle_control_message(
+    async fn handle_control_message(
         &self,
         message_type: ControlMessageType,
         payload_buffer: &mut BytesMut,
@@ -83,14 +83,16 @@ impl ServerMessageController {
             others => panic!("{}", format!("unsupported on the server. {:?}", others)),
         };
         match message {
-            MessageProcessResult::Success(buffer) => self.response(&buffer),
+            MessageProcessResult::Success(buffer) => self.response(&buffer).await,
             MessageProcessResult::SuccessWithoutResponse => Ok(()),
-            MessageProcessResult::Failure(code, message) => bail!(""),
-            MessageProcessResult::Fragment => todo!(),
+            MessageProcessResult::Failure(code, message) => {
+                bail!(format!("failed... code: {:?}, message: {}", code, message))
+            }
+            MessageProcessResult::Fragment => bail!("failed to send full message"),
         }
     }
 
-    fn response(&self, buffer: &BytesMut) {
-        self.bi_stream.send(buffer);
+    async fn response(&self, buffer: &BytesMut) -> anyhow::Result<()> {
+        self.bi_stream.send(buffer).await
     }
 }
