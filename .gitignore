@@ -15,7 +15,8 @@ js/pkg/*
 # Added by cargo
 
 /target
-
+*.log
+*.pem
 .DS_Store
 
 log/*
