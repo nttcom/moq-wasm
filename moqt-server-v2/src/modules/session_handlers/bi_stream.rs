@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use bytes::BytesMut;
+use mockall::automock;
 use quinn::{self, RecvStream};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+#[automock]
 #[async_trait]
 pub(crate) trait BiStreamTrait {
     async fn send(&self, buffer: &BytesMut) -> anyhow::Result<()>;
@@ -19,7 +21,12 @@ pub(crate) struct QuicBiStream {
 #[async_trait]
 impl BiStreamTrait for QuicBiStream {
     async fn send(&self, buffer: &BytesMut) -> anyhow::Result<()> {
-        Ok(self.shared_send_stream.lock().await.write_all(&buffer).await?)
+        Ok(self
+            .shared_send_stream
+            .lock()
+            .await
+            .write_all(&buffer)
+            .await?)
     }
 }
 

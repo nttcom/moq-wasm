@@ -47,7 +47,8 @@ impl ServerMessageController {
         read_buffer.advance(read_cur.position() as usize);
         let mut payload_buf = read_buffer.split_to(payload_length as usize);
 
-        self.handle_control_message(message_type, &mut payload_buf).await
+        self.handle_control_message(message_type, &mut payload_buf)
+            .await
     }
 
     fn read_message_type(
@@ -94,5 +95,111 @@ impl ServerMessageController {
 
     async fn response(&self, buffer: &BytesMut) -> anyhow::Result<()> {
         self.bi_stream.send(buffer).await
+    }
+}
+
+#[cfg(test)]
+mod message_controller_test {
+    use crate::modules::session_handlers::{
+        bi_stream::MockBiStreamTrait,
+        messages::{
+            control_message_type::ControlMessageType,
+            control_messages::client_setup::ClientSetup,
+            moqt_payload::MOQTPayload,
+            variable_integer::write_variable_integer,
+        },
+        server_message_controller::ServerMessageController,
+    };
+    use bytes::BytesMut;
+
+    #[tokio::test]
+    async fn handle_recv_message_success() {
+        // setup
+        let mut mock_bi_stream = MockBiStreamTrait::new();
+        mock_bi_stream.expect_send().returning(|_| Ok(()));
+        let server_message_controller = ServerMessageController::new(Box::new(mock_bi_stream));
+
+        let client_setup = ClientSetup::new(vec![1], vec![]);
+        let mut client_setup_payload = BytesMut::new();
+        client_setup.packetize(&mut client_setup_payload);
+
+        let mut message = BytesMut::new();
+        message.extend_from_slice(&write_variable_integer(ControlMessageType::ClientSetup as u64));
+        message.extend_from_slice(&write_variable_integer(client_setup_payload.len() as u64));
+        message.extend_from_slice(&client_setup_payload);
+
+        // execution
+        let result = server_message_controller
+            .handle_recv_message(&mut message)
+            .await;
+
+        // verification
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_recv_message_payload_length_is_0() {
+        // setup
+        let mut mock_bi_stream = MockBiStreamTrait::new();
+        mock_bi_stream.expect_send().returning(|_| Ok(()));
+        let server_message_controller = ServerMessageController::new(Box::new(mock_bi_stream));
+
+        let mut message = BytesMut::new();
+        message.extend_from_slice(&write_variable_integer(ControlMessageType::ClientSetup as u64));
+        message.extend_from_slice(&write_variable_integer(0));
+
+        // execution
+        let result = server_message_controller
+            .handle_recv_message(&mut message)
+            .await;
+
+        // verification
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn handle_recv_message_payload_length_mismatch() {
+        // setup
+        let mut mock_bi_stream = MockBiStreamTrait::new();
+        mock_bi_stream.expect_send().returning(|_| Ok(()));
+        let server_message_controller = ServerMessageController::new(Box::new(mock_bi_stream));
+
+        let client_setup = ClientSetup::new(vec![1], vec![]);
+        let mut client_setup_payload = BytesMut::new();
+        client_setup.packetize(&mut client_setup_payload);
+
+        let mut message = BytesMut::new();
+        message.extend_from_slice(&write_variable_integer(ControlMessageType::ClientSetup as u64));
+        message.extend_from_slice(&write_variable_integer(10000));
+        message.extend_from_slice(&client_setup_payload);
+
+        // execution
+        let _ = server_message_controller
+            .handle_recv_message(&mut message)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn handle_recv_message_invalid_payload() {
+        // setup
+        let mut mock_bi_stream = MockBiStreamTrait::new();
+        mock_bi_stream.expect_send().returning(|_| Ok(()));
+        let server_message_controller = ServerMessageController::new(Box::new(mock_bi_stream));
+
+        let invalid_payload = BytesMut::from(&b"invalid payload"[..]);
+
+        let mut message = BytesMut::new();
+        message.extend_from_slice(&write_variable_integer(ControlMessageType::ClientSetup as u64));
+        message.extend_from_slice(&write_variable_integer(invalid_payload.len() as u64));
+        message.extend_from_slice(&invalid_payload);
+
+        // execution
+        let result = server_message_controller
+            .handle_recv_message(&mut message)
+            .await;
+
+        // verification
+        assert!(result.is_err());
     }
 }
