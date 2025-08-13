@@ -7,16 +7,16 @@ use crate::modules::session_handlers::{
     bi_stream::BiStreamTrait,
     messages::{
         control_message_type::ControlMessageType,
-        control_messages::setup_message_builder::SetupMessageBuilder,
+        control_messages::setup_message_handler::SetupMessageHandler,
         message_process_result::MessageProcessResult, variable_integer::read_variable_integer,
     },
 };
 
-struct ServerMessageController {
+struct MessageController {
     bi_stream: Box<dyn BiStreamTrait>,
 }
 
-impl ServerMessageController {
+impl MessageController {
     pub fn new(bi_stream: Box<dyn BiStreamTrait>) -> Self {
         Self { bi_stream }
     }
@@ -79,7 +79,10 @@ impl ServerMessageController {
     ) -> anyhow::Result<()> {
         let message = match message_type {
             ControlMessageType::ClientSetup => {
-                SetupMessageBuilder::create_server_setup(payload_buffer)
+                SetupMessageHandler::create_server_setup(payload_buffer)
+            }
+            ControlMessageType::ServerSetup => {
+                SetupMessageHandler::handle_server_setup(payload_buffer)
             }
             others => panic!("{}", format!("unsupported on the server. {:?}", others)),
         };
@@ -102,13 +105,11 @@ impl ServerMessageController {
 mod message_controller_test {
     use crate::modules::session_handlers::{
         bi_stream::MockBiStreamTrait,
+        message_controller::MessageController,
         messages::{
-            control_message_type::ControlMessageType,
-            control_messages::client_setup::ClientSetup,
-            moqt_payload::MOQTPayload,
-            variable_integer::write_variable_integer,
+            control_message_type::ControlMessageType, control_messages::client_setup::ClientSetup,
+            moqt_payload::MOQTPayload, variable_integer::write_variable_integer,
         },
-        server_message_controller::ServerMessageController,
     };
     use bytes::BytesMut;
 
@@ -117,14 +118,16 @@ mod message_controller_test {
         // setup
         let mut mock_bi_stream = MockBiStreamTrait::new();
         mock_bi_stream.expect_send().returning(|_| Ok(()));
-        let server_message_controller = ServerMessageController::new(Box::new(mock_bi_stream));
+        let server_message_controller = MessageController::new(Box::new(mock_bi_stream));
 
         let client_setup = ClientSetup::new(vec![1], vec![]);
         let mut client_setup_payload = BytesMut::new();
         client_setup.packetize(&mut client_setup_payload);
 
         let mut message = BytesMut::new();
-        message.extend_from_slice(&write_variable_integer(ControlMessageType::ClientSetup as u64));
+        message.extend_from_slice(&write_variable_integer(
+            ControlMessageType::ClientSetup as u64,
+        ));
         message.extend_from_slice(&write_variable_integer(client_setup_payload.len() as u64));
         message.extend_from_slice(&client_setup_payload);
 
@@ -142,10 +145,12 @@ mod message_controller_test {
         // setup
         let mut mock_bi_stream = MockBiStreamTrait::new();
         mock_bi_stream.expect_send().returning(|_| Ok(()));
-        let server_message_controller = ServerMessageController::new(Box::new(mock_bi_stream));
+        let server_message_controller = MessageController::new(Box::new(mock_bi_stream));
 
         let mut message = BytesMut::new();
-        message.extend_from_slice(&write_variable_integer(ControlMessageType::ClientSetup as u64));
+        message.extend_from_slice(&write_variable_integer(
+            ControlMessageType::ClientSetup as u64,
+        ));
         message.extend_from_slice(&write_variable_integer(0));
 
         // execution
@@ -163,14 +168,16 @@ mod message_controller_test {
         // setup
         let mut mock_bi_stream = MockBiStreamTrait::new();
         mock_bi_stream.expect_send().returning(|_| Ok(()));
-        let server_message_controller = ServerMessageController::new(Box::new(mock_bi_stream));
+        let server_message_controller = MessageController::new(Box::new(mock_bi_stream));
 
         let client_setup = ClientSetup::new(vec![1], vec![]);
         let mut client_setup_payload = BytesMut::new();
         client_setup.packetize(&mut client_setup_payload);
 
         let mut message = BytesMut::new();
-        message.extend_from_slice(&write_variable_integer(ControlMessageType::ClientSetup as u64));
+        message.extend_from_slice(&write_variable_integer(
+            ControlMessageType::ClientSetup as u64,
+        ));
         message.extend_from_slice(&write_variable_integer(10000));
         message.extend_from_slice(&client_setup_payload);
 
@@ -185,12 +192,14 @@ mod message_controller_test {
         // setup
         let mut mock_bi_stream = MockBiStreamTrait::new();
         mock_bi_stream.expect_send().returning(|_| Ok(()));
-        let server_message_controller = ServerMessageController::new(Box::new(mock_bi_stream));
+        let server_message_controller = MessageController::new(Box::new(mock_bi_stream));
 
         let invalid_payload = BytesMut::from(&b"invalid payload"[..]);
 
         let mut message = BytesMut::new();
-        message.extend_from_slice(&write_variable_integer(ControlMessageType::ClientSetup as u64));
+        message.extend_from_slice(&write_variable_integer(
+            ControlMessageType::ClientSetup as u64,
+        ));
         message.extend_from_slice(&write_variable_integer(invalid_payload.len() as u64));
         message.extend_from_slice(&invalid_payload);
 

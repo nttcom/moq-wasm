@@ -7,16 +7,16 @@ use crate::modules::session_handlers::{
         control_messages::{
             client_setup::ClientSetup,
             server_setup::ServerSetup,
-            setup_parameters::{MaxSubscribeID, SetupParameter},
+            setup_parameters::{self, MaxSubscribeID, SetupParameter},
         },
         message_process_result::MessageProcessResult,
         moqt_payload::MOQTPayload,
     },
 };
 
-pub(crate) struct SetupMessageBuilder;
+pub(crate) struct SetupMessageHandler;
 
-impl SetupMessageBuilder {
+impl SetupMessageHandler {
     const DOWNSTREAM_MAX_SUBSCRIBE_ID: u64 = 100;
 
     pub(crate) fn create_server_setup(payload_buffer: &mut BytesMut) -> MessageProcessResult {
@@ -47,5 +47,31 @@ impl SetupMessageBuilder {
         setup_parameters.push(max_subscribe_id_parameter);
 
         setup_parameters
+    }
+
+    pub fn create_client_setup(supported_versions: Vec<u32>, max_subscriber_id: u64) -> BytesMut {
+        let _max_subscriber_id = if max_subscriber_id == 0 {
+            Self::DOWNSTREAM_MAX_SUBSCRIBE_ID
+        } else {
+            max_subscriber_id
+        };
+        let mut buf = BytesMut::new();
+        let mut setup_parameters = vec![];
+        setup_parameters.push(SetupParameter::MaxSubscribeID(MaxSubscribeID::new(
+            max_subscriber_id,
+        )));
+        ClientSetup::new(supported_versions, setup_parameters).packetize(&mut buf);
+
+        buf
+    }
+
+    pub fn handle_server_setup(buffer: &mut BytesMut) -> MessageProcessResult {
+        match ServerSetup::depacketize(buffer) {
+            Ok(_) => MessageProcessResult::SuccessWithoutResponse,
+            Err(_) => MessageProcessResult::Failure(
+                constants::TerminationErrorCode::InternalError,
+                "failed to depacketize ServerSetup".to_string(),
+            ),
+        }
     }
 }

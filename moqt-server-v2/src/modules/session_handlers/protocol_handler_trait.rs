@@ -7,7 +7,7 @@ use crate::modules::session_handlers::bi_stream::BiStreamTrait;
 
 #[async_trait]
 pub(crate) trait ProtocolHandlerTrait: Send + Sync {
-    async fn start(&self) -> anyhow::Result<Arc<Mutex<dyn BiStreamTrait>>>;
-    async fn start_listen(&self) -> anyhow::Result<()>;
+    async fn start(&mut self) -> anyhow::Result<Arc<Mutex<dyn BiStreamTrait>>>;
+    fn start_listen(&self) -> bool;
     fn finish(&self) -> anyhow::Result<()>;
 }

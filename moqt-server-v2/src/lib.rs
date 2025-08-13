@@ -37,6 +37,12 @@ impl MOQTConfig {
     }
 }
 
+pub trait MOQTClientListener {
+    fn on_connection_added();
+    fn on_published();
+    fn on_subscribed();
+}
+
 pub struct MOQTClient {
     underlay_handler: Arc<Mutex<UnderlayProtocolHandler>>,
 }
@@ -55,7 +61,15 @@ impl MOQTClient {
         Ok(Self { underlay_handler })
     }
 
-    pub async fn start(&self) {
+    pub async fn connect(&self) {
         self.underlay_handler.lock().await.start();
+    }
+
+    pub async fn create_uni_stream(&self) {
+
+    }
+
+    pub async fn create_uni_datagram(&self) {
+
     }
 }
