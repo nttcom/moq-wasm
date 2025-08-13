@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 #[async_trait]
 pub(crate) trait BiStreamTrait {
     async fn send(&self, buffer: &BytesMut) -> anyhow::Result<()>;
+    async fn receive(&self);
 }
 
 pub(crate) struct QuicBiStream {
@@ -27,6 +28,10 @@ impl BiStreamTrait for QuicBiStream {
             .await
             .write_all(&buffer)
             .await?)
+    }
+
+    async fn receive(&self) {
+        
     }
 }
 

@@ -7,7 +7,7 @@ use rustls::{
     self,
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, task};
 
 use crate::modules::session_handlers::{
     bi_stream::{BiStreamTrait, QuicBiStream},
@@ -15,7 +15,8 @@ use crate::modules::session_handlers::{
 };
 
 pub(crate) struct QuicHandler {
-    _endpoint: quinn::Endpoint,
+    endpoint: quinn::Endpoint,
+    connection: Option<Arc<Mutex<quinn::Connection>>>,
 }
 
 impl QuicHandler {
@@ -70,15 +71,16 @@ impl QuicHandler {
         let endpoint = quinn::Endpoint::server(server_config, address)?;
         tracing::info!("Server ready! for QUIC");
         Ok(QuicHandler {
-            _endpoint: endpoint,
+            endpoint,
+            connection: None,
         })
     }
 }
 
 #[async_trait]
 impl ProtocolHandlerTrait for QuicHandler {
-    async fn start(&self) -> anyhow::Result<Arc<Mutex<dyn BiStreamTrait>>> {
-        let incoming = self._endpoint.accept().await.expect("failed to accept");
+    async fn start(&mut self) -> anyhow::Result<Arc<Mutex<dyn BiStreamTrait>>> {
+        let incoming = self.endpoint.accept().await.expect("failed to accept");
         let connection = incoming.await.expect("failed to create connection");
         let (control_send_stream, control_recv_stream) = connection
             .accept_bi()
@@ -90,13 +92,34 @@ impl ProtocolHandlerTrait for QuicHandler {
             control_recv_stream,
             Arc::new(Mutex::new(control_send_stream)),
         );
+        self.connection = Some(Arc::new(Mutex::new(connection)));
         Ok(Arc::new(Mutex::new(bi_stream)))
     }
 
-    async fn start_listen(&self) -> anyhow::Result<()> {
-        // thread spawn
-        // accept streams in loop
-        Ok(())
+    fn start_listen(&self) -> bool {
+        let conn = match &self.connection {
+            Some(conn) => conn.clone(),
+            None => return false,
+        };
+        task::Builder::new()
+            .name("Listener Thread")
+            .spawn(async move {
+                loop {
+                    let _conn = conn.lock().await;
+                    tokio::select! {
+                        stream = _conn.accept_bi() => {
+                            // create send stream and notify
+                        }
+                        stream = _conn.accept_uni() => {
+
+                        }
+                        stream = _conn.read_datagram() => {
+
+                        }
+                    }
+                }
+            });
+        true
     }
 
     fn finish(&self) -> anyhow::Result<()> {
