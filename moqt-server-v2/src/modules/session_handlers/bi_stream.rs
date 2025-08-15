@@ -34,7 +34,7 @@ impl BiStreamTrait for QuicBiStream {
             .shared_send_stream
             .lock()
             .await
-            .write_all(&buffer)
+            .write_all(buffer)
             .await?)
     }
 
@@ -50,10 +50,16 @@ impl BiStreamTrait for QuicBiStream {
                         bytes.extend_from_slice(&buffer);
                         ReceiveEventType::OnMessageReceived{stream_id, buffer: bytes}
                     },
-                    Err(e) => ReceiveEventType::OnError{stream_id, message: e.to_string()}
+                    Err(e) => {
+                        tracing::error!("{}", format!("failed to read message: {}", e.to_string()));
+                        ReceiveEventType::OnError{stream_id, message: e.to_string()}
+                    }
                 };
                 let result = event_sender.send(message.clone());
-                if result.is_err() || matches!(message, ReceiveEventType::OnError {..}) {
+                if result.is_err() {
+                    // error log has already been sent.
+                    break;
+                } else if matches!(message, ReceiveEventType::OnError {..}) {
                     tracing::warn!("Receiver has already been released.");
                     break;
                 }
