@@ -1,11 +1,28 @@
-use crate::modules::session_handlers::bi_stream::BiStreamTrait;
+use crate::modules::session_handlers::{
+    message_controller_trait::MessageControllerTrait, protocol_handler_trait::ProtocolHandlerTrait,
+    stream_repository::StreamRepository,
+};
 
 struct SessionHandler {
-    control_stream: Box<dyn BiStreamTrait>,
+    protocol_handler: Box<dyn ProtocolHandlerTrait>,
+    message_controller: Box<dyn MessageControllerTrait>,
+    stream_repo: Box<StreamRepository>,
 }
 
 impl SessionHandler {
-    pub(crate) fn new(control_stream: Box<dyn BiStreamTrait>) -> Self {
-        Self { control_stream }
+    pub(crate) fn new(
+        protocol_handler: Box<dyn ProtocolHandlerTrait>,
+        message_controller: Box<dyn MessageControllerTrait>,
+    ) -> Self {
+        Self {
+            protocol_handler,
+            message_controller,
+            stream_repo: Box::new(StreamRepository::new()),
+        }
+    }
+
+    pub(crate) async fn connect(&mut self) -> anyhow::Result<()> {
+        let stream = self.protocol_handler.start().await?;
+        Ok(())
     }
 }
