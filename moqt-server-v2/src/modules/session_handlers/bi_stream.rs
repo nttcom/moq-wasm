@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use mockall::automock;
 use quinn::{self, RecvStream};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::Arc;
 use tokio::task;
 
 #[automock]
@@ -23,6 +23,7 @@ pub(crate) struct QuicBiStream {
     pub(crate) stream_id: u64,
     pub(crate) recv_stream: Arc<tokio::sync::Mutex<RecvStream>>,
     pub(crate) shared_send_stream: Arc<tokio::sync::Mutex<quinn::SendStream>>,
+    join_handler: Option<tokio::task::JoinHandle<()>>,
 }
 
 #[async_trait]
@@ -41,7 +42,7 @@ impl BiStreamTrait for QuicBiStream {
         let stream_id = self.stream_id;
         let name = format!("Receiver id {} thread", stream_id);
         let _recv_stream = self.recv_stream.clone();
-        task::Builder::new().name(&name).spawn(async move {
+        let join_handle = task::Builder::new().name(&name).spawn(async move {
             loop {
                 let message = match _recv_stream.lock().await.read_to_end(1024).await {
                     Ok(buffer) => {
@@ -57,7 +58,16 @@ impl BiStreamTrait for QuicBiStream {
                     break;
                 }
             }
-        });
+        }).unwrap();
+        self.join_handler = Some(join_handle);
+    }
+}
+
+impl Drop for QuicBiStream {
+    fn drop(&mut self) {
+        if let Some(join_handle) = self.join_handler.take() {
+            join_handle.abort();
+        }
     }
 }
 
@@ -72,7 +82,8 @@ impl QuicBiStream {
             stable_id,
             stream_id,
             recv_stream: Arc::new(tokio::sync::Mutex::new(recv_stream)),
-            shared_send_stream: Arc::new(tokio::sync::Mutex::new(send_stream))
+            shared_send_stream: Arc::new(tokio::sync::Mutex::new(send_stream)),
+            join_handler: None
         }
     }
 }
