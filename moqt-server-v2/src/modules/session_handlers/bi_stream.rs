@@ -65,6 +65,8 @@ impl BiStreamTrait for QuicBiStream {
                 }
             }
         }).unwrap();
+        // use force-unwrap.
+        // program should be crashed as it runs out of the resource.
         self.join_handler = Some(join_handle);
     }
 }
