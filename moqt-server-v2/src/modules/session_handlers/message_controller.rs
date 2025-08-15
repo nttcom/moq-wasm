@@ -1,10 +1,11 @@
-use std::{io::Cursor, result};
+use std::{io::Cursor, result, sync::Arc};
 
 use anyhow::bail;
 use bytes::{Buf, BytesMut};
 
 use crate::modules::session_handlers::{
     bi_stream::BiStreamTrait,
+    message_controller_trait::MessageControllerTrait,
     messages::{
         control_message_type::ControlMessageType,
         control_messages::setup_message_handler::SetupMessageHandler,
@@ -12,16 +13,27 @@ use crate::modules::session_handlers::{
     },
 };
 
-struct MessageController {
-    bi_stream: Box<dyn BiStreamTrait>,
+pub(crate) struct MessageController {
+    bi_stream: std::sync::Mutex<Option<Box<dyn BiStreamTrait>>>,
 }
 
 impl MessageController {
-    pub fn new(bi_stream: Box<dyn BiStreamTrait>) -> Self {
-        Self { bi_stream }
+    pub fn new() -> Self {
+        Self {
+            bi_stream: std::sync::Mutex::new(None),
+        }
     }
 
-    pub async fn handle_recv_message(&self, read_buffer: &mut BytesMut) -> anyhow::Result<()> {
+    pub fn add_stream(&self, stream: Box<dyn BiStreamTrait>) {
+        let mut _self = self.clone();
+        let mut _bi_stream = _self.bi_stream.lock().unwrap();
+        *_bi_stream = Some(stream);
+    }
+
+    pub async fn handle_recv_message(
+        &self,
+        read_buffer: &mut BytesMut,
+    ) -> anyhow::Result<()> {
         tracing::trace!("control_message_handler! {}", read_buffer.len());
 
         let mut read_cur = Cursor::new(&read_buffer[..]);
@@ -97,7 +109,11 @@ impl MessageController {
     }
 
     async fn response(&self, buffer: &BytesMut) -> anyhow::Result<()> {
-        self.bi_stream.send(buffer).await
+        if let Some(bi_stream) = self.bi_stream.lock().unwrap().as_ref() {
+            bi_stream.send(buffer).await
+        } else {
+            bail!("failed to get bi_stream.")
+        }
     }
 }
 
@@ -112,13 +128,14 @@ mod message_controller_test {
         },
     };
     use bytes::BytesMut;
+    use rustls::lock::Mutex;
 
     #[tokio::test]
     async fn handle_recv_message_success() {
         // setup
         let mut mock_bi_stream = MockBiStreamTrait::new();
         mock_bi_stream.expect_send().returning(|_| Ok(()));
-        let server_message_controller = MessageController::new(Box::new(mock_bi_stream));
+        let server_message_controller = MessageController::new();
 
         let client_setup = ClientSetup::new(vec![1], vec![]);
         let mut client_setup_payload = BytesMut::new();
@@ -145,7 +162,7 @@ mod message_controller_test {
         // setup
         let mut mock_bi_stream = MockBiStreamTrait::new();
         mock_bi_stream.expect_send().returning(|_| Ok(()));
-        let server_message_controller = MessageController::new(Box::new(mock_bi_stream));
+        let server_message_controller = MessageController::new();
 
         let mut message = BytesMut::new();
         message.extend_from_slice(&write_variable_integer(
@@ -168,7 +185,7 @@ mod message_controller_test {
         // setup
         let mut mock_bi_stream = MockBiStreamTrait::new();
         mock_bi_stream.expect_send().returning(|_| Ok(()));
-        let server_message_controller = MessageController::new(Box::new(mock_bi_stream));
+        let server_message_controller = MessageController::new();
 
         let client_setup = ClientSetup::new(vec![1], vec![]);
         let mut client_setup_payload = BytesMut::new();
@@ -192,7 +209,7 @@ mod message_controller_test {
         // setup
         let mut mock_bi_stream = MockBiStreamTrait::new();
         mock_bi_stream.expect_send().returning(|_| Ok(()));
-        let server_message_controller = MessageController::new(Box::new(mock_bi_stream));
+        let server_message_controller = MessageController::new();
 
         let invalid_payload = BytesMut::from(&b"invalid payload"[..]);
 

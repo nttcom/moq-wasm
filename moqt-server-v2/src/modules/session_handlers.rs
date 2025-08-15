@@ -6,4 +6,5 @@ pub(crate) mod messages;
 pub(crate) mod protocol_handler_trait;
 pub(crate) mod quic_handler;
 pub(crate) mod session_handler;
+pub(crate) mod stream_repository;
 pub(crate) mod underlay_protocol_handler;

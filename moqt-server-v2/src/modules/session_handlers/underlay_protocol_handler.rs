@@ -9,7 +9,7 @@ impl UnderlayProtocolHandler {
         Self { handler }
     }
 
-    pub async fn start(&self) {
+    pub async fn start(&mut self) {
         self.handler.start().await;
     }
 }
