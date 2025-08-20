@@ -1,13 +1,13 @@
 use crate::modules::session_handlers::{
-    connection_trait::ConnectionTrait, moqt_bi_stream::MOQTBiStream,
+    connection::Connection, moqt_bi_stream::MOQTBiStream,
 };
 
 pub(crate) struct MOQTConnection {
-    connection: Box<dyn ConnectionTrait>,
+    connection: Box<dyn Connection>,
 }
 
 impl MOQTConnection {
-    pub(crate) fn new(connection: Box<dyn ConnectionTrait>) -> Self {
+    pub(crate) fn new(connection: Box<dyn Connection>) -> Self {
         Self { connection }
     }
 

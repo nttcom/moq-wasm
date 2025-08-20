@@ -10,7 +10,7 @@ use rustls::{
 use tokio::sync::Mutex;
 
 use crate::modules::session_handlers::{
-    connection_creator::ConnectionCreator, connection_trait::ConnectionTrait,
+    connection_creator::ConnectionCreator, connection::Connection,
     quic_connection::QuicConnection,
 };
 
@@ -79,7 +79,7 @@ impl QuicConnectionCreator {
 
 #[async_trait]
 impl ConnectionCreator for QuicConnectionCreator {
-    async fn accept_new_connection(&mut self) -> anyhow::Result<Box<dyn ConnectionTrait>> {
+    async fn accept_new_connection(&mut self) -> anyhow::Result<Box<dyn Connection>> {
         let incoming = self.endpoint.accept().await.expect("failed to accept");
         let connection = incoming.await.expect("failed to create connection");
 
