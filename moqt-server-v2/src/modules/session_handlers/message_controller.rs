@@ -9,10 +9,15 @@ use crate::modules::session_handlers::messages::{
     message_process_result::MessageProcessResult, variable_integer::read_variable_integer,
 };
 
-pub(crate) struct MessageJoinHandleManager;
+pub(crate) struct MessageController;
 
-impl MessageJoinHandleManager {
-    pub async fn handle(&self, mut read_buffer: BytesMut) -> anyhow::Result<MessageProcessResult> {
+impl MessageController {
+
+    pub(crate) fn new() -> Self {
+        Self
+    }
+
+    pub fn handle(&self, mut read_buffer: BytesMut) -> anyhow::Result<MessageProcessResult> {
         let mut read_cursor = Cursor::new(&read_buffer[..]);
         tracing::debug!("read_cur! {:?}", read_cursor);
         let message_type = self.read_message_type(&mut read_cursor)?;

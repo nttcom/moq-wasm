@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 #[automock]
 #[async_trait]
-pub(crate) trait BiStreamTrait: Send + Sync {
+pub(crate) trait BiStreamTrait: Send + Sync + 'static {
     fn get_stream_id(&self) -> u64;
     async fn send(&self, buffer: &BytesMut) -> anyhow::Result<()>;
     async fn receive(&mut self) -> anyhow::Result<BytesMut>;
@@ -16,7 +16,7 @@ pub(crate) trait BiStreamTrait: Send + Sync {
 pub(crate) struct QuicBiStream {
     pub(crate) stable_id: usize,
     stream_id: u64,
-    pub(crate) recv_stream: Arc<tokio::sync::Mutex<RecvStream>>,
+    pub(crate) recv_stream: RecvStream,
     pub(crate) shared_send_stream: Arc<tokio::sync::Mutex<quinn::SendStream>>,
 }
 
@@ -37,7 +37,7 @@ impl BiStreamTrait for QuicBiStream {
     }
 
     async fn receive(&mut self) -> anyhow::Result<BytesMut> {
-        match self.recv_stream.lock().await.read_to_end(1024).await {
+        match self.recv_stream.read_to_end(1024).await {
             Ok(data) => {
                 let mut bytes = BytesMut::with_capacity(1024);
                 bytes.extend_from_slice(&data);
@@ -60,7 +60,7 @@ impl QuicBiStream {
         Self {
             stable_id,
             stream_id,
-            recv_stream: Arc::new(tokio::sync::Mutex::new(recv_stream)),
+            recv_stream,
             shared_send_stream: Arc::new(tokio::sync::Mutex::new(send_stream))
         }
     }
