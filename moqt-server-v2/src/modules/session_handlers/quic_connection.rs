@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::modules::session_handlers::{
-    connection::Connection, moqt_bi_stream::MOQTBiStream, quic_bi_stream::QuicBiStream,
+    moqt_bi_stream::MOQTBiStream, moqt_connection::MOQTConnection, quic_bi_stream::QuicBiStream,
 };
 
 pub(crate) struct QuicConnection {
@@ -15,7 +15,7 @@ impl QuicConnection {
 }
 
 #[async_trait]
-impl Connection for QuicConnection {
+impl MOQTConnection for QuicConnection {
     async fn accept_bi(&self) -> anyhow::Result<Box<dyn MOQTBiStream>> {
         let (sender, receiver) = self.connection.accept_bi().await?;
         let stream = QuicBiStream::new(

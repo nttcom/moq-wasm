@@ -1,17 +1,8 @@
-use crate::modules::session_handlers::{
-    connection::Connection, moqt_bi_stream::MOQTBiStream,
-};
+use async_trait::async_trait;
 
-pub(crate) struct MOQTConnection {
-    connection: Box<dyn Connection>,
-}
+use crate::modules::session_handlers::moqt_bi_stream::MOQTBiStream;
 
-impl MOQTConnection {
-    pub(crate) fn new(connection: Box<dyn Connection>) -> Self {
-        Self { connection }
-    }
-
-    pub(crate) async fn accept_bi(&self) -> anyhow::Result<Box<dyn MOQTBiStream>> {
-        self.connection.accept_bi().await
-    }
+#[async_trait]
+pub(crate) trait MOQTConnection {
+    async fn accept_bi(&self) -> anyhow::Result<Box<dyn MOQTBiStream>>;
 }

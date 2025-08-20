@@ -1,5 +1,5 @@
-pub(crate) mod connection_creator;
-pub(crate) mod connection;
+pub(crate) mod moqt_connection_creator;
+pub(crate) mod moqt_connection;
 pub(crate) mod constants;
 pub(crate) mod message_controller;
 pub(crate) mod message_controller_trait;

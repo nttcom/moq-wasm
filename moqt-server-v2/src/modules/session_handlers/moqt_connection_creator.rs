@@ -1,15 +1,8 @@
-use crate::modules::session_handlers::connection_creator::ConnectionCreator;
+use async_trait::async_trait;
 
-pub(crate) struct MOQTConnectionCreator {
-    handler: Box<dyn ConnectionCreator>,
-}
+use crate::modules::session_handlers::moqt_connection::MOQTConnection;
 
-impl MOQTConnectionCreator {
-    pub fn new(handler: Box<dyn ConnectionCreator>) -> Self {
-        Self { handler }
-    }
-
-    pub async fn start(&mut self) {
-        self.handler.start().await;
-    }
+#[async_trait]
+pub(crate) trait MOQTConnectionCreator: Send + Sync {
+    async fn accept_new_connection(&mut self) -> anyhow::Result<Box<dyn MOQTConnection>>;
 }
