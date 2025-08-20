@@ -1,11 +1,10 @@
-use std::{io::Cursor, result, sync::Arc};
+use std::{collections::HashMap, io::Cursor, result, sync::Arc};
 
 use anyhow::bail;
 use bytes::{Buf, BytesMut};
 
 use crate::modules::session_handlers::{
     bi_stream::BiStreamTrait,
-    message_controller_trait::MessageControllerTrait,
     messages::{
         control_message_type::ControlMessageType,
         control_messages::setup_message_handler::SetupMessageHandler,
@@ -14,32 +13,38 @@ use crate::modules::session_handlers::{
 };
 
 pub(crate) struct MessageController {
-    bi_stream: std::sync::Mutex<Option<Box<dyn BiStreamTrait>>>,
+    join_handlers: std::sync::Mutex<HashMap<u64, tokio::task::JoinHandle<()>>>,
+}
+
+impl Drop for MessageController {
+    fn drop(&mut self) {
+        self.join_handlers
+            .lock()
+            .unwrap()
+            .iter()
+            .for_each(|(_, j)| j.abort());
+    }
 }
 
 impl MessageController {
-    pub fn new() -> Self {
-        Self {
-            bi_stream: std::sync::Mutex::new(None),
-        }
-    }
-
-    pub fn add_stream(&self, stream: Box<dyn BiStreamTrait>) {
-        let mut _self = self.clone();
-        let mut _bi_stream = _self.bi_stream.lock().unwrap();
-        *_bi_stream = Some(stream);
+    pub fn new() -> Arc<Self> {
+        let _self = Self {
+            join_handlers: std::sync::Mutex::new(HashMap::new()),
+        };
+        Arc::new(_self)
     }
 
     pub async fn handle_recv_message(
-        &self,
-        read_buffer: &mut BytesMut,
+        self: Arc<Self>,
+        stream: &Box<dyn BiStreamTrait>,
+        mut read_buffer: BytesMut,
     ) -> anyhow::Result<()> {
         tracing::trace!("control_message_handler! {}", read_buffer.len());
 
         let mut read_cur = Cursor::new(&read_buffer[..]);
         tracing::debug!("read_cur! {:?}", read_cur);
 
-        let message_type = match self.read_message_type(&mut read_cur) {
+        let message_type = match self.clone().read_message_type(&mut read_cur) {
             Ok(v) => v,
             Err(err) => {
                 read_buffer.advance(read_cur.position() as usize);
@@ -59,12 +64,12 @@ impl MessageController {
         read_buffer.advance(read_cur.position() as usize);
         let mut payload_buf = read_buffer.split_to(payload_length as usize);
 
-        self.handle_control_message(message_type, &mut payload_buf)
+        self.handle_control_message(stream, message_type, &mut payload_buf)
             .await
     }
 
     fn read_message_type(
-        &self,
+        self: Arc<Self>,
         read_cur: &mut std::io::Cursor<&[u8]>,
     ) -> anyhow::Result<ControlMessageType> {
         let type_value = match read_variable_integer(read_cur) {
@@ -85,7 +90,8 @@ impl MessageController {
     }
 
     async fn handle_control_message(
-        &self,
+        self: Arc<Self>,
+        stream: &Box<dyn BiStreamTrait>,
         message_type: ControlMessageType,
         payload_buffer: &mut BytesMut,
     ) -> anyhow::Result<()> {
@@ -99,7 +105,7 @@ impl MessageController {
             others => panic!("{}", format!("unsupported on the server. {:?}", others)),
         };
         match message {
-            MessageProcessResult::Success(buffer) => self.response(&buffer).await,
+            MessageProcessResult::Success(buffer) => self.response(stream, &buffer).await,
             MessageProcessResult::SuccessWithoutResponse => Ok(()),
             MessageProcessResult::Failure(code, message) => {
                 bail!(format!("failed... code: {:?}, message: {}", code, message))
@@ -108,12 +114,41 @@ impl MessageController {
         }
     }
 
-    async fn response(&self, buffer: &BytesMut) -> anyhow::Result<()> {
-        if let Some(bi_stream) = self.bi_stream.lock().unwrap().as_ref() {
-            bi_stream.send(buffer).await
-        } else {
-            bail!("failed to get bi_stream.")
-        }
+    async fn response(self: Arc<Self>, stream: &Box<dyn BiStreamTrait>, buffer: &BytesMut) -> anyhow::Result<()> {
+        let result = stream.send(buffer).await;
+        Ok(())
+    }
+
+    fn start_receiver(self: Arc<Self>, stream: Box<dyn BiStreamTrait>) {
+        let stream_id = stream.get_stream_id();
+        let join_handle = self.clone().create_join_handle(stream);
+        self.join_handlers
+            .lock()
+            .unwrap()
+            .insert(stream_id, join_handle);
+    }
+
+    fn create_join_handle(
+        self: Arc<Self>,
+        mut stream: Box<dyn BiStreamTrait>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::task::Builder::new()
+            .name("Messsage Receiver")
+            .spawn(async move {
+                loop {
+                    let _self = self.clone();
+                    let buffer = stream.receive().await;
+                    if let Err(e) = buffer {
+                        tracing::error!("failed to receive message: {}", e.to_string());
+                        break;
+                    }
+                    match _self.handle_recv_message(&stream, buffer.unwrap()).await {
+                        Ok(_) => tracing::info!("Handling received message has succeeded."),
+                        Err(_) => todo!(),
+                    }
+                }
+            })
+            .unwrap()
     }
 }
 
@@ -128,7 +163,6 @@ mod message_controller_test {
         },
     };
     use bytes::BytesMut;
-    use rustls::lock::Mutex;
 
     #[tokio::test]
     async fn handle_recv_message_success() {
@@ -160,7 +194,7 @@ mod message_controller_test {
     #[tokio::test]
     async fn handle_recv_message_payload_length_is_0() {
         // setup
-        let mut mock_bi_stream = MockBiStreamTrait::new();
+        let mut mock_bi_stream = Box::new(MockBiStreamTrait::new());
         mock_bi_stream.expect_send().returning(|_| Ok(()));
         let server_message_controller = MessageController::new();
 

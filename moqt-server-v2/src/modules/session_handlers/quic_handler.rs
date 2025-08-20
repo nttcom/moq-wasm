@@ -1,4 +1,3 @@
-use anyhow::Ok;
 use async_trait::async_trait;
 use std::{net::SocketAddr, sync::Arc};
 
@@ -11,12 +10,13 @@ use tokio::{sync::Mutex, task};
 
 use crate::modules::session_handlers::{
     bi_stream::{BiStreamTrait, QuicBiStream},
-    protocol_handler_trait::ProtocolHandlerTrait,
+    protocol_handler_trait::{ConnectionEvent, ProtocolHandlerTrait},
 };
 
 pub(crate) struct QuicHandler {
     endpoint: quinn::Endpoint,
     connection: Option<Arc<Mutex<quinn::Connection>>>,
+    join_handler: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl QuicHandler {
@@ -73,7 +73,40 @@ impl QuicHandler {
         Ok(QuicHandler {
             endpoint,
             connection: None,
+            join_handler: None,
         })
+    }
+
+    async fn dispatch_event(
+        event_sender: &tokio::sync::mpsc::Sender<ConnectionEvent>,
+        connection_event: ConnectionEvent,
+    ) {
+        let result = event_sender.send(connection_event).await;
+        if result.is_err() {
+            tracing::warn!("Receiver has already been dropped.")
+        }
+    }
+
+    async fn dispatch_error(
+        event_sender: &tokio::sync::mpsc::Sender<ConnectionEvent>,
+        message: &str,
+    ) {
+        let result = event_sender
+            .send(ConnectionEvent::OnError {
+                message: message.to_string(),
+            })
+            .await;
+        if result.is_err() {
+            tracing::warn!("Receiver has already been dropped.")
+        }
+    }
+}
+
+impl Drop for QuicHandler {
+    fn drop(&mut self) {
+        if let Some(join_handler) = self.join_handler.take() {
+            join_handler.abort();
+        }
     }
 }
 
@@ -90,25 +123,39 @@ impl ProtocolHandlerTrait for QuicHandler {
             connection.stable_id(),
             control_recv_stream.id().into(),
             control_recv_stream,
-            Arc::new(Mutex::new(control_send_stream)),
+            control_send_stream,
         );
         self.connection = Some(Arc::new(Mutex::new(connection)));
         Ok(Arc::new(Mutex::new(bi_stream)))
     }
 
-    fn start_listen(&self) -> bool {
+    fn start_listen(&mut self, event_sender: tokio::sync::mpsc::Sender<ConnectionEvent>) -> bool {
         let conn = match &self.connection {
             Some(conn) => conn.clone(),
             None => return false,
         };
-        task::Builder::new()
+        let join_handler = task::Builder::new()
             .name("Listener Thread")
             .spawn(async move {
                 loop {
                     let _conn = conn.lock().await;
                     tokio::select! {
                         stream = _conn.accept_bi() => {
-                            // create send stream and notify
+                            match stream {
+                                Ok((send_stream, recv_stream)) => {
+                                    let bi_stream = QuicBiStream::new(
+                                        _conn.stable_id(),
+                                        recv_stream.id().into(),
+                                        recv_stream,
+                                        send_stream
+                                    );
+                                    let event = ConnectionEvent::OnControlStreamAdded { stream: Box::new(bi_stream) };
+                                    Self::dispatch_event(&event_sender, event).await;
+                                },
+                                Err(e) => {
+                                    Self::dispatch_error(&event_sender, e.to_string().as_str()).await;
+                                }
+                            }
                         }
                         stream = _conn.accept_uni() => {
 
@@ -118,7 +165,9 @@ impl ProtocolHandlerTrait for QuicHandler {
                         }
                     }
                 }
-            });
+            })
+            .unwrap();
+        self.join_handler = Some(join_handler);
         true
     }
 
