@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::modules::session_handlers::{
-    quic_handler::QuicHandler, underlay_protocol_handler::UnderlayProtocolHandler,
+    quic_handler::QuicConnectionCreator, underlay_protocol_handler::MOQTConnectionCreator,
 };
 use anyhow::Ok;
 use tokio::sync::Mutex;
@@ -44,19 +44,19 @@ pub trait MOQTClientListener {
 }
 
 pub struct MOQTClient {
-    underlay_handler: Arc<Mutex<UnderlayProtocolHandler>>,
+    underlay_handler: Arc<Mutex<MOQTConnectionCreator>>,
 }
 
 impl MOQTClient {
     pub fn new(config: &MOQTConfig) -> anyhow::Result<Self> {
-        let handler = QuicHandler::new(
+        let handler = QuicConnectionCreator::new(
             config.cert_path.clone(),
             config.key_path.clone(),
             config.port,
             config.keep_alive_interval_sec,
         )
         .expect("failed to create MOQT client");
-        let underlay_handler = Arc::new(Mutex::new(UnderlayProtocolHandler::new(Box::new(handler))));
+        let underlay_handler = Arc::new(Mutex::new(MOQTConnectionCreator::new(Box::new(handler))));
 
         Ok(Self { underlay_handler })
     }
@@ -65,11 +65,7 @@ impl MOQTClient {
         self.underlay_handler.lock().await.start();
     }
 
-    pub async fn create_uni_stream(&self) {
+    pub async fn create_uni_stream(&self) {}
 
-    }
-
-    pub async fn create_uni_datagram(&self) {
-
-    }
+    pub async fn create_uni_datagram(&self) {}
 }

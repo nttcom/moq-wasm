@@ -1,17 +1,10 @@
 use anyhow::bail;
 use async_trait::async_trait;
 use bytes::BytesMut;
-use mockall::automock;
 use quinn::{self, RecvStream};
 use std::sync::Arc;
 
-#[automock]
-#[async_trait]
-pub(crate) trait BiStreamTrait: Send + Sync + 'static {
-    fn get_stream_id(&self) -> u64;
-    async fn send(&self, buffer: &BytesMut) -> anyhow::Result<()>;
-    async fn receive(&mut self) -> anyhow::Result<BytesMut>;
-}
+use crate::modules::session_handlers::moqt_bi_stream::MOQTBiStream;
 
 pub(crate) struct QuicBiStream {
     pub(crate) stable_id: usize,
@@ -21,8 +14,7 @@ pub(crate) struct QuicBiStream {
 }
 
 #[async_trait]
-impl BiStreamTrait for QuicBiStream {
-
+impl MOQTBiStream for QuicBiStream {
     fn get_stream_id(&self) -> u64 {
         self.stream_id
     }
@@ -42,7 +34,7 @@ impl BiStreamTrait for QuicBiStream {
                 let mut bytes = BytesMut::with_capacity(1024);
                 bytes.extend_from_slice(&data);
                 Ok(bytes)
-            },
+            }
             Err(e) => {
                 bail!("{}", e)
             }
@@ -61,7 +53,7 @@ impl QuicBiStream {
             stable_id,
             stream_id,
             recv_stream,
-            shared_send_stream: Arc::new(tokio::sync::Mutex::new(send_stream))
+            shared_send_stream: Arc::new(tokio::sync::Mutex::new(send_stream)),
         }
     }
 }
