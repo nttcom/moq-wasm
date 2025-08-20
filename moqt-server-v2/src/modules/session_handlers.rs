@@ -2,6 +2,7 @@ pub(crate) mod bi_stream;
 pub(crate) mod constants;
 pub(crate) mod message_controller;
 pub(crate) mod message_controller_trait;
+pub(crate) mod message_joinhandle_manager;
 pub(crate) mod messages;
 pub(crate) mod protocol_handler_trait;
 pub(crate) mod quic_handler;
