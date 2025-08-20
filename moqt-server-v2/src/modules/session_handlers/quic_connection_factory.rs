@@ -10,15 +10,15 @@ use rustls::{
 use tokio::sync::Mutex;
 
 use crate::modules::session_handlers::{
-    moqt_connection::MOQTConnection, moqt_connection_creator::MOQTConnectionCreator,
+    moqt_connection::MOQTConnection, moqt_connection_factory::MOQTConnectionFactory,
     quic_connection::QuicConnection,
 };
-pub(crate) struct QuicConnectionCreator {
+pub(crate) struct QuicConnectionFactory {
     endpoint: quinn::Endpoint,
     connection: Option<Arc<Mutex<quinn::Connection>>>,
 }
 
-impl QuicConnectionCreator {
+impl QuicConnectionFactory {
     fn config_builder(
         cert_path: String,
         key_path: String,
@@ -69,7 +69,7 @@ impl QuicConnectionCreator {
         let address = SocketAddr::from(([0, 0, 0, 0], port_num));
         let endpoint = quinn::Endpoint::server(server_config, address)?;
         tracing::info!("Server ready! for QUIC");
-        Ok(QuicConnectionCreator {
+        Ok(QuicConnectionFactory {
             endpoint,
             connection: None,
         })
@@ -77,7 +77,7 @@ impl QuicConnectionCreator {
 }
 
 #[async_trait]
-impl MOQTConnectionCreator for QuicConnectionCreator {
+impl MOQTConnectionFactory for QuicConnectionFactory {
     async fn accept_new_connection(&mut self) -> anyhow::Result<Box<dyn MOQTConnection>> {
         let incoming = self.endpoint.accept().await.expect("failed to accept");
         let connection = incoming.await.expect("failed to create connection");
