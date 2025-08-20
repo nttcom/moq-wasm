@@ -1,12 +1,10 @@
 use crate::modules::session_handlers::{
     message_controller_trait::MessageControllerTrait, protocol_handler_trait::ConnectionCreator,
-    stream_repository::StreamRepository,
 };
 
 struct SessionHandler {
     protocol_handler: Box<dyn ConnectionCreator>,
     message_controller: Box<dyn MessageControllerTrait>,
-    stream_repo: Box<StreamRepository>,
 }
 
 impl SessionHandler {
