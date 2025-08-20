@@ -29,7 +29,7 @@ impl MessageJoinHandleManager {
         }
     }
 
-    pub fn start_receive(&self, stream: Box<dyn BiStreamTrait>) {
+    pub fn start_receive<T: BiStreamTrait>(&self, stream: T) {
         let stream_id = stream.get_stream_id();
         let join_handle = self.create_join_handle(stream);
         self.join_handlers
@@ -38,7 +38,7 @@ impl MessageJoinHandleManager {
             .insert(stream_id, join_handle);
     }
 
-    fn create_join_handle(&self, mut stream: Box<dyn BiStreamTrait>) -> tokio::task::JoinHandle<()> {
+    fn create_join_handle<T: BiStreamTrait>(&self, mut stream: T) -> tokio::task::JoinHandle<()> {
         let message_controller = self.message_controller.clone();
         tokio::task::Builder::new()
             .name("Messsage Receiver")
