@@ -1,4 +1,4 @@
-use crate::modules::session_handlers::transport_connection::TransportConnection;
+use crate::modules::transport::transport_connection::TransportConnection;
 use async_trait::async_trait;
 
 #[async_trait]

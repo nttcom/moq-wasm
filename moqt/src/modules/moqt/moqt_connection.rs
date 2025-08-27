@@ -1,6 +1,5 @@
-use crate::modules::session_handlers::{
-    moqt_message_controller::MOQTMessageController, transport_connection::TransportConnection,
-};
+use crate::modules::moqt::moqt_message_controller::MOQTMessageController;
+use crate::modules::transport::transport_connection::TransportConnection;
 
 pub(crate) struct MOQTConnection {
     transport_connection: Box<dyn TransportConnection>,
