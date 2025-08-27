@@ -1,9 +1,9 @@
 use crate::{
-    modules::session_handlers::messages::variable_bytes::read_bytes_from_buffer,
-    modules::session_handlers::messages::variable_integer::{
+    modules::moqt::messages::variable_bytes::read_bytes_from_buffer,
+    modules::moqt::messages::variable_integer::{
         read_variable_integer_from_buffer, write_variable_integer,
     },
-    modules::session_handlers::messages::{
+    modules::moqt::messages::{
         control_messages::{
             group_order::GroupOrder, version_specific_parameters::VersionSpecificParameter,
         },
@@ -164,7 +164,7 @@ impl MOQTPayload for SubscribeOk {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::session_handlers::messages::{
+        use crate::modules::moqt::messages::{
             control_messages::{
                 subscribe_ok::{GroupOrder, SubscribeOk},
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
@@ -337,7 +337,7 @@ mod tests {
     mod failure {
         use bytes::BytesMut;
 
-        use crate::modules::session_handlers::messages::{
+        use crate::modules::moqt::messages::{
             control_messages::subscribe_ok::SubscribeOk, moqt_payload::MOQTPayload,
         };
 
