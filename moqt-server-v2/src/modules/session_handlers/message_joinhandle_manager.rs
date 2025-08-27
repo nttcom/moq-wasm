@@ -1,10 +1,12 @@
-use std::{result, sync::Arc};
+use std::{sync::Arc, time::Duration};
 
+use anyhow::bail;
 use bytes::BytesMut;
+use tokio::time::timeout;
 
 use crate::modules::session_handlers::{
     messages::{
-        control_messages::{client_setup::ClientSetup, setup_parameters::SetupParameter},
+        control_messages::{client_setup::ClientSetup, server_setup::ServerSetup, setup_parameters::SetupParameter},
         moqt_payload::MOQTPayload,
     },
     moqt_bi_stream::MOQTBiStream,
@@ -13,12 +15,12 @@ use crate::modules::session_handlers::{
 #[derive(Clone)]
 enum ReceiveMessage {
     OnMessage(BytesMut),
-    OnError(String),
+    OnError,
 }
 
 pub(crate) struct MessageJoinHandleManager {
     join_handle: tokio::task::JoinHandle<()>,
-    stream: Arc<dyn MOQTBiStream>,
+    stream: Arc<tokio::sync::Mutex<dyn MOQTBiStream>>,
     sender: tokio::sync::broadcast::Sender<ReceiveMessage>,
 }
 
@@ -29,7 +31,7 @@ impl Drop for MessageJoinHandleManager {
 }
 
 impl MessageJoinHandleManager {
-    pub fn new(stream: Arc<dyn MOQTBiStream>) -> Self {
+    pub fn new(stream: Arc<tokio::sync::Mutex<dyn MOQTBiStream>>) -> Self {
         let (sender, _) = tokio::sync::broadcast::channel::<ReceiveMessage>(1024);
         let _sender = sender.clone();
         let join_handle = Self::create_join_handle(stream.clone(), sender.clone());
@@ -41,25 +43,22 @@ impl MessageJoinHandleManager {
     }
 
     fn create_join_handle(
-        stream: Arc<dyn MOQTBiStream>,
+        stream: Arc<tokio::sync::Mutex<dyn MOQTBiStream>>,
         sender: tokio::sync::broadcast::Sender<ReceiveMessage>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Messsage Receiver")
             .spawn(async move {
                 loop {
-                    let buffer = stream.receive().await;
-                    let result = match buffer {
-                        Ok(buffer) => {
-                            let receive_message = ReceiveMessage::OnMessage(buffer);
-                            sender.send(receive_message)
-                        },
+                    let buffer = stream.lock().await.receive().await;
+                    let message = match buffer {
+                        Ok(buffer) => ReceiveMessage::OnMessage(buffer),
                         Err(e) => {
-                            let receive_message = ReceiveMessage::OnError(e.to_string());
-                            sender.send(receive_message)
+                            tracing::error!("failed to receive. {:?}", e.to_string());
+                            ReceiveMessage::OnError
                         },
                     };
-                    match result {
+                    match sender.send(message) {
                         Ok(_) => tracing::info!("send ok"),
                         Err(e) => tracing::error!("failed to send. {:?}", e.to_string()),
                     }
@@ -76,11 +75,27 @@ impl MessageJoinHandleManager {
         let mut bytes = BytesMut::new();
         ClientSetup::new(supported_versions, setup_parameters).packetize(&mut bytes);
         let mut subscriber = self.sender.subscribe();
-        _ = self.stream.send(&bytes).await?;
-        loop {
-            subscriber.recv().await?;
-        }
-        Ok(())
+        _ = self.stream.lock().await.send(&bytes).await?;
+        timeout(Duration::from_secs(20), async {
+            loop {
+                let receive_message = subscriber.recv().await;
+                if let Err(e) = receive_message {
+                    bail!("failed to receive. {:?}", e.to_string());
+                }
+                match receive_message.unwrap() {
+                    ReceiveMessage::OnMessage(mut bytes_mut) => {
+                        match ServerSetup::depacketize(&mut bytes_mut) {
+                            Ok(_) => return Ok(()),
+                            Err(_) => {
+                                tracing::info!("unmatch message.");
+                                continue;
+                            },
+                        };
+                    },
+                    ReceiveMessage::OnError => bail!("failed to receive."),
+                }
+            }
+        }).await?
     }
 
     pub(crate) fn server_setup(&self) {}
