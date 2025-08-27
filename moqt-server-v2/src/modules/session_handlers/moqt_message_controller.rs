@@ -1,77 +1,134 @@
-use std::{io::Cursor, sync::Arc};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use anyhow::bail;
-use bytes::{Buf, BytesMut};
+use bytes::BytesMut;
 
 use crate::modules::session_handlers::{
     constants,
     messages::{
-        control_message_type::ControlMessageType, control_messages::client_setup::ClientSetup, message_process_result::MessageProcessResult, moqt_payload::MOQTPayload, variable_integer::read_variable_integer
+        control_messages::{
+            client_setup::ClientSetup,
+            server_setup::ServerSetup,
+            setup_parameters::{MaxSubscribeID, SetupParameter},
+        },
+        moqt_payload::MOQTPayload,
     },
     moqt_bi_stream::MOQTBiStream,
-    moqt_message_builder::MOQTMessageBuilder,
 };
 
-pub(crate) struct MOQTMessageController;
+#[derive(Clone)]
+enum ReceiveMessage {
+    OnMessage(BytesMut),
+    OnError,
+}
+
+pub(crate) struct MOQTMessageController {
+    join_handle: tokio::task::JoinHandle<()>,
+    stream: Arc<tokio::sync::Mutex<dyn MOQTBiStream>>,
+    sender: tokio::sync::broadcast::Sender<ReceiveMessage>,
+}
+
+impl Drop for MOQTMessageController {
+    fn drop(&mut self) {
+        self.join_handle.abort();
+    }
+}
 
 impl MOQTMessageController {
-    pub(crate) fn new() -> Self {
-        Self
-    }
-
-    pub fn handle(&self, mut read_buffer: BytesMut) -> anyhow::Result<MessageProcessResult> {
-        let mut read_cursor = Cursor::new(&read_buffer[..]);
-        tracing::debug!("read_cur! {:?}", read_cursor);
-        let message_type = self.read_message_type(&mut read_cursor)?;
-        tracing::info!("Received Message Type: {:?}", message_type);
-        let payload_length = read_variable_integer(&mut read_cursor).unwrap();
-        if payload_length == 0 {
-            // The length is insufficient, so do nothing. Do not synchronize with the cursor.
-            tracing::error!("fragmented {}", read_buffer.len());
-            bail!("payload length is 0.")
+    pub fn new(stream: Arc<tokio::sync::Mutex<dyn MOQTBiStream>>) -> Self {
+        let (sender, _) = tokio::sync::broadcast::channel::<ReceiveMessage>(1024);
+        let _sender = sender.clone();
+        let join_handle = Self::create_join_handle(stream.clone(), sender.clone());
+        Self {
+            join_handle,
+            stream,
+            sender,
         }
-
-        read_buffer.advance(read_cursor.position() as usize);
-
-        let mut payload = read_buffer.split_to(payload_length as usize);
-        Ok(self.handle_control_message(message_type, &mut payload))
     }
 
-    fn read_message_type(
-        &self,
-        read_cur: &mut std::io::Cursor<&[u8]>,
-    ) -> anyhow::Result<ControlMessageType> {
-        let type_value = match read_variable_integer(read_cur) {
-            Ok(v) => v as u8,
-            Err(e) => {
-                tracing::error!("message_type is wrong {:?}", e);
-                bail!(e.to_string());
-            }
-        };
-
-        let message_type: ControlMessageType = match ControlMessageType::try_from(type_value) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!("message_type is wrong {:?}", e);
-                bail!(e.to_string());
-            }
-        };
-        Ok(message_type)
+    fn create_join_handle(
+        stream: Arc<tokio::sync::Mutex<dyn MOQTBiStream>>,
+        sender: tokio::sync::broadcast::Sender<ReceiveMessage>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::task::Builder::new()
+            .name("Messsage Receiver")
+            .spawn(async move {
+                loop {
+                    let buffer = stream.lock().await.receive().await;
+                    let message = match buffer {
+                        Ok(buffer) => ReceiveMessage::OnMessage(buffer),
+                        Err(e) => {
+                            tracing::error!("failed to receive. {:?}", e.to_string());
+                            ReceiveMessage::OnError
+                        }
+                    };
+                    match sender.send(message) {
+                        Ok(_) => tracing::info!("send ok"),
+                        Err(e) => tracing::error!("failed to send. {:?}", e.to_string()),
+                    }
+                }
+            })
+            .unwrap()
     }
 
-    fn handle_control_message(
+    pub(crate) async fn client_setup(
         &self,
-        message_type: ControlMessageType,
-        payload_buffer: &mut BytesMut,
-    ) -> anyhow::Result<dyn MOQTPayload> {
-        match message_type {
-            ControlMessageType::ClientSetup => {
-                ClientSetup::depacketize(payload_buffer)
+        supported_versions: Vec<u32>,
+        setup_parameters: Vec<SetupParameter>,
+    ) -> anyhow::Result<()> {
+        let mut bytes = BytesMut::new();
+        ClientSetup::new(supported_versions, setup_parameters).packetize(&mut bytes);
+        _ = self.stream.lock().await.send(&bytes).await?;
+
+        let closure = self.create_closure::<ServerSetup>();
+        self.run_with_timeout(20, closure).await
+    }
+
+    pub(crate) async fn server_setup(&self) -> anyhow::Result<()> {
+        let closure = self.create_closure::<ClientSetup>();
+        self.run_with_timeout(20, closure).await?;
+        let mut bytes = BytesMut::new();
+        let max_id = MaxSubscribeID::new(1000);
+        ServerSetup::new(
+            constants::MOQ_TRANSPORT_VERSION,
+            vec![SetupParameter::MaxSubscribeID(max_id)],
+        )
+        .packetize(&mut bytes);
+        self.stream.lock().await.send(&bytes).await
+    }
+
+    fn create_closure<T: MOQTPayload>(&self) -> impl Future<Output = anyhow::Result<()>> {
+        let mut subscriber = self.sender.subscribe();
+        async move {
+            loop {
+                let receive_message: Result<ReceiveMessage, _> = subscriber.recv().await;
+                if let Err(e) = receive_message {
+                    bail!("failed to receive. {:?}", e.to_string());
+                }
+                match receive_message.unwrap() {
+                    ReceiveMessage::OnMessage(mut bytes_mut) => {
+                        match T::depacketize(&mut bytes_mut) {
+                            Ok(_) => return Ok(()),
+                            Err(_) => {
+                                tracing::info!("unmatch message.");
+                                continue;
+                            }
+                        };
+                    }
+                    ReceiveMessage::OnError => bail!("failed to receive."),
+                }
             }
-            ControlMessageType::ServerSetup => {
-                
-            }
-            others => panic!("{}", format!("unsupported on the server. {:?}", others)),
+        }
+    }
+
+    async fn run_with_timeout<T: Future<Output = anyhow::Result<()>>>(
+        &self,
+        timeout_sec: u64,
+        future: T,
+    ) -> anyhow::Result<()> {
+        match tokio::time::timeout(Duration::from_secs(timeout_sec), future).await {
+            Ok(_) => Ok(()),
+            Err(_) => bail!("timeout"),
         }
     }
 }
