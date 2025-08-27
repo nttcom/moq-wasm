@@ -70,7 +70,7 @@ impl MOQTEndpoint {
             .await
     }
 
-    pub async fn accept_new_setup(&self) -> anyhow::Result<MOQTConnection> {
+    pub async fn accept_new_setup(&mut self) -> anyhow::Result<MOQTConnection> {
         self.connection_creator.accept_new_connection().await
     }
 }

@@ -79,7 +79,7 @@ impl QUICConnectionCreator {
 
 #[async_trait]
 impl TransportConnectionCreator for QUICConnectionCreator {
-    async fn create_new_connection(
+    async fn create_new_transport(
         &self,
         server_name: &str,
         port: u16,
@@ -91,7 +91,7 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         Ok(Box::new(QUICConnection::new(connection)))
     }
 
-    async fn accept_new_connection(&mut self) -> anyhow::Result<Box<dyn TransportConnection>> {
+    async fn accept_new_transport(&mut self) -> anyhow::Result<Box<dyn TransportConnection>> {
         let incoming = self.endpoint.accept().await.expect("failed to accept");
         let connection = incoming.await.expect("failed to create connection");
 

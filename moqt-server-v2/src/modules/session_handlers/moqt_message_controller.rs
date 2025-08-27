@@ -78,7 +78,7 @@ impl MOQTMessageController {
     ) -> anyhow::Result<()> {
         let mut bytes = BytesMut::new();
         ClientSetup::new(supported_versions, setup_parameters).packetize(&mut bytes);
-        _ = self.stream.lock().await.send(&bytes).await?;
+        self.stream.lock().await.send(&bytes).await?;
 
         let closure = self.create_closure::<ServerSetup>();
         self.run_with_timeout(20, closure).await
