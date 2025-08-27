@@ -5,7 +5,6 @@ pub mod client_setup;
 pub mod go_away;
 pub mod group_order;
 pub mod server_setup;
-pub(crate) mod setup_message_handler;
 pub mod setup_parameters;
 pub mod subscribe;
 pub mod subscribe_announces;

@@ -1,29 +1,32 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
 use crate::modules::session_handlers::{
-    moqt_bi_stream::MOQTBiStream, moqt_connection::MOQTConnection, quic_bi_stream::QuicBiStream,
+    moqt_bi_stream::MOQTBiStream, quic_bi_stream::QUICBiStream,
+    transport_connection::TransportConnection,
 };
 
-pub(crate) struct QuicConnection {
+pub(crate) struct QUICConnection {
     connection: quinn::Connection,
 }
 
-impl QuicConnection {
+impl QUICConnection {
     pub(crate) fn new(connection: quinn::Connection) -> Self {
         Self { connection }
     }
 }
 
 #[async_trait]
-impl MOQTConnection for QuicConnection {
-    async fn accept_bi(&self) -> anyhow::Result<Box<dyn MOQTBiStream>> {
+impl TransportConnection for QUICConnection {
+    async fn accept_bi(&self) -> anyhow::Result<Arc<dyn MOQTBiStream>> {
         let (sender, receiver) = self.connection.accept_bi().await?;
-        let stream = QuicBiStream::new(
+        let stream = QUICBiStream::new(
             self.connection.stable_id(),
             receiver.id().into(),
             receiver,
             sender,
         );
-        Ok(Box::new(stream))
+        Ok(Arc::new(stream))
     }
 }

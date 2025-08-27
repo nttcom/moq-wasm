@@ -1,18 +1,20 @@
-use std::io::Cursor;
+use std::{io::Cursor, sync::Arc};
 
 use anyhow::bail;
 use bytes::{Buf, BytesMut};
 
-use crate::modules::session_handlers::messages::{
-    control_message_type::ControlMessageType,
-    control_messages::setup_message_handler::SetupMessageHandler,
-    message_process_result::MessageProcessResult, variable_integer::read_variable_integer,
+use crate::modules::session_handlers::{
+    constants,
+    messages::{
+        control_message_type::ControlMessageType, control_messages::client_setup::ClientSetup, message_process_result::MessageProcessResult, moqt_payload::MOQTPayload, variable_integer::read_variable_integer
+    },
+    moqt_bi_stream::MOQTBiStream,
+    moqt_message_builder::MOQTMessageBuilder,
 };
 
-pub(crate) struct MessageController;
+pub(crate) struct MOQTMessageController;
 
-impl MessageController {
-
+impl MOQTMessageController {
     pub(crate) fn new() -> Self {
         Self
     }
@@ -61,13 +63,13 @@ impl MessageController {
         &self,
         message_type: ControlMessageType,
         payload_buffer: &mut BytesMut,
-    ) -> MessageProcessResult {
+    ) -> anyhow::Result<dyn MOQTPayload> {
         match message_type {
             ControlMessageType::ClientSetup => {
-                SetupMessageHandler::create_server_setup(payload_buffer)
+                ClientSetup::depacketize(payload_buffer)
             }
             ControlMessageType::ServerSetup => {
-                SetupMessageHandler::handle_server_setup(payload_buffer)
+                
             }
             others => panic!("{}", format!("unsupported on the server. {:?}", others)),
         }

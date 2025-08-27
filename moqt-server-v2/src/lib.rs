@@ -1,10 +1,7 @@
-use std::sync::Arc;
-
 use crate::modules::session_handlers::{
-    quic_handler::QuicConnectionCreator, underlay_protocol_handler::MOQTConnectionCreator,
+    moqt_connection::MOQTConnection, moqt_connection_creator::MOQTConnectionCreator,
+    quic_connection_creator::QUICConnectionCreator,
 };
-use anyhow::Ok;
-use tokio::sync::Mutex;
 
 mod modules;
 
@@ -37,35 +34,43 @@ impl MOQTConfig {
     }
 }
 
-pub trait MOQTClientListener {
-    fn on_connection_added();
-    fn on_published();
-    fn on_subscribed();
+pub struct MOQTEndpoint {
+    connection_creator: MOQTConnectionCreator,
 }
 
-pub struct MOQTClient {
-    underlay_handler: Arc<Mutex<MOQTConnectionCreator>>,
-}
-
-impl MOQTClient {
-    pub fn new(config: &MOQTConfig) -> anyhow::Result<Self> {
-        let handler = QuicConnectionCreator::new(
-            config.cert_path.clone(),
-            config.key_path.clone(),
-            config.port,
-            config.keep_alive_interval_sec,
-        )
-        .expect("failed to create MOQT client");
-        let underlay_handler = Arc::new(Mutex::new(MOQTConnectionCreator::new(Box::new(handler))));
-
-        Ok(Self { underlay_handler })
+impl MOQTEndpoint {
+    pub fn create_client(port_num: u16) -> anyhow::Result<Self> {
+        let client = QUICConnectionCreator::client(port_num)?;
+        let creator = MOQTConnectionCreator::new(Box::new(client));
+        Ok(Self {
+            connection_creator: creator,
+        })
     }
 
-    pub async fn connect(&self) {
-        self.underlay_handler.lock().await.start();
+    pub fn create_server(
+        cert_path: String,
+        key_path: String,
+        port_num: u16,
+        keep_alive_sec: u64,
+    ) -> anyhow::Result<Self> {
+        let server = QUICConnectionCreator::server(cert_path, key_path, port_num, keep_alive_sec)?;
+        let creator = MOQTConnectionCreator::new(Box::new(server));
+        Ok(Self {
+            connection_creator: creator,
+        })
     }
 
-    pub async fn create_uni_stream(&self) {}
+    pub async fn client_setup(
+        &self,
+        server_name: &str,
+        port: u16,
+    ) -> anyhow::Result<MOQTConnection> {
+        self.connection_creator
+            .create_new_connection(server_name, port)
+            .await
+    }
 
-    pub async fn create_uni_datagram(&self) {}
+    pub async fn accept_new_setup(&self) -> anyhow::Result<MOQTConnection> {
+        self.connection_creator.accept_new_connection().await
+    }
 }
