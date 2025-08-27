@@ -1,11 +1,11 @@
 use crate::{
-    modules::session_handlers::messages::variable_bytes::{
+    modules::moqt::messages::variable_bytes::{
         read_variable_bytes_from_buffer, write_variable_bytes,
     },
-    modules::session_handlers::messages::variable_integer::{
+    modules::moqt::messages::variable_integer::{
         read_variable_integer_from_buffer, write_variable_integer,
     },
-    modules::session_handlers::messages::{
+    modules::moqt::messages::{
         control_messages::version_specific_parameters::VersionSpecificParameter,
         moqt_payload::MOQTPayload,
     },
@@ -100,7 +100,7 @@ impl MOQTPayload for SubscribeAnnounces {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::session_handlers::messages::{
+        use crate::modules::moqt::messages::{
             control_messages::{
                 subscribe_announces::SubscribeAnnounces,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},

@@ -1,10 +1,10 @@
 use crate::{
-    modules::session_handlers::messages::control_messages::version_specific_parameters::VersionSpecificParameter,
-    modules::session_handlers::messages::moqt_payload::MOQTPayload,
-    modules::session_handlers::messages::variable_bytes::{
+    modules::moqt::messages::control_messages::version_specific_parameters::VersionSpecificParameter,
+    modules::moqt::messages::moqt_payload::MOQTPayload,
+    modules::moqt::messages::variable_bytes::{
         read_variable_bytes_from_buffer, write_variable_bytes,
     },
-    modules::session_handlers::messages::variable_integer::{
+    modules::moqt::messages::variable_integer::{
         read_variable_integer_from_buffer, write_variable_integer,
     },
 };
@@ -90,7 +90,7 @@ mod tests {
     mod success {
 
         mod packetize {
-            use crate::modules::session_handlers::messages::{
+            use crate::modules::moqt::messages::{
                 control_messages::{
                     announce::Announce,
                     version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
@@ -148,7 +148,7 @@ mod tests {
         }
 
         mod depacketize {
-            use crate::modules::session_handlers::messages::{
+            use crate::modules::moqt::messages::{
                 control_messages::{
                     announce::Announce,
                     version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},

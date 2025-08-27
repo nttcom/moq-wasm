@@ -1,9 +1,9 @@
 use crate::{
-    modules::session_handlers::messages::moqt_payload::MOQTPayload,
-    modules::session_handlers::messages::variable_bytes::{
+    modules::moqt::messages::moqt_payload::MOQTPayload,
+    modules::moqt::messages::variable_bytes::{
         bytes_to_integer, read_bytes_from_buffer, write_bytes,
     },
-    modules::session_handlers::messages::variable_integer::{
+    modules::moqt::messages::variable_integer::{
         get_2msb_length_from_first_byte, get_2msb_value, read_variable_integer_from_buffer,
         write_variable_integer,
     },
@@ -177,7 +177,7 @@ impl MaxCacheDuration {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::session_handlers::messages::{
+        use crate::modules::moqt::messages::{
             control_messages::version_specific_parameters::{
                 AuthorizationInfo, DeliveryTimeout, MaxCacheDuration, VersionSpecificParameter,
             },
@@ -304,7 +304,7 @@ mod tests {
     }
 
     mod failure {
-        use crate::modules::session_handlers::messages::{
+        use crate::modules::moqt::messages::{
             control_messages::version_specific_parameters::VersionSpecificParameter,
             moqt_payload::MOQTPayload,
         };

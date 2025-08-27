@@ -1,8 +1,8 @@
 use crate::{
-    modules::session_handlers::messages::variable_integer::{
+    modules::moqt::messages::variable_integer::{
         read_variable_integer_from_buffer, write_variable_integer,
     },
-    modules::session_handlers::messages::{
+    modules::moqt::messages::{
         control_messages::setup_parameters::SetupParameter, moqt_payload::MOQTPayload,
     },
 };
@@ -69,8 +69,8 @@ impl MOQTPayload for ServerSetup {
 mod tests {
     mod success {
         use crate::{
-            modules::session_handlers::constants::MOQ_TRANSPORT_VERSION,
-            modules::session_handlers::messages::{
+            modules::moqt::constants::MOQ_TRANSPORT_VERSION,
+            modules::moqt::messages::{
                 control_messages::{
                     server_setup::ServerSetup,
                     setup_parameters::{MaxSubscribeID, SetupParameter},
