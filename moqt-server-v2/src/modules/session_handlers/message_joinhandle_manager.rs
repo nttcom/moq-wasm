@@ -1,12 +1,16 @@
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use anyhow::bail;
 use bytes::BytesMut;
-use tokio::time::timeout;
 
 use crate::modules::session_handlers::{
+    constants,
     messages::{
-        control_messages::{client_setup::ClientSetup, server_setup::ServerSetup, setup_parameters::SetupParameter},
+        control_messages::{
+            client_setup::ClientSetup,
+            server_setup::ServerSetup,
+            setup_parameters::{MaxSubscribeID, SetupParameter},
+        },
         moqt_payload::MOQTPayload,
     },
     moqt_bi_stream::MOQTBiStream,
@@ -56,7 +60,7 @@ impl MessageJoinHandleManager {
                         Err(e) => {
                             tracing::error!("failed to receive. {:?}", e.to_string());
                             ReceiveMessage::OnError
-                        },
+                        }
                     };
                     match sender.send(message) {
                         Ok(_) => tracing::info!("send ok"),
@@ -74,29 +78,57 @@ impl MessageJoinHandleManager {
     ) -> anyhow::Result<()> {
         let mut bytes = BytesMut::new();
         ClientSetup::new(supported_versions, setup_parameters).packetize(&mut bytes);
-        let mut subscriber = self.sender.subscribe();
         _ = self.stream.lock().await.send(&bytes).await?;
-        timeout(Duration::from_secs(20), async {
+
+        let closure = self.create_closure::<ServerSetup>();
+        self.run_with_timeout(20, closure).await
+    }
+
+    pub(crate) async fn server_setup(&self) -> anyhow::Result<()> {
+        let closure = self.create_closure::<ClientSetup>();
+        self.run_with_timeout(20, closure).await?;
+        let mut bytes = BytesMut::new();
+        let max_id = MaxSubscribeID::new(1000);
+        ServerSetup::new(
+            constants::MOQ_TRANSPORT_VERSION,
+            vec![SetupParameter::MaxSubscribeID(max_id)],
+        )
+        .packetize(&mut bytes);
+        self.stream.lock().await.send(&bytes).await
+    }
+
+    fn create_closure<T: MOQTPayload>(&self) -> impl Future<Output = anyhow::Result<()>> {
+        let mut subscriber = self.sender.subscribe();
+        async move {
             loop {
-                let receive_message = subscriber.recv().await;
+                let receive_message: Result<ReceiveMessage, _> = subscriber.recv().await;
                 if let Err(e) = receive_message {
                     bail!("failed to receive. {:?}", e.to_string());
                 }
                 match receive_message.unwrap() {
                     ReceiveMessage::OnMessage(mut bytes_mut) => {
-                        match ServerSetup::depacketize(&mut bytes_mut) {
+                        match T::depacketize(&mut bytes_mut) {
                             Ok(_) => return Ok(()),
                             Err(_) => {
                                 tracing::info!("unmatch message.");
                                 continue;
-                            },
+                            }
                         };
-                    },
+                    }
                     ReceiveMessage::OnError => bail!("failed to receive."),
                 }
             }
-        }).await?
+        }
     }
 
-    pub(crate) fn server_setup(&self) {}
+    async fn run_with_timeout<T: Future<Output = anyhow::Result<()>>>(
+        &self,
+        timeout_sec: u64,
+        future: T,
+    ) -> anyhow::Result<()> {
+        match tokio::time::timeout(Duration::from_secs(timeout_sec), future).await {
+            Ok(_) => Ok(()),
+            Err(_) => bail!("timeout"),
+        }
+    }
 }
