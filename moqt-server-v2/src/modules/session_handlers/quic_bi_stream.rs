@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::modules::session_handlers::moqt_bi_stream::MOQTBiStream;
 
-pub(crate) struct QuicBiStream {
+pub(crate) struct QUICBiStream {
     pub(crate) stable_id: usize,
     stream_id: u64,
     pub(crate) recv_stream: RecvStream,
@@ -14,7 +14,7 @@ pub(crate) struct QuicBiStream {
 }
 
 #[async_trait]
-impl MOQTBiStream for QuicBiStream {
+impl MOQTBiStream for QUICBiStream {
     fn get_stream_id(&self) -> u64 {
         self.stream_id
     }
@@ -42,7 +42,7 @@ impl MOQTBiStream for QuicBiStream {
     }
 }
 
-impl QuicBiStream {
+impl QUICBiStream {
     pub(super) fn new(
         stable_id: usize,
         stream_id: u64,

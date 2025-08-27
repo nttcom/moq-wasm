@@ -7,18 +7,16 @@ use rustls::{
     self,
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
-use tokio::sync::Mutex;
 
 use crate::modules::session_handlers::{
-    moqt_connection::MOQTConnection, moqt_connection_factory::MOQTConnectionFactory,
-    quic_connection::QuicConnection,
+    quic_connection::QUICConnection, transport_connection::TransportConnection,
+    transport_connection_creator::TransportConnectionCreator,
 };
-pub(crate) struct QuicConnectionFactory {
+pub(crate) struct QUICConnectionCreator {
     endpoint: quinn::Endpoint,
-    connection: Option<Arc<Mutex<quinn::Connection>>>,
 }
 
-impl QuicConnectionFactory {
+impl QUICConnectionCreator {
     fn config_builder(
         cert_path: String,
         key_path: String,
@@ -58,30 +56,45 @@ impl QuicConnectionFactory {
         Ok(server_config)
     }
 
-    pub fn new(
+    pub fn client(port_num: u16) -> anyhow::Result<Self> {
+        let address = SocketAddr::from(([0, 0, 0, 0], port_num));
+        let endpoint = quinn::Endpoint::client(address)?;
+        tracing::info!("Client ready! for QUIC");
+        Ok(QUICConnectionCreator { endpoint })
+    }
+
+    pub fn server(
         cert_path: String,
         key_path: String,
         port_num: u16,
         keep_alive_sec: u64,
     ) -> anyhow::Result<Self> {
-        let server_config = Self::config_builder(cert_path, key_path, port_num, keep_alive_sec)
-            .expect("failed to make configrattion");
+        let server_config = Self::config_builder(cert_path, key_path, port_num, keep_alive_sec)?;
         let address = SocketAddr::from(([0, 0, 0, 0], port_num));
         let endpoint = quinn::Endpoint::server(server_config, address)?;
         tracing::info!("Server ready! for QUIC");
-        Ok(QuicConnectionFactory {
-            endpoint,
-            connection: None,
-        })
+        Ok(QUICConnectionCreator { endpoint })
     }
 }
 
 #[async_trait]
-impl MOQTConnectionFactory for QuicConnectionFactory {
-    async fn accept_new_connection(&mut self) -> anyhow::Result<Box<dyn MOQTConnection>> {
+impl TransportConnectionCreator for QUICConnectionCreator {
+    async fn create_new_connection(
+        &self,
+        server_name: &str,
+        port: u16,
+    ) -> anyhow::Result<Box<dyn TransportConnection>> {
+        let address = SocketAddr::from(([0, 0, 0, 0], port));
+        let connecting = self.endpoint.connect(address, server_name)?;
+        let connection = connecting.await?;
+
+        Ok(Box::new(QUICConnection::new(connection)))
+    }
+
+    async fn accept_new_connection(&mut self) -> anyhow::Result<Box<dyn TransportConnection>> {
         let incoming = self.endpoint.accept().await.expect("failed to accept");
         let connection = incoming.await.expect("failed to create connection");
 
-        Ok(Box::new(QuicConnection::new(connection)))
+        Ok(Box::new(QUICConnection::new(connection)))
     }
 }

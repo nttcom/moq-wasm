@@ -1,79 +1,87 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{result, sync::Arc};
+
+use bytes::BytesMut;
 
 use crate::modules::session_handlers::{
+    messages::{
+        control_messages::{client_setup::ClientSetup, setup_parameters::SetupParameter},
+        moqt_payload::MOQTPayload,
+    },
     moqt_bi_stream::MOQTBiStream,
-    message_controller::MessageController,
-    messages::message_process_result::MessageProcessResult::*
 };
 
+#[derive(Clone)]
+enum ReceiveMessage {
+    OnMessage(BytesMut),
+    OnError(String),
+}
+
 pub(crate) struct MessageJoinHandleManager {
-    message_controller: Arc<MessageController>,
-    join_handlers: std::sync::Mutex<HashMap<u64, tokio::task::JoinHandle<()>>>,
+    join_handle: tokio::task::JoinHandle<()>,
+    stream: Arc<dyn MOQTBiStream>,
+    sender: tokio::sync::broadcast::Sender<ReceiveMessage>,
 }
 
 impl Drop for MessageJoinHandleManager {
     fn drop(&mut self) {
-        self.join_handlers
-            .lock()
-            .unwrap()
-            .iter()
-            .for_each(|(_, j)| j.abort());
+        self.join_handle.abort();
     }
 }
 
 impl MessageJoinHandleManager {
-    pub fn new(message_controller: MessageController) -> Self {
+    pub fn new(stream: Arc<dyn MOQTBiStream>) -> Self {
+        let (sender, _) = tokio::sync::broadcast::channel::<ReceiveMessage>(1024);
+        let _sender = sender.clone();
+        let join_handle = Self::create_join_handle(stream.clone(), sender.clone());
         Self {
-            message_controller: Arc::new(message_controller),
-            join_handlers: std::sync::Mutex::new(HashMap::new()),
+            join_handle,
+            stream,
+            sender,
         }
     }
 
-    pub fn start_receive(&self, stream: Box<dyn MOQTBiStream>) {
-        let stream_id = stream.get_stream_id();
-        let join_handle = self.create_join_handle(stream);
-        self.join_handlers
-            .lock()
-            .unwrap()
-            .insert(stream_id, join_handle);
-    }
-
-    fn create_join_handle(&self, mut stream: Box<dyn MOQTBiStream>) -> tokio::task::JoinHandle<()> {
-        let message_controller = self.message_controller.clone();
+    fn create_join_handle(
+        stream: Arc<dyn MOQTBiStream>,
+        sender: tokio::sync::broadcast::Sender<ReceiveMessage>,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Messsage Receiver")
             .spawn(async move {
                 loop {
                     let buffer = stream.receive().await;
-                    if let Err(e) = buffer {
-                        tracing::error!("failed to receive message: {}", e.to_string());
-                        break;
-                    }
-                    let message = message_controller.handle(buffer.unwrap());
-                    if let Err(e) = message {
-                        tracing::error!("failed to handle message: {}", e.to_string());
-                        break;
-                    }
-                    match message.unwrap() {
-                        Success(bytes_mut) => {
-                            if let Err(e) = stream.send(&bytes_mut).await {
-                                tracing::error!("sending Message has failed: {}", e.to_string());
-                                // dispatch event
-                            } else {
-                                tracing::info!("sending Message has succeeded.");
-                            }
+                    let result = match buffer {
+                        Ok(buffer) => {
+                            let receive_message = ReceiveMessage::OnMessage(buffer);
+                            sender.send(receive_message)
                         },
-                        SuccessWithoutResponse => continue,
-                        Failure(termination_error_code, text) => {
-                            tracing::error!("failed... code: {:?}, message: {}", termination_error_code, text);
-                            break;
-                        },
-                        Fragment => {
-                            tracing::warn!("fragment");
+                        Err(e) => {
+                            let receive_message = ReceiveMessage::OnError(e.to_string());
+                            sender.send(receive_message)
                         },
                     };
+                    match result {
+                        Ok(_) => tracing::info!("send ok"),
+                        Err(e) => tracing::error!("failed to send. {:?}", e.to_string()),
+                    }
                 }
             })
             .unwrap()
     }
+
+    pub(crate) async fn client_setup(
+        &self,
+        supported_versions: Vec<u32>,
+        setup_parameters: Vec<SetupParameter>,
+    ) -> anyhow::Result<()> {
+        let mut bytes = BytesMut::new();
+        ClientSetup::new(supported_versions, setup_parameters).packetize(&mut bytes);
+        let mut subscriber = self.sender.subscribe();
+        _ = self.stream.send(&bytes).await?;
+        loop {
+            subscriber.recv().await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn server_setup(&self) {}
 }
