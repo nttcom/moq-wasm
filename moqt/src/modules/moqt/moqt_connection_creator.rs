@@ -1,10 +1,10 @@
-use crate::modules::session_handlers::constants;
-use crate::modules::session_handlers::messages::control_messages::setup_parameters::{
+use crate::modules::moqt::constants;
+use crate::modules::moqt::messages::control_messages::setup_parameters::{
     MaxSubscribeID, SetupParameter,
 };
-use crate::modules::session_handlers::moqt_connection::MOQTConnection;
-use crate::modules::session_handlers::moqt_message_controller::MOQTMessageController;
-use crate::modules::session_handlers::transport_connection_creator::TransportConnectionCreator;
+use crate::modules::moqt::moqt_connection::MOQTConnection;
+use crate::modules::moqt::moqt_message_controller::MOQTMessageController;
+use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 pub(crate) struct MOQTConnectionCreator {
     transport_creator: Box<dyn TransportConnectionCreator>,

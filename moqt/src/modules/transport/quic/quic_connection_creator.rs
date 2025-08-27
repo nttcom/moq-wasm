@@ -8,10 +8,11 @@ use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
 
-use crate::modules::session_handlers::{
-    quic_connection::QUICConnection, transport_connection::TransportConnection,
-    transport_connection_creator::TransportConnectionCreator,
+use crate::modules::transport::transport_connection::TransportConnection;
+use crate::modules::transport::{
+    quic::quic_connection::QUICConnection, transport_connection_creator::TransportConnectionCreator,
 };
+
 pub(crate) struct QUICConnectionCreator {
     endpoint: quinn::Endpoint,
 }

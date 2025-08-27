@@ -3,7 +3,7 @@ use std::{future::Future, sync::Arc, time::Duration};
 use anyhow::bail;
 use bytes::BytesMut;
 
-use crate::modules::session_handlers::{
+use crate::modules::moqt::{
     constants,
     messages::{
         control_messages::{

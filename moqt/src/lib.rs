@@ -1,7 +1,8 @@
-use crate::modules::session_handlers::{
+use crate::modules::moqt::{
     moqt_connection::MOQTConnection, moqt_connection_creator::MOQTConnectionCreator,
-    quic_connection_creator::QUICConnectionCreator,
 };
+
+use crate::modules::transport::quic::quic_connection_creator::QUICConnectionCreator;
 
 mod modules;
 

@@ -4,7 +4,7 @@ use bytes::BytesMut;
 use quinn::{self, RecvStream};
 use std::sync::Arc;
 
-use crate::modules::session_handlers::moqt_bi_stream::MOQTBiStream;
+use crate::modules::moqt::moqt_bi_stream::MOQTBiStream;
 
 pub(crate) struct QUICBiStream {
     pub(crate) stable_id: usize,

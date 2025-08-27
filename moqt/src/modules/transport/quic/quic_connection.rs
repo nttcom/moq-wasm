@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::modules::session_handlers::{
-    moqt_bi_stream::MOQTBiStream, quic_bi_stream::QUICBiStream,
-    transport_connection::TransportConnection,
-};
+use crate::modules::moqt::moqt_bi_stream::MOQTBiStream;
+use crate::modules::transport::quic::quic_bi_stream::QUICBiStream;
+use crate::modules::transport::transport_connection::TransportConnection;
 
 pub(crate) struct QUICConnection {
     connection: quinn::Connection,
