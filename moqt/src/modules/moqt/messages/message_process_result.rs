@@ -1,6 +1,6 @@
 use bytes::BytesMut;
 
-use crate::modules::session_handlers::constants::TerminationErrorCode;
+use crate::modules::moqt::constants::TerminationErrorCode;
 
 #[derive(Debug, PartialEq)]
 pub enum MessageProcessResult {

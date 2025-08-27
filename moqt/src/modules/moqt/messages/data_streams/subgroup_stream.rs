@@ -1,8 +1,8 @@
 use super::{extension_header::ExtensionHeader, object_status::ObjectStatus};
 use crate::{
-    modules::session_handlers::messages::data_streams::DataStreams,
-    modules::session_handlers::messages::variable_bytes::read_bytes,
-    modules::session_handlers::messages::variable_integer::{
+    modules::moqt::messages::data_streams::DataStreams,
+    modules::moqt::messages::variable_bytes::read_bytes,
+    modules::moqt::messages::variable_integer::{
         read_variable_integer, write_variable_integer,
     },
 };
@@ -233,10 +233,10 @@ impl DataStreams for Object {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::session_handlers::messages::data_streams::extension_header::{
+        use crate::modules::moqt::messages::data_streams::extension_header::{
             ExtensionHeader, ExtensionHeaderValue, Value, ValueWithLength,
         };
-        use crate::modules::session_handlers::messages::data_streams::{
+        use crate::modules::moqt::messages::data_streams::{
             DataStreams, object_status::ObjectStatus, subgroup_stream,
         };
         use bytes::BytesMut;
@@ -757,7 +757,7 @@ mod tests {
         use bytes::BytesMut;
         use std::io::Cursor;
 
-        use crate::modules::session_handlers::messages::data_streams::{
+        use crate::modules::moqt::messages::data_streams::{
             DataStreams, object_status::ObjectStatus, subgroup_stream,
         };
 

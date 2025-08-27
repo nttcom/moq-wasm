@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use bytes::{Buf, BytesMut};
 use std::io::Cursor;
 
-use crate::modules::session_handlers::messages::variable_integer::{
+use crate::modules::moqt::messages::variable_integer::{
     read_variable_integer, write_variable_integer,
 };
 

@@ -1,7 +1,7 @@
 use crate::{
-    modules::session_handlers::messages::data_streams::DataStreams,
-    modules::session_handlers::messages::variable_bytes::read_bytes,
-    modules::session_handlers::messages::variable_integer::{
+    modules::moqt::messages::data_streams::DataStreams,
+    modules::moqt::messages::variable_bytes::read_bytes,
+    modules::moqt::messages::variable_integer::{
         read_variable_integer, write_variable_integer,
     },
 };
@@ -150,7 +150,7 @@ impl DataStreams for ValueWithLength {
 #[cfg(test)]
 mod failure {
     use super::ValueWithLength;
-    use crate::modules::session_handlers::messages::data_streams::extension_header::{
+    use crate::modules::moqt::messages::data_streams::extension_header::{
         ExtensionHeader, ExtensionHeaderValue, Value,
     };
 
