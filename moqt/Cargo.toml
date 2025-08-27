@@ -1,5 +1,5 @@
 [package]
-name = "moqt-server-v2"
+name = "moqt"
 version = "0.1.0"
 edition = "2024"
 
