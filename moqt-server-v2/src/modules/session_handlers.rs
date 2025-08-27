@@ -4,7 +4,6 @@ pub(crate) mod moqt_bi_stream;
 pub(crate) mod moqt_connection;
 pub(crate) mod moqt_connection_creator;
 pub(crate) mod moqt_message_controller;
-pub(crate) mod moqt_server_endpoint;
 pub(crate) mod quic_bi_stream;
 pub(crate) mod quic_connection;
 pub(crate) mod quic_connection_creator;
