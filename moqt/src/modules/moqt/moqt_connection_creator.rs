@@ -1,7 +1,3 @@
-use crate::modules::moqt::constants;
-use crate::modules::moqt::messages::control_messages::setup_parameters::{
-    MaxSubscribeID, SetupParameter,
-};
 use crate::modules::moqt::moqt_connection::MOQTConnection;
 use crate::modules::moqt::moqt_message_controller::MOQTMessageController;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
@@ -24,7 +20,7 @@ impl MOQTConnectionCreator {
             .transport_creator
             .create_new_transport(server_name, port)
             .await?;
-        let stream = transport_conn.accept_bi().await?;
+        let stream = transport_conn.open_bi().await?;
         let message_controller = MOQTMessageController::new(stream);
         MOQTConnection::new(true, transport_conn, message_controller).await
     }
