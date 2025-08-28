@@ -26,21 +26,13 @@ impl MOQTConnectionCreator {
             .await?;
         let stream = transport_conn.accept_bi().await?;
         let message_controller = MOQTMessageController::new(stream);
-        let max_id = MaxSubscribeID::new(1000);
-        message_controller
-            .client_setup(
-                vec![constants::MOQ_TRANSPORT_VERSION],
-                vec![SetupParameter::MaxSubscribeID(max_id)],
-            )
-            .await?;
-        Ok(MOQTConnection::new(transport_conn, message_controller))
+        MOQTConnection::new(true, transport_conn, message_controller).await
     }
 
     pub(crate) async fn accept_new_connection(&mut self) -> anyhow::Result<MOQTConnection> {
         let transport_conn = self.transport_creator.accept_new_transport().await?;
         let stream = transport_conn.accept_bi().await?;
         let message_controller = MOQTMessageController::new(stream);
-        message_controller.server_setup().await?;
-        Ok(MOQTConnection::new(transport_conn, message_controller))
+        MOQTConnection::new(false, transport_conn, message_controller).await
     }
 }
