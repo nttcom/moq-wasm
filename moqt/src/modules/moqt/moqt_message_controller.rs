@@ -3,14 +3,13 @@ use std::{future::Future, sync::Arc, time::Duration};
 use anyhow::bail;
 use bytes::BytesMut;
 
-use crate::modules::moqt::moqt_bi_stream::MOQTBiStream;
-use crate::modules::moqt::messages::moqt_payload::MOQTPayload;
-use crate::modules::moqt::messages::control_messages::setup_parameters::SetupParameter;
-use crate::modules::moqt::messages::control_messages::setup_parameters::MaxSubscribeID;
+use crate::modules::moqt::constants;
 use crate::modules::moqt::messages::control_messages::client_setup::ClientSetup;
 use crate::modules::moqt::messages::control_messages::server_setup::ServerSetup;
-use crate::modules::moqt::constants;
-
+use crate::modules::moqt::messages::control_messages::setup_parameters::MaxSubscribeID;
+use crate::modules::moqt::messages::control_messages::setup_parameters::SetupParameter;
+use crate::modules::moqt::messages::moqt_payload::MOQTPayload;
+use crate::modules::moqt::moqt_bi_stream::MOQTBiStream;
 
 #[derive(Clone)]
 enum ReceiveMessage {
@@ -57,13 +56,26 @@ impl MOQTMessageController {
                             ReceiveMessage::OnError
                         }
                     };
-                    match sender.send(message) {
-                        Ok(_) => tracing::info!("send ok"),
-                        Err(e) => tracing::error!("failed to send. {:?}", e.to_string()),
-                    }
+                    Self::send_to_receiver(&sender, &message);
                 }
             })
             .unwrap()
+    }
+
+    fn send_to_receiver(
+        sender: &tokio::sync::broadcast::Sender<ReceiveMessage>,
+        message: &ReceiveMessage,
+    ) {
+        loop {
+            if sender.send(message.clone()).is_ok() {
+                tracing::info!("send ok");
+                break;
+            } else {
+                // returns Err only when no Receiver.
+                tracing::warn!("Message has been sent, but no receiver.");
+                continue;
+            }
+        }
     }
 
     pub(crate) async fn client_setup(
