@@ -33,7 +33,6 @@ impl Drop for MOQTMessageController {
 impl MOQTMessageController {
     pub fn new(stream: Arc<tokio::sync::Mutex<dyn MOQTBiStream>>) -> Self {
         let (sender, _) = tokio::sync::broadcast::channel::<ReceiveMessage>(1024);
-        let _sender = sender.clone();
         let join_handle = Self::create_join_handle(stream.clone(), sender.clone());
         Self {
             join_handle,
