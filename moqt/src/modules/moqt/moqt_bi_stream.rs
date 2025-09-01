@@ -44,6 +44,7 @@ impl MOQTBiStream {
                                 tracing::info!("Retry to receive message.");
                                 total_message.extend_from_slice(&bytes[..n]);
                             } else {
+                                tracing::info!("message length: {}", total_message.len());
                                 Self::disptach_receive_event(
                                     &sender,
                                     ReceiveEvent::Message(total_message.clone()),
