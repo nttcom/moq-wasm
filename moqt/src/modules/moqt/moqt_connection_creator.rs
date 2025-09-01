@@ -24,7 +24,8 @@ impl MOQTConnectionCreator {
             .create_new_transport(server_name, port)
             .await?;
         let stream = transport_conn.open_bi().await?;
-        let (sender, _) = tokio::sync::broadcast::channel::<ReceiveEvent>(8192);
+        // 16 means the number of messages can be stored in the channel.
+        let (sender, _) = tokio::sync::broadcast::channel::<ReceiveEvent>(16);
         let moqt_bi_stream = Arc::new(MOQTBiStream::new(sender.clone(), stream));
         MOQTConnection::new(true, transport_conn, moqt_bi_stream, sender).await
     }
@@ -32,7 +33,8 @@ impl MOQTConnectionCreator {
     pub(crate) async fn accept_new_connection(&mut self) -> anyhow::Result<Arc<MOQTConnection>> {
         let transport_conn = self.transport_creator.accept_new_transport().await?;
         let stream = transport_conn.accept_bi().await?;
-        let (sender, _) = tokio::sync::broadcast::channel::<ReceiveEvent>(8192);
+        // 16 means the number of messages can be stored in the channel.
+        let (sender, _) = tokio::sync::broadcast::channel::<ReceiveEvent>(16);
         let moqt_bi_stream = Arc::new(MOQTBiStream::new(sender.clone(), stream));
         MOQTConnection::new(false, transport_conn, moqt_bi_stream, sender).await
     }
