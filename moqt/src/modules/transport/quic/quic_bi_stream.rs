@@ -1,10 +1,9 @@
-use anyhow::bail;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use quinn::{self, RecvStream};
 use std::sync::Arc;
 
-use crate::modules::moqt::moqt_bi_stream::MOQTBiStream;
+use crate::modules::transport::transport_bi_stream::TransportBiStream;
 
 pub(crate) struct QUICBiStream {
     pub(crate) stable_id: usize,
@@ -14,7 +13,7 @@ pub(crate) struct QUICBiStream {
 }
 
 #[async_trait]
-impl MOQTBiStream for QUICBiStream {
+impl TransportBiStream for QUICBiStream {
     fn get_stream_id(&self) -> u64 {
         self.stream_id
     }
@@ -28,17 +27,9 @@ impl MOQTBiStream for QUICBiStream {
             .await?)
     }
 
-    async fn receive(&mut self) -> anyhow::Result<BytesMut> {
-        match self.recv_stream.read_to_end(1024).await {
-            Ok(data) => {
-                let mut bytes = BytesMut::with_capacity(1024);
-                bytes.extend_from_slice(&data);
-                Ok(bytes)
-            }
-            Err(e) => {
-                bail!("{}", e)
-            }
-        }
+    async fn receive(&mut self, buffer: &mut BytesMut) -> anyhow::Result<Option<usize>> {
+        let result = self.recv_stream.read(buffer).await?;
+        Ok(result)
     }
 }
 
