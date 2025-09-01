@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::modules::moqt::moqt_bi_stream::MOQTBiStream;
 use crate::modules::transport::quic::quic_bi_stream::QUICBiStream;
+use crate::modules::transport::transport_bi_stream::TransportBiStream;
 use crate::modules::transport::transport_connection::TransportConnection;
 
 pub(crate) struct QUICConnection {
@@ -18,7 +18,7 @@ impl QUICConnection {
 
 #[async_trait]
 impl TransportConnection for QUICConnection {
-    async fn open_bi(&self) -> anyhow::Result<Arc<tokio::sync::Mutex<dyn MOQTBiStream>>> {
+    async fn open_bi(&self) -> anyhow::Result<Arc<tokio::sync::Mutex<dyn TransportBiStream>>> {
         let (sender, receiver) = self.connection.open_bi().await?;
         let stream = QUICBiStream::new(
             self.connection.stable_id(),
@@ -29,7 +29,7 @@ impl TransportConnection for QUICConnection {
         Ok(Arc::new(tokio::sync::Mutex::new(stream)))
     }
 
-    async fn accept_bi(&self) -> anyhow::Result<Arc<tokio::sync::Mutex<dyn MOQTBiStream>>> {
+    async fn accept_bi(&self) -> anyhow::Result<Arc<tokio::sync::Mutex<dyn TransportBiStream>>> {
         let (sender, receiver) = self.connection.accept_bi().await?;
         let stream = QUICBiStream::new(
             self.connection.stable_id(),

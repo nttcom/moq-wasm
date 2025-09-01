@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::modules::moqt::{
     moqt_connection::MOQTConnection, moqt_connection_creator::MOQTConnectionCreator,
 };
@@ -65,13 +67,13 @@ impl MOQTEndpoint {
         &self,
         server_name: &str,
         port: u16,
-    ) -> anyhow::Result<MOQTConnection> {
+    ) -> anyhow::Result<Arc<MOQTConnection>> {
         self.connection_creator
             .create_new_connection(server_name, port)
             .await
     }
 
-    pub async fn accept(&mut self) -> anyhow::Result<MOQTConnection> {
+    pub async fn accept(&mut self) -> anyhow::Result<Arc<MOQTConnection>> {
         self.connection_creator.accept_new_connection().await
     }
 }
