@@ -15,7 +15,7 @@ use moqt_core::{
         client_setup::ClientSetup,
         group_order::GroupOrder,
         server_setup::ServerSetup,
-        setup_parameters::{MaxSubscribeID, SetupParameter},
+        setup_parameters::{MaxSubscribeID, Role, RoleCase, SetupParameter},
         subscribe::{FilterType, Subscribe},
         subscribe_announces::SubscribeAnnounces,
         subscribe_announces_error::SubscribeAnnouncesError,
@@ -195,14 +195,18 @@ impl MOQTClient {
     pub async fn send_setup_message(
         &mut self,
         versions: Vec<u64>,
+        role: u8,
         max_subscribe_id: u64,
     ) -> Result<JsValue, JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
+            let role = RoleCase::try_from(role).unwrap();
             let versions = versions.iter().map(|v| *v as u32).collect::<Vec<u32>>();
-            let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(
-                max_subscribe_id,
-            ))];
+
+            let setup_parameters = vec![
+                SetupParameter::Role(Role::new(role)),
+                SetupParameter::MaxSubscribeID(MaxSubscribeID::new(max_subscribe_id)),
+            ];
 
             let client_setup_message = ClientSetup::new(versions, setup_parameters);
             let mut client_setup_message_buf = BytesMut::new();
@@ -891,6 +895,12 @@ impl MOQTClient {
         let subgroup_stream_header_message =
             subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
                 .unwrap();
+        log(std::format!(
+            "sent: subgroup_stream_header_message: {:#x?}",
+            subgroup_stream_header_message
+        )
+        .as_str());
+
         let mut subgroup_stream_header_message_buf = BytesMut::new();
         subgroup_stream_header_message.packetize(&mut subgroup_stream_header_message_buf);
 
@@ -930,10 +940,8 @@ impl MOQTClient {
             stream_writers.get(&writer_key).cloned()
         };
         if let Some(writer) = writer {
-            let extension_headers = vec![];
             let subgroup_stream_object = subgroup_stream::Object::new(
                 object_id,
-                extension_headers,
                 object_status.map(|status| ObjectStatus::try_from(status).unwrap()),
                 object_payload,
             )

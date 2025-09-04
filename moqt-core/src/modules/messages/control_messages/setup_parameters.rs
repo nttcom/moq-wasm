@@ -2,7 +2,7 @@ use crate::{
     messages::moqt_payload::MOQTPayload,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use bytes::BytesMut;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
@@ -11,6 +11,7 @@ use std::any::Any;
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub enum SetupParameter {
     Path(Path),
+    Role(Role),
     MaxSubscribeID(MaxSubscribeID),
     Unknown(u8),
 }
@@ -26,6 +27,26 @@ impl MOQTPayload for SetupParameter {
         }
 
         match key? {
+            SetupParameterType::Role => {
+                let length = u8::try_from(read_variable_integer_from_buffer(buf)?)
+                    .context("role value length")?;
+
+                // TODO: return TerminationError
+                ensure!(
+                    length == 1,
+                    "Invalid value length in ROLE parameter {:#04x}",
+                    length
+                );
+
+                let value = RoleCase::try_from(u8::try_from(
+                    read_variable_integer_from_buffer(buf).context("role value")?,
+                )?);
+                if let Err(err) = value {
+                    bail!("Invalid value in ROLE parameter {:?}", err);
+                }
+
+                Ok(SetupParameter::Role(Role::new(value?)))
+            }
             // Not implemented as only WebTransport is supported now.
             SetupParameterType::Path => {
                 // let value = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
@@ -49,6 +70,12 @@ impl MOQTPayload for SetupParameter {
 
     fn packetize(&self, buf: &mut BytesMut) {
         match self {
+            SetupParameter::Role(param) => {
+                buf.extend(write_variable_integer(u8::from(param.key) as u64));
+                buf.extend(write_variable_integer(param.length));
+                //   The value is of type varint.
+                buf.extend(write_variable_integer(u8::from(param.value) as u64));
+            }
             // Not implemented as only WebTransport is supported now.
             SetupParameter::Path(_param) => {
                 unimplemented!("Not implemented as only WebTransport is supported.")
@@ -71,8 +98,34 @@ impl MOQTPayload for SetupParameter {
 #[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Serialize, PartialEq)]
 #[repr(u8)]
 pub enum SetupParameterType {
+    Role = 0x00,
     Path = 0x01,
     MaxSubscribeID = 0x02,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct Role {
+    pub key: SetupParameterType,
+    pub length: u64,
+    pub value: RoleCase,
+}
+
+#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, Serialize, PartialEq)]
+#[repr(u8)]
+pub enum RoleCase {
+    Publisher = 0x01,
+    Subscriber = 0x02,
+    PubSub = 0x03,
+}
+
+impl Role {
+    pub fn new(role: RoleCase) -> Self {
+        Role {
+            key: SetupParameterType::Role,
+            length: 0x01,
+            value: role,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]

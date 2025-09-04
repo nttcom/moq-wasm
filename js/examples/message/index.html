@@ -11,7 +11,7 @@
         <div>
           <h2>Connection</h2>
           <label for="url">URL:</label>
-          <input type="url" name="url" id="url" value="https://localhost:4433" />
+          <input type="url" name="url" id="url" value="https://relay.cloudflare.mediaoverquic.com:443" />
           <button type="button" id="connectBtn">Connect</button>
           <button type="button" id="closeBtn">Close</button>
         </div>
@@ -30,7 +30,10 @@
           <label>AuthInfo: <input type="text" name="auth-info" id="" value="secret" /> </label>
           <br />
           <h3>CLIENT_SETUP</h3>
-          <label>Supported Version: <input type="text" name="versions" id="" value="0xff00000A" /></label>
+          <label><input type="radio" name="role" id="" value="1" />Publisher</label>
+          <label><input type="radio" name="role" id="" value="2" />Subscriber</label>
+          <label><input type="radio" name="role" id="" value="3" checked />Both</label>
+          <label>Supported Version: <input type="text" name="versions" id="" value="0xff000007" /></label>
           <br />
           Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="1" />
           <br />
