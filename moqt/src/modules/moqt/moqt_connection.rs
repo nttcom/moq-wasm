@@ -10,7 +10,7 @@ use crate::modules::moqt::moqt_bi_stream::ReceiveEvent;
 use crate::modules::moqt::moqt_connection_message_controller::MOQTConnectionMessageController;
 use crate::modules::transport::transport_connection::TransportConnection;
 
-pub(crate) struct MOQTConnection {
+pub struct MOQTConnection {
     transport_connection: Box<dyn TransportConnection>,
     message_controller: MOQTConnectionMessageController,
     sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
