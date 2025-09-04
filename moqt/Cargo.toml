@@ -22,3 +22,6 @@ rustls-pki-types = "1.7"
 serde = { version = "1.0.188", features = ["derive"] }
 num_enum = "0.7.0"
 mockall="0.13.1"
+
+[dev-dependencies]
+rcgen = "0.14.3"

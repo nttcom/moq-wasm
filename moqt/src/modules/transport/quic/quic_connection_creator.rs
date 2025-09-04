@@ -24,13 +24,17 @@ impl QUICConnectionCreator {
         port_num: u16,
         keep_alive_sec: u64,
     ) -> anyhow::Result<quinn::ServerConfig> {
-        let cert =
-            vec![CertificateDer::from_pem_file(cert_path).expect("failed to load cert file.")];
-        let key = PrivateKeyDer::from_pem_file(key_path).expect("failed to load key file.");
+        let cert = vec![
+            CertificateDer::from_pem_file(cert_path)
+                .inspect(|e| tracing::error!("Creating certificate failed: {:?}", e))?,
+        ];
+        let key = PrivateKeyDer::from_pem_file(key_path)
+            .inspect(|e| tracing::error!("Creating private key failed: {:?}", e))?;
 
         let mut server_crypto = rustls::ServerConfig::builder()
             .with_no_client_auth()
-            .with_single_cert(cert, key)?;
+            .with_single_cert(cert, key)
+            .inspect(|e| tracing::error!("{:?}", e))?;
         let alpn = &[b"moq-00"];
         server_crypto.alpn_protocols = alpn.iter().map(|&x| x.into()).collect();
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
