@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use std::{net::SocketAddr, sync::Arc};
 
 use quinn::{self, TransportConfig, VarInt};
-use rustls::{
+use quinn::rustls::{
     self,
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
@@ -26,15 +26,17 @@ impl QUICConnectionCreator {
     ) -> anyhow::Result<quinn::ServerConfig> {
         let cert = vec![
             CertificateDer::from_pem_file(cert_path)
-                .inspect(|e| tracing::error!("Creating certificate failed: {:?}", e))?,
+                .inspect_err(|e| tracing::error!("Creating certificate failed: {:?}", e.to_string()))?,
         ];
+        tracing::warn!("qqq cert ok");
         let key = PrivateKeyDer::from_pem_file(key_path)
-            .inspect(|e| tracing::error!("Creating private key failed: {:?}", e))?;
-
+            .inspect_err(|e| tracing::error!("Creating private key failed: {:?}", e.to_string()))?;
+        tracing::warn!("qqq key ok");
         let mut server_crypto = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert, key)
-            .inspect(|e| tracing::error!("{:?}", e))?;
+            .inspect_err(|e| tracing::error!("server config failed: {:?}", e.to_string()))?;
+        tracing::warn!("qqq server crypto ok");
         let alpn = &[b"moq-00"];
         server_crypto.alpn_protocols = alpn.iter().map(|&x| x.into()).collect();
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
