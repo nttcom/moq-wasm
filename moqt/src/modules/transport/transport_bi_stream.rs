@@ -7,5 +7,5 @@ use bytes::BytesMut;
 pub(crate) trait TransportBiStream: Send + Sync + 'static {
     fn get_stream_id(&self) -> u64;
     async fn send(&self, buffer: &BytesMut) -> anyhow::Result<()>;
-    async fn receive(&mut self, buffer: &mut BytesMut) -> anyhow::Result<Option<usize>>;
+    async fn receive(&mut self, buffer: &mut Vec<u8>) -> anyhow::Result<Option<usize>>;
 }

@@ -6,5 +6,6 @@ members = [
     'moqt-server-sample',
     'moqt-client-sample',
     'moqt',
-    'server-sample'
+    'server-sample',
+    'client-sample'
 ]
