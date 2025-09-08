@@ -5,7 +5,7 @@ use crate::modules::transport::transport_bi_stream::TransportBiStream;
 
 #[derive(Clone)]
 pub(crate) enum ReceiveEvent {
-    Message(BytesMut),
+    Message(Vec<u8>),
     Error(),
 }
 
@@ -15,7 +15,7 @@ pub(crate) struct MOQTBiStream {
 }
 
 impl MOQTBiStream {
-    const RECEIVE_BYTES_CAPACITY: usize = 8192;
+    const RECEIVE_BYTES_CAPACITY: usize = 1024;
 
     pub(crate) fn new(
         sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
@@ -34,28 +34,34 @@ impl MOQTBiStream {
         tokio::task::Builder::new()
             .name("MOQTBiStream")
             .spawn(async move {
-                let mut total_message = BytesMut::new();
+                let mut total_message = vec![];
                 loop {
-                    let mut bytes = BytesMut::with_capacity(Self::RECEIVE_BYTES_CAPACITY);
+                    let mut bytes = vec![0u8; Self::RECEIVE_BYTES_CAPACITY];
                     let message = transport_bi_stream.lock().await.receive(&mut bytes).await;
-                    match message {
-                        Ok(o) => {
-                            if let Some(n) = o {
-                                tracing::info!("Retry to receive message.");
-                                total_message.extend_from_slice(&bytes[..n]);
-                            } else {
-                                tracing::info!("message length: {}", total_message.len());
-                                Self::disptach_receive_event(
-                                    &sender,
-                                    ReceiveEvent::Message(total_message.clone()),
-                                );
-                                total_message.clear();
-                            }
+                    if let Err(e) = message {
+                        tracing::error!("failed to receive message: {:?}", e);
+                        Self::disptach_receive_event(&sender, ReceiveEvent::Error());
+                        break;
+                    }
+                    if let Some(size) = message.unwrap() {
+                        tracing::debug!("Size {} message has been received", size);
+                        total_message.extend_from_slice(&bytes[..size]);
+                        if size == Self::RECEIVE_BYTES_CAPACITY {
+                            tracing::debug!("Retry...");
+                        } else {
+                            tracing::debug!("message length: {}", total_message.len());
+                            Self::disptach_receive_event(
+                                &sender,
+                                ReceiveEvent::Message(total_message.clone()),
+                            );
                         }
-                        Err(_) => {
-                            Self::disptach_receive_event(&sender, ReceiveEvent::Error());
-                            break;
-                        }
+                    } else {
+                        tracing::debug!("message length: {}", total_message.len());
+                        Self::disptach_receive_event(
+                            &sender,
+                            ReceiveEvent::Message(total_message.clone()),
+                        );
+                        total_message.clear();
                     }
                 }
             })
@@ -68,7 +74,7 @@ impl MOQTBiStream {
     ) {
         loop {
             if sender.send(receive_event.clone()).is_ok() {
-                tracing::info!("Received message has been sent.");
+                tracing::debug!("Received message has been sent.");
                 break;
             } else {
                 tracing::warn!("Sending message failed. Retry.");

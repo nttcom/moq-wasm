@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::modules::moqt::{
@@ -50,6 +51,17 @@ impl MOQTEndpoint {
         })
     }
 
+    pub fn create_client_with_custom_cert(
+        port_num: u16,
+        custom_cert_path: &str,
+    ) -> anyhow::Result<Self> {
+        let client = QUICConnectionCreator::client_with_custom_cert(port_num, custom_cert_path)?;
+        let creator = MOQTConnectionCreator::new(Box::new(client));
+        Ok(Self {
+            connection_creator: creator,
+        })
+    }
+
     pub fn create_server(
         cert_path: String,
         key_path: String,
@@ -65,11 +77,11 @@ impl MOQTEndpoint {
 
     pub async fn connect(
         &self,
-        server_name: &str,
-        port: u16,
+        remote_address: SocketAddr,
+        host: &str
     ) -> anyhow::Result<Arc<MOQTConnection>> {
         self.connection_creator
-            .create_new_connection(server_name, port)
+            .create_new_connection(remote_address, host)
             .await
     }
 

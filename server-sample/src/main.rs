@@ -4,8 +4,12 @@ use moqt::MOQTEndpoint;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
 fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
-    if Path::new("key.pem").exists() && Path::new("cert.pem").exists() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .try_init()
+        .ok();
+
+    if Path::new("server-sample/keys/key.pem").exists() && Path::new("server-sample/keys/cert.pem").exists() {
         tracing::info!("Certificates already exist");
         Ok(())
     } else {
@@ -13,9 +17,9 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
         let CertifiedKey { cert, signing_key } =
             generate_simple_self_signed(subject_alt_names).unwrap();
         let key_pem = signing_key.serialize_pem();
-        fs::write("key.pem", key_pem)?;
+        fs::write("server-sample/keys/key.pem", key_pem)?;
         let cert_pem = cert.pem();
-        fs::write("cert.pem", cert_pem)?;
+        fs::write("server-sample/keys/cert.pem", cert_pem)?;
 
         Ok(())
     }
@@ -25,8 +29,8 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 async fn main() -> anyhow::Result<()> {
     create_certs_for_test_if_needed()?;
     let current_path = std::env::current_dir().expect("failed to get current path");
-    let key_path = format!("{}{}", current_path.to_str().unwrap(), "/key.pem");
-    let cert_path = format!("{}{}", current_path.to_str().unwrap(), "/cert.pem");
+    let key_path = format!("{}{}", current_path.to_str().unwrap(), "/server-sample/keys/key.pem");
+    let cert_path = format!("{}{}", current_path.to_str().unwrap(), "/server-sample/keys/cert.pem");
     tracing::info!("key_path: {}", key_path);
     tracing::info!("cert_path: {}", cert_path);
 

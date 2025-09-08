@@ -27,7 +27,10 @@ impl TransportBiStream for QUICBiStream {
             .await?)
     }
 
-    async fn receive(&mut self, buffer: &mut BytesMut) -> anyhow::Result<Option<usize>> {
+    async fn receive(&mut self, buffer: &mut Vec<u8>) -> anyhow::Result<Option<usize>> {
+        // `read_chunk` that reads received data from QUIC buffer directly
+        // should be used when it comes to performance.
+        // However `wtransport` does not have api that is equivalent to `read_chunk`.
         let result = self.recv_stream.read(buffer).await?;
         Ok(result)
     }

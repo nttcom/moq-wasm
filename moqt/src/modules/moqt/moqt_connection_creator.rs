@@ -1,8 +1,8 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::modules::moqt::moqt_bi_stream::{MOQTBiStream, ReceiveEvent};
 use crate::modules::moqt::moqt_connection::MOQTConnection;
-use crate::modules::moqt::moqt_connection_message_controller::MOQTConnectionMessageController;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 pub(crate) struct MOQTConnectionCreator {
@@ -16,12 +16,12 @@ impl MOQTConnectionCreator {
 
     pub(crate) async fn create_new_connection(
         &self,
-        server_name: &str,
-        port: u16,
+        remote_address: SocketAddr,
+        host: &str,
     ) -> anyhow::Result<Arc<MOQTConnection>> {
         let transport_conn = self
             .transport_creator
-            .create_new_transport(server_name, port)
+            .create_new_transport(remote_address, host)
             .await?;
         let stream = transport_conn.open_bi().await?;
         // 16 means the number of messages can be stored in the channel.
