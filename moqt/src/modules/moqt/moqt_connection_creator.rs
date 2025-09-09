@@ -40,6 +40,6 @@ impl MOQTConnectionCreator {
         let (sender, _) = tokio::sync::broadcast::channel::<ReceiveEvent>(16);
         let moqt_sender = MOQTControlSender::new(send_stream);
         let moqt_receiver = MOQTControlReceiver::new(receive_stream, sender.clone());
-        MOQTConnection::new(true, transport_conn, moqt_sender, moqt_receiver, sender).await
+        MOQTConnection::new(false, transport_conn, moqt_sender, moqt_receiver, sender).await
     }
 }
