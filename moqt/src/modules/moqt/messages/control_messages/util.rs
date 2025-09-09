@@ -17,9 +17,10 @@ pub(crate) fn validate_header( enum_value: u8, read_buf: &mut BytesMut) -> Resul
         Ok(m) => m,
         Err(_) => return Err(MOQTMessageError::ProtocolViolation),
     };
-    if message_type as u8 != enum_value {
+    let u8_message_type = message_type as u8;
+    if u8_message_type != enum_value {
         read_buf.advance(read_cur.position() as usize);
-        tracing::warn!("message_type is wrong.");
+        tracing::warn!("message_type is wrong. expect {}, actual {}", enum_value, u8_message_type);
         return Err(MOQTMessageError::MessageUnmatches);
     }
 
