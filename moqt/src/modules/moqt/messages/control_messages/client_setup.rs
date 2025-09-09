@@ -1,12 +1,15 @@
-use crate::{
-    modules::moqt::messages::variable_integer::{
-        read_variable_integer_from_buffer, write_variable_integer,
+use crate::modules::moqt::messages::{
+    control_message_type::ControlMessageType,
+    control_messages::{
+        setup_parameters::SetupParameter,
+        util::{add_header, validate_header},
     },
-    modules::moqt::messages::{
-        control_messages::setup_parameters::SetupParameter, moqt_payload::MOQTPayload,
-    },
+    moqt_message::MOQTMessage,
+    moqt_message_error::MOQTMessageError,
+    moqt_payload::MOQTPayload,
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-use anyhow::{Context, Result};
+use anyhow::Context;
 use bytes::BytesMut;
 use std::{any::Any, vec};
 
@@ -29,24 +32,41 @@ impl ClientSetup {
     }
 }
 
-impl MOQTPayload for ClientSetup {
-    fn depacketize(buf: &mut BytesMut) -> Result<Self> {
-        let number_of_supported_versions = u8::try_from(read_variable_integer_from_buffer(buf)?)
-            .context("number of supported versions")?;
+impl MOQTMessage for ClientSetup {
+    fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
+        validate_header(ControlMessageType::ClientSetup as u8, buf)?;
+
+        let number_of_supported_versions = u8::try_from(
+            read_variable_integer_from_buffer(buf)
+                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
+        )
+        .context("number of supported versions")
+        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
 
         let mut supported_versions = Vec::with_capacity(number_of_supported_versions as usize);
         for _ in 0..number_of_supported_versions {
-            let supported_version = u32::try_from(read_variable_integer_from_buffer(buf)?)
-                .context("supported version")?;
+            let supported_version = u32::try_from(
+                read_variable_integer_from_buffer(buf)
+                    .map_err(|_| MOQTMessageError::ProtocolViolation)?,
+            )
+            .context("supported version")
+            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
             supported_versions.push(supported_version);
         }
 
-        let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
-            .context("number of parameters")?;
+        let number_of_parameters = u8::try_from(
+            read_variable_integer_from_buffer(buf)
+                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
+        )
+        .context("number of parameters")
+        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
 
         let mut setup_parameters = vec![];
         for _ in 0..number_of_parameters {
-            setup_parameters.push(SetupParameter::depacketize(buf)?);
+            setup_parameters.push(
+                SetupParameter::depacketize(buf)
+                    .map_err(|_| MOQTMessageError::ProtocolViolation)?,
+            );
         }
 
         let client_setup_message = ClientSetup {
@@ -59,18 +79,21 @@ impl MOQTPayload for ClientSetup {
         Ok(client_setup_message)
     }
 
-    fn packetize(&self, buf: &mut BytesMut) {
-        buf.extend(write_variable_integer(
+    fn packetize(&self) -> BytesMut {
+        let mut payload = BytesMut::new();
+        payload.extend(write_variable_integer(
             self.number_of_supported_versions as u64,
         ));
         for supported_version in &self.supported_versions {
-            buf.extend(write_variable_integer(*supported_version as u64));
+            payload.extend(write_variable_integer(*supported_version as u64));
         }
 
-        buf.extend(write_variable_integer(self.number_of_parameters as u64));
+        payload.extend(write_variable_integer(self.number_of_parameters as u64));
         for setup_parameter in &self.setup_parameters {
-            setup_parameter.packetize(buf);
+            setup_parameter.packetize(&mut payload);
         }
+
+        add_header(ControlMessageType::ClientSetup as u8, payload)
     }
     /// Method to enable downcasting from MOQTPayload to ClientSetup
     fn as_any(&self) -> &dyn Any {
@@ -81,14 +104,14 @@ impl MOQTPayload for ClientSetup {
 #[cfg(test)]
 mod test {
     mod success {
-        use crate::{
-            modules::moqt::constants::MOQ_TRANSPORT_VERSION,
-            modules::moqt::messages::{
+        use crate::modules::moqt::{
+            constants::MOQ_TRANSPORT_VERSION,
+            messages::{
                 control_messages::{
                     client_setup::ClientSetup,
                     setup_parameters::{MaxSubscribeID, SetupParameter},
                 },
-                moqt_payload::MOQTPayload,
+                moqt_message::MOQTMessage,
             },
         };
         use bytes::BytesMut;
@@ -98,10 +121,12 @@ mod test {
             let supported_versions = vec![MOQ_TRANSPORT_VERSION];
             let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000))];
             let client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
-            let mut buf = BytesMut::new();
-            client_setup.packetize(&mut buf);
+            let buf = client_setup.packetize();
 
             let expected_bytes_array = [
+                64,  // Message Type
+                64,  // Message Type
+                14,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff000008) in 62bit
@@ -118,6 +143,9 @@ mod test {
         #[test]
         fn depacketize() {
             let bytes_array = [
+                64,  // Message Type
+                64,  // Message Type
+                14,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff000008) in 62bit

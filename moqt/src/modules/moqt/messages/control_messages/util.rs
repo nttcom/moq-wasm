@@ -3,42 +3,35 @@ use std::io::Cursor;
 use bytes::{Buf, BytesMut};
 
 use crate::modules::moqt::messages::{
-    control_message_type::ControlMessageType,
-    variable_integer::{read_variable_integer, write_variable_integer},
+    control_message_type::ControlMessageType, moqt_message_error::MOQTMessageError, variable_integer::{read_variable_integer, write_variable_integer}
 };
 
-pub(crate) enum ValidationResult {
-    Success,
-    Fragment,
-    Fail,
-}
-
-pub(crate) fn validate_header(read_buf: &mut BytesMut, enum_value: u8) -> ValidationResult {
+pub(crate) fn validate_header( enum_value: u8, read_buf: &mut BytesMut) -> Result<(), MOQTMessageError> {
     let mut read_cur = Cursor::new(&read_buf[..]);
     // Read the message type
     let message_type = match read_variable_integer(&mut read_cur) {
         Ok(v) => v as u8,
-        Err(_) => return ValidationResult::Fail,
+        Err(_) => return Err(MOQTMessageError::ProtocolViolation),
     };
     let message_type = match ControlMessageType::try_from(message_type) {
         Ok(m) => m,
-        Err(_) => return ValidationResult::Fail,
+        Err(_) => return Err(MOQTMessageError::ProtocolViolation),
     };
     if message_type as u8 != enum_value {
         read_buf.advance(read_cur.position() as usize);
         tracing::warn!("message_type is wrong.");
-        return ValidationResult::Fail;
+        return Err(MOQTMessageError::MessageUnmatches);
     }
 
     let payload_length = read_variable_integer(&mut read_cur).unwrap();
-    if payload_length == 0 {
-        // The length is insufficient, so do nothing. Do not synchronize with the cursor.
-        tracing::error!("fragmented {}", read_buf.len());
-        return ValidationResult::Fragment;
+    read_buf.advance(read_cur.position() as usize);
+
+    if read_buf.len() != payload_length as usize {
+        tracing::error!("Message length unmatches. expect {}, actual {}", payload_length, read_buf.len());
+        return Err(MOQTMessageError::ProtocolViolation);
     }
 
-    read_buf.advance(read_cur.position() as usize);
-    ValidationResult::Success
+    Ok(())
 }
 
 pub(crate) fn add_header(enum_value: u8, payload: BytesMut) -> BytesMut {

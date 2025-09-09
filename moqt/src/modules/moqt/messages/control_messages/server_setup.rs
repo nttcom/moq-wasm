@@ -1,12 +1,15 @@
-use crate::{
-    modules::moqt::messages::variable_integer::{
-        read_variable_integer_from_buffer, write_variable_integer,
+use crate::modules::moqt::messages::{
+    control_message_type::ControlMessageType,
+    control_messages::{
+        setup_parameters::SetupParameter,
+        util::{add_header, validate_header},
     },
-    modules::moqt::messages::{
-        control_messages::setup_parameters::SetupParameter, moqt_payload::MOQTPayload,
-    },
+    moqt_message::MOQTMessage,
+    moqt_message_error::MOQTMessageError,
+    moqt_payload::MOQTPayload,
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-use anyhow::{Context, Result};
+use anyhow::Context;
 use bytes::BytesMut;
 use serde::Serialize;
 use std::any::Any;
@@ -28,16 +31,29 @@ impl ServerSetup {
     }
 }
 
-impl MOQTPayload for ServerSetup {
-    fn depacketize(buf: &mut BytesMut) -> Result<Self> {
-        let selected_version = u32::try_from(read_variable_integer_from_buffer(buf)?)
-            .context("Depacketize selected version")?;
-        let number_of_parameters = u8::try_from(read_variable_integer_from_buffer(buf)?)
-            .context("Depacketize number of parameters")?;
+impl MOQTMessage for ServerSetup {
+    fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
+        validate_header(ControlMessageType::ServerSetup as u8, buf)?;
+
+        let selected_version = u32::try_from(
+            read_variable_integer_from_buffer(buf)
+                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
+        )
+        .context("Depacketize selected version")
+        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let number_of_parameters = u8::try_from(
+            read_variable_integer_from_buffer(buf)
+                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
+        )
+        .context("Depacketize number of parameters")
+        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let mut setup_parameters = vec![];
         for _ in 0..number_of_parameters {
-            setup_parameters
-                .push(SetupParameter::depacketize(buf).context("Depacketize setup parameter")?);
+            setup_parameters.push(
+                SetupParameter::depacketize(buf)
+                    .context("Depacketize setup parameter")
+                    .map_err(|_| MOQTMessageError::ProtocolViolation)?,
+            );
         }
 
         let server_setup_message = ServerSetup {
@@ -48,16 +64,19 @@ impl MOQTPayload for ServerSetup {
         Ok(server_setup_message)
     }
 
-    fn packetize(&self, buf: &mut BytesMut) {
+    fn packetize(&self) -> BytesMut {
+        let mut payload = BytesMut::new();
+
         let version_buf = write_variable_integer(self.selected_version as u64);
-        buf.extend(version_buf);
+        payload.extend(version_buf);
 
         let number_of_parameters_buf = write_variable_integer(self.number_of_parameters as u64);
-        buf.extend(number_of_parameters_buf);
+        payload.extend(number_of_parameters_buf);
 
         for setup_parameter in self.setup_parameters.iter() {
-            setup_parameter.packetize(buf);
+            setup_parameter.packetize(&mut payload);
         }
+        add_header(ControlMessageType::ServerSetup as u8, payload)
     }
     /// Method to enable downcasting from MOQTPayload to ServerSetup
     fn as_any(&self) -> &dyn Any {
@@ -68,14 +87,14 @@ impl MOQTPayload for ServerSetup {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::{
-            modules::moqt::constants::MOQ_TRANSPORT_VERSION,
-            modules::moqt::messages::{
+        use crate::modules::moqt::{
+            constants::MOQ_TRANSPORT_VERSION,
+            messages::{
                 control_messages::{
                     server_setup::ServerSetup,
                     setup_parameters::{MaxSubscribeID, SetupParameter},
                 },
-                moqt_payload::MOQTPayload,
+                moqt_message::MOQTMessage,
             },
         };
         use bytes::BytesMut;
@@ -85,10 +104,12 @@ mod tests {
             let selected_version = MOQ_TRANSPORT_VERSION;
             let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000))];
             let server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
-            let mut buf = BytesMut::new();
-            server_setup.packetize(&mut buf);
+            let buf = server_setup.packetize();
 
             let expected_bytes_array = [
+                64,  // Message Type
+                65,  // Message Type
+                13,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff000a) in 62bit
                 1,   // Number of Parameters (i)
@@ -104,6 +125,9 @@ mod tests {
         #[test]
         fn depacketize() {
             let bytes_array = [
+                64,  // Message Type
+                65,  // Message Type
+                13,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff00000a) in 62bit
                 1,   // Number of Parameters (i)
