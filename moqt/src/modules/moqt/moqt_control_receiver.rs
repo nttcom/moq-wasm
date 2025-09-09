@@ -1,34 +1,24 @@
-use bytes::BytesMut;
-use std::sync::Arc;
+use crate::modules::{
+    moqt::moqt_enums::ReceiveEvent, transport::transport_receive_stream::TransportReceiveStream,
+};
 
-use crate::modules::transport::transport_bi_stream::TransportBiStream;
-
-#[derive(Clone)]
-pub(crate) enum ReceiveEvent {
-    Message(Vec<u8>),
-    Error(),
-}
-
-pub(crate) struct MOQTBiStream {
-    transport_bi_stream: Arc<tokio::sync::Mutex<dyn TransportBiStream>>,
+pub(crate) struct MOQTControlReceiver {
     join_handle: tokio::task::JoinHandle<()>,
 }
 
-impl MOQTBiStream {
+impl MOQTControlReceiver {
     const RECEIVE_BYTES_CAPACITY: usize = 1024;
 
     pub(crate) fn new(
+        transport_stream: Box<tokio::sync::Mutex<dyn TransportReceiveStream>>,
         sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
-        transport_bi_stream: Arc<tokio::sync::Mutex<dyn TransportBiStream>>,
     ) -> Self {
-        Self {
-            join_handle: Self::create_join_handle(transport_bi_stream.clone(), sender),
-            transport_bi_stream,
-        }
+        let join_handle = Self::create_join_handle(transport_stream, sender);
+        Self { join_handle }
     }
 
     fn create_join_handle(
-        transport_bi_stream: Arc<tokio::sync::Mutex<dyn TransportBiStream>>,
+        transport_stream: Box<tokio::sync::Mutex<dyn TransportReceiveStream>>,
         sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
@@ -37,7 +27,7 @@ impl MOQTBiStream {
                 let mut total_message = vec![];
                 loop {
                     let mut bytes = vec![0u8; Self::RECEIVE_BYTES_CAPACITY];
-                    let message = transport_bi_stream.lock().await.receive(&mut bytes).await;
+                    let message = transport_stream.lock().await.receive(&mut bytes).await;
                     if let Err(e) = message {
                         tracing::error!("failed to receive message: {:?}", e);
                         Self::disptach_receive_event(&sender, ReceiveEvent::Error());
@@ -81,15 +71,5 @@ impl MOQTBiStream {
                 continue;
             }
         }
-    }
-
-    pub(crate) async fn send(&self, buffer: &BytesMut) -> anyhow::Result<()> {
-        self.transport_bi_stream.lock().await.send(buffer).await
-    }
-}
-
-impl Drop for MOQTBiStream {
-    fn drop(&mut self) {
-        self.join_handle.abort();
     }
 }

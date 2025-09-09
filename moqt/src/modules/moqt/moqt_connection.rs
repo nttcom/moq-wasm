@@ -5,16 +5,18 @@ use std::sync::atomic::AtomicU64;
 use crate::modules::moqt::constants;
 use crate::modules::moqt::messages::control_messages::setup_parameters::MaxSubscribeID;
 use crate::modules::moqt::messages::control_messages::setup_parameters::SetupParameter;
-use crate::modules::moqt::moqt_bi_stream::MOQTBiStream;
-use crate::modules::moqt::moqt_bi_stream::ReceiveEvent;
 use crate::modules::moqt::moqt_connection_message_controller::MOQTConnectionMessageController;
+use crate::modules::moqt::moqt_control_receiver::MOQTControlReceiver;
+use crate::modules::moqt::moqt_control_sender::MOQTControlSender;
+use crate::modules::moqt::moqt_enums::ReceiveEvent;
 use crate::modules::transport::transport_connection::TransportConnection;
 
 pub struct MOQTConnection {
     transport_connection: Box<dyn TransportConnection>,
     message_controller: MOQTConnectionMessageController,
     sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
-    moqt_bi_stream: Weak<MOQTBiStream>,
+    receive_stream: MOQTControlReceiver,
+    send_stream: Weak<tokio::sync::Mutex<MOQTControlSender>>,
     pub(crate) request_id: AtomicU64,
 }
 
@@ -22,16 +24,18 @@ impl MOQTConnection {
     pub(crate) async fn new(
         is_client: bool,
         transport_connection: Box<dyn TransportConnection>,
-        stream: Arc<MOQTBiStream>,
+        send_stream: MOQTControlSender,
+        receive_stream: MOQTControlReceiver,
         sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
     ) -> anyhow::Result<Arc<Self>> {
-        let message_controller =
-            MOQTConnectionMessageController::new(stream.clone(), sender.clone());
+        let shared_send_stream = Arc::new(tokio::sync::Mutex::new(send_stream));
+        let mut message_controller =
+            MOQTConnectionMessageController::new(shared_send_stream.clone(), sender.clone());
         let request_id = if is_client {
-            Self::setup_for_client(&message_controller).await?;
+            Self::setup_for_client(&mut message_controller).await?;
             AtomicU64::new(0)
         } else {
-            Self::setup_for_server(&message_controller).await?;
+            Self::setup_for_server(&mut message_controller).await?;
             AtomicU64::new(1)
         };
 
@@ -39,13 +43,14 @@ impl MOQTConnection {
             transport_connection,
             message_controller,
             sender,
-            moqt_bi_stream: Arc::downgrade(&stream),
+            receive_stream,
+            send_stream: Arc::downgrade(&shared_send_stream),
             request_id,
         }))
     }
 
     async fn setup_for_client(
-        message_controller: &MOQTConnectionMessageController,
+        message_controller: &mut MOQTConnectionMessageController,
     ) -> anyhow::Result<()> {
         let max_id = MaxSubscribeID::new(1000);
         message_controller
