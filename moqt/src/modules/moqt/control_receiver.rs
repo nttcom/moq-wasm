@@ -73,3 +73,9 @@ impl ControlReceiver {
         }
     }
 }
+
+impl Drop for ControlReceiver {
+    fn drop(&mut self) {
+        self.join_handle.abort();
+    }
+}

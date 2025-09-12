@@ -5,9 +5,9 @@ use crate::modules::transport::transport_receive_stream::TransportReceiveStream;
 
 #[derive(Debug)]
 
-pub(crate) struct QUICReceiveStream {
+pub struct QUICReceiveStream {
     pub(crate) stable_id: usize,
-    stream_id: u64,
+    pub(crate) stream_id: u64,
     pub(crate) recv_stream: RecvStream,
 }
 
@@ -19,15 +19,5 @@ impl TransportReceiveStream for QUICReceiveStream {
         // However `wtransport` does not have api that is equivalent to `read_chunk`.
         let result = self.recv_stream.read(buffer).await?;
         Ok(result)
-    }
-}
-
-impl QUICReceiveStream {
-    pub(super) fn new(stable_id: usize, stream_id: u64, recv_stream: RecvStream) -> Self {
-        Self {
-            stable_id,
-            stream_id,
-            recv_stream,
-        }
     }
 }

@@ -12,7 +12,7 @@ use crate::modules::transport::{
     quic::quic_connection::QUICConnection, transport_connection_creator::TransportConnectionCreator,
 };
 
-pub(crate) struct QUICConnectionCreator {
+pub struct QUICConnectionCreator {
     endpoint: quinn::Endpoint,
 }
 
@@ -20,7 +20,6 @@ impl QUICConnectionCreator {
     fn config_builder(
         cert_path: String,
         key_path: String,
-        port_num: u16,
         keep_alive_sec: u64,
     ) -> anyhow::Result<quinn::ServerConfig> {
         let cert = vec![CertificateDer::from_pem_file(cert_path).inspect_err(|e| {
@@ -109,7 +108,7 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         port_num: u16,
         keep_alive_sec: u64,
     ) -> anyhow::Result<Self> {
-        let server_config = Self::config_builder(cert_path, key_path, port_num, keep_alive_sec)?;
+        let server_config = Self::config_builder(cert_path, key_path, keep_alive_sec)?;
         let address = SocketAddr::from(([0, 0, 0, 0], port_num));
         let endpoint = quinn::Endpoint::server(server_config, address)?;
         tracing::info!("Server ready! for QUIC");

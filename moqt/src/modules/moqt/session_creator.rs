@@ -28,7 +28,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         // 16 means the number of messages can be stored in the channel.
         let (sender, _) = tokio::sync::broadcast::channel::<ReceiveEvent>(16);
         let moqt_sender = ControlSender::<T> { send_stream };
-        let moqt_receiver = ControlReceiver::new(receive_stream, sender.clone());
+        let moqt_receiver = ControlReceiver::new::<T>(receive_stream, sender.clone());
         Session::<T>::for_client(transport_conn, moqt_sender, moqt_receiver, sender).await
     }
 
@@ -38,7 +38,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         // 16 means the number of messages can be stored in the channel.
         let (sender, _) = tokio::sync::broadcast::channel::<ReceiveEvent>(16);
         let moqt_sender = ControlSender { send_stream };
-        let moqt_receiver = ControlReceiver::new(receive_stream, sender.clone());
+        let moqt_receiver = ControlReceiver::new::<T>(receive_stream, sender.clone());
         Session::<T>::for_server(transport_conn, moqt_sender, moqt_receiver, sender).await
     }
 }
