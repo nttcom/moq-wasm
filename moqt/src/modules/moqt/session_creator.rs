@@ -10,11 +10,10 @@ use crate::modules::transport::transport_connection::TransportConnection;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 pub(crate) struct SessionCreator<T: TransportProtocol> {
-    pub(crate)  transport_creator: T::ConnectionCreator,
+    pub(crate) transport_creator: T::ConnectionCreator,
 }
 
 impl<T: TransportProtocol> SessionCreator<T> {
-
     pub(crate) async fn create_new_connection(
         &self,
         remote_address: SocketAddr,
@@ -29,7 +28,9 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let (sender, _) = tokio::sync::broadcast::channel::<ReceiveEvent>(16);
         let moqt_sender = ControlSender::<T> { send_stream };
         let moqt_receiver = ControlReceiver::new::<T>(receive_stream, sender.clone());
-        Session::<T>::for_client(transport_conn, moqt_sender, moqt_receiver, sender).await
+        Session::<T>::for_client(transport_conn, moqt_sender, moqt_receiver, sender)
+            .await
+            .inspect(|_| tracing::info!("Session has been created."))
     }
 
     pub(crate) async fn accept_new_connection(&mut self) -> anyhow::Result<Arc<Session<T>>> {
@@ -39,6 +40,8 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let (sender, _) = tokio::sync::broadcast::channel::<ReceiveEvent>(16);
         let moqt_sender = ControlSender { send_stream };
         let moqt_receiver = ControlReceiver::new::<T>(receive_stream, sender.clone());
-        Session::<T>::for_server(transport_conn, moqt_sender, moqt_receiver, sender).await
+        Session::<T>::for_server(transport_conn, moqt_sender, moqt_receiver, sender)
+            .await
+            .inspect(|_| tracing::info!("Session has been created."))
     }
 }
