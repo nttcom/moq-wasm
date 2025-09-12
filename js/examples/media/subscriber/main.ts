@@ -41,36 +41,36 @@ function sendSubscribeButtonClickHandler(client: MOQTClient) {
       AUTH_INFO
     )
 
-    setupClientObjectCallbacks(client, 'audio', Number(1))
-    await client.sendSubscribeMessage(
-      BigInt(1),
-      BigInt(1),
-      trackNamespace,
-      'audio',
-      0, // subscriberPriority
-      0, // groupOrder
-      1, // Latest Group
-      BigInt(0), // startGroup
-      BigInt(0), // startObject
-      BigInt(10000), // endGroup
-      AUTH_INFO
-    )
+    // setupClientObjectCallbacks(client, 'audio', Number(1))
+    // await client.sendSubscribeMessage(
+    //   BigInt(1),
+    //   BigInt(1),
+    //   trackNamespace,
+    //   'audio',
+    //   0, // subscriberPriority
+    //   0, // groupOrder
+    //   1, // Latest Group
+    //   BigInt(0), // startGroup
+    //   BigInt(0), // startObject
+    //   BigInt(10000), // endGroup
+    //   AUTH_INFO
+    // )
   })
 }
 
-const audioDecoderWorker = new Worker(new URL('./audioDecoder.ts', import.meta.url), { type: 'module' })
-function setupAudioDecoderWorker() {
-  const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
-  const audioWriter = audioGenerator.writable.getWriter()
-  const audioStream = new MediaStream([audioGenerator])
-  const audioElement = document.getElementById('audio') as HTMLFormElement
-  audioElement.srcObject = audioStream
-  audioDecoderWorker.onmessage = async (e: MessageEvent) => {
-    const audioData = e.data.audioData
-    await audioWriter.write(audioData)
-    await audioElement.play()
-  }
-}
+// const audioDecoderWorker = new Worker(new URL('./audioDecoder.ts', import.meta.url), { type: 'module' })
+// function setupAudioDecoderWorker() {
+//   const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
+//   const audioWriter = audioGenerator.writable.getWriter()
+//   const audioStream = new MediaStream([audioGenerator])
+//   const audioElement = document.getElementById('audio') as HTMLFormElement
+//   audioElement.srcObject = audioStream
+//   audioDecoderWorker.onmessage = async (e: MessageEvent) => {
+//     const audioData = e.data.audioData
+//     await audioWriter.write(audioData)
+//     await audioElement.play()
+//   }
+// }
 const videoDecoderWorker = new Worker(new URL('./videoDecoder.ts', import.meta.url), { type: 'module' })
 function setupVideoDecoderWorker() {
   const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
@@ -88,7 +88,7 @@ function setupVideoDecoderWorker() {
 
 function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio', trackAlias: number) {
   client.onSubgroupStreamHeader(async (subgroupStreamHeader: any) => {
-    // console.log({ subgroupStreamHeader })
+    console.log({ subgroupStreamHeader })
   })
 
   if (type === 'audio') {
@@ -100,29 +100,29 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
   client.onSubgroupStreamObject(BigInt(trackAlias), async (groupId: number, subgroupStreamObject: any) => {
     // WARNING: Use only debug for memory usage
     // console.log(subgroupStreamObject.object_id)
-    console.log(subgroupStreamObject)
-    // if (type === 'video') {
-    //   if (
-    //     subgroupStreamObject.objectPayloadLength === 0 ||
-    //     subgroupStreamObject.object_status === 'EndOfGroup' ||
-    //     subgroupStreamObject.object_status === 'EndOfTrackAndGroup' ||
-    //     subgroupStreamObject.object_status === 'EndOfTrack'
-    //   ) {
-    //     // WARNING: Use only debug for memory usage
-    //     // console.log(subgroupStreamObject)
-    //     return
-    //   }
+    // console.log(subgroupStreamObject)
+    if (type === 'video') {
+      if (
+        subgroupStreamObject.objectPayloadLength === 0 ||
+        subgroupStreamObject.object_status === 'EndOfGroup' ||
+        subgroupStreamObject.object_status === 'EndOfTrackAndGroup' ||
+        subgroupStreamObject.object_status === 'EndOfTrack'
+      ) {
+        // WARNING: Use only debug for memory usage
+        // console.log(subgroupStreamObject)
+        return
+      }
 
-    //   videoDecoderWorker.postMessage({
-    //     groupId,
-    //     subgroupStreamObject
-    //   })
-    // } else {
-    //   audioDecoderWorker.postMessage({
-    //     groupId,
-    //     subgroupStreamObject
-    //   })
-    // }
+      videoDecoderWorker.postMessage({
+        groupId,
+        subgroupStreamObject
+      })
+    } else {
+      audioDecoderWorker.postMessage({
+        groupId,
+        subgroupStreamObject
+      })
+    }
   })
 }
 
