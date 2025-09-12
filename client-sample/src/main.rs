@@ -1,6 +1,6 @@
-use std::{io, str::FromStr, net::ToSocketAddrs};
+use std::{io, net::ToSocketAddrs, str::FromStr};
 
-use moqt::MOQTEndpoint;
+use moqt::Endpoint;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
     );
     tracing::info!("cert_path: {}", cert_path);
 
-    let endpoint = MOQTEndpoint::create_client_with_custom_cert(0, &cert_path)?;
+    let endpoint = Endpoint::create_client_with_custom_cert(0, &cert_path)?;
     let url = url::Url::from_str("moqt://localhost:4433")?;
     let host = url.host_str().unwrap();
     let remote_address = (host, url.port().unwrap_or(4433))

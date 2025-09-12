@@ -8,7 +8,6 @@ use quinn::rustls::{
 };
 use quinn::{self, TransportConfig, VarInt};
 
-use crate::modules::transport::transport_connection::TransportConnection;
 use crate::modules::transport::{
     quic::quic_connection::QUICConnection, transport_connection_creator::TransportConnectionCreator,
 };
@@ -59,26 +58,6 @@ impl QUICConnectionCreator {
         Ok(server_config)
     }
 
-    pub fn client(port_num: u16) -> anyhow::Result<Self> {
-        let mut roots = rustls::RootCertStore::empty();
-        for cert in rustls_native_certs::load_native_certs().unwrap() {
-            roots.add(cert).unwrap();
-        }
-
-        Self::create_client(port_num, roots)
-    }
-
-    pub fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
-        let cert = CertificateDer::from_pem_file(custom_cert_path).inspect_err(|e| {
-            tracing::error!("Creating certificate failed: {:?}", e.to_string())
-        })?;
-
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(cert).unwrap();
-
-        Self::create_client(port_num, roots)
-    }
-
     fn create_client(port_num: u16, root_cert: rustls::RootCertStore) -> anyhow::Result<Self> {
         let address = SocketAddr::from(([0, 0, 0, 0], port_num));
         let mut endpoint = quinn::Endpoint::client(address)?;
@@ -99,8 +78,32 @@ impl QUICConnectionCreator {
         tracing::info!("Client ready! for QUIC");
         Ok(QUICConnectionCreator { endpoint })
     }
+}
 
-    pub fn server(
+#[async_trait]
+impl TransportConnectionCreator for QUICConnectionCreator {
+    type Connection = QUICConnection;
+
+    fn client(port_num: u16) -> anyhow::Result<Self> {
+        let mut roots = rustls::RootCertStore::empty();
+        for cert in rustls_native_certs::load_native_certs().unwrap() {
+            roots.add(cert).unwrap();
+        }
+
+        Self::create_client(port_num, roots)
+    }
+
+    fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
+        let cert = CertificateDer::from_pem_file(custom_cert_path)
+            .inspect_err(|e| tracing::error!("Creating certificate failed: {:?}", e.to_string()))?;
+
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(cert).unwrap();
+
+        Self::create_client(port_num, roots)
+    }
+
+    fn server(
         cert_path: String,
         key_path: String,
         port_num: u16,
@@ -112,15 +115,12 @@ impl QUICConnectionCreator {
         tracing::info!("Server ready! for QUIC");
         Ok(QUICConnectionCreator { endpoint })
     }
-}
 
-#[async_trait]
-impl TransportConnectionCreator for QUICConnectionCreator {
     async fn create_new_transport(
         &self,
         remote_address: SocketAddr,
-        host: &str
-    ) -> anyhow::Result<Box<dyn TransportConnection>> {
+        host: &str,
+    ) -> anyhow::Result<Self::Connection> {
         let connecting = self
             .endpoint
             .connect(remote_address, host)
@@ -129,13 +129,13 @@ impl TransportConnectionCreator for QUICConnectionCreator {
             .await
             .inspect_err(|e| tracing::error!("failed to create connection: {:?}", e.to_string()))?;
 
-        Ok(Box::new(QUICConnection::new(connection)))
+        Ok(QUICConnection::new(connection))
     }
 
-    async fn accept_new_transport(&mut self) -> anyhow::Result<Box<dyn TransportConnection>> {
+    async fn accept_new_transport(&mut self) -> anyhow::Result<Self::Connection> {
         let incoming = self.endpoint.accept().await.expect("failed to accept");
         let connection = incoming.await.expect("failed to create connection");
 
-        Ok(Box::new(QUICConnection::new(connection)))
+        Ok(QUICConnection::new(connection))
     }
 }

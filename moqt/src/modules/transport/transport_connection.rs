@@ -5,16 +5,9 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub(crate) trait TransportConnection: Send + Sync {
-    async fn open_bi(
-        &self,
-    ) -> anyhow::Result<(
-        Box<dyn TransportSendStream>,
-        Box<tokio::sync::Mutex<dyn TransportReceiveStream>>,
-    )>;
-    async fn accept_bi(
-        &self,
-    ) -> anyhow::Result<(
-        Box<dyn TransportSendStream>,
-        Box<tokio::sync::Mutex<dyn TransportReceiveStream>>,
-    )>;
+    type SendStream: TransportSendStream;
+    type ReceiveStream: TransportReceiveStream;
+
+    async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)>;
+    async fn accept_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)>;
 }

@@ -4,31 +4,22 @@ use anyhow::bail;
 use bytes::BytesMut;
 
 use crate::modules::moqt::constants;
+use crate::modules::moqt::control_sender::ControlSender;
 use crate::modules::moqt::messages::control_messages::client_setup::ClientSetup;
 use crate::modules::moqt::messages::control_messages::server_setup::ServerSetup;
 use crate::modules::moqt::messages::control_messages::setup_parameters::MaxSubscribeID;
 use crate::modules::moqt::messages::control_messages::setup_parameters::SetupParameter;
 use crate::modules::moqt::messages::moqt_message::MOQTMessage;
 use crate::modules::moqt::messages::moqt_message_error::MOQTMessageError;
-use crate::modules::moqt::moqt_control_sender::MOQTControlSender;
 use crate::modules::moqt::moqt_enums::ReceiveEvent;
+use crate::modules::moqt::protocol::TransportProtocol;
 
-pub(crate) struct MOQTConnectionMessageController {
-    send_stream: Arc<tokio::sync::Mutex<MOQTControlSender>>,
-    sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
+pub(crate) struct SessionMessageController<T: TransportProtocol> {
+    pub(crate) send_stream: Arc<tokio::sync::Mutex<ControlSender<T>>>,
+    pub(crate) event_sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
 }
 
-impl MOQTConnectionMessageController {
-    pub fn new(
-        send_stream: Arc<tokio::sync::Mutex<MOQTControlSender>>,
-        sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
-    ) -> Self {
-        Self {
-            send_stream,
-            sender,
-        }
-    }
-
+impl<T: TransportProtocol> SessionMessageController<T> {
     pub(crate) async fn client_setup(
         &mut self,
         supported_versions: Vec<u32>,
@@ -66,8 +57,8 @@ impl MOQTConnectionMessageController {
             .inspect(|_| tracing::debug!("ServerSetup has been sent."))
     }
 
-    async fn start_receive<T: MOQTMessage>(&self) -> anyhow::Result<()> {
-        let mut subscriber = self.sender.subscribe();
+    async fn start_receive<U: MOQTMessage>(&self) -> anyhow::Result<()> {
+        let mut subscriber = self.event_sender.subscribe();
         loop {
             let receive_message = subscriber.recv().await;
             if let Err(e) = receive_message {
@@ -78,7 +69,7 @@ impl MOQTConnectionMessageController {
             match receive_message.unwrap() {
                 ReceiveEvent::Message(data) => {
                     let mut bytes_mut = BytesMut::from(data.as_slice());
-                    match T::depacketize(&mut bytes_mut) {
+                    match U::depacketize(&mut bytes_mut) {
                         Ok(_) => return Ok(()),
                         Err(MOQTMessageError::MessageUnmatches) => {
                             tracing::info!("Message unmatches.");

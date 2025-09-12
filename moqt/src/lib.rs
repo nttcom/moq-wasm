@@ -1,91 +1,68 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use crate::modules::moqt::{
-    moqt_connection::MOQTConnection, moqt_connection_creator::MOQTConnectionCreator,
-};
-
-use crate::modules::transport::quic::quic_connection_creator::QUICConnectionCreator;
+use crate::modules::moqt::protocol::TransportProtocol;
+use crate::modules::moqt::{session::Session, session_creator::SessionCreator};
+use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 mod modules;
 
-pub struct MOQTConfig {
+pub struct ServerConfig {
     port: u16,
     cert_path: String,
     key_path: String,
     keep_alive_interval_sec: u64,
-    // use_webtransport: bool,
     log_level: String,
 }
 
-impl MOQTConfig {
-    pub fn new(
-        port: u16,
-        cert_path: String,
-        key_path: String,
-        keep_alive_interval_sec: u64,
-        // use_webtransport: bool,
-        log_level: String,
-    ) -> Self {
-        Self {
-            port,
-            cert_path,
-            key_path,
-            keep_alive_interval_sec,
-            // use_webtransport,
-            log_level,
-        }
-    }
+pub struct Endpoint<T: TransportProtocol> {
+    session_creator: SessionCreator<T>,
 }
 
-pub struct MOQTEndpoint {
-    connection_creator: MOQTConnectionCreator,
-}
-
-impl MOQTEndpoint {
+impl<T: TransportProtocol> Endpoint<T> {
     pub fn create_client(port_num: u16) -> anyhow::Result<Self> {
-        let client = QUICConnectionCreator::client(port_num)?;
-        let creator = MOQTConnectionCreator::new(Box::new(client));
-        Ok(Self {
-            connection_creator: creator,
-        })
+        let client = T::ConnectionCreator::client(port_num)?;
+        let session_creator = SessionCreator {
+            transport_creator: client,
+        };
+        Ok(Self { session_creator })
     }
 
     pub fn create_client_with_custom_cert(
         port_num: u16,
         custom_cert_path: &str,
     ) -> anyhow::Result<Self> {
-        let client = QUICConnectionCreator::client_with_custom_cert(port_num, custom_cert_path)?;
-        let creator = MOQTConnectionCreator::new(Box::new(client));
-        Ok(Self {
-            connection_creator: creator,
-        })
+        let client = T::ConnectionCreator::client_with_custom_cert(port_num, custom_cert_path)?;
+        let session_creator = SessionCreator {
+            transport_creator: client,
+        };
+        Ok(Self { session_creator })
     }
 
-    pub fn create_server(
-        cert_path: String,
-        key_path: String,
-        port_num: u16,
-        keep_alive_sec: u64,
-    ) -> anyhow::Result<Self> {
-        let server = QUICConnectionCreator::server(cert_path, key_path, port_num, keep_alive_sec)?;
-        let creator = MOQTConnectionCreator::new(Box::new(server));
-        Ok(Self {
-            connection_creator: creator,
-        })
+    pub fn create_server(server_config: ServerConfig) -> anyhow::Result<Self> {
+        let server = T::ConnectionCreator::server(
+            server_config.cert_path,
+            server_config.key_path,
+            server_config.port,
+            server_config.keep_alive_interval_sec,
+        )?;
+        let session_creator = SessionCreator {
+            transport_creator: server,
+        };
+        Ok(Self { session_creator })
     }
 
     pub async fn connect(
         &self,
         remote_address: SocketAddr,
-        host: &str
-    ) -> anyhow::Result<Arc<MOQTConnection>> {
-        self.connection_creator
+        host: &str,
+    ) -> anyhow::Result<Arc<Session<T>>> {
+        self.session_creator
             .create_new_connection(remote_address, host)
             .await
     }
 
-    pub async fn accept(&mut self) -> anyhow::Result<Arc<MOQTConnection>> {
-        self.connection_creator.accept_new_connection().await
+    pub async fn accept(&mut self) -> anyhow::Result<Arc<Session<T>>> {
+        self.session_creator.accept_new_connection().await
     }
 }
