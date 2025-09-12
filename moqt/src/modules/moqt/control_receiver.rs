@@ -1,24 +1,24 @@
 use crate::modules::{
-    moqt::moqt_enums::ReceiveEvent, transport::transport_receive_stream::TransportReceiveStream,
+    moqt::{moqt_enums::ReceiveEvent, protocol::TransportProtocol}, transport::transport_receive_stream::TransportReceiveStream,
 };
 
-pub(crate) struct MOQTControlReceiver {
+pub(crate) struct ControlReceiver {
     join_handle: tokio::task::JoinHandle<()>,
 }
 
-impl MOQTControlReceiver {
+impl ControlReceiver {
     const RECEIVE_BYTES_CAPACITY: usize = 1024;
 
-    pub(crate) fn new(
-        transport_stream: Box<tokio::sync::Mutex<dyn TransportReceiveStream>>,
+    pub(crate) fn new<T: TransportProtocol>(
+        receive_stream: T::ReceiveStream,
         sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
     ) -> Self {
-        let join_handle = Self::create_join_handle(transport_stream, sender);
+        let join_handle = Self::create_join_handle::<T>(receive_stream, sender);
         Self { join_handle }
     }
 
-    fn create_join_handle(
-        transport_stream: Box<tokio::sync::Mutex<dyn TransportReceiveStream>>,
+    fn create_join_handle<T: TransportProtocol>(
+        mut receive_stream: T::ReceiveStream,
         sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
@@ -27,7 +27,7 @@ impl MOQTControlReceiver {
                 let mut total_message = vec![];
                 loop {
                     let mut bytes = vec![0u8; Self::RECEIVE_BYTES_CAPACITY];
-                    let message = transport_stream.lock().await.receive(&mut bytes).await;
+                    let message = receive_stream.receive(&mut bytes).await;
                     if let Err(e) = message {
                         tracing::error!("failed to receive message: {:?}", e);
                         Self::disptach_receive_event(&sender, ReceiveEvent::Error());
