@@ -8,11 +8,11 @@ use crate::modules::transport::transport_connection_creator::TransportConnection
 mod modules;
 
 pub struct ServerConfig {
-    port: u16,
-    cert_path: String,
-    key_path: String,
-    keep_alive_interval_sec: u64,
-    log_level: String,
+    pub port: u16,
+    pub cert_path: String,
+    pub key_path: String,
+    pub keep_alive_interval_sec: u64,
+    // log_level: String,
 }
 
 pub struct Endpoint<T: TransportProtocol> {
