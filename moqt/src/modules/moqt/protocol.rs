@@ -5,13 +5,17 @@ use crate::modules::transport::{
     transport_receive_stream::TransportReceiveStream, transport_send_stream::TransportSendStream,
 };
 
+// Prevent `TransportConnectionCreator` from public
+#[allow(warnings)]
 pub trait TransportProtocol {
-    type ConnectionCreator: TransportConnectionCreator;
-    type Connection: TransportConnection;
+    type ConnectionCreator: TransportConnectionCreator<Connection = Self::Connection>;
+    type Connection: TransportConnection<SendStream = Self::SendStream, ReceiveStream = Self::ReceiveStream>;
     type SendStream: TransportSendStream;
     type ReceiveStream: TransportReceiveStream;
 }
 
+// The protocol name should be all upper case.
+#[allow(warnings)]
 pub struct QUIC;
 
 impl TransportProtocol for QUIC {

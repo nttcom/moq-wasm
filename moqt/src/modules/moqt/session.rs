@@ -51,11 +51,11 @@ impl<T: TransportProtocol> Session<T> {
         event_sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
     ) -> anyhow::Result<Arc<Self>> {
         let shared_send_stream = Arc::new(tokio::sync::Mutex::new(send_stream));
-        let mut message_controller = SessionMessageController {
+        let message_controller = SessionMessageController {
             send_stream: shared_send_stream.clone(),
             event_sender: event_sender.clone(),
         };
-        Self::setup_for_server(&mut message_controller).await?;
+        Self::setup_for_server(&message_controller).await?;
 
         Ok(Arc::new(Self {
             transport_connection,
