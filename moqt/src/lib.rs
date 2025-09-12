@@ -7,6 +7,8 @@ use crate::modules::transport::transport_connection_creator::TransportConnection
 
 mod modules;
 
+pub use modules::moqt::protocol::QUIC;
+
 pub struct ServerConfig {
     pub port: u16,
     pub cert_path: String,

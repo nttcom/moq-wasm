@@ -1,6 +1,6 @@
 use std::{fs, io, path::Path};
 
-use moqt::Endpoint;
+use moqt::{Endpoint, ServerConfig, QUIC};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
 fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
@@ -43,8 +43,14 @@ async fn main() -> anyhow::Result<()> {
     );
     tracing::info!("key_path: {}", key_path);
     tracing::info!("cert_path: {}", cert_path);
-
-    let mut endpoint = Endpoint::create_server(cert_path, key_path, 4433, 30).unwrap();
+    
+    let config = ServerConfig {
+        port: 4433,
+        key_path: key_path.clone(),
+        cert_path: cert_path.clone(),
+        keep_alive_interval_sec: 30
+    };
+    let mut endpoint = Endpoint::<QUIC>::create_server(config).unwrap();
     let connection = endpoint.accept().await;
     if let Err(e) = connection {
         panic!("test failed: {:?}", e)
