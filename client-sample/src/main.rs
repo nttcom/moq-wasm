@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
     if let Err(e) = connection {
         panic!("test failed: {:?}", e)
     } else {
-        println!("Please input `Ctrl + C` to continue...");
+        println!("Please input `Ctrl + C` to finish...");
         tokio::signal::ctrl_c().await?;
         Ok(())
     }
