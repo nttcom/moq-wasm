@@ -55,9 +55,8 @@ async fn main() -> anyhow::Result<()> {
     if let Err(e) = connection {
         panic!("test failed: {:?}", e)
     } else {
-        println!("Please push the Enter key to continue...");
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).expect("入力エラー");
+        println!("Please input `Ctrl + C` to continue...");
+        tokio::signal::ctrl_c().await?;
         Ok(())
     }
 }
