@@ -892,9 +892,14 @@ impl MOQTClient {
             .await
             .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
 
-        let subgroup_stream_header_message =
-            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
-                .unwrap();
+        let subgroup_stream_header_message = subgroup_stream::Header::new(
+            subscribe_id,
+            track_alias,
+            group_id,
+            subgroup_id,
+            publisher_priority,
+        )
+        .unwrap();
         log(std::format!(
             "sent: subgroup_stream_header_message: {:#x?}",
             subgroup_stream_header_message
@@ -913,6 +918,7 @@ impl MOQTClient {
 
         let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
         buffer.copy_from(&buf);
+        log(std::format!("buf: {:#?}", buf).as_str());
         JsFuture::from(writer.write_with_chunk(&buffer)).await
     }
 
@@ -955,6 +961,7 @@ impl MOQTClient {
 
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
+            log(std::format!("buf: {:#?}", buf).as_str());
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(ok) => {
                     // log(std::format!(
@@ -1372,6 +1379,7 @@ async fn uni_directional_stream_read_thread(
         }
 
         while !buf.is_empty() {
+            log(std::format!("buf: {:#?}", buf).as_str());
             if subgroup_stream_header.is_none() {
                 let (_data_stream_type, _subgroup_stream_header) =
                     match object_header_handler(callbacks.clone(), &mut buf).await {
@@ -1557,6 +1565,7 @@ async fn subgroup_stream_object_handler(
             return Err(e);
         }
     };
+    log(std::format!("subgroup_stream_object: {:#?}", subgroup_stream_object).as_str());
 
     if let Some(callback) = callbacks
         .borrow()

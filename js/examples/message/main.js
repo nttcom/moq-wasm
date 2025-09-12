@@ -93,13 +93,9 @@ init().then(async () => {
     })
 
     const trackAlias = form['subscribe-track-alias'].value
-    client.onSubgroupStreamObject(BigInt(trackAlias), async (subgroupStreamObject) => {
+    client.onSubgroupStreamObject(BigInt(trackAlias), async (groupId, subgroupStreamObject) => {
       console.log({ subgroupStreamObject })
-      const objectPayload = subgroupStreamObject.object_payload
-
-      if (objectPayload.length > 0) {
-        describeReceivedObject(objectPayload)
-      }
+      describeReceivedObject(subgroupStreamObject.object_payload)
     })
 
     const objectIdElement = document.getElementById('objectId')
@@ -211,31 +207,35 @@ init().then(async () => {
       objectIdElement.textContent = objectId
     })
 
+    const sendSubgroupObjectHeaderBtn = document.getElementById('sendSubgroupObjectHeaderBtn')
+    sendSubgroupObjectHeaderBtn.addEventListener('click', async () => {
+      console.log('send subgroup stream object header btn clicked')
+      const trackAlias = form['object-track-alias'].value
+      const publisherPriority = form['publisher-priority'].value
+
+      await client.sendSubgroupStreamHeaderMessage(BigInt(trackAlias), groupId, subgroupId, publisherPriority)
+    })
+
     const sendSubgroupObjectBtn = document.getElementById('sendSubgroupObjectBtn')
     sendSubgroupObjectBtn.addEventListener('click', async () => {
       console.log('send subgroup stream object btn clicked')
       const trackAlias = form['object-track-alias'].value
-      const publisherPriority = form['publisher-priority'].value
       const objectPayloadString = form['object-payload'].value
 
       // encode the text to the object array
       const objectPayloadArray = new TextEncoder().encode(objectPayloadString)
       const key = `${groupId}:${subgroupId}`
 
-      // send header if it is the first time
-      if (!subgroupHeaderSent.has(key)) {
-        await client.sendSubgroupStreamHeaderMessage(BigInt(trackAlias), groupId, subgroupId, publisherPriority)
-        subgroupHeaderSent.add(key)
-      }
-
       await client.sendSubgroupStreamObject(
         BigInt(trackAlias),
         groupId,
         subgroupId,
-        objectId++,
+        objectId,
         undefined,
+        // Uint8Array.from([])
         objectPayloadArray
       )
+      objectId++
       objectIdElement.textContent = objectId
     })
 
@@ -243,17 +243,9 @@ init().then(async () => {
     sendSubgroupObjectWithStatusBtn.addEventListener('click', async () => {
       console.log('send subgroup stream object with status btn clicked')
       const trackAlias = form['object-track-alias'].value
-      const publisherPriority = form['publisher-priority'].value
       const objectStatus = Array.from(form['object-status']).filter((elem) => elem.checked)[0].value
 
       const objectPayloadArray = Uint8Array.from([])
-      const key = `${groupId}:${subgroupId}`
-
-      // send header if it is the first time
-      if (!subgroupHeaderSent.has(key)) {
-        await client.sendSubgroupStreamHeaderMessage(BigInt(trackAlias), groupId, subgroupId, publisherPriority)
-        subgroupHeaderSent.add(key)
-      }
 
       await client.sendSubgroupStreamObject(
         BigInt(trackAlias),
