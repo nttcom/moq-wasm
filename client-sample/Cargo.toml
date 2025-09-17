@@ -1,0 +1,12 @@
+[package]
+name = "client-sample"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+moqt = {path = "../moqt"}
+tokio = { version = "1.45.0", features = ["full", "tracing"] }
+anyhow = { version = "1.0.75", features = ["backtrace"] }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+url = { version = "2.5.7" }

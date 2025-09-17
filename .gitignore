@@ -22,3 +22,9 @@ js/pkg/*
 log/*
 
 cargo-flamegraph.trace/*
+
+# certs
+key.pem
+cert.pem
+
+Cargo.lock
