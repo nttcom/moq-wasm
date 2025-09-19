@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::modules::moqt::protocol::TransportProtocol;
-use crate::modules::moqt::{session::Session, session_creator::SessionCreator};
+use crate::modules::moqt::{sessions::session::Session, sessions::session_creator::SessionCreator};
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 mod modules;
