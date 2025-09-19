@@ -1,0 +1,3 @@
+enum SubscriberEvent {
+    PublishNameSpace(String),
+}

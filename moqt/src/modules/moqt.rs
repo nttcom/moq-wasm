@@ -1,9 +1,9 @@
 pub(crate) mod constants;
 pub(crate) mod messages;
-pub(crate) mod session;
-pub(crate) mod session_creator;
-pub(crate) mod session_message_controller;
+pub(crate) mod sessions;
 pub(crate) mod control_receiver;
 pub(crate) mod control_sender;
 pub(crate) mod moqt_enums;
 pub(crate) mod protocol;
+pub(crate) mod publishers;
+pub(crate) mod subscribers;

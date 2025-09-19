@@ -9,7 +9,7 @@ use crate::modules::moqt::messages::control_messages::setup_parameters::MaxSubsc
 use crate::modules::moqt::messages::control_messages::setup_parameters::SetupParameter;
 use crate::modules::moqt::moqt_enums::ReceiveEvent;
 use crate::modules::moqt::protocol::TransportProtocol;
-use crate::modules::moqt::session_message_controller::SessionMessageController;
+use crate::modules::moqt::sessions::session_message_controller::SessionMessageController;
 
 pub struct Session<T: TransportProtocol> {
     transport_connection: T::Connection,

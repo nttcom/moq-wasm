@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-moqt = {path = "../moqt"}
+moqt = {path = "../../moqt"}
 tokio = { version = "1.45.0", features = ["full", "tracing"] }
 anyhow = { version = "1.0.75", features = ["backtrace"] }
 tracing = "0.1.37"
