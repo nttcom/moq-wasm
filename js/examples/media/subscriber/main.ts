@@ -92,7 +92,7 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
   })
 
   if (type === 'audio') {
-    setupAudioDecoderWorker()
+    // setupAudioDecoderWorker()
   } else {
     setupVideoDecoderWorker()
   }
@@ -118,10 +118,10 @@ function setupClientObjectCallbacks(client: MOQTClient, type: 'video' | 'audio',
         subgroupStreamObject
       })
     } else {
-      audioDecoderWorker.postMessage({
-        groupId,
-        subgroupStreamObject
-      })
+      // audioDecoderWorker.postMessage({
+      //   groupId,
+      //   subgroupStreamObject
+      // })
     }
   })
 }

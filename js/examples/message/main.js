@@ -307,7 +307,6 @@ init().then(async () => {
     const ascendSubgroupId = document.getElementById('ascendSubgroupIdBtn')
     ascendSubgroupId.addEventListener('click', async () => {
       subgroupId++
-      objectId = 0n
       console.log('ascend subgroupId', subgroupId)
       subgroupIdElement.textContent = subgroupId
       objectIdElement.textContent = objectId
@@ -319,7 +318,6 @@ init().then(async () => {
         return
       }
       subgroupId--
-      objectId = 0n
       console.log('descend subgroupId', subgroupId)
       subgroupIdElement.textContent = subgroupId
       objectIdElement.textContent = objectId

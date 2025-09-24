@@ -28,8 +28,8 @@ const SW_VIDEO_ENCODER_CONFIG = {
   width: 1920,
   height: 1080,
   bitrate: 15_000_000, //10 Mbps
-  // scalabilityMode: 'L1T3',
-  scalabilityMode: 'L1T1',
+  scalabilityMode: 'L1T3',
+  // scalabilityMode: 'L1T1',
   framerate: 30
 }
 

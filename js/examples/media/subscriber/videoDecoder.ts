@@ -51,8 +51,8 @@ const SW_VIDEO_DECODER_CONFIG = {
   codec: 'av01.0.08M.08',
   width: 1920,
   height: 1080,
-  // scalabilityMode: 'L1T3'
-  scalabilityMode: 'L1T1'
+  scalabilityMode: 'L1T3'
+  // scalabilityMode: 'L2T2'
 }
 async function initializeVideoDecoder() {
   const init: VideoDecoderInit = {
@@ -69,6 +69,11 @@ async function initializeVideoDecoder() {
   await decoder.configure(SW_VIDEO_DECODER_CONFIG)
   return decoder
 }
+
+;(async () => {
+  const decoder = await initializeVideoDecoder()
+  console.log(decoder)
+})()
 
 namespace VideoDecoder {
   export type SubgroupStreamObject = {

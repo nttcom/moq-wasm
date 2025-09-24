@@ -40,12 +40,53 @@
           <button type="button" id="sendSetupBtn">Send</button>
 
           <h3>ANNOUNCE</h3>
-          <label>Track Namespace: <input type="text" name="announce-track-namespace" id="" value="vc/aa" /> </label>
+          <label>
+            Track Namespace:
+            <input type="text" name="announce-track-namespace" id="announce-track-namespace" value="" />
+          </label>
+          <script>
+            // Set default value for Track Namespace input
+            ;(function () {
+              function pad(n) {
+                return n < 10 ? '0' + n : n
+              }
+              const now = new Date()
+              const yyyy = now.getFullYear()
+              const mm = pad(now.getMonth() + 1)
+              const dd = pad(now.getDate())
+              const HH = pad(now.getHours())
+              const MM = pad(now.getMinutes())
+              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+              const input = document.getElementById('announce-track-namespace')
+              if (input) input.value = value
+            })()
+          </script>
+
           <br />
           <button type="button" id="sendAnnounceBtn">Send</button>
 
           <h3>SUBSCRIBE_ANNOUNCES</h3>
-          <label>Track Namespace Prefix: <input type="text" name="track-namespace-prefix" id="" value="vc" /> </label>
+          <label>
+            Track Namespace Prefix:
+            <input type="text" name="track-namespace-prefix" value="" />
+          </label>
+          <script>
+            // Set default value for Track Namespace input
+            ;(function () {
+              function pad(n) {
+                return n < 10 ? '0' + n : n
+              }
+              const now = new Date()
+              const yyyy = now.getFullYear()
+              const mm = pad(now.getMonth() + 1)
+              const dd = pad(now.getDate())
+              const HH = pad(now.getHours())
+              const MM = pad(now.getMinutes())
+              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+              const input = document.getElementById('track-namespace-prefix')
+              if (input) input.value = value
+            })()
+          </script>
           <br />
           <button type="button" id="sendSubscribeAnnouncesBtn">Send</button>
 
@@ -54,7 +95,27 @@
           <br />
           <label>Track Alias: <input type="text" name="subscribe-track-alias" id="" value="0" /> </label>
           <br />
-          <label>Track Namespace: <input type="text" name="subscribe-track-namespace" id="" value="vc/aa" /> </label>
+          <label>
+            Track Namespace:
+            <input type="text" name="subscribe-track-namespace" id="subscribe-track-namespace" value="" />
+          </label>
+          <script>
+            // Set default value for Track Namespace input
+            ;(function () {
+              function pad(n) {
+                return n < 10 ? '0' + n : n
+              }
+              const now = new Date()
+              const yyyy = now.getFullYear()
+              const mm = pad(now.getMonth() + 1)
+              const dd = pad(now.getDate())
+              const HH = pad(now.getHours())
+              const MM = pad(now.getMinutes())
+              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+              const input = document.getElementById('subscribe-track-namespace')
+              if (input) input.value = value
+            })()
+          </script>
           <br />
           <label>Track Name: <input type="text" name="track-name" id="" value="vc_track" /> </label>
           <br />
