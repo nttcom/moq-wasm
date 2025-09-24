@@ -24,7 +24,27 @@
           <button type="button" id="sendSetupBtn">Send</button>
 
           <h3>SUBSCRIBE</h3>
-          <label>Track Namespace: <input type="text" name="subscribe-track-namespace" id="" value="video_audio" /> </label>
+          <label>
+            Track Namespace:
+            <input type="text" name="subscribe-track-namespace" id="subscribe-track-namespace" value="" />
+          </label>
+          <script>
+            // Set default value for Track Namespace input
+            ;(function () {
+              function pad(n) {
+                return n < 10 ? '0' + n : n
+              }
+              const now = new Date()
+              const yyyy = now.getFullYear()
+              const mm = pad(now.getMonth() + 1)
+              const dd = pad(now.getDate())
+              const HH = pad(now.getHours())
+              const MM = pad(now.getMinutes())
+              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+              const input = document.getElementById('subscribe-track-namespace')
+              if (input) input.value = value
+            })()
+          </script>
           <button type="button" id="sendSubscribeBtn">Send</button>
           <div>
             <video id="video" muted inline controls></video>

@@ -60,22 +60,21 @@ export async function sendVideoObjectMessage(
 ) {
   chunkDataBitrateLogger.addBytes(chunk.byteLength)
   const payload = packMetaAndChunk(chunk)
-  // const payload = Uint8Array.from([])
   await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, payload)
 
   // groupIdが変わったら、EndOfGroupを送信
   // subgroupIdはなんでも良いが0とする
-  // if (groupId > currentVideoId.groupId) {
-  //   await client.sendSubgroupStreamObject(
-  //     BigInt(trackAlias),
-  //     currentVideoId.groupId,
-  //     BigInt(0),
-  //     BigInt(KEYFRAME_INTERVAL),
-  //     3, // 0x3: EndOfGroup
-  //     Uint8Array.from([])
-  //   )
-  //   console.log('send Object(ObjectStatus=EndOfGroup)')
-  // }
+  if (groupId > currentVideoId.groupId) {
+    await client.sendSubgroupStreamObject(
+      BigInt(trackAlias),
+      currentVideoId.groupId,
+      BigInt(0),
+      BigInt(KEYFRAME_INTERVAL),
+      3, // 0x3: EndOfGroup
+      Uint8Array.from([])
+    )
+    console.log('send Object(ObjectStatus=EndOfGroup)')
+  }
 
   currentVideoId = { groupId, subgroupId, objectId }
 }
