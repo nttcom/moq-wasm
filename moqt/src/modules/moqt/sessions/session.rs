@@ -10,8 +10,11 @@ use crate::modules::moqt::messages::control_messages::setup_parameters::SetupPar
 use crate::modules::moqt::moqt_enums::ReceiveEvent;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::sessions::session_message_controller::SessionMessageController;
+use crate::Publisher;
+use crate::Subscriber;
 
 pub struct Session<T: TransportProtocol> {
+    pub id: usize,
     transport_connection: T::Connection,
     message_controller: SessionMessageController<T>,
     event_sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
@@ -22,6 +25,7 @@ pub struct Session<T: TransportProtocol> {
 
 impl<T: TransportProtocol> Session<T> {
     pub(crate) async fn for_client(
+        id: usize,
         transport_connection: T::Connection,
         send_stream: ControlSender<T>,
         receive_stream: ControlReceiver,
@@ -35,6 +39,7 @@ impl<T: TransportProtocol> Session<T> {
         Self::setup_for_client(&mut message_controller).await?;
 
         Ok(Arc::new(Self {
+            id,
             transport_connection,
             message_controller,
             event_sender,
@@ -45,6 +50,7 @@ impl<T: TransportProtocol> Session<T> {
     }
 
     pub(crate) async fn for_server(
+        id: usize,
         transport_connection: T::Connection,
         send_stream: ControlSender<T>,
         receive_stream: ControlReceiver,
@@ -58,6 +64,7 @@ impl<T: TransportProtocol> Session<T> {
         Self::setup_for_server(&message_controller).await?;
 
         Ok(Arc::new(Self {
+            id,
             transport_connection,
             message_controller,
             event_sender,
@@ -85,9 +92,13 @@ impl<T: TransportProtocol> Session<T> {
         message_controller.server_setup().await
     }
 
-    pub async fn create_publisher() {}
+    pub fn create_publisher(&self) -> Publisher {
+        Publisher {}
+    }
 
-    pub async fn create_subscriber() {}
+    pub fn create_subscriber(&self) -> Subscriber {
+        Subscriber {}
+    }
 }
 
 impl<T: TransportProtocol> Drop for Session<T> {

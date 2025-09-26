@@ -7,5 +7,7 @@ members = [
     'moqt-client-sample',
     'moqt',
     './sample/server-sample',
-    './sample/client-sample'
+    './sample/client-sample',
+    './sdk/server',
+    './sdk/client'
 ]

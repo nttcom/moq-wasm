@@ -1,4 +1,4 @@
-struct Publisher;
+pub struct Publisher;
 
 impl Publisher {
     pub fn publish_namespace() {
@@ -9,7 +9,7 @@ impl Publisher {
 
     }
 
-    pub fn receive_from_subscriber() {
+    pub async fn receive_from_subscriber(&self) {
         
     }
 }
