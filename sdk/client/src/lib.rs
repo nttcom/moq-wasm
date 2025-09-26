@@ -1,7 +1,7 @@
-struct ClientSDK {
+pub struct ClientSDK {
 
 }
 
 impl ClientSDK {
-    
+
 }

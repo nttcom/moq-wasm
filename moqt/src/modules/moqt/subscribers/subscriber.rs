@@ -1,4 +1,4 @@
-struct Subscriber;
+pub struct Subscriber;
 
 impl Subscriber {
     pub fn subscribe_namespace() {
