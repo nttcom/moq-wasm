@@ -1,6 +1,6 @@
 use moqt::{Endpoint, QUIC};
 
-use crate::modules::{publisher::{self, Publisher}, subscriber::Subscriber};
+use crate::modules::{publisher::Publisher, subscriber::Subscriber};
 
 struct Handler {
     join_handle: tokio::task::JoinHandle<()>,
@@ -31,7 +31,7 @@ impl Handler {
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .spawn(async move {
-                let pubsub_id = 0;
+                let mut pubsub_id = 0;
                 loop {
                     let session = match endpoint.accept().await.inspect_err(|e| {
                         tracing::error!("failed to accept: {}", e);
@@ -44,7 +44,7 @@ impl Handler {
                     let publisher = Publisher { id: pubsub_id, session_id: session.id, publisher };
                     let subscriber = Subscriber { id: pubsub_id, session_id: session.id, subscriber };
                     event_sender.send((publisher, subscriber));
-                    pub_id += 1;
+                    pubsub_id += 1;
                 }
             })
             .unwrap()

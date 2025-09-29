@@ -8,6 +8,7 @@ pub(crate) trait TransportConnection: Send + Sync {
     type SendStream: TransportSendStream;
     type ReceiveStream: TransportReceiveStream;
 
+    fn id(&self) -> usize;
     async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)>;
     async fn accept_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)>;
 }

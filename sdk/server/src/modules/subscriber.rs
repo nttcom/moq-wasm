@@ -1,9 +1,11 @@
-pub(crate) struct Subscriber {
+pub(crate) struct Subscriber<T: moqt::TransportProtocol> {
     pub(crate) id: usize,
     pub(crate) session_id: usize,
-    pub(crate) subscriber: moqt::Subscriber
+    pub(crate) subscriber: moqt::Subscriber<T>,
 }
 
-impl Subscriber {
-    
+impl<T: moqt::TransportProtocol> Subscriber<T> {
+    pub(crate) async fn receive_from_publisher(&mut self) {
+        self.subscriber.receive_from_publisher().await;
+    }
 }

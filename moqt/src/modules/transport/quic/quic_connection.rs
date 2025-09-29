@@ -19,6 +19,10 @@ impl TransportConnection for QUICConnection {
     type SendStream = QUICSendStream;
     type ReceiveStream = QUICReceiveStream;
 
+    fn id(&self) -> usize {
+        self.connection.stable_id()
+    }
+
     async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
         let (sender, receiver) = self.connection.open_bi().await?;
         let send_stream = QUICSendStream {

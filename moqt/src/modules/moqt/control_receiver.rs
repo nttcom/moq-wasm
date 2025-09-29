@@ -1,5 +1,5 @@
 use crate::modules::{
-    moqt::{moqt_enums::ReceiveEvent, protocol::TransportProtocol}, transport::transport_receive_stream::TransportReceiveStream,
+    moqt::{enums::ReceiveEvent, protocol::TransportProtocol}, transport::transport_receive_stream::TransportReceiveStream,
 };
 
 pub(crate) struct ControlReceiver {
