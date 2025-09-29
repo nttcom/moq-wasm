@@ -107,8 +107,7 @@ mod tests {
             let buf = server_setup.packetize();
 
             let expected_bytes_array = [
-                64,  // Message Type
-                65,  // Message Type
+                33,  // Message Type
                 13,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff000a) in 62bit
@@ -125,8 +124,7 @@ mod tests {
         #[test]
         fn depacketize() {
             let bytes_array = [
-                64,  // Message Type
-                65,  // Message Type
+                33,  // Message Type
                 13,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff00000a) in 62bit

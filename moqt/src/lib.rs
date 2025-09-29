@@ -1,16 +1,15 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-
-use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::sessions::session_creator::SessionCreator;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 mod modules;
 
+pub use modules::moqt::protocol::TransportProtocol;
 pub use modules::moqt::protocol::QUIC;
 pub use modules::moqt::sessions::session::Session;
-pub use modules::moqt::publishers::publisher::Publisher;
-pub use modules::moqt::subscribers::subscriber::Subscriber;
+pub use modules::moqt::publisher::Publisher;
+pub use modules::moqt::subscriber::Subscriber;
 
 
 pub struct ServerConfig {

@@ -1,5 +1,3 @@
-use crate::modules::enums::SessionEvent;
-
 mod modules;
 
 pub struct ServerSDK {
@@ -10,7 +8,7 @@ pub struct ServerSDK {
 
 impl ServerSDK {
     pub fn run() {
-        let (manager_sender, manager_receiver) = tokio::sync::oneshot::channel::<SessionEvent>();
+        let (manager_sender, manager_receiver) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
         
     }
 }

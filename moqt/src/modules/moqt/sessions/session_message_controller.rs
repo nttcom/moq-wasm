@@ -11,7 +11,7 @@ use crate::modules::moqt::messages::control_messages::setup_parameters::MaxSubsc
 use crate::modules::moqt::messages::control_messages::setup_parameters::SetupParameter;
 use crate::modules::moqt::messages::moqt_message::MOQTMessage;
 use crate::modules::moqt::messages::moqt_message_error::MOQTMessageError;
-use crate::modules::moqt::moqt_enums::ReceiveEvent;
+use crate::modules::moqt::enums::ReceiveEvent;
 use crate::modules::moqt::protocol::TransportProtocol;
 
 pub(crate) struct SessionMessageController<T: TransportProtocol> {

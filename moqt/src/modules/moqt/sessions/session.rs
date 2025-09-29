@@ -1,31 +1,31 @@
 use std::sync::Arc;
-use std::sync::Weak;
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
+use crate::Publisher;
+use crate::Subscriber;
 use crate::modules::moqt::constants;
 use crate::modules::moqt::control_receiver::ControlReceiver;
 use crate::modules::moqt::control_sender::ControlSender;
+use crate::modules::moqt::enums::ReceiveEvent;
 use crate::modules::moqt::messages::control_messages::setup_parameters::MaxSubscribeID;
 use crate::modules::moqt::messages::control_messages::setup_parameters::SetupParameter;
-use crate::modules::moqt::moqt_enums::ReceiveEvent;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::sessions::session_message_controller::SessionMessageController;
-use crate::Publisher;
-use crate::Subscriber;
+use crate::modules::transport::transport_connection::TransportConnection;
 
 pub struct Session<T: TransportProtocol> {
     pub id: usize,
-    transport_connection: T::Connection,
-    message_controller: SessionMessageController<T>,
+    _transport_connection: T::Connection,
+    _message_controller: SessionMessageController<T>,
     event_sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
-    receive_stream: ControlReceiver,
-    send_stream: Weak<tokio::sync::Mutex<ControlSender<T>>>,
-    pub(crate) request_id: AtomicU64,
+    _receive_stream: ControlReceiver,
+    send_stream: Arc<tokio::sync::Mutex<ControlSender<T>>>,
+    request_id: AtomicU64,
 }
 
 impl<T: TransportProtocol> Session<T> {
     pub(crate) async fn for_client(
-        id: usize,
         transport_connection: T::Connection,
         send_stream: ControlSender<T>,
         receive_stream: ControlReceiver,
@@ -39,18 +39,17 @@ impl<T: TransportProtocol> Session<T> {
         Self::setup_for_client(&mut message_controller).await?;
 
         Ok(Arc::new(Self {
-            id,
-            transport_connection,
-            message_controller,
+            id: transport_connection.id(),
+            _transport_connection: transport_connection,
+            _message_controller: message_controller,
             event_sender,
-            receive_stream,
-            send_stream: Arc::downgrade(&shared_send_stream),
+            _receive_stream: receive_stream,
+            send_stream: shared_send_stream,
             request_id: AtomicU64::new(0),
         }))
     }
 
     pub(crate) async fn for_server(
-        id: usize,
         transport_connection: T::Connection,
         send_stream: ControlSender<T>,
         receive_stream: ControlReceiver,
@@ -64,12 +63,12 @@ impl<T: TransportProtocol> Session<T> {
         Self::setup_for_server(&message_controller).await?;
 
         Ok(Arc::new(Self {
-            id,
-            transport_connection,
-            message_controller,
+            id: transport_connection.id(),
+            _transport_connection: transport_connection,
+            _message_controller: message_controller,
             event_sender,
-            receive_stream,
-            send_stream: Arc::downgrade(&shared_send_stream),
+            _receive_stream: receive_stream,
+            send_stream: shared_send_stream,
             request_id: AtomicU64::new(1),
         }))
     }
@@ -92,12 +91,26 @@ impl<T: TransportProtocol> Session<T> {
         message_controller.server_setup().await
     }
 
-    pub fn create_publisher(&self) -> Publisher {
-        Publisher {}
+    pub(crate) fn get_request_id(self: &Arc<Self>) -> u64 {
+        let id = self.request_id.load(Ordering::SeqCst);
+        self.request_id.fetch_add(2, Ordering::SeqCst);
+        id
     }
 
-    pub fn create_subscriber(&self) -> Subscriber {
-        Subscriber {}
+    pub fn create_publisher(self: &Arc<Self>) -> Publisher<T> {
+        Publisher::<T> {
+            session: self.clone(),
+            shared_send_stream: self.send_stream.clone(),
+            event_sender: self.event_sender.clone(),
+        }
+    }
+
+    pub fn create_subscriber(self: &Arc<Self>) -> Subscriber<T> {
+        Subscriber::<T> {
+            session: self.clone(),
+            shared_send_stream: self.send_stream.clone(),
+            event_sender: self.event_sender.clone(),
+        }
     }
 }
 

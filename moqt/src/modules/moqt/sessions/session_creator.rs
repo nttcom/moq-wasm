@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::modules::moqt::control_receiver::ControlReceiver;
 use crate::modules::moqt::control_sender::ControlSender;
-use crate::modules::moqt::moqt_enums::ReceiveEvent;
+use crate::modules::moqt::enums::ReceiveEvent;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::sessions::session::Session;
 use crate::modules::transport::transport_connection::TransportConnection;
