@@ -7,7 +7,7 @@ use crate::modules::transport::{
 
 // Prevent `TransportConnectionCreator` from public
 #[allow(warnings)]
-pub trait TransportProtocol {
+pub trait TransportProtocol: 'static {
     type ConnectionCreator: TransportConnectionCreator<Connection = Self::Connection>;
     type Connection: TransportConnection<SendStream = Self::SendStream, ReceiveStream = Self::ReceiveStream>;
     type SendStream: TransportSendStream;

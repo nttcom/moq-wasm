@@ -7,10 +7,10 @@ struct Handler {
 }
 
 impl Handler {
-    pub(crate) fn run(
+    pub(crate) fn run<T: moqt::TransportProtocol>(
         key_path: String,
         cert_path: String,
-        event_sender: tokio::sync::mpsc::Sender<(Publisher, Subscriber)>,
+        event_sender: tokio::sync::mpsc::Sender<(Publisher<T>, Subscriber<T>)>,
     ) {
         let config = moqt::ServerConfig {
             port: 4433,
@@ -25,9 +25,9 @@ impl Handler {
         Self { join_handle };
     }
 
-    fn create_joinhandle(
+    fn create_joinhandle<T: moqt::TransportProtocol>(
         mut endpoint: Endpoint<QUIC>,
-        event_sender: tokio::sync::mpsc::Sender<(Publisher, Subscriber)>,
+        event_sender: tokio::sync::mpsc::Sender<(Publisher<T>, Subscriber<T>)>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .spawn(async move {
@@ -41,8 +41,16 @@ impl Handler {
                     };
                     let publisher = session.create_publisher();
                     let subscriber = session.create_subscriber();
-                    let publisher = Publisher { id: pubsub_id, session_id: session.id, publisher };
-                    let subscriber = Subscriber { id: pubsub_id, session_id: session.id, subscriber };
+                    let publisher = Publisher {
+                        id: pubsub_id,
+                        session_id: session.id,
+                        publisher,
+                    };
+                    let subscriber = Subscriber {
+                        id: pubsub_id,
+                        session_id: session.id,
+                        subscriber,
+                    };
                     event_sender.send((publisher, subscriber));
                     pubsub_id += 1;
                 }
