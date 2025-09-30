@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
-use moqt::Subscriber;
+use crate::modules::{
+    enums::PublisherEvent, subscriber::Subscriber, thread_manager::ThreadManager,
+};
 
-use crate::modules::{enums::MOQTEvent, thread_manager::ThreadManager};
-
-pub(crate) struct SubscriberRepository {
-    subscribers: tokio::sync::Mutex<Vec<Arc<Subscriber>>>,
-    message_sender: tokio::sync::mpsc::UnboundedSender<MOQTEvent>,
-    thread_manager: ThreadManager,
+pub(crate) struct SubscriberRepository<T: moqt::TransportProtocol> {
+    pub(crate) subscribers: tokio::sync::Mutex<Vec<Arc<Subscriber<T>>>>,
+    pub(crate) message_sender: tokio::sync::mpsc::UnboundedSender<PublisherEvent>,
+    pub(crate) thread_manager: ThreadManager,
 }
 
-impl SubscriberRepository {
-    pub(crate) async fn add(&mut self, subscriber: Subscriber) {
+impl<T: moqt::TransportProtocol> SubscriberRepository<T> {
+    pub(crate) async fn add(&mut self, subscriber: Subscriber<T>) {
         let shared_sub = Arc::new(subscriber);
         let weak_sub = Arc::downgrade(&shared_sub);
         self.subscribers.lock().await.push(shared_sub);
@@ -21,8 +21,14 @@ impl SubscriberRepository {
             .spawn(async move {
                 loop {
                     if let Some(shared_sub) = weak_sub.upgrade() {
-                        let _ = shared_sub.receive_from_publisher().await;
-                        sender.send(message);
+                        let event = match shared_sub.receive_from_publisher().await {
+                            Ok(event) => event,
+                            Err(e) => {
+                                tracing::error!("Failed to receive event: {}", e);
+                                break;
+                            }
+                        };
+                        sender.send(event);
                     } else {
                         tracing::error!("Publisher has been deleted.");
                         break;

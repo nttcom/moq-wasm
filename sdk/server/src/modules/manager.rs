@@ -4,28 +4,48 @@ use crate::modules::{
     enums::MOQTEvent,
     message_handler::MessageHandler,
     namespace_table::NamespaceTable,
+    publisher::Publisher,
     repositories::{
         publisher_repository::PublisherRepository, subscriber_repository::SubscriberRepository,
     },
+    subscriber::Subscriber,
+    thread_manager::ThreadManager,
 };
 
 pub(crate) struct Manager {
     join_handle: tokio::task::JoinHandle<()>,
-    pub_repo: PublisherRepository,
-    sub_repo: SubscriberRepository,
 }
 
 impl Manager {
-    pub fn run(receiver: tokio::sync::mpsc::Receiver<(moqt::Publisher, moqt::Subscriber)>) {}
+    pub fn run<T: moqt::TransportProtocol>(
+        receiver: tokio::sync::mpsc::Receiver<(Publisher<T>, Subscriber<T>)>,
+    ) -> Self {
+        let pub_repo = PublisherRepository::<T> {
+            publishers: tokio::sync::Mutex::new(vec![]),
+            message_sender: todo!(),
+            thread_manager: ThreadManager::new(),
+        };
+        let sub_repo = SubscriberRepository::<T> {
+            subscribers: tokio::sync::Mutex::new(vec![]),
+            message_sender: todo!(),
+            thread_manager: ThreadManager::new(),
+        };
+        let join_handle = Self::create_session_event_watcher(receiver, pub_repo, sub_repo);
+        Self { join_handle }
+    }
 
-    fn create_session_event_watcher(
-        mut receiver: tokio::sync::mpsc::Receiver<(moqt::Publisher, moqt::Subscriber)>,
+    fn create_session_event_watcher<T: moqt::TransportProtocol>(
+        mut receiver: tokio::sync::mpsc::Receiver<(Publisher<T>, Subscriber<T>)>,
+        mut pub_repo: PublisherRepository<T>,
+        mut sub_repo: SubscriberRepository<T>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Session Event Watcher")
             .spawn(async move {
                 loop {
                     if let Some((publisher, subscriber)) = receiver.recv().await {
+                        pub_repo.add(publisher).await;
+                        sub_repo.add(subscriber).await;
                     } else {
                         tracing::error!("Failed to receive session event");
                         break;

@@ -6,7 +6,14 @@ pub(crate) struct ThreadManager {
 }
 
 impl ThreadManager {
-    fn new() {}
+    pub(super) fn new() -> Self {
+        let join_handles = Arc::new(tokio::sync::Mutex::new(vec![]));
+        let checker_join_handle = Self::create_checker(join_handles.clone());
+        Self {
+            checker_join_handle,
+            join_handles,
+        }
+    }
 
     fn create_checker(
         join_handles: Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,

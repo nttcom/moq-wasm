@@ -1,18 +1,15 @@
 use std::sync::Arc;
 
-use crate::modules::{
-    enums::MOQTEvent, publisher::Publisher,
-    thread_manager::ThreadManager,
-};
+use crate::modules::{enums::SubscriberEvent, publisher::Publisher, thread_manager::ThreadManager};
 
-pub(crate) struct PublisherRepository {
-    publishers: tokio::sync::Mutex<Vec<Arc<Publisher>>>,
-    message_sender: tokio::sync::mpsc::UnboundedSender<MOQTEvent>,
-    thread_manager: ThreadManager,
+pub(crate) struct PublisherRepository<T: moqt::TransportProtocol> {
+    pub(crate) publishers: tokio::sync::Mutex<Vec<Arc<Publisher<T>>>>,
+    pub(crate) message_sender: tokio::sync::mpsc::UnboundedSender<SubscriberEvent>,
+    pub(crate) thread_manager: ThreadManager,
 }
 
-impl PublisherRepository {
-    pub(crate) async fn add(&mut self, publisher: Publisher) {
+impl<T: moqt::TransportProtocol> PublisherRepository<T> {
+    pub(crate) async fn add(&mut self, publisher: Publisher<T>) {
         let shared_pub = Arc::new(publisher);
         let weak_pub = Arc::downgrade(&shared_pub);
         self.publishers.lock().await.push(shared_pub);
@@ -22,7 +19,7 @@ impl PublisherRepository {
             .spawn(async move {
                 loop {
                     if let Some(shared_pub) = weak_pub.upgrade() {
-                        let _ = shared_pub.receive_from_subscriber().await;
+                        let event = shared_pub.receive_from_subscriber().await;
                         sender.send(message);
                     } else {
                         tracing::error!("Publisher has been deleted.");
