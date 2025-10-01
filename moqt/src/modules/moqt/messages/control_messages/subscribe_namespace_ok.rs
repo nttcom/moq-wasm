@@ -1,6 +1,5 @@
 use crate::modules::moqt::messages::{
-    control_message_type::ControlMessageType,
-    control_messages::util::{add_header, validate_header},
+    control_messages::util::{add_payload_length, validate_payload_length},
     moqt_message::MOQTMessage,
     moqt_message_error::MOQTMessageError,
     variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
@@ -9,7 +8,6 @@ use crate::modules::moqt::messages::{
 use anyhow::{Context, Result};
 use bytes::BytesMut;
 use serde::Serialize;
-use std::any::Any;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeNamespaceOk {
@@ -32,7 +30,9 @@ impl SubscribeNamespaceOk {
 
 impl MOQTMessage for SubscribeNamespaceOk {
     fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
-        validate_header(ControlMessageType::SubscribeNamespaceOk as u8, buf)?;
+        if !validate_payload_length(buf) {
+            return Err(MOQTMessageError::ProtocolViolation);
+        }
 
         let request_id = match read_variable_integer_from_buffer(buf) {
             Ok(v) => v,
@@ -75,11 +75,7 @@ impl MOQTMessage for SubscribeNamespaceOk {
                 &track_namespace_prefix.as_bytes().to_vec(),
             ));
         }
-        add_header(ControlMessageType::SubscribeNamespaceOk as u8, payload)
-    }
-    /// Method to enable downcasting from MOQTPayload to SubscribeAnnouncesOk
-    fn as_any(&self) -> &dyn Any {
-        self
+        add_payload_length(payload)
     }
 }
 
@@ -101,7 +97,6 @@ mod tests {
             let buf = subscribe_announces_ok.packetize();
 
             let expected_bytes_array = [
-                18, // Message Type(i)
                 12, // Message Length(i)
                 0,  // Request ID(i)
                 2,  // Track Namespace Prefix(tuple): Number of elements
@@ -116,7 +111,6 @@ mod tests {
         #[test]
         fn depacketize() {
             let bytes_array = [
-                18, // Message Type(i)
                 12, // Message Length(i)
                 0,  // Request ID(i)
                 2,  // Track Namespace Prefix(tuple): Number of elements

@@ -1,8 +1,7 @@
 use crate::modules::moqt::messages::{
-    control_message_type::ControlMessageType,
     control_messages::{
         setup_parameters::SetupParameter,
-        util::{add_header, validate_header},
+        util::{add_payload_length, validate_payload_length},
     },
     moqt_message::MOQTMessage,
     moqt_message_error::MOQTMessageError,
@@ -11,7 +10,7 @@ use crate::modules::moqt::messages::{
 };
 use anyhow::Context;
 use bytes::BytesMut;
-use std::{any::Any, vec};
+use std::vec;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientSetup {
@@ -34,7 +33,9 @@ impl ClientSetup {
 
 impl MOQTMessage for ClientSetup {
     fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
-        validate_header(ControlMessageType::ClientSetup as u8, buf)?;
+        if !validate_payload_length(buf) {
+            return Err(MOQTMessageError::ProtocolViolation);
+        }
 
         let number_of_supported_versions = u8::try_from(
             read_variable_integer_from_buffer(buf)
@@ -93,11 +94,7 @@ impl MOQTMessage for ClientSetup {
             setup_parameter.packetize(&mut payload);
         }
 
-        add_header(ControlMessageType::ClientSetup as u8, payload)
-    }
-    /// Method to enable downcasting from MOQTPayload to ClientSetup
-    fn as_any(&self) -> &dyn Any {
-        self
+        add_payload_length(payload)
     }
 }
 
@@ -124,7 +121,6 @@ mod test {
             let buf = client_setup.packetize();
 
             let expected_bytes_array = [
-                32,  // Message Type
                 14,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
@@ -142,7 +138,6 @@ mod test {
         #[test]
         fn depacketize() {
             let bytes_array = [
-                32,  // Message Type
                 14,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
