@@ -11,7 +11,7 @@ use serde::Serialize;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeNamespaceError {
-    request_id: u64,
+    pub(crate) request_id: u64,
     track_namespace_prefix: Vec<String>,
     error_code: u64,
     reason_phrase: String,

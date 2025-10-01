@@ -26,11 +26,21 @@ impl<T: TransportProtocol> Subscriber<T> {
         let bytes = subscribe_namespace.packetize();
         self.shared_send_stream.lock().await.send(&bytes).await?;
         tokio::select! {
-            _ = utils::start_receive::<SubscribeNamespaceOk>(self.event_sender.subscribe()) => {
-                Ok(())
+            sub_ns_ok = utils::start_receive::<SubscribeNamespaceOk>(self.event_sender.subscribe()) => {
+                let sub_ns_ok = sub_ns_ok?;
+                if request_id == sub_ns_ok.request_id {
+                    Ok(())
+                } else {
+                    bail!("unmatched request id")
+                }
             }
-            _ = utils::start_receive::<SubscribeNamespaceError>(self.event_sender.subscribe()) => {
-                bail!("Error occurred.")
+            sub_ns_err = utils::start_receive::<SubscribeNamespaceError>(self.event_sender.subscribe()) => {
+                let sub_ns_err = sub_ns_err?;
+                if request_id == sub_ns_err.request_id {
+                    Ok(())
+                } else {
+                    bail!("Error occured: Subscribe Namespace")
+                }
             }
         }
     }
