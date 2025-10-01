@@ -1,7 +1,6 @@
 use crate::modules::moqt::messages::{
-    control_message_type::ControlMessageType,
     control_messages::{
-        util::{add_header, validate_header},
+        util::{add_payload_length, validate_payload_length},
         version_specific_parameters::VersionSpecificParameter,
     },
     moqt_message::MOQTMessage,
@@ -13,7 +12,6 @@ use crate::modules::moqt::messages::{
 use anyhow::{Context, Result};
 use bytes::BytesMut;
 use serde::Serialize;
-use std::any::Any;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct PublishNamespace {
@@ -45,7 +43,9 @@ impl PublishNamespace {
 
 impl MOQTMessage for PublishNamespace {
     fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
-        validate_header(ControlMessageType::PublishNamespace as u8, buf)?;
+        if !validate_payload_length(buf) {
+            return Err(MOQTMessageError::ProtocolViolation);
+        }
 
         let request_id = match read_variable_integer_from_buffer(buf) {
             Ok(v) => v,
@@ -110,11 +110,7 @@ impl MOQTMessage for PublishNamespace {
         }
 
         tracing::trace!("Packetized Announce message.");
-        add_header(ControlMessageType::PublishNamespace as u8, payload)
-    }
-    /// Method to enable downcasting from MOQTPayload to Announce
-    fn as_any(&self) -> &dyn Any {
-        self
+        add_payload_length(payload)
     }
 }
 
@@ -146,7 +142,6 @@ mod tests {
                 let buf = announce_message.packetize();
 
                 let expected_bytes_array = [
-                    6,  // Message Type(u64)
                     19, // Message Length
                     0,  // request id(u64)
                     2,  // Track Namespace(tuple): Number of elements
@@ -172,7 +167,6 @@ mod tests {
                 let buf = announce_message.packetize();
 
                 let expected_bytes_array = [
-                    6,  // Message Type(u64)
                     13, // Message Length
                     0,  // request id(u64)
                     2,  // Track Namespace(tuple): Number of elements
@@ -235,8 +229,8 @@ mod tests {
                     6,  // Message Type(u64)
                     13, // Message Length
                     0,  // request id(u64)
-                    2, // Track Namespace(tuple): Number of elements
-                    4, // Track Namespace(b): Length
+                    2,  // Track Namespace(tuple): Number of elements
+                    4,  // Track Namespace(b): Length
                     116, 101, 115, 116, // Track Namespace(b): Value("test")
                     4,   // Track Namespace(b): Length
                     116, 101, 115, 116, // Track Namespace(b): Value("test")
