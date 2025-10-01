@@ -1,25 +1,20 @@
 use std::sync::Arc;
 
 use anyhow::bail;
-use bytes::BytesMut;
 
-use crate::{
-    modules::moqt::{
-        control_sender::ControlSender,
-        enums::{PublisherEvent, ReceiveEvent},
-        messages::{
+use crate::modules::moqt::{
+        control_sender::ControlSender, enums::ReceiveEvent, messages::{
             control_messages::{
-                publish_namespace::PublishNamespace, subscribe_namespace::SubscribeNamespace,
+                subscribe_namespace::SubscribeNamespace,
                 subscribe_namespace_error::SubscribeNamespaceError,
                 subscribe_namespace_ok::SubscribeNamespaceOk,
-            }, moqt_message::MOQTMessage
-        },
-        protocol::TransportProtocol, utils,
-    }, Session
-};
+            },
+            moqt_message::MOQTMessage,
+        }, protocol::TransportProtocol, sessions::inner_session::InnerSession, utils
+    };
 
 pub struct Subscriber<T: TransportProtocol> {
-    pub(crate) session: Arc<Session<T>>,
+    pub(crate) session: Arc<InnerSession<T>>,
     pub(crate) shared_send_stream: Arc<tokio::sync::Mutex<ControlSender<T>>>,
     pub(crate) event_sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
 }
@@ -41,27 +36,4 @@ impl<T: TransportProtocol> Subscriber<T> {
     }
 
     pub fn subscribe() {}
-
-    pub async fn receive_from_publisher(&mut self) -> anyhow::Result<PublisherEvent> {
-        let mut receiver = self.event_sender.subscribe();
-        let receive_message = receiver.recv().await?;
-        match receive_message {
-            ReceiveEvent::Message(binary) => self.resolve_message(binary),
-            ReceiveEvent::Error() => bail!("Error occurred."),
-        }
-    }
-
-    fn resolve_message(&self, binary_message: Vec<u8>) -> anyhow::Result<PublisherEvent> {
-        // publish_namespace
-        // publish
-        let mut bytes_mut = BytesMut::from(binary_message.as_slice());
-        if let Ok(publish_namespace) = PublishNamespace::depacketize(&mut bytes_mut) {
-            Ok(PublisherEvent::PublishNameSpace(
-                publish_namespace.request_id,
-                publish_namespace.track_namespace,
-            ))
-        } else {
-            bail!("message unmatches.")
-        }
-    }
 }

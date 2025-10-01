@@ -15,10 +15,3 @@ pub enum TerminationErrorCode {
     TooManySubscribes = 0x6,
     GoAwayTimeout = 0x10,
 }
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum UnderlayType {
-    QUIC,
-    WebTransport,
-    Both,
-}

@@ -1,7 +1,6 @@
 use crate::modules::moqt::sessions::session_creator::SessionCreator;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 mod modules;
 
@@ -62,13 +61,13 @@ impl<T: TransportProtocol> Endpoint<T> {
         &self,
         remote_address: SocketAddr,
         host: &str,
-    ) -> anyhow::Result<Arc<Session<T>>> {
+    ) -> anyhow::Result<Session<T>> {
         self.session_creator
             .create_new_connection(remote_address, host)
             .await
     }
 
-    pub async fn accept(&mut self) -> anyhow::Result<Arc<Session<T>>> {
+    pub async fn accept(&mut self) -> anyhow::Result<Session<T>> {
         self.session_creator.accept_new_connection().await
     }
 }
