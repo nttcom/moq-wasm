@@ -16,7 +16,7 @@ use serde::Serialize;
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct SubscribeNamespace {
     pub(crate) request_id: u64,
-    track_namespace_prefix: Vec<String>,
+    pub(crate) track_namespace_prefix: Vec<String>,
     number_of_parameters: u64,
     parameters: Vec<VersionSpecificParameter>,
 }
@@ -34,14 +34,6 @@ impl SubscribeNamespace {
             number_of_parameters,
             parameters,
         }
-    }
-
-    pub(crate) fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    pub fn track_namespace_prefix(&self) -> Vec<String> {
-        self.track_namespace_prefix.clone()
     }
 
     pub fn parameters(&self) -> &Vec<VersionSpecificParameter> {

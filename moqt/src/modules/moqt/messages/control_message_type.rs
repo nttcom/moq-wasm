@@ -1,6 +1,6 @@
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-#[derive(Debug, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Clone)]
+#[derive(Debug, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy, Clone)]
 #[repr(u8)]
 pub enum ControlMessageType {
     SubscribeUpdate = 0x02,

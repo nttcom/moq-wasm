@@ -45,11 +45,3 @@ pub(crate) fn add_payload_length(payload: BytesMut) -> BytesMut {
     buffer.unsplit(payload);
     buffer
 }
-
-pub(crate) fn add_message_type(enum_value: u8, payload: BytesMut) -> BytesMut {
-    let mut buffer = BytesMut::new();
-    // Message Type
-    buffer.extend(write_variable_integer(enum_value as u64));
-    buffer.unsplit(payload);
-    buffer
-}
