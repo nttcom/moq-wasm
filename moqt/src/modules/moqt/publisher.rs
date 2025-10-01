@@ -39,7 +39,7 @@ impl<T: TransportProtocol> Publisher<T> {
                 if request_id == publish_namespace_error.request_id {
                     Ok(())
                 } else {
-                    bail!("unmatched request id")
+                    bail!("Error occured: Publish Namespace")
                 }
             }
         }
