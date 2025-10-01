@@ -2,26 +2,19 @@ use std::sync::Arc;
 
 use anyhow::bail;
 
-use crate::{
-    Session,
-    modules::moqt::{
-        control_sender::ControlSender,
-        enums::ReceiveEvent,
-        messages::{
+use crate::modules::moqt::{
+        control_sender::ControlSender, enums::ReceiveEvent, messages::{
             control_messages::{
                 publish_namespace::PublishNamespace,
                 publish_namespace_error::PublishNamespaceError,
                 publish_namespace_ok::PublishNamespaceOk,
             },
             moqt_message::MOQTMessage,
-        },
-        protocol::TransportProtocol,
-        utils,
-    },
-};
+        }, protocol::TransportProtocol, sessions::inner_session::InnerSession, utils
+    };
 
 pub struct Publisher<T: TransportProtocol> {
-    pub(crate) session: Arc<Session<T>>,
+    pub(crate) session: Arc<InnerSession<T>>,
     pub(crate) shared_send_stream: Arc<tokio::sync::Mutex<ControlSender<T>>>,
     pub(crate) event_sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
 }
