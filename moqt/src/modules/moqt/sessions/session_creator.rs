@@ -28,7 +28,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let (sender, _) = tokio::sync::broadcast::channel::<ReceiveEvent>(16);
         let moqt_sender = ControlSender::<T> { send_stream };
         let moqt_receiver = ControlReceiver::new::<T>(receive_stream, sender.clone());
-        Session::<T>::for_client(transport_conn, moqt_sender, moqt_receiver, sender)
+        Session::<T>::client(transport_conn, moqt_sender, moqt_receiver, sender)
             .await
             .inspect(|_| tracing::info!("Session has been created."))
     }
@@ -40,7 +40,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let (sender, _) = tokio::sync::broadcast::channel::<ReceiveEvent>(16);
         let moqt_sender = ControlSender { send_stream };
         let moqt_receiver = ControlReceiver::new::<T>(receive_stream, sender.clone());
-        Session::<T>::for_server(transport_conn, moqt_sender, moqt_receiver, sender)
+        Session::<T>::server(transport_conn, moqt_sender, moqt_receiver, sender)
             .await
             .inspect(|_| tracing::info!("Session has been created."))
     }

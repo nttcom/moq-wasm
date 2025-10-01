@@ -35,10 +35,6 @@ impl PublishNamespace {
             parameters,
         }
     }
-    pub fn track_namespace(&self) -> Vec<String> {
-        // TODO: consider `std::mem::take(&mut self.items)`
-        self.track_namespace.clone()
-    }
 }
 
 impl MOQTMessage for PublishNamespace {
