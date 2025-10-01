@@ -1,4 +1,4 @@
-use std::{io, net::ToSocketAddrs, str::FromStr};
+use std::{net::ToSocketAddrs, str::FromStr};
 
 use moqt::{Endpoint, QUIC};
 
@@ -13,7 +13,7 @@ async fn main() -> anyhow::Result<()> {
     let cert_path = format!(
         "{}{}",
         current_path.to_str().unwrap(),
-        "/client-sample/keys/cert.pem"
+        "/sample/client-sample/keys/cert.pem"
     );
     tracing::info!("cert_path: {}", cert_path);
 
