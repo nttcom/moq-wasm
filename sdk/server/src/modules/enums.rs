@@ -1,12 +1,8 @@
-type PublisherId = usize;
-type SubscriberId = usize;
+use uuid::Uuid;
 
-pub enum PublisherEvent {
-    PublishNameSpace(SubscriberId, u64, Vec<String>),
-    Publish()
-}
-
-pub enum SubscriberEvent {
-    SubscribeNameSpace(PublisherId, u64, Vec<String>),
+pub enum SessionEvent {
+    PublishNameSpace(Uuid, u64, Vec<String>),
+    SubscribeNameSpace(Uuid, u64, Vec<String>),
+    Publish(),
     Subscribe()
 }

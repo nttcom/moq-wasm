@@ -1,6 +1,8 @@
 use moqt::{Endpoint, QUIC};
 
-use crate::modules::{publisher::Publisher, subscriber::Subscriber};
+use uuid::Uuid;
+
+use crate::modules::core::{publisher::Publisher, session::Session, subscriber::Subscriber};
 
 struct Handler {
     join_handle: tokio::task::JoinHandle<()>,
@@ -10,7 +12,12 @@ impl Handler {
     pub(crate) fn run<T: moqt::TransportProtocol>(
         key_path: String,
         cert_path: String,
-        event_sender: tokio::sync::mpsc::Sender<(Publisher<T>, Subscriber<T>)>,
+        event_sender: tokio::sync::mpsc::Sender<(
+            Uuid,
+            Box<dyn Session>,
+            Box<dyn Publisher>,
+            Box<dyn Subscriber>,
+        )>,
     ) {
         let config = moqt::ServerConfig {
             port: 4433,
@@ -25,13 +32,17 @@ impl Handler {
         Self { join_handle };
     }
 
-    fn create_joinhandle<T: moqt::TransportProtocol>(
+    fn create_joinhandle(
         mut endpoint: Endpoint<QUIC>,
-        event_sender: tokio::sync::mpsc::Sender<(Publisher<T>, Subscriber<T>)>,
+        event_sender: tokio::sync::mpsc::Sender<(
+            Uuid,
+            Box<dyn Session>,
+            Box<dyn Publisher>,
+            Box<dyn Subscriber>,
+        )>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .spawn(async move {
-                let mut pubsub_id = 0;
                 loop {
                     let session = match endpoint.accept().await.inspect_err(|e| {
                         tracing::error!("failed to accept: {}", e);
@@ -39,20 +50,9 @@ impl Handler {
                         Ok(s) => s,
                         Err(_) => break,
                     };
-                    let publisher = session.create_publisher();
-                    let subscriber = session.create_subscriber();
-                    let publisher = Publisher {
-                        id: pubsub_id,
-                        session_id: session.id,
-                        publisher,
-                    };
-                    let subscriber = Subscriber {
-                        id: pubsub_id,
-                        session_id: session.id,
-                        subscriber,
-                    };
-                    event_sender.send((publisher, subscriber));
-                    pubsub_id += 1;
+                    let (publisher, subscriber) = session.new_publisher_subscriber_pair();
+                    let uuid = Uuid::new_v4();
+                    event_sender.send((uuid, Box::new(session), publisher, subscriber));
                 }
             })
             .unwrap()
