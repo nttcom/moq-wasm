@@ -39,6 +39,10 @@ impl<T: TransportProtocol> Session<T> {
         }
     }
 
+    pub fn create_publisher_subscriber_pair(&self) -> (Publisher<T>, Subscriber<T>) {
+        (self.create_publisher(), self.create_subscriber())
+    }
+
     pub async fn receive_event(&self) -> anyhow::Result<SessionEvent> {
         let mut receiver = self.inner.event_sender.subscribe();
         let receive_message = receiver.recv().await?;

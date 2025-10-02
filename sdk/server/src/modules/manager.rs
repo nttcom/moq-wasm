@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 
 use crate::modules::{
-    enums::MOQTEvent,
+    domains::{publisher::Publisher, session::Session, subscriber::Subscriber},
     message_handler::MessageHandler,
     namespace_table::NamespaceTable,
-    publisher::Publisher,
     repositories::{
         publisher_repository::PublisherRepository, subscriber_repository::SubscriberRepository,
     },
-    subscriber::Subscriber,
     thread_manager::ThreadManager,
 };
 
@@ -18,7 +16,7 @@ pub(crate) struct Manager {
 
 impl Manager {
     pub fn run<T: moqt::TransportProtocol>(
-        receiver: tokio::sync::mpsc::Receiver<(Publisher<T>, Subscriber<T>)>,
+        receiver: tokio::sync::mpsc::Receiver<(Session, Publisher, Subscriber)>,
     ) -> Self {
         let pub_repo = PublisherRepository::<T> {
             publishers: tokio::sync::Mutex::new(vec![]),
@@ -35,7 +33,7 @@ impl Manager {
     }
 
     fn create_session_event_watcher<T: moqt::TransportProtocol>(
-        mut receiver: tokio::sync::mpsc::Receiver<(Publisher<T>, Subscriber<T>)>,
+        mut receiver: tokio::sync::mpsc::Receiver<(Session, Publisher, Subscriber)>,
         mut pub_repo: PublisherRepository<T>,
         mut sub_repo: SubscriberRepository<T>,
     ) -> tokio::task::JoinHandle<()> {
@@ -43,7 +41,7 @@ impl Manager {
             .name("Session Event Watcher")
             .spawn(async move {
                 loop {
-                    if let Some((publisher, subscriber)) = receiver.recv().await {
+                    if let Some((session, publisher, subscriber)) = receiver.recv().await {
                         pub_repo.add(publisher).await;
                         sub_repo.add(subscriber).await;
                     } else {

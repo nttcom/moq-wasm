@@ -9,3 +9,4 @@ tokio = { version = "1.45.0", features = ["full", "tracing"] }
 tracing = "0.1.37"
 async-trait = "0.1.74"
 anyhow = { version = "1.0.75", features = ["backtrace"] }
+uuid = { version = "1.18,1", features = ["v4"]}
