@@ -12,6 +12,7 @@ use crate::{
             control_sender::ControlSender,
             enums::ReceiveEvent,
             messages::{
+                control_message_type::ControlMessageType,
                 control_messages::{
                     client_setup::ClientSetup,
                     server_setup::ServerSetup,
@@ -82,14 +83,14 @@ impl<T: TransportProtocol> InnerSession<T> {
             vec![SetupParameter::MaxSubscribeID(max_id)],
         )
         .packetize();
-        let bytes = add_message_type::<ClientSetup>(payload);
+        let bytes = add_message_type(ControlMessageType::ClientSetup, payload);
         send_stream
             .send(&bytes)
             .await
             .inspect_err(|e| tracing::error!("failed to send. :{}", e.to_string()))?;
         tracing::info!("Sent client setup.");
 
-        utils::start_receive::<ServerSetup>(event_receiver)
+        utils::start_receive::<ServerSetup>(ControlMessageType::ServerSetup, event_receiver)
             .await
             .map(|_| ())
     }
@@ -99,7 +100,8 @@ impl<T: TransportProtocol> InnerSession<T> {
         event_receiver: tokio::sync::broadcast::Receiver<ReceiveEvent>,
     ) -> anyhow::Result<()> {
         tracing::info!("Waiting for server setup.");
-        utils::start_receive::<ClientSetup>(event_receiver).await?;
+        utils::start_receive::<ClientSetup>(ControlMessageType::ClientSetup, event_receiver)
+            .await?;
         tracing::info!("Received client setup.");
 
         let max_id = MaxSubscribeID::new(1000);
@@ -108,7 +110,7 @@ impl<T: TransportProtocol> InnerSession<T> {
             vec![SetupParameter::MaxSubscribeID(max_id)],
         )
         .packetize();
-        let bytes = add_message_type::<ServerSetup>(payload);
+        let bytes = add_message_type(ControlMessageType::ServerSetup, payload);
         send_stream
             .send(&bytes)
             .await

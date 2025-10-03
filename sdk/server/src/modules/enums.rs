@@ -1,23 +1,22 @@
 use uuid::Uuid;
 
 // message alias
-pub(crate) type RequestId = u64;
-pub(crate) type TrackNamespaces = Vec<String>;
-pub(crate) type GroupOrder = u8;
-pub(crate) type IsContentExist = u8;
-pub(crate) type IsForward = u8;
-pub(crate) type SubscriberPriority = u8;
-pub(crate) type FilterType = u64;
+pub(crate) type RequestId = moqt::RequestId;
+pub(crate) type TrackNamespaces = moqt::TrackNamespaces;
+pub(crate) type GroupOrder = moqt::GroupOrder;
+pub(crate) type IsContentExist = moqt::IsContentExist;
+pub(crate) type IsForward = moqt::IsForward;
+pub(crate) type SubscriberPriority = moqt::SubscriberPriority;
+pub(crate) type FilterType = moqt::FilterType;
 
 // parameter alias
-pub(crate) type AuthorizationInfo = String;
-pub(crate) type DeliveryTimeout = u64;
-pub(crate) type MaxCacheDuration = u64;
-pub(crate) type Parameters = (AuthorizationInfo, DeliveryTimeout, MaxCacheDuration);
+pub(crate) type Authorization = moqt::Authorization;
+pub(crate) type DeliveryTimeout = moqt::DeliveryTimeout;
+pub(crate) type MaxCacheDuration = moqt::MaxCacheDuration;
 
 pub(crate) enum SessionEvent {
-    PublishNameSpace(Uuid, RequestId, TrackNamespaces, Parameters),
-    SubscribeNameSpace(Uuid, RequestId, TrackNamespaces, Parameters),
+    PublishNameSpace(Uuid, RequestId, TrackNamespaces, Vec<Authorization>),
+    SubscribeNameSpace(Uuid, RequestId, TrackNamespaces, Vec<Authorization>),
     Publish(
         Uuid,
         RequestId,
@@ -25,7 +24,9 @@ pub(crate) enum SessionEvent {
         GroupOrder,
         IsContentExist,
         IsForward,
-        Parameters,
+        Vec<Authorization>,
+        Vec<DeliveryTimeout>,
+        Vec<MaxCacheDuration>,
     ),
     Subscribe(
         Uuid,
@@ -36,6 +37,7 @@ pub(crate) enum SessionEvent {
         IsContentExist,
         IsForward,
         FilterType,
-        Parameters,
+        Vec<Authorization>,
+        Vec<DeliveryTimeout>,
     ),
 }

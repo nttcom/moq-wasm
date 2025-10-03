@@ -5,6 +5,10 @@ use std::net::SocketAddr;
 mod modules;
 
 pub use modules::moqt::enums::SessionEvent;
+pub use modules::moqt::enums::{
+    Authorization, DeliveryTimeout, FilterType, GroupOrder, IsContentExist, IsForward,
+    MaxCacheDuration, RequestId, SubscriberPriority, TrackNamespaces,
+};
 pub use modules::moqt::protocol::QUIC;
 pub use modules::moqt::protocol::TransportProtocol;
 pub use modules::moqt::publisher::Publisher;

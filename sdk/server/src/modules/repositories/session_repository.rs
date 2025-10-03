@@ -7,42 +7,46 @@ use uuid::Uuid;
 use crate::modules::{
     core::{publisher::Publisher, session::Session, subscriber::Subscriber},
     enums::SessionEvent,
+    event_resolver::moqt_session_event_resolver::MOQTSessionEventResolver,
+    repositories::subscriber_repository::SubscriberRepository,
     thread_manager::ThreadManager,
 };
 
-pub(crate) struct Repository {
+pub(crate) struct SessionRepository {
     thread_manager: ThreadManager,
     sessions: tokio::sync::Mutex<HashMap<Uuid, Arc<dyn Session>>>,
-    publishers: tokio::sync::Mutex<HashMap<Uuid, Box<dyn Publisher>>>,
-    subscribers: tokio::sync::Mutex<HashMap<Uuid, Box<dyn Subscriber>>>,
+    publishers: tokio::sync::Mutex<HashMap<Uuid, Arc<dyn Publisher>>>,
+    subscriber_repo: SubscriberRepository,
 }
 
-impl Repository {
+impl SessionRepository {
     pub(crate) fn new() -> Self {
         Self {
             thread_manager: ThreadManager::new(),
             sessions: tokio::sync::Mutex::new(HashMap::new()),
             publishers: tokio::sync::Mutex::new(HashMap::new()),
-            subscribers: tokio::sync::Mutex::new(HashMap::new()),
+            subscriber_repo: SubscriberRepository::new(),
         }
     }
 
     pub(crate) async fn add(
-        &self,
+        &mut self,
         uuid: Uuid,
         session: Box<dyn Session>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         publisher: Box<dyn Publisher>,
         subscriber: Box<dyn Subscriber>,
     ) {
         let arc_session = Arc::from(session);
-        self.start_receive(uuid, Arc::downgrade(&arc_session));
+        let arc_publisher = Arc::from(publisher);
+        self.start_receive(uuid, Arc::downgrade(&arc_session), event_sender);
         self.sessions.lock().await.insert(uuid, arc_session);
-        self.publishers.lock().await.insert(uuid, publisher);
-        self.subscribers.lock().await.insert(uuid, subscriber);
+        self.publishers.lock().await.insert(uuid, arc_publisher);
+        self.subscriber_repo.add(uuid, subscriber).await;
     }
 
     fn start_receive(
-        &self,
+        &mut self,
         uuid: Uuid,
         session: Weak<dyn Session>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
@@ -57,7 +61,7 @@ impl Repository {
                             tracing::error!("Failed to receive session event: {}", e);
                             break;
                         }
-                        let session_event = Self::resolve_session_event(uuid, event.unwrap());
+                        let session_event = MOQTSessionEventResolver::resolve(uuid, event.unwrap());
                         event_sender.send(session_event).unwrap();
                     } else {
                         tracing::error!("Session has been dropped.");
@@ -66,34 +70,20 @@ impl Repository {
                 }
             })
             .unwrap();
+        self.thread_manager.add_join_handle(join_handle);
     }
 
-    fn resolve_session_event(uuid: Uuid, event: moqt::SessionEvent) -> SessionEvent {
-        match event {
-            moqt::SessionEvent::PublishNameSpace(request_id, namespaces, param) => {
-                SessionEvent::PublishNameSpace(uuid, request_id, namespaces, param)
-            }
-            moqt::SessionEvent::SubscribeNameSpace(request_id, namespaces, param) => {
-                SessionEvent::PublishNameSpace(uuid, request_id, namespaces, param)
-            }
-            moqt::SessionEvent::Publish(
-                request_id,
-                namespaces,
-                group_order,
-                is_content_exist,
-                is_forward,
-                param,
-            ) => todo!(),
-            moqt::SessionEvent::Subscribe(
-                request_id,
-                namespaces,
-                subscriber_priority,
-                group_order,
-                is_content_exist,
-                is_forward,
-                filter_type,
-                param,
-            ) => todo!(),
+    pub(crate) async fn get_subscriber(&self, uuid: Uuid) -> Option<Arc<dyn Subscriber>> {
+        self.subscriber_repo.get(uuid).await
+    }
+
+    pub(crate) async fn get_publisher(&self, uuid: Uuid) -> Option<Arc<dyn Publisher>> {
+        let publishers = self.publishers.lock().await;
+        let result = publishers.get(&uuid);
+        if let Some(publisher) = result {
+            Some(publisher.clone())
+        } else {
+            None
         }
     }
 }
