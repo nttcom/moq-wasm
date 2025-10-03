@@ -41,7 +41,12 @@ impl Repository {
         self.subscribers.lock().await.insert(uuid, subscriber);
     }
 
-    fn start_receive(&self, uuid: Uuid, session: Weak<dyn Session>) {
+    fn start_receive(
+        &self,
+        uuid: Uuid,
+        session: Weak<dyn Session>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    ) {
         let join_handle = tokio::task::Builder::new()
             .name("Session Event Watcher")
             .spawn(async move {
@@ -52,6 +57,8 @@ impl Repository {
                             tracing::error!("Failed to receive session event: {}", e);
                             break;
                         }
+                        let session_event = Self::resolve_session_event(uuid, event.unwrap());
+                        event_sender.send(session_event).unwrap();
                     } else {
                         tracing::error!("Session has been dropped.");
                         break;
@@ -63,14 +70,30 @@ impl Repository {
 
     fn resolve_session_event(uuid: Uuid, event: moqt::SessionEvent) -> SessionEvent {
         match event {
-            moqt::SessionEvent::PublishNameSpace(request_id, items) => {
-                SessionEvent::PublishNameSpace(uuid, request_id, items)
+            moqt::SessionEvent::PublishNameSpace(request_id, namespaces, param) => {
+                SessionEvent::PublishNameSpace(uuid, request_id, namespaces, param)
             }
-            moqt::SessionEvent::SubscribeNameSpace(request_id, items) => {
-                SessionEvent::PublishNameSpace(uuid, request_id, items)
+            moqt::SessionEvent::SubscribeNameSpace(request_id, namespaces, param) => {
+                SessionEvent::PublishNameSpace(uuid, request_id, namespaces, param)
             }
-            moqt::SessionEvent::Publish() => todo!(),
-            moqt::SessionEvent::Subscribe() => todo!(),
+            moqt::SessionEvent::Publish(
+                request_id,
+                namespaces,
+                group_order,
+                is_content_exist,
+                is_forward,
+                param,
+            ) => todo!(),
+            moqt::SessionEvent::Subscribe(
+                request_id,
+                namespaces,
+                subscriber_priority,
+                group_order,
+                is_content_exist,
+                is_forward,
+                filter_type,
+                param,
+            ) => todo!(),
         }
     }
 }

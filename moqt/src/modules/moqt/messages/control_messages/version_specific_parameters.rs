@@ -130,6 +130,10 @@ impl AuthorizationInfo {
             value,
         }
     }
+
+    pub(crate) fn get_value(&mut self) -> String {
+        std::mem::take(&mut self.value)
+    }
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -151,6 +155,10 @@ impl DeliveryTimeout {
             value: first_two_bits_masked_value,
         }
     }
+
+    pub(crate) fn get_value(&self) -> u64 {
+        self.value
+    }
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -171,6 +179,10 @@ impl MaxCacheDuration {
             length,
             value: first_two_bits_masked_value,
         }
+    }
+
+    pub(crate) fn get_value(&self) -> u64 {
+        self.value
     }
 }
 

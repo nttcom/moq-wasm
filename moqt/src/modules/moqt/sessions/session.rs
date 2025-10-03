@@ -11,6 +11,8 @@ use crate::modules::moqt::sessions::session_message_resolver::SessionMessageReso
 
 pub struct Session<T: TransportProtocol> {
     pub id: usize,
+    // To avoid forcing Session is wrapped by Mutex.
+    event_receiver: tokio::sync::Mutex<tokio::sync::broadcast::Receiver<ReceiveEvent>>,
     inner: Arc<InnerSession<T>>,
 }
 
@@ -19,6 +21,7 @@ impl<T: TransportProtocol> Session<T> {
         let id = inner.id;
         Self {
             id,
+            event_receiver: tokio::sync::Mutex::new(inner.event_sender.subscribe()),
             inner: Arc::new(inner),
         }
     }
@@ -44,7 +47,7 @@ impl<T: TransportProtocol> Session<T> {
     }
 
     pub async fn receive_event(&self) -> anyhow::Result<SessionEvent> {
-        let mut receiver = self.inner.event_sender.subscribe();
+        let mut receiver = self.event_receiver.lock().await;
         let receive_message = receiver.recv().await?;
         match receive_message {
             ReceiveEvent::Message(binary) => SessionMessageResolver::resolve_message(binary),

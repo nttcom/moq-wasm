@@ -18,7 +18,7 @@ pub struct SubscribeNamespace {
     pub(crate) request_id: u64,
     pub(crate) track_namespace_prefix: Vec<String>,
     number_of_parameters: u64,
-    parameters: Vec<VersionSpecificParameter>,
+    pub(crate) parameters: Vec<VersionSpecificParameter>,
 }
 
 impl SubscribeNamespace {
@@ -34,10 +34,6 @@ impl SubscribeNamespace {
             number_of_parameters,
             parameters,
         }
-    }
-
-    pub fn parameters(&self) -> &Vec<VersionSpecificParameter> {
-        &self.parameters
     }
 }
 
