@@ -1,49 +1,69 @@
-use std::collections::HashMap;
+use std::sync::Arc;
+
+use uuid::Uuid;
 
 use crate::modules::{
-    domains::{publisher::Publisher, session::Session, subscriber::Subscriber},
-    message_handler::MessageHandler,
-    namespace_table::NamespaceTable,
-    repositories::{
-        publisher_repository::PublisherRepository, subscriber_repository::SubscriberRepository,
-    },
-    thread_manager::ThreadManager,
+    core::{publisher::Publisher, session::Session, subscriber::Subscriber},
+    enums::SessionEvent,
+    event_resolver::sequence_handler::SequenceHandler,
+    repositories::session_repository::SessionRepository,
 };
 
 pub(crate) struct Manager {
-    join_handle: tokio::task::JoinHandle<()>,
+    new_session_watcher: tokio::task::JoinHandle<()>,
+    session_event_watcher: tokio::task::JoinHandle<()>,
+    repo: Arc<tokio::sync::Mutex<SessionRepository>>,
 }
 
 impl Manager {
-    pub fn run<T: moqt::TransportProtocol>(
-        receiver: tokio::sync::mpsc::Receiver<(Session, Publisher, Subscriber)>,
+    pub fn run(
+        receiver: tokio::sync::mpsc::Receiver<(
+            Uuid,
+            Box<dyn Session>,
+            Box<dyn Publisher>,
+            Box<dyn Subscriber>,
+        )>,
     ) -> Self {
-        let pub_repo = PublisherRepository::<T> {
-            publishers: tokio::sync::Mutex::new(vec![]),
-            message_sender: todo!(),
-            thread_manager: ThreadManager::new(),
-        };
-        let sub_repo = SubscriberRepository::<T> {
-            subscribers: tokio::sync::Mutex::new(vec![]),
-            message_sender: todo!(),
-            thread_manager: ThreadManager::new(),
-        };
-        let join_handle = Self::create_session_event_watcher(receiver, pub_repo, sub_repo);
-        Self { join_handle }
+        let repo: Arc<tokio::sync::Mutex<SessionRepository>> =
+            Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
+        let (session_sender, session_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
+
+        let new_session_watcher =
+            Self::create_new_session_watcher(receiver, session_sender, repo.clone());
+        Self {
+            new_session_watcher,
+            repo,
+        }
     }
 
-    fn create_session_event_watcher<T: moqt::TransportProtocol>(
-        mut receiver: tokio::sync::mpsc::Receiver<(Session, Publisher, Subscriber)>,
-        mut pub_repo: PublisherRepository<T>,
-        mut sub_repo: SubscriberRepository<T>,
+    fn create_new_session_watcher(
+        mut event_receiver: tokio::sync::mpsc::Receiver<(
+            Uuid,
+            Box<dyn Session>,
+            Box<dyn Publisher>,
+            Box<dyn Subscriber>,
+        )>,
+        session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Session Event Watcher")
             .spawn(async move {
                 loop {
-                    if let Some((session, publisher, subscriber)) = receiver.recv().await {
-                        pub_repo.add(publisher).await;
-                        sub_repo.add(subscriber).await;
+                    if let Some((uuid, session, publisher, subscriber)) =
+                        event_receiver.recv().await
+                    {
+                        repo.lock()
+                            .await
+                            .add(
+                                uuid,
+                                session,
+                                session_event_sender.clone(),
+                                publisher,
+                                subscriber,
+                            )
+                            .await;
                     } else {
                         tracing::error!("Failed to receive session event");
                         break;
@@ -54,26 +74,41 @@ impl Manager {
     }
 
     fn create_pub_sub_event_watcher(
-        mut receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTEvent>,
+        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+        mut receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Session Event Watcher")
             .spawn(async move {
-                let table = tokio::sync::Mutex::new(HashMap::new());
-                let mut pub_table = NamespaceTable { table };
-                let table = tokio::sync::Mutex::new(HashMap::new());
-                let mut sub_table = NamespaceTable { table };
+                let sequense_handler = SequenceHandler::new(repo);
                 loop {
                     if let Some(event) = receiver.recv().await {
                         match event {
-                            MOQTEvent::NamespacePublished(sub_id, ns) => {
-                                MessageHandler::publish_namespace(&mut sub_table, sub_id, ns)
-                            }
-                            MOQTEvent::NamespaceSubscribed(pub_id, ns) => {
-                                MessageHandler::subscribe_namespace(&mut pub_table, pub_id, ns)
-                            }
-                            MOQTEvent::Publish() => todo!(),
-                            MOQTEvent::Subscribe() => todo!(),
+                            SessionEvent::PublishNameSpace(uuid, request_id, items, items1) => todo!(),
+                            SessionEvent::SubscribeNameSpace(uuid, request_id, items, items1) => todo!(),
+                            SessionEvent::Publish(
+                                uuid,
+                                _,
+                                items,
+                                _,
+                                _,
+                                _,
+                                items1,
+                                items2,
+                                items3,
+                            ) => todo!(),
+                            SessionEvent::Subscribe(
+                                uuid,
+                                _,
+                                items,
+                                _,
+                                _,
+                                _,
+                                _,
+                                _,
+                                items1,
+                                items2,
+                            ) => todo!(),
                         }
                     } else {
                         tracing::error!("Failed to receive session event");

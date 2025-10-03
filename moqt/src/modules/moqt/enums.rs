@@ -6,7 +6,7 @@ pub(crate) enum ReceiveEvent {
 
 // message aliases
 pub type RequestId = u64;
-pub type TrackNamespace = Vec<String>;
+pub type TrackNamespaces = Vec<String>;
 pub type TrackAlias = u64;
 pub type GroupOrder = u8;
 pub type IsContentExist = u8;
@@ -26,11 +26,11 @@ pub type MaxCacheDuration = u64;
 
 #[derive(Clone)]
 pub enum SessionEvent {
-    PublishNameSpace(RequestId, TrackNamespace, Vec<Authorization>),
-    SubscribeNameSpace(RequestId, TrackNamespace, Vec<Authorization>),
+    PublishNameSpace(RequestId, TrackNamespaces, Vec<Authorization>),
+    SubscribeNameSpace(RequestId, TrackNamespaces, Vec<Authorization>),
     Publish(
         RequestId,
-        TrackNamespace,
+        TrackNamespaces,
         TrackAlias,
         GroupOrder,
         IsContentExist,
@@ -41,7 +41,7 @@ pub enum SessionEvent {
     ),
     Subscribe(
         RequestId,
-        TrackNamespace,
+        TrackNamespaces,
         SubscriberPriority,
         GroupOrder,
         IsContentExist,
