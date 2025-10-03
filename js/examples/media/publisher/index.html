@@ -35,8 +35,26 @@
 
           <h3>ANNOUNCE</h3>
           <label
-            >Track Namespace: <input type="text" name="announce-track-namespace" id="" value="video_audio" />
+            >Track Namespace:
+            <input type="text" name="announce-track-namespace" id="announce-track-namespace" value="video_audio" />
           </label>
+          <script>
+            // Set default value for Track Namespace input
+            ;(function () {
+              function pad(n) {
+                return n < 10 ? '0' + n : n
+              }
+              const now = new Date()
+              const yyyy = now.getFullYear()
+              const mm = pad(now.getMonth() + 1)
+              const dd = pad(now.getDate())
+              const HH = pad(now.getHours())
+              const MM = pad(now.getMinutes())
+              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+              const input = document.getElementById('announce-track-namespace')
+              if (input) input.value = value
+            })()
+          </script>
           <br />
           <button type="button" id="sendAnnounceBtn">Send</button>
           <h3>OBJECT</h3>
