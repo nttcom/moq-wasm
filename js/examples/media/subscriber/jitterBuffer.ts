@@ -1,4 +1,4 @@
-const DEFAULT_MIN_DELAY_MS = 500
+const DEFAULT_MIN_DELAY_MS = 50
 const DEFAULT_JITTER_BUFFER_SIZE = 1800
 
 type JitterBufferEntry<T> = {
