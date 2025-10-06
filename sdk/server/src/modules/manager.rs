@@ -84,8 +84,10 @@ impl Manager {
                 loop {
                     if let Some(event) = receiver.recv().await {
                         match event {
-                            SessionEvent::PublishNameSpace(uuid, request_id, items, items1) => todo!(),
-                            SessionEvent::SubscribeNameSpace(uuid, request_id, items, items1) => todo!(),
+                            SessionEvent::PublishNameSpace(uuid, items) => todo!(),
+                            SessionEvent::SubscribeNameSpace(uuid, items) => {
+                                todo!()
+                            }
                             SessionEvent::Publish(
                                 uuid,
                                 _,

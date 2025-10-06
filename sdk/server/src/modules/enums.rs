@@ -15,8 +15,8 @@ pub(crate) type DeliveryTimeout = moqt::DeliveryTimeout;
 pub(crate) type MaxCacheDuration = moqt::MaxCacheDuration;
 
 pub(crate) enum SessionEvent {
-    PublishNameSpace(Uuid, RequestId, TrackNamespaces, Vec<Authorization>),
-    SubscribeNameSpace(Uuid, RequestId, TrackNamespaces, Vec<Authorization>),
+    PublishNameSpace(Uuid, TrackNamespaces),
+    SubscribeNameSpace(Uuid, TrackNamespaces),
     Publish(
         Uuid,
         RequestId,

@@ -1,44 +1,41 @@
-use anyhow::bail;
 use std::sync::Arc;
 
 use crate::Publisher;
 use crate::Subscriber;
-use crate::modules::moqt::enums::ReceiveEvent;
+use crate::modules::moqt::controls::control_message_dispatcher::ControlMessageDispatcher;
 use crate::modules::moqt::enums::SessionEvent;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::sessions::inner_session::InnerSession;
-use crate::modules::moqt::sessions::session_message_resolver::SessionMessageResolver;
 
 pub struct Session<T: TransportProtocol> {
-    pub id: usize,
-    // To avoid forcing Session is wrapped by Mutex.
-    event_receiver: tokio::sync::Mutex<tokio::sync::broadcast::Receiver<ReceiveEvent>>,
     inner: Arc<InnerSession<T>>,
+    event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent>>,
+    message_receive_join_handle: tokio::task::JoinHandle<()>,
 }
 
 impl<T: TransportProtocol> Session<T> {
-    pub(crate) fn new(inner: InnerSession<T>) -> Self {
-        let id = inner.id;
+    pub(crate) fn new(
+        inner: InnerSession<T>,
+        event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
+    ) -> Self {
+        let inner = Arc::new(inner);
+        let message_receive_join_handle = ControlMessageDispatcher::run(Arc::downgrade(&inner));
         Self {
-            id,
-            event_receiver: tokio::sync::Mutex::new(inner.event_sender.subscribe()),
-            inner: Arc::new(inner),
+            inner,
+            event_receiver: tokio::sync::Mutex::new(event_receiver),
+            message_receive_join_handle,
         }
     }
 
     pub fn create_publisher(&self) -> Publisher<T> {
         Publisher::<T> {
             session: self.inner.clone(),
-            shared_send_stream: self.inner.send_stream.clone(),
-            event_sender: self.inner.event_sender.clone(),
         }
     }
 
     pub fn create_subscriber(&self) -> Subscriber<T> {
         Subscriber::<T> {
             session: self.inner.clone(),
-            shared_send_stream: self.inner.send_stream.clone(),
-            event_sender: self.inner.event_sender.clone(),
         }
     }
 
@@ -47,11 +44,15 @@ impl<T: TransportProtocol> Session<T> {
     }
 
     pub async fn receive_event(&self) -> anyhow::Result<SessionEvent> {
-        let mut receiver = self.event_receiver.lock().await;
-        let receive_message = receiver.recv().await?;
-        match receive_message {
-            ReceiveEvent::Message(binary) => SessionMessageResolver::resolve_message(binary),
-            ReceiveEvent::Error() => bail!("Error occurred."),
+        match self.event_receiver.lock().await.recv().await {
+            Some(v) => Ok(v),
+            None => todo!(),
         }
+    }
+}
+
+impl<T: TransportProtocol> Drop for Session<T> {
+    fn drop(&mut self) {
+        self.message_receive_join_handle.abort();
     }
 }
