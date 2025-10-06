@@ -14,12 +14,12 @@ pub struct NamespaceOk {
 }
 
 impl MOQTMessage for NamespaceOk {
-    fn depacketize(mut buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
+    fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
         if !validate_payload_length(buf) {
             return Err(MOQTMessageError::ProtocolViolation);
         }
 
-        let request_id = match read_variable_integer_from_buffer(&mut buf) {
+        let request_id = match read_variable_integer_from_buffer(buf) {
             Ok(v) => v,
             Err(_) => return Err(MOQTMessageError::ProtocolViolation),
         };

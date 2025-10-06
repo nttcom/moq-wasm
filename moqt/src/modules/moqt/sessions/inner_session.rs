@@ -1,81 +1,78 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
+use anyhow::bail;
+
 use crate::{
-    TransportProtocol,
-    modules::{
-        moqt::{
-            constants,
-            control_receiver::ControlReceiver,
-            control_sender::ControlSender,
-            enums::ReceiveEvent,
-            messages::{
-                control_message_type::ControlMessageType,
-                control_messages::{
-                    client_setup::ClientSetup,
-                    server_setup::ServerSetup,
-                    setup_parameters::{MaxSubscribeID, SetupParameter},
-                },
-                moqt_message::MOQTMessage,
+    modules::moqt::{
+        constants,
+        controls::{control_receiver::ControlReceiver, control_sender::ControlSender},
+        enums::ResponseMessage,
+        messages::{
+            control_message_type::ControlMessageType,
+            control_messages::{
+                client_setup::ClientSetup,
+                server_setup::ServerSetup,
+                setup_parameters::{MaxSubscribeID, SetupParameter},
             },
-            utils::{self, add_message_type},
+            moqt_message::MOQTMessage,
         },
-        transport::transport_connection::TransportConnection,
-    },
+        utils::{self, add_message_type},
+    }, RequestId, SessionEvent, TransportProtocol
 };
 
 pub(crate) struct InnerSession<T: TransportProtocol> {
-    pub(crate) id: usize,
     _transport_connection: T::Connection,
-    pub(super) event_sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
-    _receive_stream: ControlReceiver,
-    pub(crate) send_stream: Arc<tokio::sync::Mutex<ControlSender<T>>>,
+    pub(crate) send_stream: ControlSender<T>,
+    pub(crate) receive_stream: ControlReceiver<T>,
     request_id: AtomicU64,
+    pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    pub(crate) sender_map:
+        tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
 }
 
 impl<T: TransportProtocol> InnerSession<T> {
     pub(crate) async fn client(
         transport_connection: T::Connection,
         mut send_stream: ControlSender<T>,
-        receive_stream: ControlReceiver,
-        event_sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
+        receive_stream: ControlReceiver<T>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>
     ) -> anyhow::Result<Self> {
-        Self::setup_client(&mut send_stream, event_sender.subscribe()).await?;
-        let shared_send_stream = Arc::new(tokio::sync::Mutex::new(send_stream));
+        Self::setup_client(&mut send_stream, &receive_stream).await?;
+
         Ok(Self {
-            id: transport_connection.id(),
             _transport_connection: transport_connection,
-            event_sender,
-            _receive_stream: receive_stream,
-            send_stream: shared_send_stream,
+            send_stream,
+            receive_stream,
             request_id: AtomicU64::new(0),
+            event_sender,
+            sender_map: tokio::sync::Mutex::new(HashMap::new()),
         })
     }
 
     pub(crate) async fn server(
         transport_connection: T::Connection,
         mut send_stream: ControlSender<T>,
-        receive_stream: ControlReceiver,
-        event_sender: tokio::sync::broadcast::Sender<ReceiveEvent>,
+        receive_stream: ControlReceiver<T>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>
     ) -> anyhow::Result<Self> {
-        Self::setup_server(&mut send_stream, event_sender.subscribe()).await?;
+        Self::setup_server(&mut send_stream, &receive_stream).await?;
 
-        let shared_send_stream = Arc::new(tokio::sync::Mutex::new(send_stream));
         Ok(Self {
-            id: transport_connection.id(),
             _transport_connection: transport_connection,
-            event_sender,
-            _receive_stream: receive_stream,
-            send_stream: shared_send_stream,
+            send_stream,
+            receive_stream,
             request_id: AtomicU64::new(1),
+            event_sender,
+            sender_map: tokio::sync::Mutex::new(HashMap::new()),
         })
     }
 
     async fn setup_client(
         send_stream: &mut ControlSender<T>,
-        event_receiver: tokio::sync::broadcast::Receiver<ReceiveEvent>,
+        receive_stream: &ControlReceiver<T>,
     ) -> anyhow::Result<()> {
         let max_id = MaxSubscribeID::new(1000);
         let payload = ClientSetup::new(
@@ -90,18 +87,34 @@ impl<T: TransportProtocol> InnerSession<T> {
             .inspect_err(|e| tracing::error!("failed to send. :{}", e.to_string()))?;
         tracing::info!("Sent client setup.");
 
-        utils::start_receive::<ServerSetup>(ControlMessageType::ServerSetup, event_receiver)
-            .await
-            .map(|_| ())
+        let bytes = receive_stream.receive().await?;
+        match utils::depacketize::<ServerSetup>(ControlMessageType::ServerSetup, bytes) {
+            Ok(_) => {
+                tracing::info!("Received server setup.");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Protocol violation. {}", e.to_string());
+                bail!("Protocol violation.")
+            }
+        }
     }
 
     async fn setup_server(
         send_stream: &mut ControlSender<T>,
-        event_receiver: tokio::sync::broadcast::Receiver<ReceiveEvent>,
+        receive_stream: &ControlReceiver<T>,
     ) -> anyhow::Result<()> {
         tracing::info!("Waiting for server setup.");
-        utils::start_receive::<ClientSetup>(ControlMessageType::ClientSetup, event_receiver)
-            .await?;
+        let bytes = receive_stream.receive().await?;
+        match utils::depacketize::<ClientSetup>(ControlMessageType::ServerSetup, bytes) {
+            Ok(_) => {
+                tracing::info!("Received client setup.");
+            }
+            Err(e) => {
+                tracing::error!("Protocol violation. {}", e.to_string());
+                bail!("Protocol violation.")
+            }
+        };
         tracing::info!("Received client setup.");
 
         let max_id = MaxSubscribeID::new(1000);

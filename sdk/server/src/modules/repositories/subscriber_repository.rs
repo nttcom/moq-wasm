@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     sync::{Arc, Weak},
 };
-use tracing::subscriber;
 use uuid::Uuid;
 
 use crate::modules::{core::subscriber::Subscriber, thread_manager::ThreadManager};

@@ -7,11 +7,11 @@ pub(crate) struct MOQTSessionEventResolver;
 impl MOQTSessionEventResolver {
     pub(crate) fn resolve(uuid: Uuid, event: moqt::SessionEvent) -> SessionEvent {
         match event {
-            moqt::SessionEvent::PublishNameSpace(request_id, namespaces, param) => {
-                SessionEvent::PublishNameSpace(uuid, request_id, namespaces, param)
+            moqt::SessionEvent::PublishNamespace(namespaces) => {
+                SessionEvent::PublishNameSpace(uuid, namespaces)
             }
-            moqt::SessionEvent::SubscribeNameSpace(request_id, namespaces, param) => {
-                SessionEvent::PublishNameSpace(uuid, request_id, namespaces, param)
+            moqt::SessionEvent::SubscribeNameSpace(namespaces) => {
+                SessionEvent::PublishNameSpace(uuid, namespaces)
             }
             moqt::SessionEvent::Publish(
                 request_id,
@@ -35,6 +35,7 @@ impl MOQTSessionEventResolver {
                 authorization,
                 delivery_timeout,
             ) => todo!(),
+            moqt::SessionEvent::FatalError() => todo!(),
         }
     }
 }
