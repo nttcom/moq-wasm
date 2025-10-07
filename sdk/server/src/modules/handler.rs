@@ -4,15 +4,15 @@ use uuid::Uuid;
 
 use crate::modules::core::{publisher::Publisher, session::Session, subscriber::Subscriber};
 
-struct Handler {
+pub struct Handler {
     join_handle: tokio::task::JoinHandle<()>,
 }
 
 impl Handler {
-    pub(crate) fn run<T: moqt::TransportProtocol>(
+    pub fn run(
         key_path: String,
         cert_path: String,
-        event_sender: tokio::sync::mpsc::Sender<(
+        event_sender: tokio::sync::mpsc::UnboundedSender<(
             Uuid,
             Box<dyn Session>,
             Box<dyn Publisher>,
@@ -34,7 +34,7 @@ impl Handler {
 
     fn create_joinhandle(
         mut endpoint: Endpoint<QUIC>,
-        event_sender: tokio::sync::mpsc::Sender<(
+        event_sender: tokio::sync::mpsc::UnboundedSender<(
             Uuid,
             Box<dyn Session>,
             Box<dyn Publisher>,
