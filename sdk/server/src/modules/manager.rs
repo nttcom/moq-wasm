@@ -31,9 +31,12 @@ impl Manager {
 
         let new_session_watcher =
             Self::create_new_session_watcher(receiver, session_sender, repo.clone());
+        let session_event_watcher =
+            Self::create_pub_sub_event_watcher(repo.clone(), session_receiver);
         Self {
             new_session_watcher,
             repo,
+            session_event_watcher,
         }
     }
 
@@ -80,13 +83,15 @@ impl Manager {
         tokio::task::Builder::new()
             .name("Session Event Watcher")
             .spawn(async move {
-                let sequense_handler = SequenceHandler::new(repo);
+                let mut sequense_handler = SequenceHandler::new(repo);
                 loop {
                     if let Some(event) = receiver.recv().await {
                         match event {
-                            SessionEvent::PublishNameSpace(uuid, items) => todo!(),
+                            SessionEvent::PublishNameSpace(uuid, items) => {
+                                sequense_handler.publish_namespace(uuid, items)
+                            }
                             SessionEvent::SubscribeNameSpace(uuid, items) => {
-                                todo!()
+                                sequense_handler.subscribe_namespace(uuid, items);
                             }
                             SessionEvent::Publish(
                                 uuid,
