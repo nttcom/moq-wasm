@@ -1,4 +1,4 @@
-use std::{net::ToSocketAddrs, str::FromStr};
+use std::net::ToSocketAddrs;
 
 use moqt::{Endpoint, QUIC};
 
