@@ -1,7 +1,11 @@
-use std::{fs, path::Path};
+mod modules;
 
-use moqt::{Endpoint, ServerConfig, QUIC};
+use std::{fs, path::Path};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
+use modules::handler::Handler;
+use modules::manager::Manager;
+use uuid::Uuid;
+use modules::core::{publisher::Publisher, session::Session, subscriber::Subscriber};
 
 fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -36,29 +40,25 @@ async fn main() -> anyhow::Result<()> {
     let key_path = format!(
         "{}{}",
         current_path.to_str().unwrap(),
-        "/sample/server-sample/keys/key.pem"
+        "/sample/keys/key.pem"
     );
     let cert_path = format!(
         "{}{}",
         current_path.to_str().unwrap(),
-        "/sample/server-sample/keys/cert.pem"
+        "/sample/keys/cert.pem"
     );
     tracing::info!("key_path: {}", key_path);
     tracing::info!("cert_path: {}", cert_path);
     
-    let config = ServerConfig {
-        port: 4433,
-        key_path: key_path.clone(),
-        cert_path: cert_path.clone(),
-        keep_alive_interval_sec: 30
-    };
-    let mut endpoint = Endpoint::<QUIC>::create_server(config).unwrap();
-    let connection = endpoint.accept().await;
-    if let Err(e) = connection {
-        panic!("test failed: {:?}", e)
-    } else {
-        println!("Please input `Ctrl + C` to finish...");
-        tokio::signal::ctrl_c().await?;
-        Ok(())
-    }
+    tokio::spawn(async move {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<(
+            Uuid,
+            Box<dyn Session>,
+            Box<dyn Publisher>,
+            Box<dyn Subscriber>,
+        )>();
+        let _handler = Handler::run(key_path, cert_path, sender);
+        let _manager = Manager::run(receiver);
+    });
+    Ok(())
 }
