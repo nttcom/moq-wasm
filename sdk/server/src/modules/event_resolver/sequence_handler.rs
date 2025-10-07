@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use dashmap::DashSet;
 use uuid::Uuid;
 
 use crate::modules::{
@@ -10,8 +11,7 @@ use crate::modules::{
 type Namespace = String;
 
 pub(crate) struct SequenceHandler {
-    pub_namespace_table: Arc<tokio::sync::Mutex<Tables>>,
-    sub_namespace_table: Arc<tokio::sync::Mutex<Tables>>,
+    tables: Arc<Tables>,
     session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     thread_manager: ThreadManager,
 }
@@ -19,35 +19,29 @@ pub(crate) struct SequenceHandler {
 impl SequenceHandler {
     pub(crate) fn new(session_repo: Arc<tokio::sync::Mutex<SessionRepository>>) -> Self {
         Self {
-            pub_namespace_table: Arc::new(tokio::sync::Mutex::new(Tables::new())),
-            sub_namespace_table: Arc::new(tokio::sync::Mutex::new(Tables::new())),
+            tables: Arc::new(Tables::new()),
             session_repo,
             thread_manager: ThreadManager::new(),
         }
     }
 
     pub(crate) fn publish_namespace(&mut self, uuid: Uuid, track_namespaces: Vec<Namespace>) {
-        let pub_table = self.pub_namespace_table.clone();
-        let sub_table = self.sub_namespace_table.clone();
+        let table = self.tables.clone();
         let session_repo = self.session_repo.clone();
 
         let join_handle = tokio::spawn(async move {
-            for namespace in track_namespaces.clone() {
-                pub_table.lock().await.add(namespace.clone(), uuid);
-                let ids = sub_table
-                    .lock()
-                    .await
-                    .get_by_namespace(namespace.clone())
-                    .await;
-                for id in ids {
-                    let publisher = session_repo.lock().await.get_publisher(id).await;
-                    if let Some(publisher) = publisher {
-                        publisher
-                            .send_publish_namespace(vec![namespace.clone()])
-                            .await;
-                    } else {
-                        tracing::error!("publisher not found");
-                    }
+            for namespace in track_namespaces {
+                if let Some(dash_set) = table.publishers.get_mut(&namespace) {
+                    tracing::info!("The Namespace has been registered.");
+                    dash_set.insert(uuid);
+                } else {
+                    tracing::info!("New namespace has been published.");
+                    let dash_set = DashSet::new();
+                    dash_set.insert(uuid);
+                    table.publishers.insert(namespace.clone(), dash_set);
+                }
+                if let None = table.publisher_namespaces.get_mut(&namespace) {
+                    table.publisher_namespaces.insert(namespace.clone(), DashSet::new());
                 }
             }
         });
@@ -55,11 +49,22 @@ impl SequenceHandler {
     }
 
     pub(crate) fn subscribe_namespace(&mut self, uuid: Uuid, track_namespaces: Vec<Namespace>) {
-        let sub_table = self.sub_namespace_table.clone();
+        let table = self.tables.clone();
 
         let join_handle = tokio::spawn(async move {
             for namespace in track_namespaces.clone() {
-                sub_table.lock().await.add(namespace, uuid);
+                if let Some(dash_set) = table.subscribers.get_mut(&namespace) {
+                    tracing::info!("The Namespace has been registered.");
+                    dash_set.insert(uuid);
+                } else {
+                    tracing::info!("New namespace has been subscribed.");
+                    let dash_set = DashSet::new();
+                    dash_set.insert(uuid);
+                    table.subscribers.insert(namespace.clone(), dash_set);
+                }
+                if let None = table.subscriber_namespaces.get_mut(&namespace) {
+                    table.subscriber_namespaces.insert(namespace.clone(), DashSet::new());
+                }
             }
         });
         self.thread_manager.add_join_handle(join_handle);
