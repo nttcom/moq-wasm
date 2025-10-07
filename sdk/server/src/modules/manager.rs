@@ -17,7 +17,7 @@ pub(crate) struct Manager {
 
 impl Manager {
     pub fn run(
-        receiver: tokio::sync::mpsc::Receiver<(
+        receiver: tokio::sync::mpsc::UnboundedReceiver<(
             Uuid,
             Box<dyn Session>,
             Box<dyn Publisher>,
@@ -41,7 +41,7 @@ impl Manager {
     }
 
     fn create_new_session_watcher(
-        mut event_receiver: tokio::sync::mpsc::Receiver<(
+        mut event_receiver: tokio::sync::mpsc::UnboundedReceiver<(
             Uuid,
             Box<dyn Session>,
             Box<dyn Publisher>,
