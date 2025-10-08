@@ -106,7 +106,7 @@ impl<T: TransportProtocol> InnerSession<T> {
     ) -> anyhow::Result<()> {
         tracing::info!("Waiting for server setup.");
         let bytes = receive_stream.receive().await?;
-        match utils::depacketize::<ClientSetup>(ControlMessageType::ServerSetup, bytes) {
+        match utils::depacketize::<ClientSetup>(ControlMessageType::ClientSetup, bytes) {
             Ok(_) => {
                 tracing::info!("Received client setup.");
             }
