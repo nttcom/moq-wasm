@@ -57,6 +57,7 @@ impl Manager {
                     if let Some((uuid, session, publisher, subscriber)) =
                         event_receiver.recv().await
                     {
+                        tracing::info!("Session event received");
                         repo.lock()
                             .await
                             .add(

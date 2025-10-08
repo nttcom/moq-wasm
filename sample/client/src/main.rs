@@ -1,5 +1,5 @@
-use std::net::ToSocketAddrs;
-
+use std::{net::ToSocketAddrs, str::FromStr};
+use anyhow::bail;
 use moqt::{Endpoint, QUIC};
 
 #[tokio::main]
@@ -13,26 +13,38 @@ async fn main() -> anyhow::Result<()> {
     let cert_path = format!(
         "{}{}",
         current_path.to_str().unwrap(),
-        "/sample/client-sample/keys/cert.pem"
+        "/sample/keys/cert.pem"
     );
     tracing::info!("cert_path: {}", cert_path);
+    let (signal_sender, signal_receiver) = tokio::sync::oneshot::channel::<()>();
 
-    let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
-    let url = url::Url::from_str("moqt://localhost:4433")?;
-    let host = url.host_str().unwrap();
-    let remote_address = (host, url.port().unwrap_or(4433))
-        .to_socket_addrs()?
-        .next()
-        .unwrap();
+    let thread = tokio::task::Builder::new()
+        .name("Client")
+        .spawn(async move {
+            let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
+            let url = url::Url::from_str("moqt://localhost:4433")?;
+            let host = url.host_str().unwrap();
+            let remote_address = (host, url.port().unwrap_or(4433))
+                .to_socket_addrs()?
+                .next()
+                .unwrap();
 
-    tracing::info!("remote_address: {} host: {}", remote_address, host);
+            tracing::info!("remote_address: {} host: {}", remote_address, host);
 
-    let connection = endpoint.connect(remote_address, host).await;
-    if let Err(e) = connection {
-        panic!("test failed: {:?}", e)
-    } else {
-        println!("Please input `Ctrl + C` to finish...");
-        tokio::signal::ctrl_c().await?;
-        Ok(())
-    }
+            let connection = endpoint.connect(remote_address, host).await;
+            if let Err(e) = connection {
+                bail!("test failed: {:?}", e)
+            } else {
+                tracing::info!("test succeeded");
+            }
+            // await until the application is shut down.
+            let _ = signal_receiver.await.ok();
+            Ok(())
+        }).unwrap();
+    tracing::info!("Ctrl+C to shutdown");
+    tokio::signal::ctrl_c().await?;
+    tracing::info!("shutdown");
+    signal_sender.send(()).unwrap();
+    let _ = thread.await.unwrap();
+    Ok(())
 }

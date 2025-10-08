@@ -9,7 +9,6 @@ tokio = { version = "1.45.0", features = ["full", "tracing"] }
 tracing = "0.1.37"
 async-trait = "0.1.74"
 anyhow = { version = "1.0.75", features = ["backtrace"] }
-uuid = { version = "1.18,1", features = ["v4"]}
-dashmap = "6.1.0"
+url = "2.5.7"
 rcgen = "0.14.3"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }

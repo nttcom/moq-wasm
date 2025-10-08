@@ -74,7 +74,7 @@ impl QUICConnectionCreator {
         ));
         endpoint.set_default_client_config(client_config);
 
-        tracing::info!("Client ready! for QUIC");
+        tracing::info!("Client ready! for QUIC: {:?}", address);
         Ok(QUICConnectionCreator { endpoint })
     }
 }
@@ -111,7 +111,7 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         let server_config = Self::config_builder(cert_path, key_path, keep_alive_sec)?;
         let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
         let endpoint = quinn::Endpoint::server(server_config, address)?;
-        tracing::info!("Server ready! for QUIC");
+        tracing::info!("Server ready! for QUIC: {:?}", address);
         Ok(QUICConnectionCreator { endpoint })
     }
 
