@@ -47,7 +47,7 @@ impl ControlMessageDispatcher {
                                 let result = Self::resolve_message(session, message_type.unwrap(), bytes_mut);
                                 futs.push(result);
                             }
-                            _ = futs.next() => {
+                            Some(_) = futs.next() => {
                                 tracing::debug!("futus has been resolved.");
                             }
                         }
