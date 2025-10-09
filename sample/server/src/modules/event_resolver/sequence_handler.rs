@@ -4,14 +4,14 @@ use dashmap::{DashMap, DashSet};
 use uuid::Uuid;
 
 use crate::modules::{
-    repositories::session_repository::SessionRepository, tables::Tables,
+    repositories::session_repository::SessionRepository, relations::Relations,
     thread_manager::ThreadManager,
 };
 
 type Namespace = String;
 
 pub(crate) struct SequenceHandler {
-    tables: Arc<Tables>,
+    tables: Arc<Relations>,
     session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     thread_manager: ThreadManager,
 }
@@ -19,7 +19,7 @@ pub(crate) struct SequenceHandler {
 impl SequenceHandler {
     pub(crate) fn new(session_repo: Arc<tokio::sync::Mutex<SessionRepository>>) -> Self {
         Self {
-            tables: Arc::new(Tables::new()),
+            tables: Arc::new(Relations::new()),
             session_repo,
             thread_manager: ThreadManager::new(),
         }
@@ -33,18 +33,20 @@ impl SequenceHandler {
             let dest_map = DashMap::new();
 
             for namespace in track_namespaces {
-                if let Some(dash_set) = table.publishers.get_mut(&namespace) {
+                if let Some(dash_set) = table.publisher_namespaces.get_mut(&namespace) {
                     tracing::info!("The Namespace has been registered. :{}", namespace);
                     dash_set.insert(uuid);
                 } else {
                     tracing::info!("New namespace has been published. :{}", namespace);
                     let dash_set = DashSet::new();
                     dash_set.insert(uuid);
-                    table.publishers.insert(namespace.clone(), dash_set);
-                }
-                if let None = table.publisher_namespaces.get_mut(&namespace) {
                     table
                         .publisher_namespaces
+                        .insert(namespace.clone(), dash_set);
+                }
+                if let None = table.published_tracks.get_mut(&namespace) {
+                    table
+                        .published_tracks
                         .insert(namespace.clone(), DashSet::new());
                 }
                 // The draft defines that the relay requires to send `PUBLISH_NAMESPACE` message to
@@ -52,7 +54,7 @@ impl SequenceHandler {
                 // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
 
                 // Convert DashMap<Namespace, DashSet<Uuid>> to DashMap<Uuid, DashSet<Namespace>>
-                if let Some(uuids) = table.subscribers.get(&namespace) {
+                if let Some(uuids) = table.subscriber_namespaces.get(&namespace) {
                     for uuid in uuids.iter() {
                         let uuid = *uuid;
 
@@ -100,18 +102,20 @@ impl SequenceHandler {
 
         let join_handle = tokio::spawn(async move {
             for namespace in track_namespaces.clone() {
-                if let Some(dash_set) = table.subscribers.get_mut(&namespace) {
+                if let Some(dash_set) = table.subscriber_namespaces.get_mut(&namespace) {
                     tracing::info!("The Namespace has been registered. :{}", namespace);
                     dash_set.insert(uuid);
                 } else {
                     tracing::info!("New namespace has been subscribed. :{}", namespace);
                     let dash_set = DashSet::new();
                     dash_set.insert(uuid);
-                    table.subscribers.insert(namespace.clone(), dash_set);
-                }
-                if let None = table.subscriber_namespaces.get_mut(&namespace) {
                     table
                         .subscriber_namespaces
+                        .insert(namespace.clone(), dash_set);
+                }
+                if let None = table.subscribed_tracks.get_mut(&namespace) {
+                    table
+                        .subscribed_tracks
                         .insert(namespace.clone(), DashSet::new());
                 }
             }
