@@ -32,8 +32,10 @@ impl ControlMessageDispatcher {
                 let mut futs = FuturesUnordered::new();
                 loop {
                     if let Some(session) = inner_session.upgrade() {
+                        tracing::debug!("Session is alive.");
                         tokio::select! {
                             bytes = session.receive_stream.receive() => {
+                                tracing::info!("Message has been received.");
                                 if let Err(e) = bytes {
                                     tracing::error!("failed to receive message: {:?}", e);
                                     break;
@@ -46,8 +48,9 @@ impl ControlMessageDispatcher {
                                 }
                                 let result = Self::resolve_message(session, message_type.unwrap(), bytes_mut);
                                 futs.push(result);
-                            }
-                            Some(_) = futs.next() => {
+                                tracing::debug!("futus has been pushed. length: {}", futs.len());
+                            },
+                            Some(_) = futs.next(), if !futs.is_empty() => {
                                 tracing::debug!("futus has been resolved.");
                             }
                         }
@@ -60,11 +63,12 @@ impl ControlMessageDispatcher {
             .unwrap()
     }
 
-    async fn resolve_message<T: TransportProtocol>(
+    fn resolve_message<T: TransportProtocol>(
         session: Arc<InnerSession<T>>,
         message_type: ControlMessageType,
         bytes_mut: BytesMut,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        tracing::debug!("message_type: {:?}", message_type);
         match message_type {
             ControlMessageType::GoAway => todo!(),
             ControlMessageType::MaxSubscribeId => todo!(),

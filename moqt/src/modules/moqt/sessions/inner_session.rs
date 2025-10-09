@@ -140,6 +140,7 @@ impl<T: TransportProtocol> InnerSession<T> {
 
 impl<T: TransportProtocol> Drop for InnerSession<T> {
     fn drop(&mut self) {
+        tracing::info!("Session has been dropped.");
         // send goaway
     }
 }

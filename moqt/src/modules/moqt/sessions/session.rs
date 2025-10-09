@@ -53,6 +53,7 @@ impl<T: TransportProtocol> Session<T> {
 
 impl<T: TransportProtocol> Drop for Session<T> {
     fn drop(&mut self) {
+        tracing::info!("Session has been dropped.");
         self.message_receive_join_handle.abort();
     }
 }

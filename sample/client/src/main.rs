@@ -1,6 +1,6 @@
-use std::{net::ToSocketAddrs, str::FromStr};
 use anyhow::bail;
 use moqt::{Endpoint, QUIC};
+use std::{net::ToSocketAddrs, str::FromStr};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -31,16 +31,28 @@ async fn main() -> anyhow::Result<()> {
 
             tracing::info!("remote_address: {} host: {}", remote_address, host);
 
-            let connection = endpoint.connect(remote_address, host).await;
-            if let Err(e) = connection {
-                bail!("test failed: {:?}", e)
+            let session = match endpoint.connect(remote_address, host).await {
+                Ok(s) => s,
+                Err(e) => {
+                    bail!("test failed: {:?}", e)
+                },
+            };
+            tracing::info!("create session ok");
+            let (publisher, subscriber) = session.create_publisher_subscriber_pair();
+            let result = publisher.publish_namespace(vec!["test".to_string()]).await;
+            if result.is_err() {
+                tracing::info!("publish namespace error");
             } else {
-                tracing::info!("test succeeded");
+                tracing::info!("publish namespace ok");
             }
+            let result = subscriber
+                .subscribe_namespace(vec!["sample".to_string()])
+                .await;
             // await until the application is shut down.
             let _ = signal_receiver.await.ok();
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
     tracing::info!("Ctrl+C to shutdown");
     tokio::signal::ctrl_c().await?;
     tracing::info!("shutdown");
