@@ -30,6 +30,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         let bytes =
             utils::create_full_message(ControlMessageType::SubscribeNamespace, publish_namespace);
         self.session.send_stream.send(&bytes).await?;
+        tracing::info!("Subscribe namespace");
         let result = receiver.await;
         if let Err(e) = result {
             bail!("Failed to receive message: {}", e.to_string())
@@ -40,10 +41,12 @@ impl<T: TransportProtocol> Subscriber<T> {
                 if request_id != response_request_id {
                     bail!("Protocol violation")
                 } else {
+                    tracing::info!("Subscribe namespace ok");
                     Ok(())
                 }
             }
             ResponseMessage::SubscribeNameSpaceError(_, _, _) => {
+                tracing::info!("Subscribe namespace error");
                 bail!("Subscribe namespace error")
             }
             _ => bail!("Protocol violation"),

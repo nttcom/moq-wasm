@@ -32,17 +32,22 @@ impl SequenceHandler {
         let join_handle = tokio::spawn(async move {
             for namespace in track_namespaces {
                 if let Some(dash_set) = table.publishers.get_mut(&namespace) {
-                    tracing::info!("The Namespace has been registered.");
+                    tracing::info!("The Namespace has been registered. :{}", namespace);
                     dash_set.insert(uuid);
                 } else {
-                    tracing::info!("New namespace has been published.");
+                    tracing::info!("New namespace has been published. :{}", namespace);
                     let dash_set = DashSet::new();
                     dash_set.insert(uuid);
                     table.publishers.insert(namespace.clone(), dash_set);
                 }
                 if let None = table.publisher_namespaces.get_mut(&namespace) {
-                    table.publisher_namespaces.insert(namespace.clone(), DashSet::new());
+                    table
+                        .publisher_namespaces
+                        .insert(namespace.clone(), DashSet::new());
                 }
+                // The draft defines that the relay requires to send `PUBLISH_NAMESPACE` message to
+                // any subscriber that has interests in the namespace
+                // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
             }
         });
         self.thread_manager.add_join_handle(join_handle);
@@ -54,16 +59,18 @@ impl SequenceHandler {
         let join_handle = tokio::spawn(async move {
             for namespace in track_namespaces.clone() {
                 if let Some(dash_set) = table.subscribers.get_mut(&namespace) {
-                    tracing::info!("The Namespace has been registered.");
+                    tracing::info!("The Namespace has been registered. :{}", namespace);
                     dash_set.insert(uuid);
                 } else {
-                    tracing::info!("New namespace has been subscribed.");
+                    tracing::info!("New namespace has been subscribed. :{}", namespace);
                     let dash_set = DashSet::new();
                     dash_set.insert(uuid);
                     table.subscribers.insert(namespace.clone(), dash_set);
                 }
                 if let None = table.subscriber_namespaces.get_mut(&namespace) {
-                    table.subscriber_namespaces.insert(namespace.clone(), DashSet::new());
+                    table
+                        .subscriber_namespaces
+                        .insert(namespace.clone(), DashSet::new());
                 }
             }
         });

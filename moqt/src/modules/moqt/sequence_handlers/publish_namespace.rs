@@ -27,8 +27,10 @@ impl PublishNamespaceHandler {
         session: Arc<InnerSession<T>>,
         mut bytes_mut: BytesMut,
     ) {
+        tracing::info!("Publish namespace");
         let result = PublishNamespace::depacketize(&mut bytes_mut);
         if let Err(e) = result.as_ref() {
+            tracing::warn!("Error has detected.");
             let err = RequestError {
                 // TODO: assign correct request id.
                 request_id: 0,
@@ -36,11 +38,15 @@ impl PublishNamespaceHandler {
                 reason_phrase: e.to_string(),
             };
             let bytes = utils::create_full_message(ControlMessageType::PublishNamespaceError, err);
-            session
+            if let Err(e) = session
                 .send_stream
                 .send(&bytes)
-                .await
-                .map_err(|e| tracing::error!("Failed: {:?}", e));
+                .await {
+                    tracing::info!("send `Publish_Namespace_Error` failed: {}.", e.to_string());
+                } else {
+                    tracing::info!("send `Publish_Namespace_Error` OK.");
+                }
+            return;
         }
         let result = result.unwrap();
         let (auth, _, _) = sequence_handler_util::resolve_param(result.parameters);
@@ -48,6 +54,7 @@ impl PublishNamespaceHandler {
         // authorized
         // uninterest namespace
         // malformed authorization token
+        tracing::info!("Publish namespace OK");
         let publish_namespace_ok = NamespaceOk {
             request_id: result.request_id,
         };

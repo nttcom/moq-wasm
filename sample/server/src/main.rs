@@ -52,10 +52,6 @@ async fn main() -> anyhow::Result<()> {
     let thread = tokio::task::Builder::new()
         .name("Handler")
         .spawn(async move {
-            tracing_subscriber::fmt()
-                .with_max_level(tracing::Level::DEBUG)
-                .try_init()
-                .ok();
             tracing::info!("Handler started");
             let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<(
                 Uuid,

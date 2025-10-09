@@ -30,6 +30,7 @@ impl<T: TransportProtocol> Publisher<T> {
         let bytes =
             utils::create_full_message(ControlMessageType::PublishNamespace, publish_namespace);
         self.session.send_stream.send(&bytes).await?;
+        tracing::info!("Publish namespace");
         let result = receiver.await;
         if let Err(e) = result {
             bail!("Failed to receive message: {}", e.to_string())
@@ -40,10 +41,12 @@ impl<T: TransportProtocol> Publisher<T> {
                 if request_id != response_request_id {
                     bail!("Protocol violation")
                 } else {
+                    tracing::info!("Publish namespace ok");
                     Ok(())
                 }
             }
             ResponseMessage::PublishNamespaceError(_, _, _) => {
+                tracing::info!("Publish namespace error");
                 bail!("Publish namespace error")
             }
             _ => bail!("Protocol violation"),
