@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dashmap::DashSet;
+use dashmap::{DashMap, DashSet};
 use uuid::Uuid;
 
 use crate::modules::{
@@ -30,6 +30,8 @@ impl SequenceHandler {
         let session_repo = self.session_repo.clone();
 
         let join_handle = tokio::spawn(async move {
+            let dest_map = DashMap::new();
+
             for namespace in track_namespaces {
                 if let Some(dash_set) = table.publishers.get_mut(&namespace) {
                     tracing::info!("The Namespace has been registered. :{}", namespace);
@@ -48,6 +50,46 @@ impl SequenceHandler {
                 // The draft defines that the relay requires to send `PUBLISH_NAMESPACE` message to
                 // any subscriber that has interests in the namespace
                 // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
+
+                // Convert DashMap<Namespace, DashSet<Uuid>> to DashMap<Uuid, DashSet<Namespace>>
+                if let Some(uuids) = table.subscribers.get(&namespace) {
+                    for uuid in uuids.iter() {
+                        let uuid = *uuid;
+
+                        // そのuuidのオブジェクトが持つNamespaceのセットを取得
+                        let session = match session_repo.lock().await.get_session(uuid).await {
+                            Some(s) => s,
+                            None => {
+                                tracing::info!("no session subscribes. :{}", namespace);
+                                continue;
+                            }
+                        };
+                        let ns = session.get_subscribed_namespaces().await;
+
+                        // 現在のnamespaceがh1に含まれているか確認
+                        if ns.contains(&namespace) {
+                            // d2にuuidのエントリを取得または作成
+                            dest_map
+                                .entry(uuid)
+                                .or_insert_with(DashSet::new)
+                                .insert(namespace.clone());
+                        }
+                    }
+                }
+            }
+
+            for (uuid, namespaces) in dest_map {
+                let publisher = match session_repo.lock().await.get_publisher(uuid).await {
+                    Some(s) => s,
+                    None => {
+                        tracing::info!("no session publishers. :{}", uuid);
+                        continue;
+                    }
+                };
+                if namespaces.len() == 0 {
+                    continue;
+                }
+                publisher.send_publish_namespace(namespaces.into_iter().collect());
             }
         });
         self.thread_manager.add_join_handle(join_handle);

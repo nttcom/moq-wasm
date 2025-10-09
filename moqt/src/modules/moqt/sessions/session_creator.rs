@@ -4,7 +4,7 @@ use crate::modules::moqt::controls::control_receiver::ControlReceiver;
 use crate::modules::moqt::controls::control_sender::ControlSender;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::sessions::inner_session::InnerSession;
-use crate::modules::moqt::sessions::session::{self, Session};
+use crate::modules::moqt::sessions::session::Session;
 use crate::modules::transport::transport_connection::TransportConnection;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 

@@ -73,6 +73,11 @@ impl SessionRepository {
         self.thread_manager.add_join_handle(join_handle);
     }
 
+    pub(crate) async fn get_session(&self, uuid: Uuid) -> Option<Arc<dyn Session>> {
+        let sessions = self.sessions.lock().await;
+        sessions.get(&uuid).cloned()
+    }
+
     pub(crate) async fn get_subscriber(&self, uuid: Uuid) -> Option<Arc<dyn Subscriber>> {
         self.subscriber_repo.get(uuid).await
     }
