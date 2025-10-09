@@ -39,14 +39,14 @@ async fn main() -> anyhow::Result<()> {
             };
             tracing::info!("create session ok");
             let (publisher, subscriber) = session.create_publisher_subscriber_pair();
-            let result = publisher.publish_namespace(vec!["test".to_string()]).await;
+            let result = publisher.publish_namespace("room".to_string()).await;
             if result.is_err() {
                 tracing::info!("publish namespace error");
             } else {
                 tracing::info!("publish namespace ok");
             }
             let result = subscriber
-                .subscribe_namespace(vec!["sample".to_string()])
+                .subscribe_namespace("sample".to_string())
                 .await;
             // await until the application is shut down.
             let _ = signal_receiver.await.ok();

@@ -64,7 +64,8 @@ impl PublishNamespaceHandler {
         );
         match session.send_stream.send(&bytes).await {
             Ok(_) => {
-                let session_event = SessionEvent::PublishNamespace(result.track_namespace);
+                let namespace = result.track_namespace.join("/");
+                let session_event = SessionEvent::PublishNamespace(namespace);
                 match session.event_sender.send(session_event) {
                     Ok(_) => tracing::info!("Message has been sent on sender."),
                     Err(_) => tracing::error!("failed to send publish namespace response message"),

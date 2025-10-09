@@ -1,17 +1,15 @@
-use uuid::Uuid;
-
-use crate::modules::enums::SessionEvent;
+use crate::modules::{enums::SessionEvent, types::SessionId};
 
 pub(crate) struct MOQTSessionEventResolver;
 
 impl MOQTSessionEventResolver {
-    pub(crate) fn resolve(uuid: Uuid, event: moqt::SessionEvent) -> SessionEvent {
+    pub(crate) fn resolve(session_id: SessionId, event: moqt::SessionEvent) -> SessionEvent {
         match event {
             moqt::SessionEvent::PublishNamespace(namespaces) => {
-                SessionEvent::PublishNameSpace(uuid, namespaces)
+                SessionEvent::PublishNameSpace(session_id, namespaces)
             }
             moqt::SessionEvent::SubscribeNameSpace(namespaces) => {
-                SessionEvent::PublishNameSpace(uuid, namespaces)
+                SessionEvent::PublishNameSpace(session_id, namespaces)
             }
             moqt::SessionEvent::Publish(
                 request_id,

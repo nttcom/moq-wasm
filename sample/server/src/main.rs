@@ -5,7 +5,8 @@ use modules::handler::Handler;
 use modules::manager::Manager;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use std::{fs, path::Path};
-use uuid::Uuid;
+
+use crate::modules::types::SessionId;
 
 fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -54,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
         .spawn(async move {
             tracing::info!("Handler started");
             let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<(
-                Uuid,
+                SessionId,
                 Box<dyn Session>,
                 Box<dyn Publisher>,
                 Box<dyn Subscriber>,

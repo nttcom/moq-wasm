@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use uuid::Uuid;
-
 use crate::modules::{
     core::{publisher::Publisher, session::Session, subscriber::Subscriber},
     enums::SessionEvent,
     event_resolver::sequence_handler::SequenceHandler,
     repositories::session_repository::SessionRepository,
+    types::SessionId,
 };
 
 pub(crate) struct Manager {
@@ -18,7 +17,7 @@ pub(crate) struct Manager {
 impl Manager {
     pub fn run(
         receiver: tokio::sync::mpsc::UnboundedReceiver<(
-            Uuid,
+            SessionId,
             Box<dyn Session>,
             Box<dyn Publisher>,
             Box<dyn Subscriber>,
@@ -42,7 +41,7 @@ impl Manager {
 
     fn create_new_session_watcher(
         mut event_receiver: tokio::sync::mpsc::UnboundedReceiver<(
-            Uuid,
+            SessionId,
             Box<dyn Session>,
             Box<dyn Publisher>,
             Box<dyn Subscriber>,
@@ -54,14 +53,14 @@ impl Manager {
             .name("Session Event Watcher")
             .spawn(async move {
                 loop {
-                    if let Some((uuid, session, publisher, subscriber)) =
+                    if let Some((session_id, session, publisher, subscriber)) =
                         event_receiver.recv().await
                     {
                         tracing::info!("Session event received");
                         repo.lock()
                             .await
                             .add(
-                                uuid,
+                                session_id,
                                 session,
                                 session_event_sender.clone(),
                                 publisher,
@@ -88,16 +87,18 @@ impl Manager {
                 loop {
                     if let Some(event) = receiver.recv().await {
                         match event {
-                            SessionEvent::PublishNameSpace(uuid, items) => {
-                                sequense_handler.publish_namespace(uuid, items)
+                            SessionEvent::PublishNameSpace(session_id, items) => {
+                                sequense_handler.publish_namespace(session_id, items)
                             }
-                            SessionEvent::SubscribeNameSpace(uuid, items) => {
-                                sequense_handler.subscribe_namespace(uuid, items);
+                            SessionEvent::SubscribeNameSpace(session_id, items) => {
+                                sequense_handler.subscribe_namespace(session_id, items);
                             }
                             SessionEvent::Publish(
-                                uuid,
+                                session_id,
                                 _,
                                 items,
+                                _,
+                                _,
                                 _,
                                 _,
                                 _,
@@ -106,7 +107,7 @@ impl Manager {
                                 items3,
                             ) => todo!(),
                             SessionEvent::Subscribe(
-                                uuid,
+                                session_id,
                                 _,
                                 items,
                                 _,

@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     sync::{Arc, Weak},
 };
-use uuid::Uuid;
 
 use crate::modules::{
     core::{publisher::Publisher, session::Session, subscriber::Subscriber},
@@ -10,12 +9,13 @@ use crate::modules::{
     event_resolver::moqt_session_event_resolver::MOQTSessionEventResolver,
     repositories::subscriber_repository::SubscriberRepository,
     thread_manager::ThreadManager,
+    types::SessionId,
 };
 
 pub(crate) struct SessionRepository {
     thread_manager: ThreadManager,
-    sessions: tokio::sync::Mutex<HashMap<Uuid, Arc<dyn Session>>>,
-    publishers: tokio::sync::Mutex<HashMap<Uuid, Arc<dyn Publisher>>>,
+    sessions: tokio::sync::Mutex<HashMap<SessionId, Arc<dyn Session>>>,
+    publishers: tokio::sync::Mutex<HashMap<SessionId, Arc<dyn Publisher>>>,
     subscriber_repo: SubscriberRepository,
 }
 
@@ -31,7 +31,7 @@ impl SessionRepository {
 
     pub(crate) async fn add(
         &mut self,
-        uuid: Uuid,
+        session_id: SessionId,
         session: Box<dyn Session>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         publisher: Box<dyn Publisher>,
@@ -39,15 +39,18 @@ impl SessionRepository {
     ) {
         let arc_session = Arc::from(session);
         let arc_publisher = Arc::from(publisher);
-        self.start_receive(uuid, Arc::downgrade(&arc_session), event_sender);
-        self.sessions.lock().await.insert(uuid, arc_session);
-        self.publishers.lock().await.insert(uuid, arc_publisher);
-        self.subscriber_repo.add(uuid, subscriber).await;
+        self.start_receive(session_id, Arc::downgrade(&arc_session), event_sender);
+        self.sessions.lock().await.insert(session_id, arc_session);
+        self.publishers
+            .lock()
+            .await
+            .insert(session_id, arc_publisher);
+        self.subscriber_repo.add(session_id, subscriber).await;
     }
 
     fn start_receive(
         &mut self,
-        uuid: Uuid,
+        session_id: SessionId,
         session: Weak<dyn Session>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) {
@@ -61,7 +64,8 @@ impl SessionRepository {
                             tracing::error!("Failed to receive session event: {}", e);
                             break;
                         }
-                        let session_event = MOQTSessionEventResolver::resolve(uuid, event.unwrap());
+                        let session_event =
+                            MOQTSessionEventResolver::resolve(session_id, event.unwrap());
                         event_sender.send(session_event).unwrap();
                     } else {
                         tracing::error!("Session has been dropped.");
@@ -73,18 +77,21 @@ impl SessionRepository {
         self.thread_manager.add_join_handle(join_handle);
     }
 
-    pub(crate) async fn get_session(&self, uuid: Uuid) -> Option<Arc<dyn Session>> {
+    pub(crate) async fn get_session(&self, session_id: SessionId) -> Option<Arc<dyn Session>> {
         let sessions = self.sessions.lock().await;
-        sessions.get(&uuid).cloned()
+        sessions.get(&session_id).cloned()
     }
 
-    pub(crate) async fn get_subscriber(&self, uuid: Uuid) -> Option<Arc<dyn Subscriber>> {
-        self.subscriber_repo.get(uuid).await
+    pub(crate) async fn get_subscriber(
+        &self,
+        session_id: SessionId,
+    ) -> Option<Arc<dyn Subscriber>> {
+        self.subscriber_repo.get(session_id).await
     }
 
-    pub(crate) async fn get_publisher(&self, uuid: Uuid) -> Option<Arc<dyn Publisher>> {
+    pub(crate) async fn get_publisher(&self, session_id: SessionId) -> Option<Arc<dyn Publisher>> {
         let publishers = self.publishers.lock().await;
-        let result = publishers.get(&uuid);
+        let result = publishers.get(&session_id);
         if let Some(publisher) = result {
             Some(publisher.clone())
         } else {
