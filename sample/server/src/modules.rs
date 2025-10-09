@@ -4,5 +4,6 @@ pub(crate) mod event_resolver;
 pub(crate) mod handler;
 pub(crate) mod manager;
 pub(crate) mod repositories;
-pub(crate) mod tables;
+pub(crate) mod relations;
 pub(crate) mod thread_manager;
+pub(crate) mod types;
