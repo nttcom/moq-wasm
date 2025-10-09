@@ -1,7 +1,8 @@
 use dashmap::{DashMap, DashSet};
-use uuid::Uuid;
-type Namespace = String;
-type TrackNamespace = String;
+
+use crate::modules::types::{
+    SessionId, TrackName, TrackNamespace, TrackNamespacePrefix, TrackNamespaceWithTrackName,
+};
 
 pub(crate) struct Relations {
     /**
@@ -11,10 +12,10 @@ pub(crate) struct Relations {
      * publish: room/member + video
      * subscribe: room/member/video
      */
-    pub(crate) publisher_namespaces: DashMap<Namespace, DashSet<Uuid>>,
-    pub(crate) subscriber_namespaces: DashMap<Namespace, DashSet<Uuid>>,
-    pub(crate) published_tracks: DashMap<Namespace, DashSet<TrackNamespace>>,
-    pub(crate) subscribed_tracks: DashMap<Namespace, DashSet<TrackNamespace>>,
+    pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashSet<SessionId>>,
+    pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashSet<SessionId>>,
+    pub(crate) published_tracks: DashMap<TrackNamespace, DashSet<TrackName>>,
+    pub(crate) subscribed_tracks: DashMap<TrackNamespaceWithTrackName, DashSet<TrackName>>,
 }
 
 impl Relations {

@@ -1,6 +1,6 @@
 // message aliases
 pub type RequestId = u64;
-pub type TrackNamespaces = Vec<String>;
+pub type TrackNamespace = String;
 pub type TrackAlias = u64;
 pub type GroupOrder = u8;
 pub type IsContentExist = u8;
@@ -23,11 +23,11 @@ pub type MaxCacheDuration = u64;
 
 #[derive(Clone)]
 pub enum SessionEvent {
-    PublishNamespace(TrackNamespaces),
-    SubscribeNameSpace(TrackNamespaces),
+    PublishNamespace(TrackNamespace),
+    SubscribeNameSpace(TrackNamespace),
     Publish(
         RequestId,
-        TrackNamespaces,
+        TrackNamespace,
         TrackAlias,
         GroupOrder,
         IsContentExist,
@@ -38,7 +38,7 @@ pub enum SessionEvent {
     ),
     Subscribe(
         RequestId,
-        TrackNamespaces,
+        TrackNamespace,
         SubscriberPriority,
         GroupOrder,
         IsContentExist,

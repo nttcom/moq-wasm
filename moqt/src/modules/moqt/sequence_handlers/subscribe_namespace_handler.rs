@@ -52,7 +52,7 @@ impl SubscribeNamespaceHandler {
         // authorized
         // uninterest namespace
         // malformed authorization token
-        let track_namespace = result.track_namespace_prefix;
+        let track_namespace: Vec<String> = result.track_namespace_prefix;
         {
             let mut subscribed_namespaces = session.subscribed_namespaces.lock().await;
             for s in &track_namespace {
@@ -90,7 +90,8 @@ impl SubscribeNamespaceHandler {
 
         match session.send_stream.send(&bytes).await {
             Ok(_) => {
-                let session_event = SessionEvent::SubscribeNameSpace(track_namespace);
+                let namespace = track_namespace.join("/");
+                let session_event = SessionEvent::SubscribeNameSpace(namespace);
                 match session.event_sender.send(session_event) {
                     Ok(_) => tracing::info!("Message has been sent on sender."),
                     Err(_) => {

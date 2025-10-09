@@ -1,26 +1,18 @@
-use uuid::Uuid;
-
-// message alias
-pub(crate) type RequestId = moqt::RequestId;
-pub(crate) type TrackNamespaces = moqt::TrackNamespaces;
-pub(crate) type GroupOrder = moqt::GroupOrder;
-pub(crate) type IsContentExist = moqt::IsContentExist;
-pub(crate) type IsForward = moqt::IsForward;
-pub(crate) type SubscriberPriority = moqt::SubscriberPriority;
-pub(crate) type FilterType = moqt::FilterType;
-
-// parameter alias
-pub(crate) type Authorization = moqt::Authorization;
-pub(crate) type DeliveryTimeout = moqt::DeliveryTimeout;
-pub(crate) type MaxCacheDuration = moqt::MaxCacheDuration;
+use crate::modules::types::{
+    Authorization, DeliveryTimeout, FilterType, GroupOrder, IsContentExist, IsForward,
+    MaxCacheDuration, RequestId, SessionId, SubscriberPriority, TrackAlias, TrackName,
+    TrackNamespace, TrackNamespacePrefix,
+};
 
 pub(crate) enum SessionEvent {
-    PublishNameSpace(Uuid, TrackNamespaces),
-    SubscribeNameSpace(Uuid, TrackNamespaces),
+    PublishNameSpace(SessionId, TrackNamespace),
+    SubscribeNameSpace(SessionId, TrackNamespacePrefix),
     Publish(
-        Uuid,
+        SessionId,
         RequestId,
-        TrackNamespaces,
+        TrackNamespace,
+        TrackName,
+        TrackAlias,
         GroupOrder,
         IsContentExist,
         IsForward,
@@ -29,9 +21,9 @@ pub(crate) enum SessionEvent {
         Vec<MaxCacheDuration>,
     ),
     Subscribe(
-        Uuid,
+        SessionId,
         RequestId,
-        TrackNamespaces,
+        TrackNamespace,
         SubscriberPriority,
         GroupOrder,
         IsContentExist,

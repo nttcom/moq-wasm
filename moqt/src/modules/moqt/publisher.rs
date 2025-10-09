@@ -18,7 +18,8 @@ pub struct Publisher<T: TransportProtocol> {
 }
 
 impl<T: TransportProtocol> Publisher<T> {
-    pub async fn publish_namespace(&self, namespaces: Vec<String>) -> anyhow::Result<()> {
+    pub async fn publish_namespace(&self, namespace: String) -> anyhow::Result<()> {
+        let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
         self.session
@@ -26,7 +27,7 @@ impl<T: TransportProtocol> Publisher<T> {
             .lock()
             .await
             .insert(request_id, sender);
-        let publish_namespace = PublishNamespace::new(request_id, namespaces, vec![]);
+        let publish_namespace = PublishNamespace::new(request_id, vec_namespace, vec![]);
         let bytes =
             utils::create_full_message(ControlMessageType::PublishNamespace, publish_namespace);
         self.session.send_stream.send(&bytes).await?;

@@ -1,8 +1,10 @@
 use moqt::{Endpoint, QUIC};
-
 use uuid::Uuid;
 
-use crate::modules::core::{publisher::Publisher, session::Session, subscriber::Subscriber};
+use crate::modules::{
+    core::{publisher::Publisher, session::Session, subscriber::Subscriber},
+    types::SessionId,
+};
 
 pub struct Handler {
     join_handle: tokio::task::JoinHandle<()>,
@@ -13,7 +15,7 @@ impl Handler {
         key_path: String,
         cert_path: String,
         event_sender: tokio::sync::mpsc::UnboundedSender<(
-            Uuid,
+            SessionId,
             Box<dyn Session>,
             Box<dyn Publisher>,
             Box<dyn Subscriber>,
@@ -35,7 +37,7 @@ impl Handler {
     fn create_joinhandle(
         mut endpoint: Endpoint<QUIC>,
         event_sender: tokio::sync::mpsc::UnboundedSender<(
-            Uuid,
+            SessionId,
             Box<dyn Session>,
             Box<dyn Publisher>,
             Box<dyn Subscriber>,
@@ -52,9 +54,9 @@ impl Handler {
                         Err(_) => break,
                     };
                     let (publisher, subscriber) = session.new_publisher_subscriber_pair();
-                    let uuid = Uuid::new_v4();
-                    tracing::info!("uuid: {}", uuid);
-                    event_sender.send((uuid, Box::new(session), publisher, subscriber));
+                    let session_id = Uuid::new_v4();
+                    tracing::info!("Session ID: {}", session_id);
+                    event_sender.send((session_id, Box::new(session), publisher, subscriber));
                 }
             })
             .unwrap()
