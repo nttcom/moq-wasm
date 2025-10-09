@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -31,6 +31,7 @@ pub(crate) struct InnerSession<T: TransportProtocol> {
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     pub(crate) sender_map:
         tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
+    pub(crate) subscribed_namespaces: tokio::sync::Mutex<HashSet<String>>,
 }
 
 impl<T: TransportProtocol> InnerSession<T> {
@@ -49,6 +50,7 @@ impl<T: TransportProtocol> InnerSession<T> {
             request_id: AtomicU64::new(0),
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
+            subscribed_namespaces: tokio::sync::Mutex::new(HashSet::new()),
         })
     }
 
@@ -67,6 +69,7 @@ impl<T: TransportProtocol> InnerSession<T> {
             request_id: AtomicU64::new(1),
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
+            subscribed_namespaces: tokio::sync::Mutex::new(HashSet::new()),
         })
     }
 
@@ -133,6 +136,7 @@ impl<T: TransportProtocol> InnerSession<T> {
 
     pub(crate) fn get_request_id(&self) -> u64 {
         let id = self.request_id.load(Ordering::SeqCst);
+        tracing::debug!("request_id: {}", id);
         self.request_id.fetch_add(2, Ordering::SeqCst);
         id
     }
