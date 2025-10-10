@@ -21,7 +21,7 @@ pub type DeliveryTimeout = u64;
 // PUBLISH, SUBSCRIBE_OK, FETCH_OK or TRACK_STATUS_OK
 pub type MaxCacheDuration = u64;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SessionEvent {
     PublishNamespace(TrackNamespace),
     SubscribeNameSpace(TrackNamespace),

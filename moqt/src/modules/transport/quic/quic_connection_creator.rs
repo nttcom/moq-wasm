@@ -2,10 +2,10 @@ use anyhow::Ok;
 use async_trait::async_trait;
 use std::{net::{Ipv6Addr, SocketAddr}, sync::Arc};
 
-use quinn::rustls::{
+use quinn::{rustls::{
     self,
-    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
-};
+    pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
+}, IdleTimeout};
 use quinn::{self, TransportConfig, VarInt};
 
 use crate::modules::transport::{

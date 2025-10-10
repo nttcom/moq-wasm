@@ -25,7 +25,7 @@ impl Handler {
             port: 4433,
             cert_path,
             key_path,
-            keep_alive_interval_sec: 30,
+            keep_alive_interval_sec: 15,
         };
         let endpoint = Endpoint::<QUIC>::create_server(config)
             .inspect_err(|e| tracing::error!("failed to create server: {}", e))
