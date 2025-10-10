@@ -34,20 +34,15 @@ impl SequenceHandler {
 
         let join_handle = tokio::spawn(async move {
             if let Some(dash_set) = table.publisher_namespaces.get_mut(&track_namespace) {
-                tracing::info!("The Namespace has been registered. :{}", track_namespace);
+                tracing::info!("The namespace '{}' has been registered.", track_namespace);
                 dash_set.insert(session_id);
             } else {
-                tracing::info!("New namespace has been published. :{}", track_namespace);
+                tracing::info!("New namespace '{}' has been published.", track_namespace);
                 let dash_set = DashSet::new();
                 dash_set.insert(session_id);
                 table
                     .publisher_namespaces
                     .insert(track_namespace.clone(), dash_set);
-            }
-            if table.published_tracks.get_mut(&track_namespace).is_none() {
-                table
-                    .published_tracks
-                    .insert(track_namespace.clone(), DashSet::new());
             }
             // The draft defines that the relay requires to send `PUBLISH_NAMESPACE` message to
             // any subscriber that has interests in the namespace
@@ -64,6 +59,7 @@ impl SequenceHandler {
                         combined.insert(*session_id);
                     })
                 });
+            tracing::debug!("The namespace are subscribed by: {:?}", combined);
             for session_id in combined {
                 let publisher = session_repo.lock().await.get_publisher(session_id).await;
                 if let Some(publisher) = publisher {
@@ -71,7 +67,11 @@ impl SequenceHandler {
                         .send_publish_namespace(track_namespace.clone())
                         .await
                     {
-                        Ok(_) => tracing::info!("Sent publish namespace"),
+                        Ok(_) => tracing::info!(
+                            "Sent publish namespace '{}' to {}",
+                            track_namespace,
+                            session_id
+                        ),
                         Err(_) => tracing::error!("Failed to send publish namespace"),
                     }
                 } else {
@@ -93,13 +93,13 @@ impl SequenceHandler {
         let join_handle = tokio::spawn(async move {
             if let Some(dash_set) = table.subscriber_namespaces.get_mut(&track_namespace_prefix) {
                 tracing::info!(
-                    "The Namespace has been registered. :{}",
+                    "The namespace '{}' has been registered.",
                     track_namespace_prefix
                 );
                 dash_set.insert(session_id);
             } else {
                 tracing::info!(
-                    "New namespace has been subscribed. :{}",
+                    "New namespace '{}' has been subscribed.",
                     track_namespace_prefix
                 );
                 let dash_set = DashSet::new();
@@ -124,6 +124,8 @@ impl SequenceHandler {
                 }
             }
 
+            tracing::debug!("The namespace prefix are subscribed by: {:?}", filtered);
+
             for (track_namespace, session_ids) in filtered {
                 for session_id in session_ids {
                     let publisher = session_repo.lock().await.get_publisher(session_id).await;
@@ -132,7 +134,11 @@ impl SequenceHandler {
                             .send_publish_namespace(track_namespace.clone())
                             .await
                         {
-                            Ok(_) => tracing::info!("Sent publish namespace"),
+                            Ok(_) => tracing::info!(
+                                "Sent publish namespace '{}' to {}",
+                                track_namespace,
+                                session_id
+                            ),
                             Err(_) => tracing::error!("Failed to send publish namespace"),
                         }
                     } else {
