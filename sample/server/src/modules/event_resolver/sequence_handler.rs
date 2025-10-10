@@ -24,7 +24,7 @@ impl SequenceHandler {
         }
     }
 
-    pub(crate) fn publish_namespace(
+    pub(crate) async fn publish_namespace(
         &mut self,
         session_id: SessionId,
         track_namespace: TrackNamespace,
@@ -33,8 +33,6 @@ impl SequenceHandler {
         let session_repo = self.session_repo.clone();
 
         let join_handle = tokio::spawn(async move {
-            let dest_map = DashMap::new();
-
             if let Some(dash_set) = table.publisher_namespaces.get_mut(&track_namespace) {
                 tracing::info!("The Namespace has been registered. :{}", track_namespace);
                 dash_set.insert(session_id);
@@ -46,7 +44,7 @@ impl SequenceHandler {
                     .publisher_namespaces
                     .insert(track_namespace.clone(), dash_set);
             }
-            if let None = table.published_tracks.get_mut(&track_namespace) {
+            if table.published_tracks.get_mut(&track_namespace).is_none() {
                 table
                     .published_tracks
                     .insert(track_namespace.clone(), DashSet::new());
@@ -56,54 +54,41 @@ impl SequenceHandler {
             // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
 
             // Convert DashMap<Namespace, DashSet<Uuid>> to DashMap<Uuid, DashSet<Namespace>>
-            if let Some(session_ids) = table.subscriber_namespaces.get(&track_namespace) {
-                for session_id in session_ids.iter() {
-                    let session_id = *session_id;
-
-                    // そのuuidのオブジェクトが持つNamespaceのセットを取得
-                    let session = match session_repo.lock().await.get_session(session_id).await {
-                        Some(s) => s,
-                        None => {
-                            tracing::info!("no session subscribes. :{}", track_namespace);
-                            continue;
-                        }
-                    };
-                    let ns = session.get_subscribed_namespaces().await;
-
-                    // 現在のnamespaceがh1に含まれているか確認
-                    if ns.contains(&track_namespace) {
-                        // d2にuuidのエントリを取得または作成
-                        dest_map
-                            .entry(session_id)
-                            .or_insert_with(DashSet::new)
-                            .insert(track_namespace.clone());
+            let combined = DashSet::new();
+            table
+                .subscriber_namespaces
+                .iter()
+                .filter(|entry| entry.key().starts_with(track_namespace.as_str()))
+                .for_each(|entry| {
+                    entry.value().iter().for_each(|session_id| {
+                        combined.insert(*session_id);
+                    })
+                });
+            for session_id in combined {
+                let publisher = session_repo.lock().await.get_publisher(session_id).await;
+                if let Some(publisher) = publisher {
+                    match publisher
+                        .send_publish_namespace(track_namespace.clone())
+                        .await
+                    {
+                        Ok(_) => tracing::info!("Sent publish namespace"),
+                        Err(_) => tracing::error!("Failed to send publish namespace"),
                     }
+                } else {
+                    tracing::warn!("No publisher");
                 }
-            }
-
-            for (session_id, namespaces) in dest_map {
-                let publisher = match session_repo.lock().await.get_publisher(session_id).await {
-                    Some(s) => s,
-                    None => {
-                        tracing::info!("no session publishers. :{}", session_id);
-                        continue;
-                    }
-                };
-                if namespaces.len() == 0 {
-                    continue;
-                }
-                publisher.send_publish_namespace(namespaces.into_iter().collect());
             }
         });
-        self.thread_manager.add_join_handle(join_handle);
+        self.thread_manager.add_join_handle(join_handle).await;
     }
 
-    pub(crate) fn subscribe_namespace(
+    pub(crate) async fn subscribe_namespace(
         &mut self,
         session_id: SessionId,
         track_namespace_prefix: TrackNamespacePrefix,
     ) {
         let table = self.tables.clone();
+        let session_repo = self.session_repo.clone();
 
         let join_handle = tokio::spawn(async move {
             if let Some(dash_set) = table.subscriber_namespaces.get_mut(&track_namespace_prefix) {
@@ -123,13 +108,40 @@ impl SequenceHandler {
                     .subscriber_namespaces
                     .insert(track_namespace_prefix.clone(), dash_set);
             }
-            if let None = table.subscribed_tracks.get_mut(&track_namespace_prefix) {
+            if table
+                .subscribed_tracks
+                .get_mut(&track_namespace_prefix)
+                .is_none()
+            {
                 table
                     .subscribed_tracks
                     .insert(track_namespace_prefix.clone(), DashSet::new());
             }
+            let filtered = DashMap::new();
+            for entry in table.publisher_namespaces.iter() {
+                if entry.key().starts_with(track_namespace_prefix.as_str()) {
+                    filtered.insert(entry.key().clone(), entry.value().clone());
+                }
+            }
+
+            for (track_namespace, session_ids) in filtered {
+                for session_id in session_ids {
+                    let publisher = session_repo.lock().await.get_publisher(session_id).await;
+                    if let Some(publisher) = publisher {
+                        match publisher
+                            .send_publish_namespace(track_namespace.clone())
+                            .await
+                        {
+                            Ok(_) => tracing::info!("Sent publish namespace"),
+                            Err(_) => tracing::error!("Failed to send publish namespace"),
+                        }
+                    } else {
+                        tracing::warn!("No publisher");
+                    }
+                }
+            }
         });
-        self.thread_manager.add_join_handle(join_handle);
+        self.thread_manager.add_join_handle(join_handle).await;
     }
 
     pub(crate) fn publish(&self) {}
