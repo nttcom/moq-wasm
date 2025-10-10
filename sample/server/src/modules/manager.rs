@@ -88,10 +88,12 @@ impl Manager {
                     if let Some(event) = receiver.recv().await {
                         match event {
                             SessionEvent::PublishNameSpace(session_id, items) => {
-                                sequense_handler.publish_namespace(session_id, items)
+                                sequense_handler.publish_namespace(session_id, items).await
                             }
                             SessionEvent::SubscribeNameSpace(session_id, items) => {
-                                sequense_handler.subscribe_namespace(session_id, items);
+                                sequense_handler
+                                    .subscribe_namespace(session_id, items)
+                                    .await;
                             }
                             SessionEvent::Publish(
                                 session_id,
@@ -126,5 +128,13 @@ impl Manager {
                 }
             })
             .unwrap()
+    }
+}
+
+impl Drop for Manager {
+    fn drop(&mut self) {
+        tracing::info!("Manager has been dropped.");
+        self.new_session_watcher.abort();
+        self.session_event_watcher.abort();
     }
 }
