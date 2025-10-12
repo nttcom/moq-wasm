@@ -9,7 +9,7 @@ impl MOQTSessionEventResolver {
                 SessionEvent::PublishNameSpace(session_id, namespaces)
             }
             moqt::SessionEvent::SubscribeNameSpace(namespaces) => {
-                SessionEvent::PublishNameSpace(session_id, namespaces)
+                SessionEvent::SubscribeNameSpace(session_id, namespaces)
             }
             moqt::SessionEvent::Publish(
                 request_id,

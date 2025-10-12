@@ -29,21 +29,26 @@ impl SequenceHandler {
         session_id: SessionId,
         track_namespace: TrackNamespace,
     ) {
+        tracing::info!("publish namespace");
         let table = self.tables.clone();
         let session_repo = self.session_repo.clone();
 
         let join_handle = tokio::spawn(async move {
             if let Some(dash_set) = table.publisher_namespaces.get_mut(&track_namespace) {
-                tracing::info!("The namespace '{}' has been registered.", track_namespace);
+                tracing::info!(
+                    "'{}' has been registered for namespace publication.",
+                    track_namespace
+                );
                 dash_set.insert(session_id);
             } else {
-                tracing::info!("New namespace '{}' has been published.", track_namespace);
+                tracing::info!("New namespace '{}' has been subscribed.", track_namespace);
                 let dash_set = DashSet::new();
                 dash_set.insert(session_id);
                 table
                     .publisher_namespaces
                     .insert(track_namespace.clone(), dash_set);
             }
+            tracing::debug!("publisher_namespaces: {:?}", table.publisher_namespaces);
             // The draft defines that the relay requires to send `PUBLISH_NAMESPACE` message to
             // any subscriber that has interests in the namespace
             // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
@@ -87,19 +92,20 @@ impl SequenceHandler {
         session_id: SessionId,
         track_namespace_prefix: TrackNamespacePrefix,
     ) {
+        tracing::info!("subscribe namespace");
         let table = self.tables.clone();
         let session_repo = self.session_repo.clone();
 
         let join_handle = tokio::spawn(async move {
             if let Some(dash_set) = table.subscriber_namespaces.get_mut(&track_namespace_prefix) {
                 tracing::info!(
-                    "The namespace '{}' has been registered.",
+                    "The namespace prefix '{}' has been registered for namespace subscription.",
                     track_namespace_prefix
                 );
                 dash_set.insert(session_id);
             } else {
                 tracing::info!(
-                    "New namespace '{}' has been subscribed.",
+                    "New namespace prefix '{}' has been subscribed.",
                     track_namespace_prefix
                 );
                 let dash_set = DashSet::new();
@@ -108,42 +114,38 @@ impl SequenceHandler {
                     .subscriber_namespaces
                     .insert(track_namespace_prefix.clone(), dash_set);
             }
-            if table
-                .subscribed_tracks
-                .get_mut(&track_namespace_prefix)
-                .is_none()
-            {
-                table
-                    .subscribed_tracks
-                    .insert(track_namespace_prefix.clone(), DashSet::new());
-            }
-            let filtered = DashMap::new();
+            tracing::info!(
+                "New namespace prefix '{}' has been subscribed.",
+                track_namespace_prefix
+            );
+            tracing::debug!("subscriber_namespaces: {:?}", table.subscriber_namespaces);
+
+            tracing::debug!("publisher_namespaces: {:?}", table.publisher_namespaces);
+            let mut filtered = Vec::new();
             for entry in table.publisher_namespaces.iter() {
                 if entry.key().starts_with(track_namespace_prefix.as_str()) {
-                    filtered.insert(entry.key().clone(), entry.value().clone());
+                    filtered.push(entry.key().clone());
                 }
             }
 
             tracing::debug!("The namespace prefix are subscribed by: {:?}", filtered);
 
-            for (track_namespace, session_ids) in filtered {
-                for session_id in session_ids {
-                    let publisher = session_repo.lock().await.get_publisher(session_id).await;
-                    if let Some(publisher) = publisher {
-                        match publisher
-                            .send_publish_namespace(track_namespace.clone())
-                            .await
-                        {
-                            Ok(_) => tracing::info!(
-                                "Sent publish namespace '{}' to {}",
-                                track_namespace,
-                                session_id
-                            ),
-                            Err(_) => tracing::error!("Failed to send publish namespace"),
-                        }
-                    } else {
-                        tracing::warn!("No publisher");
+            for track_namespace in filtered {
+                let publisher = session_repo.lock().await.get_publisher(session_id).await;
+                if let Some(publisher) = publisher {
+                    match publisher
+                        .send_publish_namespace(track_namespace.clone())
+                        .await
+                    {
+                        Ok(_) => tracing::info!(
+                            "Sent publish namespace '{}' to {}",
+                            track_namespace,
+                            session_id
+                        ),
+                        Err(_) => tracing::error!("Failed to send publish namespace"),
                     }
+                } else {
+                    tracing::warn!("No publisher");
                 }
             }
         });

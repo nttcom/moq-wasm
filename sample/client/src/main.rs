@@ -1,8 +1,9 @@
 use anyhow::bail;
 use moqt::{Endpoint, QUIC};
-use tokio::time::sleep;
 use std::{net::ToSocketAddrs, str::FromStr, sync::Arc, time::Duration};
+use tokio::time::sleep;
 
+// room/user2 is notified from `Publish Namespace`.
 fn create_client_thread(
     cert_path: String,
     mut signal_receiver: tokio::sync::broadcast::Receiver<()>,
@@ -25,7 +26,7 @@ fn create_client_thread(
             }
         };
         let session = Arc::new(session);
-        let th = create_receive_thread(session.clone());
+        let th = create_receive_thread("thread_1".to_string(), session.clone());
         tracing::info!("create session ok");
         let (publisher, subscriber) = session.create_publisher_subscriber_pair();
         let result = publisher.publish_namespace("room/user1".to_string()).await;
@@ -44,6 +45,7 @@ fn create_client_thread(
     })
 }
 
+// room/user1, room/user2 is notified from `Publish Namespace`.
 fn create_client_thread2(
     cert_path: String,
     mut signal_receiver: tokio::sync::broadcast::Receiver<()>,
@@ -67,7 +69,7 @@ fn create_client_thread2(
             }
         };
         let session = Arc::new(session);
-        let th = create_receive_thread(session.clone());
+        let th = create_receive_thread("thread_2".to_string(), session.clone());
         tracing::info!("create session ok");
         let (publisher, subscriber) = session.create_publisher_subscriber_pair();
         let result = publisher.publish_namespace("room/user2".to_string()).await;
@@ -84,7 +86,10 @@ fn create_client_thread2(
     })
 }
 
-fn create_receive_thread(session: Arc<moqt::Session<QUIC>>) -> tokio::task::JoinHandle<()> {
+fn create_receive_thread(
+    label: String,
+    session: Arc<moqt::Session<QUIC>>,
+) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn(async move {
         loop {
             let result = session.receive_event().await;
@@ -93,7 +98,7 @@ fn create_receive_thread(session: Arc<moqt::Session<QUIC>>) -> tokio::task::Join
                 break;
             }
             let event = result.unwrap();
-            tracing::info!("Received event: {:?}", event);
+            tracing::info!("Received: label: {} event: {:?}", label, event);
         }
     })
 }
