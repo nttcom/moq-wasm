@@ -1,13 +1,19 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-
-use crate::modules::moqt::protocol::TransportProtocol;
-use crate::modules::moqt::{session::Session, session_creator::SessionCreator};
+use crate::modules::moqt::sessions::session_creator::SessionCreator;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
+use std::net::SocketAddr;
 
 mod modules;
 
+pub use modules::moqt::enums::SessionEvent;
+pub use modules::moqt::enums::{
+    Authorization, DeliveryTimeout, FilterType, GroupOrder, IsContentExist, IsForward,
+    MaxCacheDuration, RequestId, SubscriberPriority, TrackNamespace,
+};
 pub use modules::moqt::protocol::QUIC;
+pub use modules::moqt::protocol::TransportProtocol;
+pub use modules::moqt::publisher::Publisher;
+pub use modules::moqt::sessions::session::Session;
+pub use modules::moqt::subscriber::Subscriber;
 
 pub struct ServerConfig {
     pub port: u16,
@@ -58,13 +64,13 @@ impl<T: TransportProtocol> Endpoint<T> {
         &self,
         remote_address: SocketAddr,
         host: &str,
-    ) -> anyhow::Result<Arc<Session<T>>> {
+    ) -> anyhow::Result<Session<T>> {
         self.session_creator
             .create_new_connection(remote_address, host)
             .await
     }
 
-    pub async fn accept(&mut self) -> anyhow::Result<Arc<Session<T>>> {
+    pub async fn accept(&mut self) -> anyhow::Result<Session<T>> {
         self.session_creator.accept_new_connection().await
     }
 }

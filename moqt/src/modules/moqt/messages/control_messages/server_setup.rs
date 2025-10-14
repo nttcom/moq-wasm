@@ -1,8 +1,7 @@
 use crate::modules::moqt::messages::{
-    control_message_type::ControlMessageType,
     control_messages::{
         setup_parameters::SetupParameter,
-        util::{add_header, validate_header},
+        util::{add_payload_length, validate_payload_length},
     },
     moqt_message::MOQTMessage,
     moqt_message_error::MOQTMessageError,
@@ -12,7 +11,6 @@ use crate::modules::moqt::messages::{
 use anyhow::Context;
 use bytes::BytesMut;
 use serde::Serialize;
-use std::any::Any;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ServerSetup {
@@ -33,7 +31,9 @@ impl ServerSetup {
 
 impl MOQTMessage for ServerSetup {
     fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
-        validate_header(ControlMessageType::ServerSetup as u8, buf)?;
+        if !validate_payload_length(buf) {
+            return Err(MOQTMessageError::ProtocolViolation);
+        }
 
         let selected_version = u32::try_from(
             read_variable_integer_from_buffer(buf)
@@ -76,11 +76,7 @@ impl MOQTMessage for ServerSetup {
         for setup_parameter in self.setup_parameters.iter() {
             setup_parameter.packetize(&mut payload);
         }
-        add_header(ControlMessageType::ServerSetup as u8, payload)
-    }
-    /// Method to enable downcasting from MOQTPayload to ServerSetup
-    fn as_any(&self) -> &dyn Any {
-        self
+        add_payload_length(payload)
     }
 }
 
@@ -107,8 +103,6 @@ mod tests {
             let buf = server_setup.packetize();
 
             let expected_bytes_array = [
-                64,  // Message Type
-                65,  // Message Type
                 13,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff000a) in 62bit
@@ -125,8 +119,6 @@ mod tests {
         #[test]
         fn depacketize() {
             let bytes_array = [
-                64,  // Message Type
-                65,  // Message Type
                 13,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff00000a) in 62bit

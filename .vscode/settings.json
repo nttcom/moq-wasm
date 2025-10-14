@@ -12,5 +12,13 @@
   "rust-analyzer.cargo.extraEnv": {
     "RUSTFLAGS": "--cfg web_sys_unstable_apis --cfg tokio_unstable"
   },
-  "rust-analyzer.cargo.features": ["web_sys_unstable_apis"]
+  "rust-analyzer.cargo.features": [
+    // "web_sys_unstable_apis"
+  ],
+  "rust-analyzer.linkedProjects": [
+    "moqt-wasm/Cargo.toml",
+    "moqt-wasm/moqt/Cargo.toml",
+    "moqt-wasm/sample/client/Cargo.toml",
+    "moqt-wasm/sample/server/Cargo.toml"
+  ]
 }

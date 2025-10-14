@@ -1,11 +1,11 @@
 use anyhow::Ok;
 use async_trait::async_trait;
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::{Ipv6Addr, SocketAddr}, sync::Arc};
 
-use quinn::rustls::{
+use quinn::{rustls::{
     self,
-    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
-};
+    pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
+}, IdleTimeout};
 use quinn::{self, TransportConfig, VarInt};
 
 use crate::modules::transport::{
@@ -58,7 +58,7 @@ impl QUICConnectionCreator {
     }
 
     fn create_client(port_num: u16, root_cert: rustls::RootCertStore) -> anyhow::Result<Self> {
-        let address = SocketAddr::from(([0, 0, 0, 0], port_num));
+        let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
         let mut endpoint = quinn::Endpoint::client(address)?;
 
         let mut client_crypto = rustls::ClientConfig::builder()
@@ -74,7 +74,7 @@ impl QUICConnectionCreator {
         ));
         endpoint.set_default_client_config(client_config);
 
-        tracing::info!("Client ready! for QUIC");
+        tracing::info!("Client ready! for QUIC: {:?}", address);
         Ok(QUICConnectionCreator { endpoint })
     }
 }
@@ -109,9 +109,9 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         keep_alive_sec: u64,
     ) -> anyhow::Result<Self> {
         let server_config = Self::config_builder(cert_path, key_path, keep_alive_sec)?;
-        let address = SocketAddr::from(([0, 0, 0, 0], port_num));
+        let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
         let endpoint = quinn::Endpoint::server(server_config, address)?;
-        tracing::info!("Server ready! for QUIC");
+        tracing::info!("Server ready! for QUIC: {:?}", address);
         Ok(QUICConnectionCreator { endpoint })
     }
 
