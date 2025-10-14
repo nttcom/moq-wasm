@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::Publisher;
 use crate::Subscriber;
-use crate::modules::moqt::controls::control_message_dispatcher::ControlMessageDispatcher;
+use crate::modules::moqt::controls::control_message_receive_thread::ControlMessageReceiveThread;
 use crate::modules::moqt::enums::SessionEvent;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::sessions::inner_session::InnerSession;
@@ -20,7 +20,7 @@ impl<T: TransportProtocol> Session<T> {
         event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
     ) -> Self {
         let inner = Arc::new(inner);
-        let message_receive_join_handle = ControlMessageDispatcher::run(Arc::downgrade(&inner));
+        let message_receive_join_handle = ControlMessageReceiveThread::run(Arc::downgrade(&inner));
         Self {
             inner,
             event_receiver: tokio::sync::Mutex::new(event_receiver),

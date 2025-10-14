@@ -4,7 +4,7 @@ use crate::modules::types::{
     TrackNamespace, TrackNamespacePrefix,
 };
 
-pub(crate) enum SessionEvent {
+pub(crate) enum MOQTMessageReceived {
     PublishNameSpace(SessionId, TrackNamespace),
     SubscribeNameSpace(SessionId, TrackNamespacePrefix),
     Publish(

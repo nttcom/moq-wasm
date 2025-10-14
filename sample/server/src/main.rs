@@ -6,7 +6,7 @@ use rcgen::{CertifiedKey, generate_simple_self_signed};
 use std::sync::Arc;
 use std::{fs, path::Path};
 
-use crate::modules::enums::SessionEvent;
+use crate::modules::enums::MOQTMessageReceived;
 use crate::modules::repositories::session_repository::SessionRepository;
 
 fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
         .spawn(async move {
             tracing::info!("Handler started");
             let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
-            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
+            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MOQTMessageReceived>();
             let _handler = SessionHandler::run(key_path, cert_path, repo.clone(), sender);
             let _manager = EventHandler::run(repo, receiver);
             // await until the application is shut down.
