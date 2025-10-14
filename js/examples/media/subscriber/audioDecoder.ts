@@ -42,7 +42,7 @@ namespace AudioDecoder {
   }
 }
 
-const POP_INTERVAL_MS = 10
+const POP_INTERVAL_MS = 5
 const jitterBuffer: JitterBuffer<AudioDecoder.SubgroupStreamObject> = new JitterBuffer()
 
 setInterval(() => {
@@ -56,7 +56,7 @@ self.onmessage = async (event) => {
   const subgroupStreamObject: AudioDecoder.SubgroupStreamObject = {
     objectId: event.data.subgroupStreamObject.object_id,
     objectPayloadLength: event.data.subgroupStreamObject.object_payload_length,
-    objectPayload: event.data.subgroupStreamObject.object_payload,
+    objectPayload: new Uint8Array(event.data.subgroupStreamObject.object_payload),
     objectStatus: event.data.subgroupStreamObject.object_status
   }
 
@@ -73,7 +73,7 @@ async function decode(subgroupStreamObject: AudioDecoder.SubgroupStreamObject) {
     data: chunkArray
   })
 
-  if (!audioDecoder) {
+  if (!audioDecoder || audioDecoder.state === 'closed') {
     audioDecoder = await initializeAudioDecoder()
   }
 

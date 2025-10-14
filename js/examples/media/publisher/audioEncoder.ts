@@ -7,7 +7,7 @@ const AUDIO_ENCODER_CONFIG = {
 }
 
 function sendAudioChunkMessage(chunk: EncodedAudioChunk, metadata: EncodedAudioChunkMetadata | undefined) {
-  // self.postMessage({ chunk, metadata })
+  self.postMessage({ chunk, metadata })
 }
 
 async function initializeAudioEncoder() {

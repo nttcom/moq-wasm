@@ -8,7 +8,7 @@ function setUpStartGetUserMediaButton() {
   const startGetUserMediaBtn = document.getElementById('startGetUserMediaBtn') as HTMLButtonElement
   startGetUserMediaBtn.addEventListener('click', async () => {
     const constraints = {
-      audio: false,
+      audio: true,
       video: {
         width: { exact: 1920 },
         height: { exact: 1080 }
@@ -65,9 +65,6 @@ async function handleVideoChunkMessage(
   const form = getFormElement()
   const trackAlias = form['video-object-track-alias'].value
   const publisherPriority = form['video-publisher-priority'].value
-  // if (LatestMediaTrackInfo['video'].objectId >= 5n) {
-  //   return
-  // }
 
   // Increment the groupId and reset the objectId at the timing of the keyframe
   // Then, resend the SubgroupStreamHeader
@@ -212,7 +209,7 @@ function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
         chunk: EncodedAudioChunk
         metadata: EncodedAudioChunkMetadata | undefined
       }
-      // handleAudioChunkMessage(chunk, metadata, client)
+      handleAudioChunkMessage(chunk, metadata, client)
     }
 
     const [videoTrack] = mediaStream.getVideoTracks()
@@ -223,10 +220,10 @@ function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
       keyframeInterval: KEYFRAME_INTERVAL
     })
     videoEncoderWorker.postMessage({ type: 'videoStream', videoStream: videoStream }, [videoStream])
-    // const [audioTrack] = mediaStream.getAudioTracks()
-    // const audioProcessor = new MediaStreamTrackProcessor({ track: audioTrack })
-    // const audioStream = audioProcessor.readable
-    // audioEncoderWorker.postMessage({ type: 'audioStream', audioStream: audioStream }, [audioStream])
+    const [audioTrack] = mediaStream.getAudioTracks()
+    const audioProcessor = new MediaStreamTrackProcessor({ track: audioTrack })
+    const audioStream = audioProcessor.readable
+    audioEncoderWorker.postMessage({ type: 'audioStream', audioStream: audioStream }, [audioStream])
   })
 }
 
