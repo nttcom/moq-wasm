@@ -3,20 +3,18 @@ use std::sync::Arc;
 use moqt::{Endpoint, QUIC};
 use uuid::Uuid;
 
-use crate::modules::{
-    enums::SessionEvent, repositories::session_repository::SessionRepository
-};
+use crate::modules::{enums::SessionEvent, repositories::session_repository::SessionRepository};
 
-pub struct Handler {
+pub struct SessionHandler {
     join_handle: tokio::task::JoinHandle<()>,
 }
 
-impl Handler {
+impl SessionHandler {
     pub fn run(
         key_path: String,
         cert_path: String,
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>
+        session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let config = moqt::ServerConfig {
             port: 4433,
@@ -34,7 +32,7 @@ impl Handler {
     fn create_joinhandle(
         mut endpoint: Endpoint<QUIC>,
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>
+        session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .spawn(async move {
@@ -48,14 +46,17 @@ impl Handler {
                     };
                     let session_id = Uuid::new_v4();
                     tracing::info!("Session ID: {}", session_id);
-                    repo.lock().await.add(session_id, Box::new(session), session_event_sender.clone()).await;
+                    repo.lock()
+                        .await
+                        .add(session_id, Box::new(session), session_event_sender.clone())
+                        .await;
                 }
             })
             .unwrap()
     }
 }
 
-impl Drop for Handler {
+impl Drop for SessionHandler {
     fn drop(&mut self) {
         tracing::info!("Handle has been dropped.");
         self.join_handle.abort();

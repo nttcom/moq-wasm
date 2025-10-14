@@ -1,7 +1,7 @@
 mod modules;
 
-use modules::handler::Handler;
-use modules::manager::Manager;
+use modules::event_handler::EventHandler;
+use modules::session_handler::SessionHandler;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use std::sync::Arc;
 use std::{fs, path::Path};
@@ -58,8 +58,8 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Handler started");
             let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
             let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
-            let _handler = Handler::run(key_path, cert_path, repo.clone(), sender);
-            let _manager = Manager::run(repo, receiver);
+            let _handler = SessionHandler::run(key_path, cert_path, repo.clone(), sender);
+            let _manager = EventHandler::run(repo, receiver);
             // await until the application is shut down.
             let _ = signal_receiver.await.ok();
         })
