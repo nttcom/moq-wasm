@@ -48,42 +48,46 @@ pub(crate) async fn handle_control_stream(
         let mut buf = buf.lock().await;
         buf.extend_from_slice(&read_buf);
 
-        let message_result: MessageProcessResult;
-        {
-            let mut client = client.lock().await;
-            // TODO: Move the implementation of control_message_handler to the server side since it is only used by the server
-            message_result = control_message_handler(
-                &mut buf,
-                UnderlayType::WebTransport,
-                &mut client,
-                senders.start_forwarder_txes().clone(),
-                &mut pubsub_relation_manager,
-                &mut control_message_dispatcher,
-                &mut object_cache_storage,
-            )
-            .await;
+        while !buf.is_empty() {
+            let message_result: MessageProcessResult;
+            {
+                let mut client = client.lock().await;
+                // TODO: Move the implementation of control_message_handler to the server side since it is only used by the server
+                message_result = control_message_handler(
+                    &mut buf,
+                    UnderlayType::WebTransport,
+                    &mut client,
+                    senders.start_forwarder_txes().clone(),
+                    &mut pubsub_relation_manager,
+                    &mut control_message_dispatcher,
+                    &mut object_cache_storage,
+                )
+                .await;
+            }
+
+            tracing::debug!("message_result: {:?}", message_result);
+
+            match message_result {
+                MessageProcessResult::Success(buf) => {
+                    let mut shared_send_stream = shared_send_stream.lock().await;
+                    shared_send_stream.write_all(&buf).await?;
+
+                    tracing::info!("Message is sent.");
+                    tracing::debug!("sent message: {:x?}", buf.to_vec());
+                }
+                MessageProcessResult::SuccessWithoutResponse => {}
+                MessageProcessResult::Failure(code, message) => {
+                    senders
+                        .close_session_tx()
+                        .send((u8::from(code) as u64, message))
+                        .await?;
+                    break;
+                }
+                MessageProcessResult::Fragment => {
+                    break;
+                }
+            };
         }
-
-        tracing::debug!("message_result: {:?}", message_result);
-
-        match message_result {
-            MessageProcessResult::Success(buf) => {
-                let mut shared_send_stream = shared_send_stream.lock().await;
-                shared_send_stream.write_all(&buf).await?;
-
-                tracing::info!("Message is sent.");
-                tracing::debug!("sent message: {:x?}", buf.to_vec());
-            }
-            MessageProcessResult::SuccessWithoutResponse => {}
-            MessageProcessResult::Failure(code, message) => {
-                senders
-                    .close_session_tx()
-                    .send((u8::from(code) as u64, message))
-                    .await?;
-                break;
-            }
-            MessageProcessResult::Fragment => (),
-        };
     }
 
     senders
