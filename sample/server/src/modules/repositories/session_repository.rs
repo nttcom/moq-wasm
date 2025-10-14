@@ -4,12 +4,8 @@ use std::{
 };
 
 use crate::modules::{
-    core::{
-        publisher::Publisher,
-        session::Session,
-        subscriber::Subscriber,
-    },
-    enums::SessionEvent,
+    core::{publisher::Publisher, session::Session, subscriber::Subscriber},
+    enums::MOQTMessageReceived,
     event_resolver::moqt_session_event_resolver::MOQTSessionEventResolver,
     repositories::subscriber_repository::SubscriberRepository,
     thread_manager::ThreadManager,
@@ -37,7 +33,7 @@ impl SessionRepository {
         &mut self,
         session_id: SessionId,
         session: Box<dyn Session>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
     ) {
         let arc_session: Arc<dyn Session> = Arc::from(session);
         let (publisher, subscriber) = arc_session.new_publisher_subscriber_pair();
@@ -55,7 +51,7 @@ impl SessionRepository {
         &mut self,
         session_id: SessionId,
         session: Weak<dyn Session>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
     ) {
         let join_handle = tokio::task::Builder::new()
             .name("Session Event Watcher")

@@ -8,17 +8,17 @@ use crate::{
         messages::{
             control_message_type::ControlMessageType, control_messages::util::get_message_type,
         },
-        sequence_handlers::{
+        receive_message_sequence_handlers::{
             publish_namespace::PublishNamespaceHandler,
-            subscribe_namespace_handler::SubscribeNamespaceHandler,
+            subscribe_namespace::SubscribeNamespaceHandler,
         },
         sessions::inner_session::InnerSession,
     },
 };
 
-pub(crate) struct ControlMessageDispatcher;
+pub(crate) struct ControlMessageReceiveThread;
 
-impl ControlMessageDispatcher {
+impl ControlMessageReceiveThread {
     pub(crate) fn run<T: TransportProtocol>(
         inner_session: Weak<InnerSession<T>>,
     ) -> tokio::task::JoinHandle<()> {

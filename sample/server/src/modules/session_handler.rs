@@ -3,7 +3,7 @@ use std::sync::Arc;
 use moqt::{Endpoint, QUIC};
 use uuid::Uuid;
 
-use crate::modules::{enums::SessionEvent, repositories::session_repository::SessionRepository};
+use crate::modules::{enums::MOQTMessageReceived, repositories::session_repository::SessionRepository};
 
 pub struct SessionHandler {
     join_handle: tokio::task::JoinHandle<()>,
@@ -14,7 +14,7 @@ impl SessionHandler {
         key_path: String,
         cert_path: String,
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        session_event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
     ) -> Self {
         let config = moqt::ServerConfig {
             port: 4433,
@@ -32,7 +32,7 @@ impl SessionHandler {
     fn create_joinhandle(
         mut endpoint: Endpoint<QUIC>,
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        session_event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .spawn(async move {

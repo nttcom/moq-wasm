@@ -14,7 +14,7 @@ use crate::{
             },
             moqt_message::MOQTMessage,
         },
-        sequence_handlers::sequence_handler_util,
+        receive_message_sequence_handlers::sequence_handler_util,
         sessions::inner_session::InnerSession,
         utils,
     },
@@ -38,14 +38,11 @@ impl PublishNamespaceHandler {
                 reason_phrase: e.to_string(),
             };
             let bytes = utils::create_full_message(ControlMessageType::PublishNamespaceError, err);
-            if let Err(e) = session
-                .send_stream
-                .send(&bytes)
-                .await {
-                    tracing::info!("send `Publish_Namespace_Error` failed: {}.", e.to_string());
-                } else {
-                    tracing::info!("send `Publish_Namespace_Error` OK.");
-                }
+            if let Err(e) = session.send_stream.send(&bytes).await {
+                tracing::info!("send `Publish_Namespace_Error` failed: {}.", e.to_string());
+            } else {
+                tracing::info!("send `Publish_Namespace_Error` OK.");
+            }
             return;
         }
         let result = result.unwrap();

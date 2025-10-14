@@ -1,15 +1,15 @@
-use crate::modules::{enums::SessionEvent, types::SessionId};
+use crate::modules::{enums::MOQTMessageReceived, types::SessionId};
 
 pub(crate) struct MOQTSessionEventResolver;
 
 impl MOQTSessionEventResolver {
-    pub(crate) fn resolve(session_id: SessionId, event: moqt::SessionEvent) -> SessionEvent {
+    pub(crate) fn resolve(session_id: SessionId, event: moqt::SessionEvent) -> MOQTMessageReceived {
         match event {
             moqt::SessionEvent::PublishNamespace(namespaces) => {
-                SessionEvent::PublishNameSpace(session_id, namespaces)
+                MOQTMessageReceived::PublishNameSpace(session_id, namespaces)
             }
             moqt::SessionEvent::SubscribeNameSpace(namespaces) => {
-                SessionEvent::SubscribeNameSpace(session_id, namespaces)
+                MOQTMessageReceived::SubscribeNameSpace(session_id, namespaces)
             }
             moqt::SessionEvent::Publish(
                 request_id,
