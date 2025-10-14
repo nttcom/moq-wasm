@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dashmap::{DashMap, DashSet};
+use dashmap::DashSet;
 
 use crate::modules::{
     relations::Relations,
