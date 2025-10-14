@@ -1,9 +1,10 @@
+use std::sync::Arc;
+
 use moqt::{Endpoint, QUIC};
 use uuid::Uuid;
 
 use crate::modules::{
-    core::{publisher::Publisher, session::Session, subscriber::Subscriber},
-    types::SessionId,
+    enums::SessionEvent, repositories::session_repository::SessionRepository
 };
 
 pub struct Handler {
@@ -14,12 +15,8 @@ impl Handler {
     pub fn run(
         key_path: String,
         cert_path: String,
-        event_sender: tokio::sync::mpsc::UnboundedSender<(
-            SessionId,
-            Box<dyn Session>,
-            Box<dyn Publisher>,
-            Box<dyn Subscriber>,
-        )>,
+        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+        session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>
     ) -> Self {
         let config = moqt::ServerConfig {
             port: 4433,
@@ -30,18 +27,14 @@ impl Handler {
         let endpoint = Endpoint::<QUIC>::create_server(config)
             .inspect_err(|e| tracing::error!("failed to create server: {}", e))
             .unwrap();
-        let join_handle = Self::create_joinhandle(endpoint, event_sender);
+        let join_handle = Self::create_joinhandle(endpoint, repo, session_event_sender);
         Self { join_handle }
     }
 
     fn create_joinhandle(
         mut endpoint: Endpoint<QUIC>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<(
-            SessionId,
-            Box<dyn Session>,
-            Box<dyn Publisher>,
-            Box<dyn Subscriber>,
-        )>,
+        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+        session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .spawn(async move {
@@ -53,10 +46,9 @@ impl Handler {
                         Ok(s) => s,
                         Err(_) => break,
                     };
-                    let (publisher, subscriber) = session.new_publisher_subscriber_pair();
                     let session_id = Uuid::new_v4();
                     tracing::info!("Session ID: {}", session_id);
-                    event_sender.send((session_id, Box::new(session), publisher, subscriber));
+                    repo.lock().await.add(session_id, Box::new(session), session_event_sender.clone()).await;
                 }
             })
             .unwrap()

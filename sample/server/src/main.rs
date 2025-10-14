@@ -1,12 +1,13 @@
 mod modules;
 
-use modules::core::{publisher::Publisher, session::Session, subscriber::Subscriber};
 use modules::handler::Handler;
 use modules::manager::Manager;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
+use std::sync::Arc;
 use std::{fs, path::Path};
 
-use crate::modules::types::SessionId;
+use crate::modules::enums::SessionEvent;
+use crate::modules::repositories::session_repository::SessionRepository;
 
 fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -55,17 +56,14 @@ async fn main() -> anyhow::Result<()> {
         .name("Handler")
         .spawn(async move {
             tracing::info!("Handler started");
-            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<(
-                SessionId,
-                Box<dyn Session>,
-                Box<dyn Publisher>,
-                Box<dyn Subscriber>,
-            )>();
-            let _handler = Handler::run(key_path, cert_path, sender);
-            let _manager = Manager::run(receiver);
+            let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
+            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
+            let _handler = Handler::run(key_path, cert_path, repo.clone(), sender);
+            let _manager = Manager::run(repo, receiver);
             // await until the application is shut down.
             let _ = signal_receiver.await.ok();
-        }).unwrap();
+        })
+        .unwrap();
     tracing::info!("Ctrl+C to shutdown");
     tokio::signal::ctrl_c().await.unwrap();
     tracing::info!("shutdown");

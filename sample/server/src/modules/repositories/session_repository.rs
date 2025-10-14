@@ -4,7 +4,11 @@ use std::{
 };
 
 use crate::modules::{
-    core::{publisher::Publisher, session::Session, subscriber::Subscriber},
+    core::{
+        publisher::Publisher,
+        session::Session,
+        subscriber::Subscriber,
+    },
     enums::SessionEvent,
     event_resolver::moqt_session_event_resolver::MOQTSessionEventResolver,
     repositories::subscriber_repository::SubscriberRepository,
@@ -34,10 +38,9 @@ impl SessionRepository {
         session_id: SessionId,
         session: Box<dyn Session>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        publisher: Box<dyn Publisher>,
-        subscriber: Box<dyn Subscriber>,
     ) {
-        let arc_session = Arc::from(session);
+        let arc_session: Arc<dyn Session> = Arc::from(session);
+        let (publisher, subscriber) = arc_session.new_publisher_subscriber_pair();
         let arc_publisher = Arc::from(publisher);
         self.start_receive(session_id, Arc::downgrade(&arc_session), event_sender);
         self.sessions.lock().await.insert(session_id, arc_session);

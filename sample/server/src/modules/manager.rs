@@ -1,79 +1,26 @@
 use std::sync::Arc;
 
 use crate::modules::{
-    core::{publisher::Publisher, session::Session, subscriber::Subscriber},
-    enums::SessionEvent,
-    event_resolver::sequence_handler::SequenceHandler,
+    enums::SessionEvent, event_resolver::sequence_handler::SequenceHandler,
     repositories::session_repository::SessionRepository,
-    types::SessionId,
 };
 
 pub(crate) struct Manager {
-    new_session_watcher: tokio::task::JoinHandle<()>,
     session_event_watcher: tokio::task::JoinHandle<()>,
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
 }
 
 impl Manager {
     pub fn run(
-        receiver: tokio::sync::mpsc::UnboundedReceiver<(
-            SessionId,
-            Box<dyn Session>,
-            Box<dyn Publisher>,
-            Box<dyn Subscriber>,
-        )>,
+        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+        session_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
     ) -> Self {
-        let repo: Arc<tokio::sync::Mutex<SessionRepository>> =
-            Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
-        let (session_sender, session_receiver) =
-            tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
-
-        let new_session_watcher =
-            Self::create_new_session_watcher(receiver, session_sender, repo.clone());
         let session_event_watcher =
             Self::create_pub_sub_event_watcher(repo.clone(), session_receiver);
         Self {
-            new_session_watcher,
             repo,
             session_event_watcher,
         }
-    }
-
-    fn create_new_session_watcher(
-        mut event_receiver: tokio::sync::mpsc::UnboundedReceiver<(
-            SessionId,
-            Box<dyn Session>,
-            Box<dyn Publisher>,
-            Box<dyn Subscriber>,
-        )>,
-        session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::task::Builder::new()
-            .name("Session Event Watcher")
-            .spawn(async move {
-                loop {
-                    if let Some((session_id, session, publisher, subscriber)) =
-                        event_receiver.recv().await
-                    {
-                        tracing::info!("Session event received");
-                        repo.lock()
-                            .await
-                            .add(
-                                session_id,
-                                session,
-                                session_event_sender.clone(),
-                                publisher,
-                                subscriber,
-                            )
-                            .await;
-                    } else {
-                        tracing::error!("Failed to receive session event");
-                        break;
-                    }
-                }
-            })
-            .unwrap()
     }
 
     fn create_pub_sub_event_watcher(
@@ -134,7 +81,6 @@ impl Manager {
 impl Drop for Manager {
     fn drop(&mut self) {
         tracing::info!("Manager has been dropped.");
-        self.new_session_watcher.abort();
         self.session_event_watcher.abort();
     }
 }
