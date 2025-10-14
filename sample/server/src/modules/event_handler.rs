@@ -5,20 +5,17 @@ use crate::modules::{
     repositories::session_repository::SessionRepository,
 };
 
-pub(crate) struct Manager {
+pub(crate) struct EventHandler {
     session_event_watcher: tokio::task::JoinHandle<()>,
-    repo: Arc<tokio::sync::Mutex<SessionRepository>>,
 }
 
-impl Manager {
+impl EventHandler {
     pub fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
     ) -> Self {
-        let session_event_watcher =
-            Self::create_pub_sub_event_watcher(repo.clone(), session_receiver);
+        let session_event_watcher = Self::create_pub_sub_event_watcher(repo, session_receiver);
         Self {
-            repo,
             session_event_watcher,
         }
     }
@@ -78,7 +75,7 @@ impl Manager {
     }
 }
 
-impl Drop for Manager {
+impl Drop for EventHandler {
     fn drop(&mut self) {
         tracing::info!("Manager has been dropped.");
         self.session_event_watcher.abort();
