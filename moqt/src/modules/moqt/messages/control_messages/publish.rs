@@ -76,18 +76,7 @@ impl MOQTMessage for Publish {
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
         // location
         let largest_location = if content_exists == 1 {
-            let group_id = match read_variable_integer_from_buffer(buf) {
-                Ok(v) => v,
-                Err(_) => return Err(MOQTMessageError::ProtocolViolation),
-            };
-            let object_id = match read_variable_integer_from_buffer(buf) {
-                Ok(v) => v,
-                Err(_) => return Err(MOQTMessageError::ProtocolViolation),
-            };
-            Some(Location {
-                group_id,
-                object_id,
-            })
+            Some(Location::depacketize(buf)?)
         } else {
             None
         };
@@ -144,8 +133,8 @@ impl MOQTMessage for Publish {
         payload.extend(write_variable_integer(self.content_exists as u64));
         // location
         if let Some(location) = &self.largest_location {
-            payload.extend(write_variable_integer(location.group_id));
-            payload.extend(write_variable_integer(location.object_id));
+            let bytes = location.packetize();
+            payload.extend(bytes);
         }
         payload.extend(write_variable_integer(self.forward as u64));
 
@@ -155,7 +144,7 @@ impl MOQTMessage for Publish {
             param.packetize(&mut payload);
         }
 
-        tracing::trace!("Packetized Announce message.");
+        tracing::trace!("Packetized Publish message.");
         add_payload_length(payload)
     }
 }
