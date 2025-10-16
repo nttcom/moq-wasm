@@ -69,7 +69,7 @@ impl MOQTMessage for PublishOk {
         let filter_type =
             FilterType::try_from(filter_type).map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let (start_location, end_group) = match filter_type {
-            FilterType::LatestGroup | FilterType::LatestObject | FilterType::AbsoluteStart => {
+            FilterType::AbsoluteStart => {
                 (Some(Location::depacketize(buf)?), None)
             }
             FilterType::AbsoluteRange => {
@@ -124,11 +124,6 @@ impl MOQTMessage for PublishOk {
         payload.extend(write_variable_integer(self.group_order as u64));
         payload.extend(write_variable_integer(self.filter_type as u64));
         match self.filter_type {
-            // NOTE: filter_type as u64 is correct because FilterType is repr(u8) and IntoPrimitive
-            FilterType::LatestGroup | FilterType::LatestObject => {
-                let bytes = self.start_location.as_ref().unwrap().packetize();
-                payload.extend(bytes);
-            }
             FilterType::AbsoluteStart => {
                 let bytes = self.start_location.as_ref().unwrap().packetize();
                 payload.extend(bytes);
