@@ -56,6 +56,7 @@ impl MOQTMessage for Publish {
             read_variable_bytes_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
+        .context("track name")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let track_alias = match read_variable_integer_from_buffer(buf) {
             Ok(v) => v,
@@ -135,8 +136,6 @@ impl MOQTMessage for Publish {
         for track_namespace in &self.track_namespace_tuple {
             payload.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
         }
-        let track_name_length = self.track_name.len();
-        payload.extend(write_variable_integer(track_name_length as u64));
         payload.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
 
         payload.extend(write_variable_integer(self.track_alias));
@@ -164,6 +163,144 @@ impl MOQTMessage for Publish {
 #[cfg(test)]
 mod tests {
     mod success {
-        
+        use crate::modules::moqt::messages::{
+            control_messages::{
+                location::Location,
+                publish::Publish,
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            },
+            moqt_message::MOQTMessage,
+        };
+
+        #[test]
+        fn packetize_and_depacketize_with_location_and_params() {
+            let publish_message = Publish {
+                request_id: 1,
+                track_namespace_tuple: vec!["moq".to_string(), "news".to_string()],
+                track_name: "video".to_string(),
+                track_alias: 2,
+                group_order: 1, // Ascending
+                content_exists: 1,
+                largest_location: Some(Location {
+                    group_id: 10,
+                    object_id: 5,
+                }),
+                forward: 1,
+                number_of_parameters: 1,
+                parameters: vec![VersionSpecificParameter::AuthorizationInfo(
+                    AuthorizationInfo::new("token".to_string()),
+                )],
+            };
+
+            let mut buf = publish_message.packetize();
+
+            // depacketize
+            let depacketized_message = Publish::depacketize(&mut buf).unwrap();
+
+            assert_eq!(publish_message.request_id, depacketized_message.request_id);
+            assert_eq!(
+                publish_message.track_namespace_tuple,
+                depacketized_message.track_namespace_tuple
+            );
+            assert_eq!(publish_message.track_name, depacketized_message.track_name);
+            assert_eq!(
+                publish_message.track_alias,
+                depacketized_message.track_alias
+            );
+            assert_eq!(
+                publish_message.group_order,
+                depacketized_message.group_order
+            );
+            assert_eq!(
+                publish_message.content_exists,
+                depacketized_message.content_exists
+            );
+            let largest_location = publish_message.largest_location.unwrap();
+            let depacketized_largest_location = depacketized_message.largest_location.unwrap();
+            assert_eq!(
+                largest_location.group_id,
+                depacketized_largest_location.group_id
+            );
+            assert_eq!(
+                largest_location.object_id,
+                depacketized_largest_location.object_id
+            );
+            assert_eq!(publish_message.forward, depacketized_message.forward);
+            assert_eq!(
+                publish_message.number_of_parameters,
+                depacketized_message.number_of_parameters
+            );
+            assert_eq!(publish_message.parameters, depacketized_message.parameters);
+        }
+
+        #[test]
+        fn packetize_and_depacketize_without_location_or_params() {
+            let publish_message = Publish {
+                request_id: 1,
+                track_namespace_tuple: vec!["moq".to_string()],
+                track_name: "audio".to_string(),
+                track_alias: 3,
+                group_order: 2, // Descending
+                content_exists: 0,
+                largest_location: None,
+                forward: 0,
+                number_of_parameters: 0,
+                parameters: vec![],
+            };
+
+            let mut buf = publish_message.packetize();
+
+            // depacketize
+            let depacketized_message = Publish::depacketize(&mut buf).unwrap();
+
+            assert_eq!(publish_message.request_id, depacketized_message.request_id);
+            assert_eq!(
+                publish_message.track_namespace_tuple,
+                depacketized_message.track_namespace_tuple
+            );
+            assert_eq!(publish_message.track_name, depacketized_message.track_name);
+            assert_eq!(
+                publish_message.track_alias,
+                depacketized_message.track_alias
+            );
+            assert_eq!(
+                publish_message.group_order,
+                depacketized_message.group_order
+            );
+            assert_eq!(
+                publish_message.content_exists,
+                depacketized_message.content_exists
+            );
+            assert!(depacketized_message.largest_location.is_none());
+            assert_eq!(publish_message.forward, depacketized_message.forward);
+            assert_eq!(
+                publish_message.number_of_parameters,
+                depacketized_message.number_of_parameters
+            );
+            assert!(depacketized_message.parameters.is_empty());
+        }
+
+        #[test]
+        fn packetize_check_bytes() {
+            let publish_message = Publish {
+                request_id: 1,
+                track_namespace_tuple: vec!["moq".to_string()],
+                track_name: "video".to_string(),
+                track_alias: 2,
+                group_order: 1,
+                content_exists: 0,
+                largest_location: None,
+                forward: 1,
+                number_of_parameters: 0,
+                parameters: vec![],
+            };
+
+            let buf = publish_message.packetize();
+
+            let expected_bytes = vec![
+                17, 1, 1, 3, b'm', b'o', b'q', 5, b'v', b'i', b'd', b'e', b'o', 2, 1, 0, 1, 0,
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes.as_slice());
+        }
     }
 }
