@@ -64,12 +64,14 @@ impl MOQTMessage for PublishOk {
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
-        .context("group order")
+        .context("filter type")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let filter_type =
             FilterType::try_from(filter_type).map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let (start_location, end_group) = match filter_type {
-            FilterType::AbsoluteStart => (Some(Location::depacketize(buf)?), None),
+            FilterType::LatestGroup | FilterType::LatestObject | FilterType::AbsoluteStart => {
+                (Some(Location::depacketize(buf)?), None)
+            }
             FilterType::AbsoluteRange => {
                 let start_location = Location::depacketize(buf)?;
                 let end_group = read_variable_integer_from_buffer(buf)
@@ -122,6 +124,11 @@ impl MOQTMessage for PublishOk {
         payload.extend(write_variable_integer(self.group_order as u64));
         payload.extend(write_variable_integer(self.filter_type as u64));
         match self.filter_type {
+            // NOTE: filter_type as u64 is correct because FilterType is repr(u8) and IntoPrimitive
+            FilterType::LatestGroup | FilterType::LatestObject => {
+                let bytes = self.start_location.as_ref().unwrap().packetize();
+                payload.extend(bytes);
+            }
             FilterType::AbsoluteStart => {
                 let bytes = self.start_location.as_ref().unwrap().packetize();
                 payload.extend(bytes);
@@ -146,5 +153,178 @@ impl MOQTMessage for PublishOk {
 
         tracing::trace!("Packetized Publish message.");
         add_payload_length(payload)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    mod success {
+
+        use crate::modules::moqt::messages::{
+            control_messages::{
+                enums::FilterType,
+                location::Location,
+                publish_ok::PublishOk,
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            },
+            moqt_message::MOQTMessage,
+        };
+
+        #[test]
+        fn packetize_and_depacketize_absolute_start() {
+            let publish_ok_message = PublishOk {
+                request_id: 1,
+                forward: 1,
+                subscriber_priority: 128,
+                group_order: 1, // Ascending
+                filter_type: FilterType::AbsoluteStart,
+                start_location: Some(Location {
+                    group_id: 10,
+                    object_id: 5,
+                }),
+                end_group: None,
+                number_of_parameters: 1,
+                parameters: vec![VersionSpecificParameter::AuthorizationInfo(
+                    AuthorizationInfo::new("token".to_string()),
+                )],
+            };
+
+            let mut buf = publish_ok_message.packetize();
+            let depacketized_message = PublishOk::depacketize(&mut buf).unwrap();
+
+            assert_eq!(
+                publish_ok_message.request_id,
+                depacketized_message.request_id
+            );
+            assert_eq!(publish_ok_message.forward, depacketized_message.forward);
+            assert_eq!(
+                publish_ok_message.subscriber_priority,
+                depacketized_message.subscriber_priority
+            );
+            assert_eq!(
+                publish_ok_message.group_order,
+                depacketized_message.group_order
+            );
+            assert_eq!(
+                publish_ok_message.filter_type,
+                depacketized_message.filter_type
+            );
+            let start_location = publish_ok_message.start_location.unwrap();
+            let depacketized_start_location = depacketized_message.start_location.unwrap();
+            assert_eq!(
+                start_location.group_id,
+                depacketized_start_location.group_id
+            );
+            assert_eq!(
+                start_location.object_id,
+                depacketized_start_location.object_id
+            );
+            assert!(depacketized_message.end_group.is_none());
+            assert_eq!(
+                publish_ok_message.number_of_parameters,
+                depacketized_message.number_of_parameters
+            );
+            assert_eq!(
+                publish_ok_message.parameters,
+                depacketized_message.parameters
+            );
+        }
+
+        #[test]
+        fn packetize_and_depacketize_absolute_range() {
+            let publish_ok_message = PublishOk {
+                request_id: 2,
+                forward: 0,
+                subscriber_priority: 64,
+                group_order: 2, // Descending
+                filter_type: FilterType::AbsoluteRange,
+                start_location: Some(Location {
+                    group_id: 20,
+                    object_id: 15,
+                }),
+                end_group: Some(30),
+                number_of_parameters: 0,
+                parameters: vec![],
+            };
+
+            let mut buf = publish_ok_message.packetize();
+            let depacketized_message = PublishOk::depacketize(&mut buf).unwrap();
+
+            assert_eq!(
+                publish_ok_message.request_id,
+                depacketized_message.request_id
+            );
+            assert_eq!(publish_ok_message.forward, depacketized_message.forward);
+            assert_eq!(
+                publish_ok_message.subscriber_priority,
+                depacketized_message.subscriber_priority
+            );
+            assert_eq!(
+                publish_ok_message.group_order,
+                depacketized_message.group_order
+            );
+            assert_eq!(
+                publish_ok_message.filter_type,
+                depacketized_message.filter_type
+            );
+            let start_location = publish_ok_message.start_location.unwrap();
+            let depacketized_start_location = depacketized_message.start_location.unwrap();
+            assert_eq!(
+                start_location.group_id,
+                depacketized_start_location.group_id
+            );
+            assert_eq!(
+                start_location.object_id,
+                depacketized_start_location.object_id
+            );
+            assert_eq!(publish_ok_message.end_group, depacketized_message.end_group);
+            assert_eq!(
+                publish_ok_message.number_of_parameters,
+                depacketized_message.number_of_parameters
+            );
+            assert!(depacketized_message.parameters.is_empty());
+        }
+
+        #[test]
+        fn packetize_and_depacketize_latest_group() {
+            let publish_ok_message = PublishOk {
+                request_id: 3,
+                forward: 1,
+                subscriber_priority: 0,
+                group_order: 0, // Original
+                filter_type: FilterType::LatestGroup,
+                start_location: Some(Location {
+                    group_id: 1,
+                    object_id: 1,
+                }),
+                end_group: None,
+                number_of_parameters: 0,
+                parameters: vec![],
+            };
+
+            let mut buf = publish_ok_message.packetize();
+            let depacketized_message = PublishOk::depacketize(&mut buf).unwrap();
+
+            assert_eq!(
+                publish_ok_message.request_id,
+                depacketized_message.request_id
+            );
+            assert_eq!(
+                publish_ok_message.filter_type,
+                depacketized_message.filter_type
+            );
+            let start_location = publish_ok_message.start_location.unwrap();
+            let depacketized_start_location = depacketized_message.start_location.unwrap();
+            assert_eq!(
+                start_location.group_id,
+                depacketized_start_location.group_id
+            );
+            assert_eq!(
+                start_location.object_id,
+                depacketized_start_location.object_id
+            );
+            assert!(depacketized_message.end_group.is_none());
+            assert!(depacketized_message.parameters.is_empty());
+        }
     }
 }
