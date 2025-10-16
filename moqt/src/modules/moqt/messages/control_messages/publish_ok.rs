@@ -288,10 +288,7 @@ mod tests {
                 subscriber_priority: 0,
                 group_order: 0, // Original
                 filter_type: FilterType::LatestGroup,
-                start_location: Some(Location {
-                    group_id: 1,
-                    object_id: 1,
-                }),
+                start_location: None,
                 end_group: None,
                 number_of_parameters: 0,
                 parameters: vec![],
@@ -308,15 +305,9 @@ mod tests {
                 publish_ok_message.filter_type,
                 depacketized_message.filter_type
             );
-            let start_location = publish_ok_message.start_location.unwrap();
-            let depacketized_start_location = depacketized_message.start_location.unwrap();
-            assert_eq!(
-                start_location.group_id,
-                depacketized_start_location.group_id
-            );
-            assert_eq!(
-                start_location.object_id,
-                depacketized_start_location.object_id
+            let depacketized_start_location = depacketized_message.start_location;
+            assert!(
+                depacketized_start_location.is_none()
             );
             assert!(depacketized_message.end_group.is_none());
             assert!(depacketized_message.parameters.is_empty());
