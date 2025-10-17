@@ -2,7 +2,7 @@ use crate::modules::moqt::messages::{
     control_messages::{
         group_order::GroupOrder,
         location::Location,
-        util::{add_payload_length, validate_payload_length},
+        util::{self, add_payload_length, validate_payload_length},
         version_specific_parameters::VersionSpecificParameter,
     },
     moqt_message::MOQTMessage,
@@ -60,13 +60,7 @@ impl MOQTMessage for SubscribeOk {
         )
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
 
-        let content_exists = match content_exists_u8 {
-            0 => false,
-            1 => true,
-            _ => {
-                return Err(MOQTMessageError::ProtocolViolation);
-            }
-        };
+        let content_exists = util::u8_to_bool(content_exists_u8)?;
 
         let largest_location = if content_exists {
             Some(Location::depacketize(buf)?)
