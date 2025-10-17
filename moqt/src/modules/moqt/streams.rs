@@ -1,1 +1,1 @@
-pub(crate) mod bi_streams;
+pub(crate) mod stream;
