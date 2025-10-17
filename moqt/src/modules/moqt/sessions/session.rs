@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use crate::Publisher;
 use crate::Subscriber;
-use crate::modules::moqt::controls::control_message_receive_thread::ControlMessageReceiveThread;
 use crate::modules::moqt::enums::SessionEvent;
 use crate::modules::moqt::protocol::TransportProtocol;
+use crate::modules::moqt::sessions::control_message_receive_thread::ControlMessageReceiveThread;
 use crate::modules::moqt::sessions::inner_session::InnerSession;
 
 pub struct Session<T: TransportProtocol> {

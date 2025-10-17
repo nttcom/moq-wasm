@@ -11,9 +11,9 @@ pub use modules::moqt::enums::{
 };
 pub use modules::moqt::protocol::QUIC;
 pub use modules::moqt::protocol::TransportProtocol;
-pub use modules::moqt::publisher::Publisher;
+pub use modules::moqt::sessions::publisher::Publisher;
 pub use modules::moqt::sessions::session::Session;
-pub use modules::moqt::subscriber::Subscriber;
+pub use modules::moqt::sessions::subscriber::Subscriber;
 
 pub struct ServerConfig {
     pub port: u16,

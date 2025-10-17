@@ -4,11 +4,11 @@ use crate::modules::{
     moqt::protocol::TransportProtocol, transport::transport_receive_stream::TransportReceiveStream,
 };
 
-pub(crate) struct ControlReceiver<T: TransportProtocol> {
+pub(crate) struct BiStreamReceiver<T: TransportProtocol> {
     receive_stream: tokio::sync::Mutex<T::ReceiveStream>,
 }
 
-impl<T: TransportProtocol> ControlReceiver<T> {
+impl<T: TransportProtocol> BiStreamReceiver<T> {
     const RECEIVE_BYTES_CAPACITY: usize = 1024;
 
     pub(crate) fn new(receive_stream: T::ReceiveStream) -> Self {
