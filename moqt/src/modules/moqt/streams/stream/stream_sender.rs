@@ -4,11 +4,11 @@ use crate::modules::{
     moqt::protocol::TransportProtocol, transport::transport_send_stream::TransportSendStream,
 };
 
-pub(crate) struct BiStreamSender<T: TransportProtocol> {
+pub(crate) struct StreamSender<T: TransportProtocol> {
     send_stream: tokio::sync::Mutex<T::SendStream>,
 }
 
-impl<T: TransportProtocol> BiStreamSender<T> {
+impl<T: TransportProtocol> StreamSender<T> {
     pub(crate) fn new(send_stream: T::SendStream) -> Self {
         Self {
             send_stream: tokio::sync::Mutex::new(send_stream),
