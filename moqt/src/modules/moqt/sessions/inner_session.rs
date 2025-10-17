@@ -6,9 +6,9 @@ use std::{
 use anyhow::bail;
 
 use crate::{
+    RequestId, SessionEvent, TransportProtocol,
     modules::moqt::{
         constants,
-        controls::{control_receiver::ControlReceiver, control_sender::ControlSender},
         enums::ResponseMessage,
         messages::{
             control_message_type::ControlMessageType,
@@ -19,14 +19,17 @@ use crate::{
             },
             moqt_message::MOQTMessage,
         },
+        streams::bi_streams::{
+            bi_stream_receiver::BiStreamReceiver, bi_stream_sender::BiStreamSender,
+        },
         utils::{self, add_message_type},
-    }, RequestId, SessionEvent, TransportProtocol
+    },
 };
 
 pub(crate) struct InnerSession<T: TransportProtocol> {
     _transport_connection: T::Connection,
-    pub(crate) send_stream: ControlSender<T>,
-    pub(crate) receive_stream: ControlReceiver<T>,
+    pub(crate) send_stream: BiStreamSender<T>,
+    pub(crate) receive_stream: BiStreamReceiver<T>,
     request_id: AtomicU64,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     pub(crate) sender_map:
@@ -37,9 +40,9 @@ pub(crate) struct InnerSession<T: TransportProtocol> {
 impl<T: TransportProtocol> InnerSession<T> {
     pub(crate) async fn client(
         transport_connection: T::Connection,
-        mut send_stream: ControlSender<T>,
-        receive_stream: ControlReceiver<T>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>
+        mut send_stream: BiStreamSender<T>,
+        receive_stream: BiStreamReceiver<T>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> anyhow::Result<Self> {
         Self::setup_client(&mut send_stream, &receive_stream).await?;
 
@@ -56,9 +59,9 @@ impl<T: TransportProtocol> InnerSession<T> {
 
     pub(crate) async fn server(
         transport_connection: T::Connection,
-        mut send_stream: ControlSender<T>,
-        receive_stream: ControlReceiver<T>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>
+        mut send_stream: BiStreamSender<T>,
+        receive_stream: BiStreamReceiver<T>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> anyhow::Result<Self> {
         Self::setup_server(&mut send_stream, &receive_stream).await?;
 
@@ -74,8 +77,8 @@ impl<T: TransportProtocol> InnerSession<T> {
     }
 
     async fn setup_client(
-        send_stream: &mut ControlSender<T>,
-        receive_stream: &ControlReceiver<T>,
+        send_stream: &mut BiStreamSender<T>,
+        receive_stream: &BiStreamReceiver<T>,
     ) -> anyhow::Result<()> {
         let max_id = MaxSubscribeID::new(1000);
         let payload = ClientSetup::new(
@@ -104,8 +107,8 @@ impl<T: TransportProtocol> InnerSession<T> {
     }
 
     async fn setup_server(
-        send_stream: &mut ControlSender<T>,
-        receive_stream: &ControlReceiver<T>,
+        send_stream: &mut BiStreamSender<T>,
+        receive_stream: &BiStreamReceiver<T>,
     ) -> anyhow::Result<()> {
         tracing::info!("Waiting for server setup.");
         let bytes = receive_stream.receive().await?;

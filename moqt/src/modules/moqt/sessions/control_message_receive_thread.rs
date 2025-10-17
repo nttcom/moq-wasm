@@ -45,7 +45,7 @@ impl ControlMessageReceiveThread {
                                 break;
                             }
                         };
-                        let result = Self::resolve_message(session, message_type, bytes_mut).await;
+                        let _ = Self::resolve_message(session, message_type, bytes_mut).await;
                     } else {
                         tracing::error!("Session has been dropped.");
                         break;
