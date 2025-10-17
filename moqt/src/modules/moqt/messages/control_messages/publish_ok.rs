@@ -15,11 +15,11 @@ use crate::modules::moqt::messages::{
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
-pub(super) struct PublishOk {
-    pub(super) request_id: u64,
-    pub(super) forward: bool,
-    pub(super) subscriber_priority: u8,
-    pub(super) group_order: GroupOrder,
+pub(crate) struct PublishOk {
+    pub(crate) request_id: u64,
+    pub(crate) forward: bool,
+    pub(crate) subscriber_priority: u8,
+    pub(crate) group_order: GroupOrder,
     /**
      * filter type
      * LatestGroup(0x01) = start location
@@ -27,10 +27,10 @@ pub(super) struct PublishOk {
      * AbsoluteStart(0x03) = start location
      * AbsoluteRange(0x04) = start location && end group
      */
-    pub(super) filter_type: FilterType,
-    pub(super) start_location: Option<Location>,
-    pub(super) end_group: Option<u64>,
-    pub(super) parameters: Vec<VersionSpecificParameter>,
+    pub(crate) filter_type: FilterType,
+    pub(crate) start_location: Option<Location>,
+    pub(crate) end_group: Option<u64>,
+    pub(crate) parameters: Vec<VersionSpecificParameter>,
 }
 
 impl MOQTMessage for PublishOk {
@@ -277,7 +277,7 @@ mod tests {
                 request_id: 3,
                 forward: true,
                 subscriber_priority: 0,
-                group_order: GroupOrder::Original, // Original
+                group_order: GroupOrder::Ascending, // Ascending
                 filter_type: FilterType::LatestGroup,
                 start_location: None,
                 end_group: None,

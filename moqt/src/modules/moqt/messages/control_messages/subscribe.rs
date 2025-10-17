@@ -18,17 +18,17 @@ use tracing;
 
 #[derive(Debug, PartialEq)]
 pub struct Subscribe {
-    pub(super) request_id: u64,
-    pub(super) track_alias: u64,
-    pub(super) track_namespace: Vec<String>,
-    pub(super) track_name: String,
-    pub(super) subscriber_priority: u8,
-    pub(super) group_order: GroupOrder,
-    pub(super) forward: bool,
-    pub(super) filter_type: FilterType,
-    pub(super) start_location: Option<Location>,
-    pub(super) end_group: Option<u64>,
-    pub(super) subscribe_parameters: Vec<VersionSpecificParameter>,
+    pub(crate) request_id: u64,
+    pub(crate) track_alias: u64,
+    pub(crate) track_namespace: Vec<String>,
+    pub(crate) track_name: String,
+    pub(crate) subscriber_priority: u8,
+    pub(crate) group_order: GroupOrder,
+    pub(crate) forward: bool,
+    pub(crate) filter_type: FilterType,
+    pub(crate) start_location: Option<Location>,
+    pub(crate) end_group: Option<u64>,
+    pub(crate) subscribe_parameters: Vec<VersionSpecificParameter>,
 }
 
 impl MOQTMessage for Subscribe {
