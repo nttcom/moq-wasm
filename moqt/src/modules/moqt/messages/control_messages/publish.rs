@@ -3,8 +3,9 @@ use bytes::BytesMut;
 
 use crate::modules::moqt::messages::{
     control_messages::{
+        group_order::GroupOrder,
         location::Location,
-        util::{add_payload_length, validate_payload_length},
+        util::{self, add_payload_length, validate_payload_length},
         version_specific_parameters::VersionSpecificParameter,
     },
     moqt_message::MOQTMessage,
@@ -19,11 +20,10 @@ pub(crate) struct Publish {
     pub(super) track_namespace_tuple: Vec<String>,
     pub(super) track_name: String,
     pub(super) track_alias: u64,
-    pub(super) group_order: u8,
-    pub(super) content_exists: u8,
+    pub(super) group_order: GroupOrder,
+    pub(super) content_exists: bool,
     pub(super) largest_location: Option<Location>,
-    pub(super) forward: u8,
-    pub(super) number_of_parameters: u8,
+    pub(super) forward: bool,
     pub(super) parameters: Vec<VersionSpecificParameter>,
 }
 
@@ -62,31 +62,35 @@ impl MOQTMessage for Publish {
             Ok(v) => v,
             Err(_) => return Err(MOQTMessageError::ProtocolViolation),
         };
-        let group_order = u8::try_from(
+        let group_order_u8 = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .context("track namespace length")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let content_exists = u8::try_from(
+        let group_order = GroupOrder::try_from(group_order_u8)
+            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let content_exists_u8 = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .context("track namespace length")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let content_exists = util::u8_to_bool(content_exists_u8)?;
         // location
-        let largest_location = if content_exists == 1 {
+        let largest_location = if content_exists {
             Some(Location::depacketize(buf)?)
         } else {
             None
         };
 
-        let forward = u8::try_from(
+        let forward_u8 = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .context("track namespace length")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let forward = util::u8_to_bool(forward_u8)?;
         let number_of_parameters = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
@@ -112,7 +116,6 @@ impl MOQTMessage for Publish {
             content_exists,
             largest_location,
             forward,
-            number_of_parameters,
             parameters,
         })
     }
@@ -138,7 +141,7 @@ impl MOQTMessage for Publish {
         }
         payload.extend(write_variable_integer(self.forward as u64));
 
-        payload.extend(write_variable_integer(self.number_of_parameters as u64));
+        payload.extend(write_variable_integer(self.parameters.len() as u64));
         // Parameters
         for param in &self.parameters {
             param.packetize(&mut payload);
@@ -154,6 +157,7 @@ mod tests {
     mod success {
         use crate::modules::moqt::messages::{
             control_messages::{
+                group_order::GroupOrder,
                 location::Location,
                 publish::Publish,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
@@ -168,14 +172,13 @@ mod tests {
                 track_namespace_tuple: vec!["moq".to_string(), "news".to_string()],
                 track_name: "video".to_string(),
                 track_alias: 2,
-                group_order: 1, // Ascending
-                content_exists: 1,
+                group_order: GroupOrder::Ascending, // Ascending
+                content_exists: true,
                 largest_location: Some(Location {
                     group_id: 10,
                     object_id: 5,
                 }),
-                forward: 1,
-                number_of_parameters: 1,
+                forward: true,
                 parameters: vec![VersionSpecificParameter::AuthorizationInfo(
                     AuthorizationInfo::new("token".to_string()),
                 )],
@@ -215,10 +218,6 @@ mod tests {
                 depacketized_largest_location.object_id
             );
             assert_eq!(publish_message.forward, depacketized_message.forward);
-            assert_eq!(
-                publish_message.number_of_parameters,
-                depacketized_message.number_of_parameters
-            );
             assert_eq!(publish_message.parameters, depacketized_message.parameters);
         }
 
@@ -229,11 +228,10 @@ mod tests {
                 track_namespace_tuple: vec!["moq".to_string()],
                 track_name: "audio".to_string(),
                 track_alias: 3,
-                group_order: 2, // Descending
-                content_exists: 0,
+                group_order: GroupOrder::Descending, // Descending
+                content_exists: false,
                 largest_location: None,
-                forward: 0,
-                number_of_parameters: 0,
+                forward: false,
                 parameters: vec![],
             };
 
@@ -262,10 +260,6 @@ mod tests {
             );
             assert!(depacketized_message.largest_location.is_none());
             assert_eq!(publish_message.forward, depacketized_message.forward);
-            assert_eq!(
-                publish_message.number_of_parameters,
-                depacketized_message.number_of_parameters
-            );
             assert!(depacketized_message.parameters.is_empty());
         }
 
@@ -276,11 +270,10 @@ mod tests {
                 track_namespace_tuple: vec!["moq".to_string()],
                 track_name: "video".to_string(),
                 track_alias: 2,
-                group_order: 1,
-                content_exists: 0,
+                group_order: GroupOrder::Ascending,
+                content_exists: false,
                 largest_location: None,
-                forward: 1,
-                number_of_parameters: 0,
+                forward: true,
                 parameters: vec![],
             };
 
