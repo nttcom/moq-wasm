@@ -40,14 +40,14 @@ pub(crate) async fn subscribe_handler(
     let downstream_subscribe_id = subscribe_message.subscribe_id();
     let downstream_session_id = client.id();
 
-    if pubsub_relation_manager_repository
+    if !pubsub_relation_manager_repository
         .is_downstream_subscribe_id_unique(downstream_subscribe_id, downstream_session_id)
         .await?
     {
         bail!("DuplicateSubscribeID");
     }
 
-    if pubsub_relation_manager_repository
+    if !pubsub_relation_manager_repository
         .is_downstream_subscribe_id_less_than_max(downstream_subscribe_id, downstream_session_id)
         .await?
     {
