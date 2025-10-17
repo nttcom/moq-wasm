@@ -2,11 +2,11 @@ use bytes::BytesMut;
 
 use crate::modules::moqt::messages::variable_integer::read_variable_integer_from_buffer;
 use crate::modules::moqt::messages::{
-    moqt_message::MOQTMessage,
-    moqt_message_error::MOQTMessageError,
+    moqt_message::MOQTMessage, moqt_message_error::MOQTMessageError,
     variable_integer::write_variable_integer,
 };
 
+#[derive(Debug, PartialEq)]
 pub(super) struct Location {
     pub(super) group_id: u64,
     pub(super) object_id: u64,
