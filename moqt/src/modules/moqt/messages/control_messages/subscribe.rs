@@ -3,7 +3,7 @@ use crate::modules::moqt::messages::{
         enums::FilterType,
         group_order::GroupOrder,
         location::Location,
-        util::{add_payload_length, validate_payload_length},
+        util::{self, add_payload_length, validate_payload_length},
         version_specific_parameters::VersionSpecificParameter,
     },
     moqt_message::MOQTMessage,
@@ -24,11 +24,10 @@ pub struct Subscribe {
     pub(super) track_name: String,
     pub(super) subscriber_priority: u8,
     pub(super) group_order: GroupOrder,
-    pub(super) forward: u8,
+    pub(super) forward: bool,
     pub(super) filter_type: FilterType,
     pub(super) start_location: Option<Location>,
     pub(super) end_group: Option<u64>,
-    pub(super) number_of_parameters: u64,
     pub(super) subscribe_parameters: Vec<VersionSpecificParameter>,
 }
 
@@ -86,12 +85,13 @@ impl MOQTMessage for Subscribe {
                 return Err(MOQTMessageError::ProtocolViolation);
             }
         };
-        let forward = u8::try_from(
+        let forward_u8 = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .context("forward")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let forward = util::u8_to_bool(forward_u8)?;
         let filter_type_u64 = read_variable_integer_from_buffer(buf)
             .map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let filter_type = FilterType::try_from(filter_type_u64 as u8)
@@ -140,7 +140,6 @@ impl MOQTMessage for Subscribe {
             filter_type,
             start_location,
             end_group,
-            number_of_parameters,
             subscribe_parameters,
         })
     }
@@ -159,7 +158,7 @@ impl MOQTMessage for Subscribe {
         payload.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
         payload.extend(self.subscriber_priority.to_be_bytes());
         payload.extend(u8::from(self.group_order).to_be_bytes());
-        payload.extend(self.forward.to_be_bytes());
+        payload.extend((self.forward as u8).to_be_bytes());
         payload.extend(write_variable_integer(u8::from(self.filter_type) as u64));
         match self.filter_type {
             FilterType::AbsoluteStart => {
@@ -213,7 +212,7 @@ mod tests {
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
             let group_order = GroupOrder::Ascending;
-            let forward = 0;
+            let forward = false;
             let filter_type = FilterType::LatestGroup;
             let start_location = None;
             let end_group = None;
@@ -221,7 +220,6 @@ mod tests {
                 AuthorizationInfo::new("test".to_string()),
             );
             let subscribe_parameters = vec![version_specific_parameter];
-            let param_num = subscribe_parameters.len();
 
             let subscribe = Subscribe {
                 request_id,
@@ -234,7 +232,6 @@ mod tests {
                 filter_type,
                 start_location,
                 end_group,
-                number_of_parameters: param_num as u64,
                 subscribe_parameters,
             };
 
@@ -272,7 +269,7 @@ mod tests {
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
             let group_order = GroupOrder::Descending;
-            let forward = 0;
+            let forward = false;
             let filter_type = FilterType::AbsoluteStart;
             let start_location = Some(Location {
                 group_id: 10,
@@ -283,7 +280,6 @@ mod tests {
                 AuthorizationInfo::new("test".to_string()),
             );
             let subscribe_parameters = vec![version_specific_parameter];
-            let param_num = subscribe_parameters.len();
 
             let subscribe = Subscribe {
                 request_id,
@@ -296,7 +292,6 @@ mod tests {
                 filter_type,
                 start_location,
                 end_group,
-                number_of_parameters: param_num as u64,
                 subscribe_parameters,
             };
 
@@ -336,7 +331,7 @@ mod tests {
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
             let group_order = GroupOrder::Ascending;
-            let forward = 0;
+            let forward = true;
             let filter_type = FilterType::AbsoluteRange;
             let start_location = Some(Location {
                 group_id: 10,
@@ -347,7 +342,6 @@ mod tests {
                 AuthorizationInfo::new("test".to_string()),
             );
             let subscribe_parameters = vec![version_specific_parameter];
-            let param_num = subscribe_parameters.len();
 
             let subscribe = Subscribe {
                 request_id,
@@ -360,7 +354,6 @@ mod tests {
                 filter_type,
                 start_location,
                 end_group,
-                number_of_parameters: param_num as u64,
                 subscribe_parameters,
             };
 
@@ -380,7 +373,7 @@ mod tests {
                 101, // Track Name (b): Value("track_name")
                 0,   // Subscriber Priority (8)
                 1,   // Group Order (8): Assending
-                0,   // Forward(8)
+                1,   // Forward(8)
                 4,   // Filter Type (i): AbsoluteRange
                 10,  // Location: group id (i)
                 20,  // Location: object id (i)
@@ -409,7 +402,7 @@ mod tests {
                 101, // Track Name (b): Value("track_name")
                 0,   // Subscriber Priority (8)
                 1,   // Group Order (8): Assending
-                0,   // Forward(8)
+                1,   // Forward(8)
                 1,   // Filter Type (i): LatestGroup
                 1,   // Track Request Parameters (..): Number of Parameters
                 2,   // Parameter Type (i): AuthorizationInfo
@@ -426,7 +419,7 @@ mod tests {
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
             let group_order = GroupOrder::Ascending;
-            let forward = 0;
+            let forward = true;
             let filter_type = FilterType::LatestGroup;
             let start_location = None;
             let end_group = None;
@@ -434,7 +427,6 @@ mod tests {
                 AuthorizationInfo::new("test".to_string()),
             );
             let subscribe_parameters = vec![version_specific_parameter];
-            let number_of_parameters = subscribe_parameters.len();
             let expected_subscribe = Subscribe {
                 request_id,
                 track_alias,
@@ -446,7 +438,6 @@ mod tests {
                 filter_type,
                 start_location,
                 end_group,
-                number_of_parameters: number_of_parameters as u64,
                 subscribe_parameters,
             };
 
@@ -488,7 +479,7 @@ mod tests {
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
             let group_order = GroupOrder::Ascending;
-            let forward = 0;
+            let forward = false;
             let filter_type = FilterType::AbsoluteStart;
             let start_location = Some(Location {
                 group_id: 5,
@@ -499,7 +490,6 @@ mod tests {
                 AuthorizationInfo::new("test".to_string()),
             );
             let subscribe_parameters = vec![version_specific_parameter];
-            let number_of_parameters = subscribe_parameters.len();
             let expected_subscribe = Subscribe {
                 request_id,
                 track_alias,
@@ -511,7 +501,6 @@ mod tests {
                 filter_type,
                 start_location,
                 end_group,
-                number_of_parameters: number_of_parameters as u64,
                 subscribe_parameters,
             };
 
@@ -551,7 +540,7 @@ mod tests {
                 Ok(s) => s,
                 Err(e) => {
                     panic!("Failed to depacketize: {:?}", e)
-                },
+                }
             };
 
             let request_id = 0;
@@ -560,7 +549,7 @@ mod tests {
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
             let group_order = GroupOrder::Ascending;
-            let forward = 0;
+            let forward = false;
             let filter_type = FilterType::AbsoluteRange;
             let start_location = Some(Location {
                 group_id: 5,
@@ -571,7 +560,6 @@ mod tests {
                 AuthorizationInfo::new("test".to_string()),
             );
             let subscribe_parameters = vec![version_specific_parameter];
-            let number_of_parameters = subscribe_parameters.len();
             let expected_subscribe = Subscribe {
                 request_id,
                 track_alias,
@@ -583,7 +571,6 @@ mod tests {
                 filter_type,
                 start_location,
                 end_group,
-                number_of_parameters: number_of_parameters as u64,
                 subscribe_parameters,
             };
             assert_eq!(depacketized_subscribe, expected_subscribe);
