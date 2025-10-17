@@ -4,8 +4,9 @@ use bytes::BytesMut;
 use crate::modules::moqt::messages::{
     control_messages::{
         enums::FilterType,
+        group_order::GroupOrder,
         location::Location,
-        util::{add_payload_length, validate_payload_length},
+        util::{self, add_payload_length, validate_payload_length},
         version_specific_parameters::VersionSpecificParameter,
     },
     moqt_message::MOQTMessage,
@@ -16,9 +17,9 @@ use crate::modules::moqt::messages::{
 
 pub(super) struct PublishOk {
     pub(super) request_id: u64,
-    pub(super) forward: u8,
+    pub(super) forward: bool,
     pub(super) subscriber_priority: u8,
-    pub(super) group_order: u8,
+    pub(super) group_order: GroupOrder,
     /**
      * filter type
      * LatestGroup(0x01) = start location
@@ -29,7 +30,6 @@ pub(super) struct PublishOk {
     pub(super) filter_type: FilterType,
     pub(super) start_location: Option<Location>,
     pub(super) end_group: Option<u64>,
-    pub(super) number_of_parameters: u8,
     pub(super) parameters: Vec<VersionSpecificParameter>,
 }
 
@@ -42,24 +42,27 @@ impl MOQTMessage for PublishOk {
             Ok(v) => v,
             Err(_) => return Err(MOQTMessageError::ProtocolViolation),
         };
-        let forward = u8::try_from(
+        let forward_u8 = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .context("forward")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let forward = util::u8_to_bool(forward_u8)?;
         let subscriber_priority = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .context("subscriber priority")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let group_order = u8::try_from(
+        let group_order_u8 = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .context("group order")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let group_order = GroupOrder::try_from(group_order_u8)
+            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let filter_type = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
@@ -69,9 +72,7 @@ impl MOQTMessage for PublishOk {
         let filter_type =
             FilterType::try_from(filter_type).map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let (start_location, end_group) = match filter_type {
-            FilterType::AbsoluteStart => {
-                (Some(Location::depacketize(buf)?), None)
-            }
+            FilterType::AbsoluteStart => (Some(Location::depacketize(buf)?), None),
             FilterType::AbsoluteRange => {
                 let start_location = Location::depacketize(buf)?;
                 let end_group = read_variable_integer_from_buffer(buf)
@@ -111,7 +112,6 @@ impl MOQTMessage for PublishOk {
             filter_type,
             start_location,
             end_group,
-            number_of_parameters,
             parameters,
         })
     }
@@ -140,7 +140,7 @@ impl MOQTMessage for PublishOk {
                 );
             }
         };
-        payload.extend(write_variable_integer(self.number_of_parameters as u64));
+        payload.extend(write_variable_integer(self.parameters.len() as u64));
         // Parameters
         for param in &self.parameters {
             param.packetize(&mut payload);
@@ -158,6 +158,7 @@ mod tests {
         use crate::modules::moqt::messages::{
             control_messages::{
                 enums::FilterType,
+                group_order::GroupOrder,
                 location::Location,
                 publish_ok::PublishOk,
                 version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
@@ -169,16 +170,15 @@ mod tests {
         fn packetize_and_depacketize_absolute_start() {
             let publish_ok_message = PublishOk {
                 request_id: 1,
-                forward: 1,
+                forward: true,
                 subscriber_priority: 128,
-                group_order: 1, // Ascending
+                group_order: GroupOrder::Ascending, // Ascending
                 filter_type: FilterType::AbsoluteStart,
                 start_location: Some(Location {
                     group_id: 10,
                     object_id: 5,
                 }),
                 end_group: None,
-                number_of_parameters: 1,
                 parameters: vec![VersionSpecificParameter::AuthorizationInfo(
                     AuthorizationInfo::new("token".to_string()),
                 )],
@@ -216,10 +216,6 @@ mod tests {
             );
             assert!(depacketized_message.end_group.is_none());
             assert_eq!(
-                publish_ok_message.number_of_parameters,
-                depacketized_message.number_of_parameters
-            );
-            assert_eq!(
                 publish_ok_message.parameters,
                 depacketized_message.parameters
             );
@@ -229,16 +225,15 @@ mod tests {
         fn packetize_and_depacketize_absolute_range() {
             let publish_ok_message = PublishOk {
                 request_id: 2,
-                forward: 0,
+                forward: false,
                 subscriber_priority: 64,
-                group_order: 2, // Descending
+                group_order: GroupOrder::Descending, // Descending
                 filter_type: FilterType::AbsoluteRange,
                 start_location: Some(Location {
                     group_id: 20,
                     object_id: 15,
                 }),
                 end_group: Some(30),
-                number_of_parameters: 0,
                 parameters: vec![],
             };
 
@@ -273,10 +268,6 @@ mod tests {
                 depacketized_start_location.object_id
             );
             assert_eq!(publish_ok_message.end_group, depacketized_message.end_group);
-            assert_eq!(
-                publish_ok_message.number_of_parameters,
-                depacketized_message.number_of_parameters
-            );
             assert!(depacketized_message.parameters.is_empty());
         }
 
@@ -284,13 +275,12 @@ mod tests {
         fn packetize_and_depacketize_latest_group() {
             let publish_ok_message = PublishOk {
                 request_id: 3,
-                forward: 1,
+                forward: true,
                 subscriber_priority: 0,
-                group_order: 0, // Original
+                group_order: GroupOrder::Original, // Original
                 filter_type: FilterType::LatestGroup,
                 start_location: None,
                 end_group: None,
-                number_of_parameters: 0,
                 parameters: vec![],
             };
 
@@ -306,9 +296,7 @@ mod tests {
                 depacketized_message.filter_type
             );
             let depacketized_start_location = depacketized_message.start_location;
-            assert!(
-                depacketized_start_location.is_none()
-            );
+            assert!(depacketized_start_location.is_none());
             assert!(depacketized_message.end_group.is_none());
             assert!(depacketized_message.parameters.is_empty());
         }
