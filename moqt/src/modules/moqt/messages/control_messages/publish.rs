@@ -16,15 +16,15 @@ use crate::modules::moqt::messages::{
 };
 
 pub(crate) struct Publish {
-    pub(super) request_id: u64,
-    pub(super) track_namespace_tuple: Vec<String>,
-    pub(super) track_name: String,
-    pub(super) track_alias: u64,
-    pub(super) group_order: GroupOrder,
-    pub(super) content_exists: bool,
-    pub(super) largest_location: Option<Location>,
-    pub(super) forward: bool,
-    pub(super) parameters: Vec<VersionSpecificParameter>,
+    pub(crate) request_id: u64,
+    pub(crate) track_namespace_tuple: Vec<String>,
+    pub(crate) track_name: String,
+    pub(crate) track_alias: u64,
+    pub(crate) group_order: GroupOrder,
+    pub(crate) content_exists: bool,
+    pub(crate) largest_location: Option<Location>,
+    pub(crate) forward: bool,
+    pub(crate) parameters: Vec<VersionSpecificParameter>,
 }
 
 impl MOQTMessage for Publish {

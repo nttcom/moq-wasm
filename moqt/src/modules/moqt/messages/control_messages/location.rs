@@ -6,10 +6,10 @@ use crate::modules::moqt::messages::{
     variable_integer::write_variable_integer,
 };
 
-#[derive(Debug, PartialEq)]
-pub(super) struct Location {
-    pub(super) group_id: u64,
-    pub(super) object_id: u64,
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub(crate) struct Location {
+    pub(crate) group_id: u64,
+    pub(crate) object_id: u64,
 }
 
 impl MOQTMessage for Location {

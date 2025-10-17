@@ -11,8 +11,8 @@ pub(crate) type SessionId = uuid::Uuid;
 pub(crate) type RequestId = moqt::RequestId;
 pub(crate) type TrackAlias = u64;
 pub(crate) type GroupOrder = moqt::GroupOrder;
-pub(crate) type IsContentExist = moqt::IsContentExist;
-pub(crate) type IsForward = moqt::IsForward;
+pub(crate) type IsContentExist = moqt::ContentExists;
+pub(crate) type IsForward = moqt::Forward;
 pub(crate) type SubscriberPriority = moqt::SubscriberPriority;
 pub(crate) type FilterType = moqt::FilterType;
 

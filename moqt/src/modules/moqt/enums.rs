@@ -1,12 +1,18 @@
+use crate::modules::moqt::messages::control_messages::{
+    enums::FilterType, group_order::GroupOrder, location::Location,
+};
+
 // message aliases
 pub type RequestId = u64;
 pub type TrackNamespace = String;
 pub type TrackAlias = u64;
-pub type GroupOrder = u8;
-pub type IsContentExist = u8;
-pub type IsForward = u8;
+pub type ContentExists = bool;
+pub type Forward = bool;
 pub type SubscriberPriority = u8;
-pub type FilterType = u64;
+pub type Expires = u64;
+pub type TrackName = String;
+pub type EndGroup = u64;
+
 pub(crate) type ErrorCode = u64;
 pub(crate) type ErrorPhrase = String;
 
@@ -26,26 +32,26 @@ pub enum SessionEvent {
     PublishNamespace(TrackNamespace),
     SubscribeNameSpace(TrackNamespace),
     Publish(
-        RequestId,
         TrackNamespace,
+        TrackName,
         TrackAlias,
         GroupOrder,
-        IsContentExist,
-        IsForward,
-        Vec<Authorization>,
-        Vec<DeliveryTimeout>,
-        Vec<MaxCacheDuration>,
+        ContentExists,
+        Option<Location>,
+        Forward,
+        DeliveryTimeout,
+        MaxCacheDuration,
     ),
     Subscribe(
-        RequestId,
         TrackNamespace,
+        TrackName,
+        TrackAlias,
         SubscriberPriority,
         GroupOrder,
-        IsContentExist,
-        IsForward,
+        ContentExists,
+        Forward,
         FilterType,
-        Vec<Authorization>,
-        Vec<DeliveryTimeout>,
+        DeliveryTimeout,
     ),
     FatalError(),
 }
@@ -55,4 +61,23 @@ pub(crate) enum ResponseMessage {
     SubscribeNameSpaceError(RequestId, ErrorCode, ErrorPhrase),
     PublishNamespaceOk(RequestId),
     PublishNamespaceError(RequestId, ErrorCode, ErrorPhrase),
+    PublishOk(
+        RequestId,
+        GroupOrder,
+        SubscriberPriority,
+        Forward,
+        FilterType,
+        Option<Location>,
+        Option<EndGroup>,
+    ),
+    PublishError(RequestId, ErrorCode, ErrorPhrase),
+    SubscribeOk(
+        RequestId,
+        TrackAlias,
+        Expires,
+        GroupOrder,
+        ContentExists,
+        Option<Location>,
+    ),
+    SubscribeError(RequestId, ErrorCode, ErrorPhrase),
 }

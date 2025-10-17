@@ -6,7 +6,7 @@ mod modules;
 
 pub use modules::moqt::enums::SessionEvent;
 pub use modules::moqt::enums::{
-    Authorization, DeliveryTimeout, FilterType, GroupOrder, IsContentExist, IsForward,
+    Authorization, ContentExists, DeliveryTimeout, Forward,
     MaxCacheDuration, RequestId, SubscriberPriority, TrackNamespace,
 };
 pub use modules::moqt::protocol::QUIC;

@@ -15,13 +15,13 @@ use bytes::BytesMut;
 
 #[derive(Debug, PartialEq)]
 pub struct SubscribeOk {
-    pub(super) request_id: u64,
-    pub(super) track_alias: u64,
-    pub(super) expires: u64,
-    pub(super) group_order: GroupOrder,
-    pub(super) content_exists: bool,
-    pub(super) largest_location: Option<Location>,
-    pub(super) subscribe_parameters: Vec<VersionSpecificParameter>,
+    pub(crate) request_id: u64,
+    pub(crate) track_alias: u64,
+    pub(crate) expires: u64,
+    pub(crate) group_order: GroupOrder,
+    pub(crate) content_exists: bool,
+    pub(crate) largest_location: Option<Location>,
+    pub(crate) subscribe_parameters: Vec<VersionSpecificParameter>,
 }
 
 impl MOQTMessage for SubscribeOk {

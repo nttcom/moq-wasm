@@ -9,8 +9,8 @@ use crate::{
             control_message_type::ControlMessageType, control_messages::util::get_message_type,
         },
         receive_message_sequence_handlers::{
-            publish_namespace::PublishNamespaceHandler,
-            subscribe_namespace::SubscribeNamespaceHandler,
+            publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
+            subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
         },
         sessions::inner_session::InnerSession,
     },
@@ -65,15 +65,21 @@ impl ControlMessageReceiveThread {
             ControlMessageType::GoAway => todo!(),
             ControlMessageType::MaxSubscribeId => todo!(),
             ControlMessageType::RequestsBlocked => todo!(),
-            ControlMessageType::Subscribe => todo!(),
-            ControlMessageType::SubscribeOk => todo!(),
-            ControlMessageType::SubscribeError => todo!(),
+            ControlMessageType::Subscribe => SubscribeHandler::subscribe(session, bytes_mut).await,
+            ControlMessageType::SubscribeOk => {
+                SubscribeHandler::subscribe_ok(session, bytes_mut).await
+            }
+            ControlMessageType::SubscribeError => {
+                SubscribeHandler::subscribe_error(session, bytes_mut).await
+            }
             ControlMessageType::SubscribeUpdate => todo!(),
             ControlMessageType::UnSubscribe => todo!(),
             ControlMessageType::PublishDone => todo!(),
-            ControlMessageType::Publish => todo!(),
-            ControlMessageType::PublishOk => todo!(),
-            ControlMessageType::PublishError => todo!(),
+            ControlMessageType::Publish => PublishHandler::publish(session, bytes_mut).await,
+            ControlMessageType::PublishOk => PublishHandler::publish_ok(session, bytes_mut).await,
+            ControlMessageType::PublishError => {
+                PublishHandler::publish_error(session, bytes_mut).await
+            }
             ControlMessageType::Fetch => todo!(),
             ControlMessageType::FetchOk => todo!(),
             ControlMessageType::FetchError => todo!(),
