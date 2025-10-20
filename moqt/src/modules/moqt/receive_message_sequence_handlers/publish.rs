@@ -15,7 +15,7 @@ use crate::{
             moqt_message::MOQTMessage,
         },
         receive_message_sequence_handlers::sequence_handler_util,
-        sessions::inner_session::InnerSession,
+        sessions::session_context::SessionContext,
         utils,
     },
 };
@@ -24,7 +24,7 @@ pub(crate) struct PublishHandler;
 
 impl PublishHandler {
     pub(crate) async fn publish<T: TransportProtocol>(
-        session: Arc<InnerSession<T>>,
+        session: Arc<SessionContext<T>>,
         mut bytes_mut: BytesMut,
     ) {
         tracing::info!("Publish namespace");
@@ -87,7 +87,7 @@ impl PublishHandler {
     }
 
     pub(crate) async fn publish_ok<T: TransportProtocol>(
-        session: Arc<InnerSession<T>>,
+        session: Arc<SessionContext<T>>,
         mut bytes_mut: BytesMut,
     ) {
         let result = PublishOk::depacketize(&mut bytes_mut).unwrap();
@@ -113,7 +113,7 @@ impl PublishHandler {
     }
 
     pub(crate) async fn publish_error<T: TransportProtocol>(
-        session: Arc<InnerSession<T>>,
+        session: Arc<SessionContext<T>>,
         mut bytes_mut: BytesMut,
     ) {
         let result = RequestError::depacketize(&mut bytes_mut).unwrap();

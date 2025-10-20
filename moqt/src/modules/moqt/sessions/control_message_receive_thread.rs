@@ -12,7 +12,7 @@ use crate::{
             publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
             subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
         },
-        sessions::inner_session::InnerSession,
+        sessions::session_context::SessionContext,
     },
 };
 
@@ -20,13 +20,13 @@ pub(crate) struct ControlMessageReceiveThread;
 
 impl ControlMessageReceiveThread {
     pub(crate) fn run<T: TransportProtocol>(
-        inner_session: Weak<InnerSession<T>>,
+        session_context: Weak<SessionContext<T>>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Message Receiver")
             .spawn(async move {
                 loop {
-                    if let Some(session) = inner_session.upgrade() {
+                    if let Some(session) = session_context.upgrade() {
                         tracing::debug!("Session is alive.");
 
                         let bytes = match session.receive_stream.receive().await {
@@ -56,7 +56,7 @@ impl ControlMessageReceiveThread {
     }
 
     async fn resolve_message<T: TransportProtocol>(
-        session: Arc<InnerSession<T>>,
+        session: Arc<SessionContext<T>>,
         message_type: ControlMessageType,
         bytes_mut: BytesMut,
     ) {
