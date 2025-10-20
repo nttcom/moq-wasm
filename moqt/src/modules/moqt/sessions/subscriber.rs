@@ -2,18 +2,23 @@ use std::sync::Arc;
 
 use anyhow::bail;
 
-use crate::modules::moqt::{
-    enums::ResponseMessage,
-    messages::{
-        control_message_type::ControlMessageType,
-        control_messages::{
-            group_order::GroupOrder, subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
+use crate::modules::{
+    moqt::{
+        enums::ResponseMessage,
+        messages::{
+            control_message_type::ControlMessageType,
+            control_messages::{
+                group_order::GroupOrder, subscribe::Subscribe,
+                subscribe_namespace::SubscribeNamespace,
+            },
         },
+        options::SubscribeOption,
+        protocol::TransportProtocol,
+        sessions::session_context::SessionContext,
+        streams::stream::stream_receiver::StreamReceiver,
+        utils,
     },
-    options::SubscribeOption,
-    protocol::TransportProtocol,
-    sessions::inner_session::InnerSession,
-    utils,
+    transport::transport_connection::TransportConnection,
 };
 
 pub struct SubscribeResult {
@@ -26,7 +31,7 @@ pub struct SubscribeResult {
 }
 
 pub struct Subscriber<T: TransportProtocol> {
-    pub(crate) session: Arc<InnerSession<T>>,
+    pub(crate) session: Arc<SessionContext<T>>,
 }
 
 impl<T: TransportProtocol> Subscriber<T> {
@@ -139,5 +144,10 @@ impl<T: TransportProtocol> Subscriber<T> {
             }
             _ => bail!("Protocol violation"),
         }
+    }
+
+    pub async fn create_stream(&self) -> anyhow::Result<StreamReceiver<T>> {
+        let send_stream = self.session.transport_connection.accept_uni().await?;
+        Ok(StreamReceiver::new(send_stream))
     }
 }

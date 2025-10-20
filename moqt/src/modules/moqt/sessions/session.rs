@@ -6,17 +6,17 @@ use crate::Subscriber;
 use crate::modules::moqt::enums::SessionEvent;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::sessions::control_message_receive_thread::ControlMessageReceiveThread;
-use crate::modules::moqt::sessions::inner_session::InnerSession;
+use crate::modules::moqt::sessions::session_context::SessionContext;
 
 pub struct Session<T: TransportProtocol> {
-    inner: Arc<InnerSession<T>>,
+    inner: Arc<SessionContext<T>>,
     event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent>>,
     message_receive_join_handle: tokio::task::JoinHandle<()>,
 }
 
 impl<T: TransportProtocol> Session<T> {
     pub(crate) fn new(
-        inner: InnerSession<T>,
+        inner: SessionContext<T>,
         event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
     ) -> Self {
         let inner = Arc::new(inner);

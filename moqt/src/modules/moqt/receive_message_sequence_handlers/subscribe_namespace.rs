@@ -15,7 +15,7 @@ use crate::{
             moqt_message::MOQTMessage,
         },
         receive_message_sequence_handlers::sequence_handler_util,
-        sessions::inner_session::InnerSession,
+        sessions::session_context::SessionContext,
         utils,
     },
 };
@@ -24,7 +24,7 @@ pub(crate) struct SubscribeNamespaceHandler;
 
 impl SubscribeNamespaceHandler {
     pub(crate) async fn subscribe_namespace<T: TransportProtocol>(
-        session: Arc<InnerSession<T>>,
+        session: Arc<SessionContext<T>>,
         mut bytes_mut: BytesMut,
     ) {
         let result = SubscribeNamespace::depacketize(&mut bytes_mut);
@@ -104,7 +104,7 @@ impl SubscribeNamespaceHandler {
     }
 
     pub(crate) async fn subscribe_namespace_ok<T: TransportProtocol>(
-        session: Arc<InnerSession<T>>,
+        session: Arc<SessionContext<T>>,
         mut bytes_mut: BytesMut,
     ) {
         let result = NamespaceOk::depacketize(&mut bytes_mut).unwrap();
@@ -119,7 +119,7 @@ impl SubscribeNamespaceHandler {
     }
 
     pub(crate) async fn subscribe_namespace_error<T: TransportProtocol>(
-        session: Arc<InnerSession<T>>,
+        session: Arc<SessionContext<T>>,
         mut bytes_mut: BytesMut,
     ) {
         let result = RequestError::depacketize(&mut bytes_mut).unwrap();

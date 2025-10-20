@@ -11,4 +11,8 @@ pub(crate) trait TransportConnection: Send + Sync {
     fn id(&self) -> usize;
     async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)>;
     async fn accept_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)>;
+    async fn open_uni(&self) -> anyhow::Result<Self::SendStream>;
+    async fn accept_uni(&self) -> anyhow::Result<Self::ReceiveStream>;
+    fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<()>;
+    async fn receive_datagram(&self) -> anyhow::Result<bytes::BytesMut>;
 }

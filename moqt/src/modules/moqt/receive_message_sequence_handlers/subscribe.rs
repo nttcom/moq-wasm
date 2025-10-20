@@ -14,7 +14,7 @@ use crate::{
             moqt_message::MOQTMessage,
         },
         receive_message_sequence_handlers::sequence_handler_util,
-        sessions::inner_session::InnerSession,
+        sessions::session_context::SessionContext,
         utils,
     },
 };
@@ -23,7 +23,7 @@ pub(crate) struct SubscribeHandler;
 
 impl SubscribeHandler {
     pub(crate) async fn subscribe<T: TransportProtocol>(
-        session: Arc<InnerSession<T>>,
+        session: Arc<SessionContext<T>>,
         mut bytes_mut: BytesMut,
     ) {
         let result = Subscribe::depacketize(&mut bytes_mut);
@@ -113,7 +113,7 @@ impl SubscribeHandler {
     }
 
     pub(crate) async fn subscribe_ok<T: TransportProtocol>(
-        session: Arc<InnerSession<T>>,
+        session: Arc<SessionContext<T>>,
         mut bytes_mut: BytesMut,
     ) {
         let result = SubscribeOk::depacketize(&mut bytes_mut).unwrap();
@@ -135,7 +135,7 @@ impl SubscribeHandler {
     }
 
     pub(crate) async fn subscribe_error<T: TransportProtocol>(
-        session: Arc<InnerSession<T>>,
+        session: Arc<SessionContext<T>>,
         mut bytes_mut: BytesMut,
     ) {
         let result = RequestError::depacketize(&mut bytes_mut).unwrap();

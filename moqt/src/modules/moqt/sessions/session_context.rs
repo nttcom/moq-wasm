@@ -24,8 +24,8 @@ use crate::{
     },
 };
 
-pub(crate) struct InnerSession<T: TransportProtocol> {
-    _transport_connection: T::Connection,
+pub(crate) struct SessionContext<T: TransportProtocol> {
+    pub(crate) transport_connection: T::Connection,
     pub(crate) send_stream: StreamSender<T>,
     pub(crate) receive_stream: StreamReceiver<T>,
     request_id: AtomicU64,
@@ -35,7 +35,7 @@ pub(crate) struct InnerSession<T: TransportProtocol> {
     pub(crate) subscribed_namespaces: tokio::sync::Mutex<HashSet<String>>,
 }
 
-impl<T: TransportProtocol> InnerSession<T> {
+impl<T: TransportProtocol> SessionContext<T> {
     pub(crate) async fn client(
         transport_connection: T::Connection,
         mut send_stream: StreamSender<T>,
@@ -45,7 +45,7 @@ impl<T: TransportProtocol> InnerSession<T> {
         Self::setup_client(&mut send_stream, &receive_stream).await?;
 
         Ok(Self {
-            _transport_connection: transport_connection,
+            transport_connection,
             send_stream,
             receive_stream,
             request_id: AtomicU64::new(0),
@@ -64,7 +64,7 @@ impl<T: TransportProtocol> InnerSession<T> {
         Self::setup_server(&mut send_stream, &receive_stream).await?;
 
         Ok(Self {
-            _transport_connection: transport_connection,
+            transport_connection,
             send_stream,
             receive_stream,
             request_id: AtomicU64::new(1),
@@ -143,7 +143,7 @@ impl<T: TransportProtocol> InnerSession<T> {
     }
 }
 
-impl<T: TransportProtocol> Drop for InnerSession<T> {
+impl<T: TransportProtocol> Drop for SessionContext<T> {
     fn drop(&mut self) {
         tracing::info!("Session has been dropped.");
         // send goaway

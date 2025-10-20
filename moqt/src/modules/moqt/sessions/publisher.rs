@@ -7,19 +7,23 @@ use anyhow::bail;
 
 use crate::{
     Forward, SubscriberPriority,
-    modules::moqt::{
-        enums::ResponseMessage,
-        messages::{
-            control_message_type::ControlMessageType,
-            control_messages::{
-                enums::FilterType, group_order::GroupOrder, publish::Publish,
-                publish_namespace::PublishNamespace,
+    modules::{
+        moqt::{
+            enums::ResponseMessage,
+            messages::{
+                control_message_type::ControlMessageType,
+                control_messages::{
+                    enums::FilterType, group_order::GroupOrder, publish::Publish,
+                    publish_namespace::PublishNamespace,
+                },
             },
+            options::PublishOption,
+            protocol::TransportProtocol,
+            sessions::session_context::SessionContext,
+            streams::stream::stream_sender::StreamSender,
+            utils,
         },
-        options::PublishOption,
-        protocol::TransportProtocol,
-        sessions::inner_session::InnerSession,
-        utils,
+        transport::transport_connection::TransportConnection,
     },
 };
 
@@ -34,12 +38,12 @@ pub struct PublishResult {
 }
 
 pub struct Publisher<T: TransportProtocol> {
-    session: Arc<InnerSession<T>>,
+    session: Arc<SessionContext<T>>,
     track_alias: AtomicU64,
 }
 
 impl<T: TransportProtocol> Publisher<T> {
-    pub(crate) fn new(session: Arc<InnerSession<T>>) -> Self {
+    pub(crate) fn new(session: Arc<SessionContext<T>>) -> Self {
         Self {
             session,
             track_alias: AtomicU64::new(0),
@@ -153,6 +157,11 @@ impl<T: TransportProtocol> Publisher<T> {
             }
             _ => bail!("Protocol violation"),
         }
+    }
+
+    pub async fn create_stream(&self) -> anyhow::Result<StreamSender<T>> {
+        let send_stream = self.session.transport_connection.open_uni().await?;
+        Ok(StreamSender::new(send_stream))
     }
 
     fn get_track_alias(&self) -> u64 {
