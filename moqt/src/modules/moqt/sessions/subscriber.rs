@@ -15,7 +15,9 @@ use crate::modules::{
         options::SubscribeOption,
         protocol::TransportProtocol,
         sessions::session_context::SessionContext,
-        streams::stream::stream_receiver::StreamReceiver,
+        streams::{
+            datagram::datagram_receiver::DatagramReceiver, stream::stream_receiver::StreamReceiver,
+        },
         utils,
     },
     transport::transport_connection::TransportConnection,
@@ -146,8 +148,14 @@ impl<T: TransportProtocol> Subscriber<T> {
         }
     }
 
-    pub async fn create_stream(&self) -> anyhow::Result<StreamReceiver<T>> {
+    pub async fn accept_stream(&self) -> anyhow::Result<StreamReceiver<T>> {
         let send_stream = self.session.transport_connection.accept_uni().await?;
         Ok(StreamReceiver::new(send_stream))
+    }
+
+    pub async fn accept_datagram(&self) -> DatagramReceiver<T> {
+        DatagramReceiver {
+            session_context: self.session.clone(),
+        }
     }
 }

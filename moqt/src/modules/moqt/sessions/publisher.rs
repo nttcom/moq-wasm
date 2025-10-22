@@ -20,7 +20,9 @@ use crate::{
             options::PublishOption,
             protocol::TransportProtocol,
             sessions::session_context::SessionContext,
-            streams::stream::stream_sender::StreamSender,
+            streams::{
+                datagram::datagram_sender::DatagramSender, stream::stream_sender::StreamSender,
+            },
             utils,
         },
         transport::transport_connection::TransportConnection,
@@ -162,6 +164,12 @@ impl<T: TransportProtocol> Publisher<T> {
     pub async fn create_stream(&self) -> anyhow::Result<StreamSender<T>> {
         let send_stream = self.session.transport_connection.open_uni().await?;
         Ok(StreamSender::new(send_stream))
+    }
+
+    pub async fn create_datagram(&self) -> DatagramSender<T> {
+        DatagramSender {
+            session_context: self.session.clone(),
+        }
     }
 
     fn get_track_alias(&self) -> u64 {

@@ -11,11 +11,11 @@ use crate::{
 };
 
 pub struct DatagramReceiver<T: TransportProtocol> {
-    session_context: Arc<SessionContext<T>>,
+    pub(crate) session_context: Arc<SessionContext<T>>,
 }
 
 impl<T: TransportProtocol> DatagramReceiver<T> {
-    async fn receive(&self) -> anyhow::Result<BytesMut> {
+    pub async fn receive(&self) -> anyhow::Result<BytesMut> {
         self.session_context
             .transport_connection
             .receive_datagram()

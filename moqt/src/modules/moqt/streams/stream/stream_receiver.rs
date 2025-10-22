@@ -4,7 +4,7 @@ use crate::modules::{
     moqt::protocol::TransportProtocol, transport::transport_receive_stream::TransportReceiveStream,
 };
 
-pub(crate) struct StreamReceiver<T: TransportProtocol> {
+pub struct StreamReceiver<T: TransportProtocol> {
     receive_stream: tokio::sync::Mutex<T::ReceiveStream>,
 }
 
@@ -17,7 +17,7 @@ impl<T: TransportProtocol> StreamReceiver<T> {
         }
     }
 
-    pub(crate) async fn receive(&self) -> anyhow::Result<Vec<u8>> {
+    pub async fn receive(&self) -> anyhow::Result<Vec<u8>> {
         let mut total_message = vec![];
         loop {
             let mut bytes = vec![0u8; Self::RECEIVE_BYTES_CAPACITY];
