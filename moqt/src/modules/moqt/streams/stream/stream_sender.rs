@@ -4,7 +4,7 @@ use crate::modules::{
     moqt::protocol::TransportProtocol, transport::transport_send_stream::TransportSendStream,
 };
 
-pub(crate) struct StreamSender<T: TransportProtocol> {
+pub struct StreamSender<T: TransportProtocol> {
     send_stream: tokio::sync::Mutex<T::SendStream>,
 }
 
@@ -15,7 +15,7 @@ impl<T: TransportProtocol> StreamSender<T> {
         }
     }
 
-    pub(crate) async fn send(&self, bytes: &BytesMut) -> anyhow::Result<()> {
+    pub async fn send(&self, bytes: &BytesMut) -> anyhow::Result<()> {
         self.send_stream.lock().await.send(bytes).await
     }
 }

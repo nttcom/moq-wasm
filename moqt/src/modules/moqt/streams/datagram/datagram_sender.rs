@@ -11,11 +11,11 @@ use crate::{
 };
 
 pub struct DatagramSender<T: TransportProtocol> {
-    session_context: Arc<SessionContext<T>>,
+    pub(crate) session_context: Arc<SessionContext<T>>,
 }
 
 impl<T: TransportProtocol> DatagramSender<T> {
-    fn send(&self, bytes: BytesMut) {
+    pub fn send(&self, bytes: BytesMut) {
         self.session_context
             .transport_connection
             .send_datagram(bytes)
