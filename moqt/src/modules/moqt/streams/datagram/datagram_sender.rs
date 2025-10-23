@@ -18,6 +18,15 @@ use crate::{
     },
 };
 
+pub struct DatagramHeader {
+    pub group_id: u64,
+    pub object_id: Option<u64>,
+    pub publisher_priority: u8,
+    pub prior_object_id_gap: Option<u64>,
+    pub prior_group_id_gap: Option<u64>,
+    pub immutable_extensions: Vec<u8>,
+}
+
 pub struct DatagramSender<T: TransportProtocol> {
     pub track_alias: u64,
     pub end_of_group: bool,
@@ -25,7 +34,7 @@ pub struct DatagramSender<T: TransportProtocol> {
 }
 
 impl<T: TransportProtocol> DatagramSender<T> {
-    pub fn new(track_alias: u64, session_context: Arc<SessionContext<T>>) -> Self {
+    pub(crate) fn new(track_alias: u64, session_context: Arc<SessionContext<T>>) -> Self {
         Self {
             track_alias,
             end_of_group: false,
@@ -33,29 +42,24 @@ impl<T: TransportProtocol> DatagramSender<T> {
         }
     }
 
-    pub fn create_datagram_object(
+    pub fn create_object_datagram(
         &self,
-        group_id: u64,
-        object_id: Option<u64>,
-        publisher_priority: u8,
-        prior_object_id_gap: Option<u64>,
-        prior_group_id_gap: Option<u64>,
-        immutable_extensions: Vec<u8>,
+        datagram_header: DatagramHeader,
         bytes: BytesMut,
     ) -> anyhow::Result<DatagramObject> {
-        let (object_id, has_object_id) = if object_id.is_none() {
-            (0, false)
+        let (object_id, has_object_id) = if let Some(object_id) = datagram_header.object_id {
+            (object_id, true)
         } else {
-            (object_id.unwrap(), true)
+            (0, false)
         };
-        let has_extension_headers = prior_group_id_gap.is_some()
-            || prior_object_id_gap.is_some()
-            || !immutable_extensions.is_empty();
+        let has_extension_headers = datagram_header.prior_group_id_gap.is_some()
+            || datagram_header.prior_object_id_gap.is_some()
+            || !datagram_header.immutable_extensions.is_empty();
         let extension_headers = if has_extension_headers {
             Self::create_extension_headers(
-                prior_group_id_gap,
-                prior_object_id_gap,
-                immutable_extensions,
+                datagram_header.prior_group_id_gap,
+                datagram_header.prior_object_id_gap,
+                datagram_header.immutable_extensions,
             )
         } else {
             vec![]
@@ -65,41 +69,22 @@ impl<T: TransportProtocol> DatagramSender<T> {
         Ok(DatagramObject {
             message_type,
             track_alias: self.track_alias,
-            group_id,
+            group_id: datagram_header.group_id,
             object_id,
-            publisher_priority,
+            publisher_priority: datagram_header.publisher_priority,
             extension_headers,
             object_status: None,
             object_payload: bytes.to_vec(),
         })
     }
 
-    pub fn create_datagram_object_with_extension_headers(
+    pub fn create_object_datagram_from_binary(
         &self,
-        group_id: u64,
-        object_id: Option<u64>,
-        publisher_priority: u8,
-        extension_headers: Vec<KeyValuePair>,
-        bytes: BytesMut,
+        mut binary_object: BytesMut,
     ) -> anyhow::Result<DatagramObject> {
-        let (object_id, has_object_id) = if let Some(object_id) = object_id {
-            (object_id, true)
-        } else {
-            (0, false)
-        };
-
-        let message_type =
-            self.fix_message_type(!extension_headers.is_empty(), has_object_id, true)?;
-        Ok(DatagramObject {
-            message_type,
-            track_alias: self.track_alias,
-            group_id,
-            object_id,
-            publisher_priority,
-            extension_headers,
-            object_status: None,
-            object_payload: bytes.to_vec(),
-        })
+        let mut object = DatagramObject::depacketize(&mut binary_object)?;
+        object.track_alias = self.track_alias;
+        Ok(object)
     }
 
     fn fix_message_type(
