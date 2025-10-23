@@ -2,7 +2,6 @@ use anyhow::bail;
 use bytes::BytesMut;
 
 use crate::modules::moqt::messages::{
-    data_streams::DataStreams,
     object::key_value_pair::KeyValuePair,
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
@@ -43,7 +42,7 @@ type ExtensionHeader = KeyValuePair;
 //  | 0x1D | Yes           | N/A         | Yes        | Yes          |
 //  +------+---------------+-------------+------------+--------------+
 
-enum SubgroupId {
+pub enum SubgroupId {
     Zero,
     FirstObjectIdDelta,
     Value(u64),
@@ -77,11 +76,7 @@ impl SubgroupHeader {
     }
 
     fn validate_message_type(message_type: u64) -> bool {
-        if 0x10 <= message_type && message_type <= 0x1d {
-            true
-        } else {
-            false
-        }
+        (0x10..=0x1d).contains(&message_type)
     }
 
     fn read_subgroup_id(message_type: u64, bytes: &mut BytesMut) -> anyhow::Result<SubgroupId> {
