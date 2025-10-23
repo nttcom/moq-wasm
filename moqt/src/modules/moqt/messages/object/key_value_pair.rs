@@ -8,8 +8,8 @@ pub enum VariantType {
 }
 
 pub struct KeyValuePair {
-    key: u64,
-    value: VariantType,
+    pub key: u64,
+    pub value: VariantType,
 }
 
 impl KeyValuePair {

@@ -81,3 +81,8 @@ pub(crate) enum ResponseMessage {
     ),
     SubscribeError(RequestId, ErrorCode, ErrorPhrase),
 }
+
+pub enum StreamMessage {
+    Header(),
+    ObjectField
+}
