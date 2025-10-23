@@ -156,14 +156,19 @@ pub struct SubgroupObjectField {
 impl SubgroupObjectField {
     pub(crate) fn depacketize(mut buf: BytesMut) -> anyhow::Result<Self> {
         let object_id_delta = read_variable_integer_from_buffer(&mut buf)?;
-        let extension_headers_length = read_variable_integer_from_buffer(&mut buf)?;
-        for _ in 0..extension_headers_length {
-            ExtensionHeader::depacketize(&mut buf)?;
+        let extension_headers_total_len = read_variable_integer_from_buffer(&mut buf)?;
+        let mut extension_headers_bytes = buf.split_to(extension_headers_total_len as usize);
+        let mut extension_headers = Vec::new();
+        while !extension_headers_bytes.is_empty() {
+            let header = ExtensionHeader::depacketize(&mut extension_headers_bytes)?;
+            extension_headers.push(header);
         }
+        // The remaining bytes in `buf` are the object payload
+        // The original code had `buf.split_to(buf.len())` which is correct for the payload.
         let object_payload = buf.split_to(buf.len());
         Ok(Self {
             object_id_delta,
-            extension_headers: vec![],
+            extension_headers,
             object_payload: object_payload.to_vec(),
         })
     }
@@ -171,12 +176,196 @@ impl SubgroupObjectField {
     pub(crate) fn packetize(&self) -> BytesMut {
         let mut buf = BytesMut::new();
         buf.extend(write_variable_integer(self.object_id_delta));
-        buf.extend(write_variable_integer(self.extension_headers.len() as u64));
+
+        let mut headers_buf = BytesMut::new();
         for header in &self.extension_headers {
-            let header = header.packetize();
-            buf.extend_from_slice(&header);
+            let header_bytes = header.packetize();
+            headers_buf.extend_from_slice(&header_bytes);
         }
+        buf.extend(write_variable_integer(headers_buf.len() as u64)); // Write total byte length
+        buf.extend(headers_buf); // Write serialized headers
+
         buf.extend_from_slice(&self.object_payload);
         buf
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    mod success {
+        use bytes::BytesMut;
+
+        use crate::modules::moqt::messages::object::{
+            key_value_pair::{KeyValuePair, VariantType},
+            subgroup::{SubgroupHeader, SubgroupId, SubgroupObjectField},
+        };
+
+        // --- SubgroupHeader Tests ---
+
+        #[test]
+        fn subgroup_header_packetize_and_depacketize_zero_id() {
+            let header = SubgroupHeader {
+                message_type: 0x10, // No Subgroup ID field, No Extensions, No End of Group
+                track_alias: 1,
+                group_id: 2,
+                subgroup_id: SubgroupId::Zero,
+                publisher_priority: 128,
+            };
+
+            let mut buf = header.packetize().unwrap();
+            let depacketized = SubgroupHeader::depacketize(buf.clone()).unwrap();
+
+            assert_eq!(header.message_type, depacketized.message_type);
+            assert_eq!(header.track_alias, depacketized.track_alias);
+            assert_eq!(header.group_id, depacketized.group_id);
+            assert!(matches!(depacketized.subgroup_id, SubgroupId::Zero));
+            assert_eq!(header.publisher_priority, depacketized.publisher_priority);
+
+            // Check raw bytes for 0x10
+            // Message Type (0x10), Track Alias (1), Group ID (2), Publisher Priority (128)
+            let expected_bytes = vec![0x10, 0x01, 0x02, 0x40, 0x80];
+            assert_eq!(buf.as_ref(), expected_bytes.as_slice());
+        }
+
+        #[test]
+        fn subgroup_header_packetize_and_depacketize_first_object_id_delta() {
+            let header = SubgroupHeader {
+                message_type: 0x12, // First Object ID, No Extensions, No End of Group
+                track_alias: 3,
+                group_id: 4,
+                subgroup_id: SubgroupId::FirstObjectIdDelta,
+                publisher_priority: 64,
+            };
+
+            let mut buf = header.packetize().unwrap();
+            let depacketized = SubgroupHeader::depacketize(buf.clone()).unwrap();
+
+            assert_eq!(header.message_type, depacketized.message_type);
+            assert_eq!(header.track_alias, depacketized.track_alias);
+            assert_eq!(header.group_id, depacketized.group_id);
+            assert!(matches!(
+                depacketized.subgroup_id,
+                SubgroupId::FirstObjectIdDelta
+            ));
+            assert_eq!(header.publisher_priority, depacketized.publisher_priority);
+
+            // Check raw bytes for 0x12
+            // Message Type (0x12), Track Alias (3), Group ID (4), Publisher Priority (64)
+            let expected_bytes = vec![0x12, 0x03, 0x04, 0x40, 0x40];
+            assert_eq!(buf.as_ref(), expected_bytes.as_slice());
+        }
+
+        #[test]
+        fn subgroup_header_packetize_and_depacketize_value_id() {
+            let header = SubgroupHeader {
+                message_type: 0x14, // Subgroup ID field present, No Extensions, No End of Group
+                track_alias: 5,
+                group_id: 6,
+                subgroup_id: SubgroupId::Value(100),
+                publisher_priority: 32,
+            };
+
+            let mut buf = header.packetize().unwrap();
+            let depacketized = SubgroupHeader::depacketize(buf.clone()).unwrap();
+
+            assert_eq!(header.message_type, depacketized.message_type);
+            assert_eq!(header.track_alias, depacketized.track_alias);
+            assert_eq!(header.group_id, depacketized.group_id);
+            if let SubgroupId::Value(v) = depacketized.subgroup_id {
+                assert_eq!(v, 100);
+            } else {
+                panic!("Expected SubgroupId::Value(100)");
+            }
+            assert_eq!(header.publisher_priority, depacketized.publisher_priority);
+
+            // Check raw bytes for 0x14
+            // Message Type (0x14), Track Alias (5), Group ID (6), Subgroup ID (100), Publisher Priority (32)
+            let expected_bytes = vec![0x14, 0x05, 0x06, 0x40, 0x64, 0x20];
+            assert_eq!(buf.as_ref(), expected_bytes.as_slice());
+        }
+
+        // --- SubgroupObjectField Tests ---
+
+        #[test]
+        fn subgroup_object_field_packetize_and_depacketize_no_extensions() {
+            let object_field = SubgroupObjectField {
+                object_id_delta: 1,
+                extension_headers: vec![],
+                object_payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            };
+
+            let mut buf = object_field.packetize();
+            let depacketized = SubgroupObjectField::depacketize(buf.clone()).unwrap();
+
+            assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
+            assert!(depacketized.extension_headers.is_empty());
+            assert_eq!(object_field.object_payload, depacketized.object_payload);
+
+            // Check raw bytes: Object ID Delta (1), Extension Headers Length (0), Payload
+            let expected_bytes = vec![0x01, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
+            assert_eq!(buf.as_ref(), expected_bytes.as_slice());
+        }
+
+        #[test]
+        fn subgroup_object_field_packetize_and_depacketize_with_extensions() {
+            let object_field = SubgroupObjectField {
+                object_id_delta: 5,
+                extension_headers: vec![
+                    KeyValuePair {
+                        key: 0x3c, // PriorGroupIdGap
+                        value: VariantType::Even(10),
+                    },
+                    KeyValuePair {
+                        key: 0x0b, // ImmutableExtensions
+                        value: VariantType::Odd(vec![0x01, 0x02]),
+                    },
+                ],
+                object_payload: vec![0x11, 0x22, 0x33],
+            };
+
+            let mut buf = object_field.packetize();
+            let depacketized = SubgroupObjectField::depacketize(buf.clone()).unwrap();
+
+            assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
+            assert_eq!(
+                object_field.extension_headers.len(),
+                depacketized.extension_headers.len()
+            );
+            assert_eq!(
+                object_field.extension_headers[0].key,
+                depacketized.extension_headers[0].key
+            );
+            assert!(matches!(
+                depacketized.extension_headers[0].value,
+                VariantType::Even(10)
+            ));
+            assert_eq!(
+                object_field.extension_headers[1].key,
+                depacketized.extension_headers[1].key
+            );
+            if let VariantType::Odd(v) = &depacketized.extension_headers[1].value {
+                assert_eq!(v, &vec![0x01, 0x02]);
+            } else {
+                panic!("Expected VariantType::Odd");
+            }
+            assert_eq!(object_field.object_payload, depacketized.object_payload);
+
+            // Expected bytes:
+            // Object ID Delta (5) = 0x05
+            // Extension Headers:
+            //   - KeyValuePair 1: Key (0x3c), Value (10) => 0x3c 0x0a
+            //   - KeyValuePair 2: Key (0x0b), Value Length (2), Value (0x01 0x02) => 0x0b 0x02 0x01 0x02
+            // Total Extension Headers Length = 2 + 4 = 6 bytes
+            // Payload = 0x11 0x22 0x33
+            let expected_bytes = vec![
+                0x05, // object_id_delta
+                0x06, // extension_headers_total_len (6 bytes)
+                0x3c, 0x0a, // KeyValuePair 1: Key=0x3c, Value=10
+                0x0b, 0x02, 0x01,
+                0x02, // KeyValuePair 2: Key=0x0b, ValueLen=2, Value=[0x01, 0x02]
+                0x11, 0x22, 0x33, // object_payload
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes.as_slice());
+        }
     }
 }
