@@ -193,8 +193,6 @@ impl SubgroupObjectField {
 #[cfg(test)]
 mod tests {
     mod success {
-        use bytes::BytesMut;
-
         use crate::modules::moqt::messages::object::{
             key_value_pair::{KeyValuePair, VariantType},
             subgroup::{SubgroupHeader, SubgroupId, SubgroupObjectField},
@@ -212,7 +210,7 @@ mod tests {
                 publisher_priority: 128,
             };
 
-            let mut buf = header.packetize().unwrap();
+            let buf = header.packetize().unwrap();
             let depacketized = SubgroupHeader::depacketize(buf.clone()).unwrap();
 
             assert_eq!(header.message_type, depacketized.message_type);
@@ -237,7 +235,7 @@ mod tests {
                 publisher_priority: 64,
             };
 
-            let mut buf = header.packetize().unwrap();
+            let buf = header.packetize().unwrap();
             let depacketized = SubgroupHeader::depacketize(buf.clone()).unwrap();
 
             assert_eq!(header.message_type, depacketized.message_type);
@@ -265,7 +263,7 @@ mod tests {
                 publisher_priority: 32,
             };
 
-            let mut buf = header.packetize().unwrap();
+            let buf = header.packetize().unwrap();
             let depacketized = SubgroupHeader::depacketize(buf.clone()).unwrap();
 
             assert_eq!(header.message_type, depacketized.message_type);
@@ -294,7 +292,7 @@ mod tests {
                 object_payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
             };
 
-            let mut buf = object_field.packetize();
+            let buf = object_field.packetize();
             let depacketized = SubgroupObjectField::depacketize(buf.clone()).unwrap();
 
             assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
@@ -323,7 +321,7 @@ mod tests {
                 object_payload: vec![0x11, 0x22, 0x33],
             };
 
-            let mut buf = object_field.packetize();
+            let buf = object_field.packetize();
             let depacketized = SubgroupObjectField::depacketize(buf.clone()).unwrap();
 
             assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
