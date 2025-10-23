@@ -1,6 +1,9 @@
 use bytes::BytesMut;
 
-use crate::modules::moqt::messages::variable_integer::read_variable_integer_from_buffer;
+use crate::modules::moqt::messages::{
+    variable_bytes::write_variable_bytes,
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+};
 
 pub enum VariantType {
     Odd(Vec<u8>),
@@ -33,17 +36,15 @@ impl KeyValuePair {
 
     pub(crate) fn packetize(&self) -> BytesMut {
         let mut buf = BytesMut::new();
-        buf.extend(self.key.to_be_bytes());
+        buf.extend(write_variable_integer(self.key));
         match &self.value {
             VariantType::Odd(value) => {
-                buf.extend(value.len().to_be_bytes());
-                buf.extend(value);
-                buf
+                buf.extend(write_variable_bytes(value));
             }
             VariantType::Even(value) => {
-                buf.extend(value.to_be_bytes());
-                buf
+                buf.extend(write_variable_integer(*value));
             }
         }
+        buf
     }
 }

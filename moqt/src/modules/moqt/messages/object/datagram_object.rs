@@ -71,8 +71,7 @@ impl DatagramObject {
     }
 
     fn validate_message_type(message_type: u64) -> bool {
-        (0x00..=0x07).contains(&message_type)
-            || message_type == 0x20 || message_type == 0x21
+        (0x00..=0x07).contains(&message_type) || message_type == 0x20 || message_type == 0x21
     }
 
     fn read_object_id(message_type: u64, bytes: &mut BytesMut) -> anyhow::Result<u64> {
@@ -97,10 +96,10 @@ impl DatagramObject {
             Ok(Vec::new())
         } else {
             let extension_headers_length = read_variable_integer_from_buffer(bytes)?;
-            let mut extension_headers_bytes = bytes.split_to(extension_headers_length as usize);
+            let mut extension_headers_bytes = bytes.split_to(extension_headers_length as usize); // consume the bytes
             let mut extension_headers = Vec::new();
-            for _ in 0..extension_headers_length {
-                let result = ExtensionHeader::depacketize(&mut extension_headers_bytes)?;
+            while !extension_headers_bytes.is_empty() {
+                let result = ExtensionHeader::depacketize(&mut extension_headers_bytes)?; // this will consume bytes from extension_headers_bytes
                 extension_headers.push(result);
             }
             Ok(extension_headers)
@@ -124,23 +123,24 @@ impl DatagramObject {
         buf.extend(write_variable_integer(self.message_type));
         buf.extend(write_variable_integer(self.track_alias));
         buf.extend(write_variable_integer(self.group_id));
-        if self.object_id > 0 {
+        if self.message_type <= 0x03 || self.message_type == 0x20 || self.message_type == 0x21 {
             buf.extend(write_variable_integer(self.object_id));
         }
         buf.extend(write_variable_integer(self.publisher_priority as u64));
         self.write_extension_headers(&mut buf);
         self.write_object_status_or_payload(&mut buf);
-
         buf
     }
 
     fn write_extension_headers(&self, bytes: &mut BytesMut) {
         if self.message_type % 2 != 0 {
-            bytes.extend(write_variable_integer(self.extension_headers.len() as u64));
+            let mut headers_buf = BytesMut::new();
             for header in &self.extension_headers {
                 let header = header.packetize();
-                bytes.extend_from_slice(&header);
+                headers_buf.extend_from_slice(&header);
             }
+            bytes.extend(write_variable_integer(headers_buf.len() as u64));
+            bytes.extend(headers_buf);
         }
     }
 
@@ -149,6 +149,106 @@ impl DatagramObject {
             bytes.extend(write_variable_integer(self.object_status.unwrap() as u64));
         } else {
             bytes.extend_from_slice(&self.object_payload);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    mod success {
+
+        use crate::modules::moqt::messages::object::{
+            datagram_object::DatagramObject,
+            key_value_pair::{KeyValuePair, VariantType},
+            object_status::ObjectStatus,
+        };
+
+        #[test]
+        fn packetize_and_depacketize_payload_with_object_id_no_extensions() {
+            let object = DatagramObject {
+                message_type: 0x00,
+                track_alias: 1,
+                group_id: 2,
+                object_id: 3,
+                publisher_priority: 128,
+                extension_headers: vec![],
+                object_status: None,
+                object_payload: vec![0, 1, 2, 3],
+            };
+
+            let mut buf = object.packetize();
+            let depacketized = DatagramObject::depacketize(&mut buf).unwrap();
+
+            assert_eq!(object.message_type, depacketized.message_type);
+            assert_eq!(object.track_alias, depacketized.track_alias);
+            assert_eq!(object.group_id, depacketized.group_id);
+            assert_eq!(object.object_id, depacketized.object_id);
+            assert_eq!(object.publisher_priority, depacketized.publisher_priority);
+            assert!(depacketized.extension_headers.is_empty());
+            assert!(depacketized.object_status.is_none());
+            assert_eq!(object.object_payload, depacketized.object_payload);
+        }
+
+        #[test]
+        fn packetize_and_depacketize_payload_with_object_id_with_extensions() {
+            let object = DatagramObject {
+                message_type: 0x01,
+                track_alias: 1,
+                group_id: 2,
+                object_id: 3,
+                publisher_priority: 128,
+                extension_headers: vec![KeyValuePair {
+                    key: 0x3c, // PriorGroupIdGap
+                    value: VariantType::Even(5),
+                }],
+                object_status: None,
+                object_payload: vec![0, 1, 2, 3],
+            };
+
+            let mut buf = object.packetize();
+            let depacketized = DatagramObject::depacketize(&mut buf).unwrap();
+
+            assert_eq!(object.message_type, depacketized.message_type);
+            assert_eq!(object.track_alias, depacketized.track_alias);
+            assert_eq!(object.group_id, depacketized.group_id);
+            assert_eq!(object.object_id, depacketized.object_id);
+            assert_eq!(object.publisher_priority, depacketized.publisher_priority);
+            assert_eq!(
+                object.extension_headers[0].key,
+                depacketized.extension_headers[0].key
+            );
+            assert!(matches!(
+                depacketized.extension_headers[0].value,
+                VariantType::Even(5)
+            ));
+            assert!(depacketized.object_status.is_none());
+            assert_eq!(object.object_payload, depacketized.object_payload);
+        }
+
+        #[test]
+        fn packetize_and_depacketize_status_with_object_id_no_extensions() {
+            let object = DatagramObject {
+                message_type: 0x20,
+                track_alias: 1,
+                group_id: 2,
+                object_id: 3,
+                publisher_priority: 128,
+                extension_headers: vec![],
+                object_status: Some(ObjectStatus::DoesNotExist),
+                object_payload: vec![],
+            };
+
+            let mut buf = object.packetize();
+            let depacketized = DatagramObject::depacketize(&mut buf).unwrap();
+
+            assert_eq!(object.message_type, depacketized.message_type);
+            assert_eq!(object.track_alias, depacketized.track_alias);
+            assert_eq!(object.group_id, depacketized.group_id);
+            assert_eq!(object.object_id, depacketized.object_id);
+            assert_eq!(object.publisher_priority, depacketized.publisher_priority);
+            assert!(depacketized.extension_headers.is_empty());
+            assert_eq!(object.object_status, depacketized.object_status);
+            assert!(depacketized.object_payload.is_empty());
         }
     }
 }
