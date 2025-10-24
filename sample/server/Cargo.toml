@@ -13,3 +13,4 @@ uuid = { version = "1.18,1", features = ["v4"]}
 dashmap = "6.1.0"
 rcgen = "0.14.3"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+bytes = "1"

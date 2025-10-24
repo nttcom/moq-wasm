@@ -1,7 +1,7 @@
 use dashmap::{DashMap, DashSet};
 
 use crate::modules::types::{
-    SessionId, TrackName, TrackNamespace, TrackNamespacePrefix, TrackNamespaceWithTrackName,
+    SessionId, TrackNamespace, TrackNamespacePrefix, TrackNamespaceWithTrackName,
 };
 
 pub(crate) struct Relations {
@@ -14,8 +14,8 @@ pub(crate) struct Relations {
      */
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashSet<SessionId>>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashSet<SessionId>>,
-    pub(crate) published_tracks: DashMap<TrackNamespace, DashSet<TrackName>>,
-    pub(crate) subscribed_tracks: DashMap<TrackNamespaceWithTrackName, DashSet<TrackName>>,
+    pub(crate) published_tracks: DashMap<TrackNamespaceWithTrackName, SessionId>,
+    pub(crate) subscribed_tracks: DashMap<TrackNamespaceWithTrackName, SessionId>,
 }
 
 impl Relations {

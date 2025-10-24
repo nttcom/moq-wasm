@@ -149,11 +149,10 @@ impl<T: TransportProtocol> DatagramSender<T> {
         extension_headers
     }
 
-    pub fn send(&self, object: DatagramObject) {
+    pub fn send(&self, object: DatagramObject) -> anyhow::Result<()> {
         let bytes = object.packetize();
         self.session_context
             .transport_connection
             .send_datagram(bytes)
-            .unwrap();
     }
 }

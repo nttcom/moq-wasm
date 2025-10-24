@@ -166,7 +166,7 @@ impl<T: TransportProtocol> Publisher<T> {
         Ok(StreamSender::new(send_stream))
     }
 
-    pub async fn create_datagram(&self, track_alias: u64) -> DatagramSender<T> {
+    pub fn create_datagram(&self, track_alias: u64) -> DatagramSender<T> {
         DatagramSender::new(track_alias, self.session.clone())
     }
 
