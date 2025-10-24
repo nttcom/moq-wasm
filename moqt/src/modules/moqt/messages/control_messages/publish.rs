@@ -15,6 +15,11 @@ use crate::modules::moqt::messages::{
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
+pub enum ContentExistsPair {
+    False,
+    True(Location),
+}
+
 pub(crate) struct Publish {
     pub(crate) request_id: u64,
     pub(crate) track_namespace_tuple: Vec<String>,

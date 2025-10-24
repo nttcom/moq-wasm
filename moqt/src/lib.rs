@@ -4,16 +4,24 @@ use std::net::SocketAddr;
 
 mod modules;
 
+pub use crate::modules::moqt::messages::control_messages::enums::FilterType;
+pub use crate::modules::moqt::messages::control_messages::group_order::GroupOrder;
 pub use modules::moqt::enums::SessionEvent;
 pub use modules::moqt::enums::{
-    Authorization, ContentExists, DeliveryTimeout, Forward,
-    MaxCacheDuration, RequestId, SubscriberPriority, TrackNamespace,
+    Authorization, ContentExists, DeliveryTimeout, Forward, MaxCacheDuration, RequestId,
+    SubscriberPriority, TrackNamespace,
 };
+pub use modules::moqt::options::PublishOption;
+pub use modules::moqt::options::SubscribeOption;
 pub use modules::moqt::protocol::QUIC;
 pub use modules::moqt::protocol::TransportProtocol;
 pub use modules::moqt::sessions::publisher::Publisher;
 pub use modules::moqt::sessions::session::Session;
 pub use modules::moqt::sessions::subscriber::Subscriber;
+pub use modules::moqt::streams::datagram::datagram_receiver::DatagramReceiver;
+pub use modules::moqt::streams::datagram::datagram_sender::DatagramHeader;
+pub use modules::moqt::streams::datagram::datagram_sender::DatagramSender;
+pub use modules::moqt::messages::object::datagram_object::DatagramObject;
 
 pub struct ServerConfig {
     pub port: u16,

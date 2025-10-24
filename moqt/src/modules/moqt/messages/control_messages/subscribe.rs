@@ -16,6 +16,13 @@ use anyhow::Context;
 use bytes::BytesMut;
 use tracing;
 
+pub enum FilterTypePair {
+    LatestObject,
+    LatestGroup,
+    AbsoluteStart(Location),
+    AbsoluteRange(Location, u64),
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Subscribe {
     pub(crate) request_id: u64,

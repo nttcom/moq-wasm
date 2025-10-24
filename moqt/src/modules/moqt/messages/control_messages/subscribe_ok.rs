@@ -13,6 +13,11 @@ use crate::modules::moqt::messages::{
 use anyhow::Context;
 use bytes::BytesMut;
 
+pub enum ContentExistsPair {
+    False,
+    True(Location),
+}
+
 #[derive(Debug, PartialEq)]
 pub struct SubscribeOk {
     pub(crate) request_id: u64,

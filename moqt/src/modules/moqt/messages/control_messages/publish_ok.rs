@@ -15,6 +15,13 @@ use crate::modules::moqt::messages::{
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
+pub enum FilterTypePair {
+    LatestObject,
+    LatestGroup,
+    AbsoluteStart(Location),
+    AbsoluteRange(Location, u64),
+}
+
 pub(crate) struct PublishOk {
     pub(crate) request_id: u64,
     pub(crate) forward: bool,

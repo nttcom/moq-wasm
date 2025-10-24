@@ -7,9 +7,9 @@ use crate::modules::moqt::messages::{
 };
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub(crate) struct Location {
-    pub(crate) group_id: u64,
-    pub(crate) object_id: u64,
+pub struct Location {
+    pub group_id: u64,
+    pub object_id: u64,
 }
 
 impl MOQTMessage for Location {

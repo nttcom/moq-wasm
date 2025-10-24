@@ -3,9 +3,10 @@ use std::sync::Arc;
 use dashmap::DashSet;
 
 use crate::modules::{
+    enums::Location,
     relations::Relations,
     repositories::session_repository::SessionRepository,
-    types::{SessionId, TrackNamespace, TrackNamespacePrefix},
+    types::{GroupOrder, SessionId, TrackNamespace, TrackNamespacePrefix},
 };
 
 pub(crate) struct SequenceHandler {
@@ -162,7 +163,71 @@ impl SequenceHandler {
         }
     }
 
-    pub(crate) fn publish(&self) {}
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn publish(
+        &self,
+        session_id: SessionId,
+        track_namespace: String,
+        track_name: String,
+        track_alias: u64,
+        group_order: GroupOrder,
+        is_content_exist: bool,
+        location: Option<Location>,
+        is_forward: bool,
+        delivery_timeout: u64,
+        max_cache_duration: u64,
+    ) {
+        tracing::info!("publish namespace");
+        let full_track_namespace = format!("{}:{}", track_namespace, track_name);
+
+        tracing::info!("New namespace '{}' has been subscribed.", track_namespace);
+        self.tables
+            .published_tracks
+            .insert(full_track_namespace.clone(), session_id);
+        tracing::debug!(
+            "publisher_namespaces: {:?}",
+            self.tables.publisher_namespaces
+        );
+        // The draft defines that the relay requires to send `PUBLISH_NAMESPACE` message to
+        // any subscriber that has interests in the namespace
+        // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
+
+        // Convert DashMap<Namespace, DashSet<Uuid>> to DashMap<Uuid, DashSet<Namespace>>
+        let combined = DashSet::new();
+        self.tables
+            .subscriber_namespaces
+            .iter()
+            .filter(|entry| entry.key().starts_with(track_namespace.as_str()))
+            .for_each(|entry| {
+                entry.value().iter().for_each(|session_id| {
+                    combined.insert(*session_id);
+                })
+            });
+        tracing::debug!("The namespace are subscribed by: {:?}", combined);
+        for session_id in combined {
+            let publisher = self
+                .session_repo
+                .lock()
+                .await
+                .get_publisher(session_id)
+                .await;
+            if let Some(publisher) = publisher {
+                match publisher
+                    .send_publish_namespace(track_namespace.clone())
+                    .await
+                {
+                    Ok(_) => tracing::info!(
+                        "Sent publish namespace '{}' to {}",
+                        track_namespace,
+                        session_id
+                    ),
+                    Err(_) => tracing::error!("Failed to send publish namespace"),
+                }
+            } else {
+                tracing::warn!("No publisher");
+            }
+        }
+    }
 
     pub(crate) fn subscribe(&self) {}
 }
