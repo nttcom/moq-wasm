@@ -29,7 +29,9 @@ impl<T: TransportProtocol> Session<T> {
     }
 
     pub fn create_publisher(&self) -> Publisher<T> {
-        Publisher::<T>::new(self.inner.clone())
+        Publisher::<T> {
+            session: self.inner.clone(),
+        }
     }
 
     pub fn create_subscriber(&self) -> Subscriber<T> {

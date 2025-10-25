@@ -1,5 +1,5 @@
 use anyhow::bail;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 
 use crate::modules::moqt::messages::{
     object::{key_value_pair::KeyValuePair, object_status::ObjectStatus},
@@ -34,15 +34,16 @@ type ExtensionHeader = KeyValuePair;
 // | 0x21 | No           | Yes        | Yes       | Status           |
 // +------+--------------+------------+-----------+------------------+
 
+#[derive(Debug, Clone)]
 pub struct DatagramObject {
     pub(crate) message_type: u64,
-    pub(crate) track_alias: u64,
+    pub track_alias: u64,
     pub(crate) group_id: u64,
     pub(crate) object_id: u64,
     pub(crate) publisher_priority: u8,
     pub(crate) extension_headers: Vec<ExtensionHeader>,
     pub(crate) object_status: Option<ObjectStatus>,
-    pub(crate) object_payload: Vec<u8>,
+    pub(crate) object_payload: Bytes,
 }
 
 impl DatagramObject {
@@ -66,7 +67,7 @@ impl DatagramObject {
             publisher_priority,
             extension_headers,
             object_status,
-            object_payload,
+            object_payload: Bytes::from(object_payload),
         })
     }
 
@@ -157,6 +158,8 @@ impl DatagramObject {
 mod tests {
     mod success {
 
+        use bytes::Bytes;
+
         use crate::modules::moqt::messages::object::{
             datagram_object::DatagramObject,
             key_value_pair::{KeyValuePair, VariantType},
@@ -173,7 +176,7 @@ mod tests {
                 publisher_priority: 128,
                 extension_headers: vec![],
                 object_status: None,
-                object_payload: vec![0, 1, 2, 3],
+                object_payload: Bytes::from(vec![0, 1, 2, 3]),
             };
 
             let mut buf = object.packetize();
@@ -202,7 +205,7 @@ mod tests {
                     value: VariantType::Even(5),
                 }],
                 object_status: None,
-                object_payload: vec![0, 1, 2, 3],
+                object_payload: Bytes::from(vec![0, 1, 2, 3]),
             };
 
             let mut buf = object.packetize();
@@ -235,7 +238,7 @@ mod tests {
                 publisher_priority: 128,
                 extension_headers: vec![],
                 object_status: Some(ObjectStatus::DoesNotExist),
-                object_payload: vec![],
+                object_payload: Bytes::from(vec![]),
             };
 
             let mut buf = object.packetize();

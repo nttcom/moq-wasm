@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 #[async_trait]
-pub(crate) trait DatagramReceiver {
+pub(crate) trait DatagramReceiver: 'static + Send + Sync {
     async fn receive(&self) -> anyhow::Result<moqt::DatagramObject>;
 }
 

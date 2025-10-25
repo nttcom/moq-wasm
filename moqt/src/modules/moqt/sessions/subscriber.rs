@@ -153,7 +153,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         Ok(StreamReceiver::new(send_stream))
     }
 
-    pub async fn accept_datagram(&self) -> DatagramReceiver<T> {
+    pub fn accept_datagram(&self) -> DatagramReceiver<T> {
         DatagramReceiver {
             session_context: self.session.clone(),
         }

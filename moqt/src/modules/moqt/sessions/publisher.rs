@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::bail;
@@ -40,18 +43,10 @@ pub struct PublishResult {
 }
 
 pub struct Publisher<T: TransportProtocol> {
-    session: Arc<SessionContext<T>>,
-    track_alias: AtomicU64,
+    pub(crate) session: Arc<SessionContext<T>>,
 }
 
 impl<T: TransportProtocol> Publisher<T> {
-    pub(crate) fn new(session: Arc<SessionContext<T>>) -> Self {
-        Self {
-            session,
-            track_alias: AtomicU64::new(0),
-        }
-    }
-
     pub async fn publish_namespace(&self, namespace: String) -> anyhow::Result<()> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -171,9 +166,11 @@ impl<T: TransportProtocol> Publisher<T> {
     }
 
     fn get_track_alias(&self) -> u64 {
-        let id = self.track_alias.load(Ordering::SeqCst);
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_nanos() as u64;
         tracing::debug!("request_id: {}", id);
-        self.track_alias.fetch_add(1, Ordering::SeqCst);
         id
     }
 }

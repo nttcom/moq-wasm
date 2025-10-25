@@ -5,11 +5,13 @@ use crate::modules::moqt::messages::{
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 
+#[derive(Debug, Clone)]
 pub enum VariantType {
     Odd(Vec<u8>),
     Even(u64),
 }
 
+#[derive(Debug, Clone)]
 pub struct KeyValuePair {
     pub key: u64,
     pub value: VariantType,
