@@ -19,8 +19,9 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         &self,
         track_namespace: String,
         track_name: String,
+        track_alias: u64,
     ) -> anyhow::Result<PublishResult>;
-    async fn create_datagram(&self, track_alias: u64) -> Box<dyn DatagramSender>;
+    fn create_datagram(&self, track_alias: u64) -> Box<dyn DatagramSender>;
 }
 
 #[async_trait]
@@ -33,8 +34,10 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         &self,
         track_namespace: String,
         track_name: String,
+        track_alias: u64,
     ) -> anyhow::Result<PublishResult> {
-        let option = moqt::PublishOption::default();
+        let mut option = moqt::PublishOption::default();
+        option.track_alias = track_alias;
         let result = self.publish(track_namespace, track_name, option).await?;
         let is_group_order_ascending = result.group_order == moqt::GroupOrder::Ascending;
         Ok(PublishResult {
@@ -48,7 +51,7 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         })
     }
 
-    async fn create_datagram(&self, track_alias: u64) -> Box<dyn DatagramSender> {
+    fn create_datagram(&self, track_alias: u64) -> Box<dyn DatagramSender> {
         let sender = self.create_datagram(track_alias);
         Box::new(sender)
     }

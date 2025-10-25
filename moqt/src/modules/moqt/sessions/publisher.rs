@@ -1,10 +1,4 @@
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::sync::Arc;
 
 use anyhow::bail;
 
@@ -101,7 +95,7 @@ impl<T: TransportProtocol> Publisher<T> {
             request_id,
             track_namespace_tuple: vec_namespace,
             track_name,
-            track_alias: self.get_track_alias(),
+            track_alias: option.track_alias,
             group_order: option.group_order,
             content_exists: option.content_exists,
             largest_location: option.largest_location,
@@ -163,14 +157,5 @@ impl<T: TransportProtocol> Publisher<T> {
 
     pub fn create_datagram(&self, track_alias: u64) -> DatagramSender<T> {
         DatagramSender::new(track_alias, self.session.clone())
-    }
-
-    fn get_track_alias(&self) -> u64 {
-        let id = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_nanos() as u64;
-        tracing::debug!("request_id: {}", id);
-        id
     }
 }

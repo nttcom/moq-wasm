@@ -7,7 +7,7 @@ pub struct RelayManager {
 }
 
 impl RelayManager {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             relay_map: DashMap::new()
         }

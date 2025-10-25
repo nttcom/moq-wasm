@@ -6,11 +6,11 @@ use crate::modules::{
 };
 
 pub(crate) struct Relay {
-    relay_properties: RelayProperties,
+    pub(crate) relay_properties: RelayProperties,
 }
 
 impl Relay {
-    fn add_object_receiver(
+    pub(crate) fn add_object_receiver(
         &mut self,
         track_alias: u64,
         datagram_receiver: Box<dyn DatagramReceiver>,
@@ -32,7 +32,7 @@ impl Relay {
         });
     }
 
-    fn add_object_sender(&mut self, track_alias: u64, datagram_sender: Box<dyn DatagramSender>) {
+    pub(crate) fn add_object_sender(&mut self, track_alias: u64, datagram_sender: Box<dyn DatagramSender>) {
         self.initialize_if_needed(track_alias);
         let mut receiver = self
             .relay_properties
