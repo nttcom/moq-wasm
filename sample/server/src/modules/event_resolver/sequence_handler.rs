@@ -3,7 +3,7 @@ use std::sync::Arc;
 use dashmap::DashSet;
 
 use crate::modules::{
-    enums::Location,
+    enums::{FilterType, Location},
     relations::Relations,
     repositories::session_repository::SessionRepository,
     types::{GroupOrder, SessionId, TrackNamespace, TrackNamespacePrefix},
@@ -227,7 +227,33 @@ impl SequenceHandler {
                 tracing::warn!("No publisher");
             }
         }
+        let subscriber = self
+            .session_repo
+            .lock()
+            .await
+            .get_subscriber(session_id)
+            .await;
+        if let Some(subscriber) = subscriber {
+            let _ = subscriber
+                .send_subscribe(track_namespace, track_name, track_alias)
+                .await
+                .inspect_err(|_| tracing::error!("Failed to send subscribe"));
+            let datagram_receiver = subscriber.accept_datagram();
+        }
     }
 
-    pub(crate) fn subscribe(&self) {}
+    pub(crate) fn subscribe(
+        &self,
+        session_id: SessionId,
+        namespaces: String,
+        track_name: String,
+        track_alias: u64,
+        subscriber_priority: u8,
+        group_order: GroupOrder,
+        is_content_exist: bool,
+        is_forward: bool,
+        filter_type: FilterType,
+        delivery_timeout: u64,
+    ) {
+    }
 }

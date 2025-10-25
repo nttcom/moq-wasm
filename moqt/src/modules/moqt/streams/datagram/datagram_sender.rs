@@ -74,7 +74,7 @@ impl<T: TransportProtocol> DatagramSender<T> {
             publisher_priority: datagram_header.publisher_priority,
             extension_headers,
             object_status: None,
-            object_payload: bytes.to_vec(),
+            object_payload: bytes.freeze(),
         })
     }
 
@@ -150,6 +150,17 @@ impl<T: TransportProtocol> DatagramSender<T> {
     }
 
     pub fn send(&self, object: DatagramObject) -> anyhow::Result<()> {
+        let bytes = object.packetize();
+        self.session_context
+            .transport_connection
+            .send_datagram(bytes)
+    }
+
+    pub fn overwrite_track_alias_then_send(
+        &self,
+        mut object: DatagramObject,
+    ) -> anyhow::Result<()> {
+        object.track_alias = self.track_alias;
         let bytes = object.packetize();
         self.session_context
             .transport_connection
