@@ -50,7 +50,22 @@ impl EventHandler {
                                 is_forward,
                                 delivery_timeout,
                                 max_cache_duration,
-                            ) => todo!(),
+                            ) => {
+                                sequense_handler
+                                    .publish(
+                                        session_id,
+                                        namespaces,
+                                        track_name,
+                                        track_alias,
+                                        group_order,
+                                        is_content_exist,
+                                        location,
+                                        is_forward,
+                                        delivery_timeout,
+                                        max_cache_duration,
+                                    )
+                                    .await
+                            }
                             MOQTMessageReceived::Subscribe(
                                 session_id,
                                 namespaces,
@@ -62,7 +77,22 @@ impl EventHandler {
                                 is_forward,
                                 filter_type,
                                 delivery_timeout,
-                            ) => todo!(),
+                            ) => {
+                                sequense_handler
+                                    .subscribe(
+                                        session_id,
+                                        namespaces,
+                                        track_name,
+                                        track_alias,
+                                        subscriber_priority,
+                                        group_order,
+                                        is_content_exist,
+                                        is_forward,
+                                        filter_type,
+                                        delivery_timeout,
+                                    )
+                                    .await
+                            }
                         }
                     } else {
                         tracing::error!("Failed to receive session event");
