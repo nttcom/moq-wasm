@@ -2,34 +2,43 @@ use std::sync::Arc;
 
 use anyhow::bail;
 
-use crate::modules::{
-    moqt::{
-        enums::ResponseMessage,
-        messages::{
-            control_message_type::ControlMessageType,
-            control_messages::{
-                group_order::GroupOrder, subscribe::Subscribe,
-                subscribe_namespace::SubscribeNamespace,
+use crate::{
+    DatagramObject,
+    modules::{
+        moqt::{
+            enums::ResponseMessage,
+            messages::{
+                control_message_type::ControlMessageType,
+                control_messages::{
+                    group_order::GroupOrder, subscribe::Subscribe,
+                    subscribe_namespace::SubscribeNamespace,
+                },
             },
+            options::SubscribeOption,
+            protocol::TransportProtocol,
+            sessions::session_context::SessionContext,
+            streams::{
+                datagram::datagram_receiver::DatagramReceiver,
+                stream::stream_receiver::StreamReceiver,
+            },
+            utils,
         },
-        options::SubscribeOption,
-        protocol::TransportProtocol,
-        sessions::session_context::SessionContext,
-        streams::{
-            datagram::datagram_receiver::DatagramReceiver, stream::stream_receiver::StreamReceiver,
-        },
-        utils,
+        transport::transport_connection::TransportConnection,
     },
-    transport::transport_connection::TransportConnection,
 };
 
-pub struct SubscribeResult {
+pub struct Subscription {
     pub track_alias: u64,
     pub expires: u64,
     pub group_order: GroupOrder,
     pub content_exists: bool,
     pub start_location_group_id: Option<u64>,
     pub start_location_object_id: Option<u64>,
+}
+
+pub enum Accepted<T: TransportProtocol> {
+    Stream(StreamReceiver<T>),
+    Datagram(DatagramReceiver, DatagramObject),
 }
 
 pub struct Subscriber<T: TransportProtocol> {
@@ -79,7 +88,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         track_name: String,
         track_alias: u64,
         option: SubscribeOption,
-    ) -> anyhow::Result<SubscribeResult> {
+    ) -> anyhow::Result<Subscription> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -130,7 +139,7 @@ impl<T: TransportProtocol> Subscriber<T> {
                         } else {
                             (None, None)
                         };
-                    Ok(SubscribeResult {
+                    Ok(Subscription {
                         track_alias,
                         expires,
                         group_order,
@@ -148,14 +157,20 @@ impl<T: TransportProtocol> Subscriber<T> {
         }
     }
 
-    pub async fn accept_stream(&self) -> anyhow::Result<StreamReceiver<T>> {
-        let send_stream = self.session.transport_connection.accept_uni().await?;
-        Ok(StreamReceiver::new(send_stream))
-    }
+    pub async fn accept_stream_or_datagram(&self, track_alias: u64) -> anyhow::Result<Accepted<T>> {
+        let mut datagram_receiver = DatagramReceiver::new(self.session.clone(), track_alias).await;
 
-    pub fn accept_datagram(&self) -> DatagramReceiver<T> {
-        DatagramReceiver {
-            session_context: self.session.clone(),
+        tokio::select! {
+            stream = self.session.transport_connection.accept_uni() => {
+                Ok(Accepted::Stream(StreamReceiver::new(stream?)))
+            }
+            datagram = datagram_receiver.receive() => {
+                if let Ok(datagram) = datagram {
+                    Ok(Accepted::Datagram(datagram_receiver, datagram))
+                } else {
+                    bail!("Failed to receive datagram")
+                }
+            }
         }
     }
 }

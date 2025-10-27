@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use moqt::DatagramObject;
+
 use crate::modules::{
     core::{datagram_receiver::DatagramReceiver, datagram_sender::DatagramSender},
     relaies::relay_properties::RelayProperties,
@@ -14,8 +16,14 @@ impl Relay {
         &mut self,
         track_alias: u64,
         datagram_receiver: Box<dyn DatagramReceiver>,
+        object_datagram: moqt::DatagramObject,
     ) {
         self.initialize_if_needed(track_alias);
+        self.relay_properties
+            .object_queue
+            .get_mut(&track_alias)
+            .unwrap()
+            .push_back(object_datagram);
         let queue = self.relay_properties.object_queue.clone();
         self.relay_properties.joinset.spawn(async move {
             while let Ok(datagram_object) = datagram_receiver.receive().await {
@@ -32,7 +40,11 @@ impl Relay {
         });
     }
 
-    pub(crate) fn add_object_sender(&mut self, track_alias: u64, datagram_sender: Box<dyn DatagramSender>) {
+    pub(crate) fn add_object_sender(
+        &mut self,
+        track_alias: u64,
+        datagram_sender: Box<dyn DatagramSender>,
+    ) {
         self.initialize_if_needed(track_alias);
         let mut receiver = self
             .relay_properties

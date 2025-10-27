@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::modules::core::datagram_sender::DatagramSender;
 
-pub(crate) struct PublishResult {
+pub(crate) struct Publication {
     pub is_group_order_ascending: bool,
     pub subscriber_priority: u8,
     pub forward: bool,
@@ -20,7 +20,7 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         track_namespace: String,
         track_name: String,
         track_alias: u64,
-    ) -> anyhow::Result<PublishResult>;
+    ) -> anyhow::Result<Publication>;
     fn create_datagram(&self, track_alias: u64) -> Box<dyn DatagramSender>;
 }
 
@@ -35,12 +35,12 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         track_namespace: String,
         track_name: String,
         track_alias: u64,
-    ) -> anyhow::Result<PublishResult> {
+    ) -> anyhow::Result<Publication> {
         let mut option = moqt::PublishOption::default();
         option.track_alias = track_alias;
         let result = self.publish(track_namespace, track_name, option).await?;
         let is_group_order_ascending = result.group_order == moqt::GroupOrder::Ascending;
-        Ok(PublishResult {
+        Ok(Publication {
             is_group_order_ascending,
             subscriber_priority: result.subscriber_priority,
             forward: result.forward,
