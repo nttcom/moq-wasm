@@ -142,8 +142,8 @@ function setupClientCallbacks(client: MOQTClient): void {
     await client.sendAnnounceOkMessage(announcedNamespace)
   })
 
-  client.onAnnounceResponce(async (announceResponceMessage: any) => {
-    console.log({ announceResponceMessage })
+  client.onAnnounceResponse(async (announceResponseMessage: any) => {
+    console.log({ announceResponseMessage })
   })
 
   client.onSubscribe(async (subscribeMessage: any, isSuccess: any, code: any) => {
