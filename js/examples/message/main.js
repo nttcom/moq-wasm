@@ -45,8 +45,8 @@ init().then(async () => {
       await client.sendAnnounceOkMessage(announcedNamespace)
     })
 
-    client.onAnnounceResponce(async (announceResponceMessage) => {
-      console.log({ announceResponceMessage })
+    client.onAnnounceResponse(async (announceResponseMessage) => {
+      console.log({ announceResponseMessage })
     })
 
     client.onSubscribe(async (subscribeMessage, isSuccess, code) => {

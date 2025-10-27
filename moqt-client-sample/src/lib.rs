@@ -127,11 +127,11 @@ impl MOQTClient {
         self.callbacks.borrow_mut().set_announce_callback(callback);
     }
 
-    #[wasm_bindgen(js_name = onAnnounceResponce)]
-    pub fn set_announce_responce_callback(&mut self, callback: js_sys::Function) {
+    #[wasm_bindgen(js_name = onAnnounceResponse)]
+    pub fn set_announce_response_callback(&mut self, callback: js_sys::Function) {
         self.callbacks
             .borrow_mut()
-            .set_announce_responce_callback(callback);
+            .set_announce_response_callback(callback);
     }
 
     #[wasm_bindgen(js_name = onSubscribe)]
@@ -1163,7 +1163,7 @@ async fn control_message_handler(
                         .borrow_mut()
                         .set_namespace(announce_ok_message.track_namespace().clone());
 
-                    if let Some(callback) = callbacks.borrow().announce_responce_callback() {
+                    if let Some(callback) = callbacks.borrow().announce_response_callback() {
                         let v = serde_wasm_bindgen::to_value(&announce_ok_message).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
@@ -1176,7 +1176,7 @@ async fn control_message_handler(
                     )
                     .as_str());
 
-                    if let Some(callback) = callbacks.borrow().announce_responce_callback() {
+                    if let Some(callback) = callbacks.borrow().announce_response_callback() {
                         let v = serde_wasm_bindgen::to_value(&announce_error_message).unwrap();
                         callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
@@ -1761,7 +1761,7 @@ impl SubscriptionNode {
 struct MOQTCallbacks {
     setup_callback: Option<js_sys::Function>,
     announce_callback: Option<js_sys::Function>,
-    announce_responce_callback: Option<js_sys::Function>,
+    announce_response_callback: Option<js_sys::Function>,
     subscribe_callback: Option<js_sys::Function>,
     subscribe_response_callback: Option<js_sys::Function>,
     subscribe_announces_response_callback: Option<js_sys::Function>,
@@ -1778,7 +1778,7 @@ impl MOQTCallbacks {
         MOQTCallbacks {
             setup_callback: None,
             announce_callback: None,
-            announce_responce_callback: None,
+            announce_response_callback: None,
             subscribe_callback: None,
             subscribe_response_callback: None,
             subscribe_announces_response_callback: None,
@@ -1806,12 +1806,12 @@ impl MOQTCallbacks {
         self.announce_callback = Some(callback);
     }
 
-    pub fn announce_responce_callback(&self) -> Option<js_sys::Function> {
-        self.announce_responce_callback.clone()
+    pub fn announce_response_callback(&self) -> Option<js_sys::Function> {
+        self.announce_response_callback.clone()
     }
 
-    pub fn set_announce_responce_callback(&mut self, callback: js_sys::Function) {
-        self.announce_responce_callback = Some(callback);
+    pub fn set_announce_response_callback(&mut self, callback: js_sys::Function) {
+        self.announce_response_callback = Some(callback);
     }
 
     pub fn subscribe_callback(&self) -> Option<js_sys::Function> {
