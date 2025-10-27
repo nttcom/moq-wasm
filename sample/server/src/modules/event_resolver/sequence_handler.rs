@@ -3,6 +3,7 @@ use std::sync::Arc;
 use dashmap::DashSet;
 
 use crate::modules::{
+    core::subscriber::Accepted,
     enums::{FilterType, Location},
     relaies::{relay::Relay, relay_manager::RelayManager, relay_properties::RelayProperties},
     relations::Relations,
@@ -240,19 +241,26 @@ impl SequenceHandler {
                 .send_subscribe(track_namespace, track_name, track_alias)
                 .await
                 .inspect_err(|_| tracing::error!("Failed to send subscribe"));
-            let datagram_receiver = subscriber.accept_datagram();
-            if self.relay_manager.relay_map.contains_key(&track_alias) {
-                self.relay_manager
-                    .relay_map
-                    .get_mut(&track_alias)
-                    .unwrap()
-                    .add_object_receiver(track_alias, datagram_receiver);
-            } else {
-                let mut relay = Relay {
-                    relay_properties: RelayProperties::new(),
-                };
-                relay.add_object_receiver(track_alias, datagram_receiver);
-                self.relay_manager.relay_map.insert(track_alias, relay);
+            let datagram_receiver = subscriber.accept_stream_or_datagram(track_alias).await;
+            if datagram_receiver.is_err() {
+                tracing::error!("Failed to accept stream or datagram");
+                return;
+            }
+            let datagram_receiver = datagram_receiver.unwrap();
+            if let Accepted::Datagram(datagram_receiver, object) = datagram_receiver {
+                if self.relay_manager.relay_map.contains_key(&track_alias) {
+                    self.relay_manager
+                        .relay_map
+                        .get_mut(&track_alias)
+                        .unwrap()
+                        .add_object_receiver(track_alias, datagram_receiver, object);
+                } else {
+                    let mut relay = Relay {
+                        relay_properties: RelayProperties::new(),
+                    };
+                    relay.add_object_receiver(track_alias, datagram_receiver, object);
+                    self.relay_manager.relay_map.insert(track_alias, relay);
+                }
             }
         } else {
             tracing::warn!("No subscriber");

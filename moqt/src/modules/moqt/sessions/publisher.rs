@@ -26,7 +26,7 @@ use crate::{
     },
 };
 
-pub struct PublishResult {
+pub struct Publication {
     pub group_order: GroupOrder,
     pub subscriber_priority: SubscriberPriority,
     pub forward: Forward,
@@ -82,7 +82,7 @@ impl<T: TransportProtocol> Publisher<T> {
         track_namespace: String,
         track_name: String,
         option: PublishOption,
-    ) -> anyhow::Result<PublishResult> {
+    ) -> anyhow::Result<Publication> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -131,7 +131,7 @@ impl<T: TransportProtocol> Publisher<T> {
                         } else {
                             (None, None)
                         };
-                    Ok(PublishResult {
+                    Ok(Publication {
                         group_order,
                         subscriber_priority,
                         forward,

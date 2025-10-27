@@ -6,4 +6,5 @@ pub(crate) mod protocol;
 pub(crate) mod receive_message_sequence_handlers;
 pub(crate) mod sessions;
 pub(crate) mod streams;
+pub(crate) mod threads;
 pub(crate) mod utils;

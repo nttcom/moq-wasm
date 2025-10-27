@@ -6,7 +6,7 @@ use std::{
 use anyhow::bail;
 
 use crate::{
-    RequestId, SessionEvent, TransportProtocol,
+    DatagramObject, RequestId, SessionEvent, TransportProtocol,
     modules::moqt::{
         constants,
         enums::ResponseMessage,
@@ -32,6 +32,8 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     pub(crate) sender_map:
         tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
+    pub(crate) datagram_sender_map:
+        tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<DatagramObject>>>,
     pub(crate) subscribed_namespaces: tokio::sync::Mutex<HashSet<String>>,
 }
 
@@ -51,6 +53,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             request_id: AtomicU64::new(0),
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
+            datagram_sender_map: tokio::sync::RwLock::new(HashMap::new()),
             subscribed_namespaces: tokio::sync::Mutex::new(HashSet::new()),
         })
     }
@@ -70,6 +73,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             request_id: AtomicU64::new(1),
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
+            datagram_sender_map: tokio::sync::RwLock::new(HashMap::new()),
             subscribed_namespaces: tokio::sync::Mutex::new(HashSet::new()),
         })
     }

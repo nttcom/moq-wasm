@@ -2,7 +2,11 @@ use async_trait::async_trait;
 
 use crate::modules::core::datagram_receiver::DatagramReceiver;
 
-pub struct SubscribeResult {
+pub(crate) enum Accepted {
+    Datagram(Box<dyn DatagramReceiver>, moqt::DatagramObject),
+}
+
+pub struct Subscription {
     pub track_alias: u64,
     pub expires: u64,
     pub is_group_order_acsending: bool,
@@ -19,8 +23,8 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         track_namespace: String,
         track_name: String,
         track_alias: u64,
-    ) -> anyhow::Result<SubscribeResult>;
-    fn accept_datagram(&self) -> Box<dyn DatagramReceiver>;
+    ) -> anyhow::Result<Subscription>;
+    async fn accept_stream_or_datagram(&self, track_alias: u64) -> anyhow::Result<Accepted>;
 }
 
 #[async_trait]
@@ -33,7 +37,7 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
         track_namespace: String,
         track_name: String,
         track_alias: u64,
-    ) -> anyhow::Result<SubscribeResult> {
+    ) -> anyhow::Result<Subscription> {
         let result = self
             .subscribe(
                 track_namespace,
@@ -42,7 +46,7 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
                 moqt::SubscribeOption::default(),
             )
             .await?;
-        Ok(SubscribeResult {
+        Ok(Subscription {
             track_alias: result.track_alias,
             expires: result.expires,
             is_group_order_acsending: result.group_order == moqt::GroupOrder::Ascending,
@@ -52,7 +56,13 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
         })
     }
 
-    fn accept_datagram(&self) -> Box<dyn DatagramReceiver> {
-        Box::new(self.accept_datagram())
+    async fn accept_stream_or_datagram(&self, track_alias: u64) -> anyhow::Result<Accepted> {
+        let result = self.accept_stream_or_datagram(track_alias).await?;
+        match result {
+            moqt::Accepted::Stream(stream) => todo!(),
+            moqt::Accepted::Datagram(datagram, object) => {
+                Ok(Accepted::Datagram(Box::new(datagram), object))
+            }
+        }
     }
 }
