@@ -102,7 +102,7 @@ impl<T: TransportProtocol> Publisher<T> {
             forward: option.forward,
             parameters: vec![],
         };
-        let bytes = utils::create_full_message(ControlMessageType::PublishNamespace, publish);
+        let bytes = utils::create_full_message(ControlMessageType::Publish, publish);
         self.session.send_stream.send(&bytes).await?;
         tracing::info!("Publish namespace");
         let result = receiver.await;

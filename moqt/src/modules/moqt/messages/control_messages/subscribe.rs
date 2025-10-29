@@ -26,7 +26,6 @@ pub enum FilterTypePair {
 #[derive(Debug, PartialEq)]
 pub struct Subscribe {
     pub(crate) request_id: u64,
-    pub(crate) track_alias: u64,
     pub(crate) track_namespace: Vec<String>,
     pub(crate) track_name: String,
     pub(crate) subscriber_priority: u8,
@@ -45,9 +44,6 @@ impl MOQTMessage for Subscribe {
         }
         let subscribe_id = read_variable_integer_from_buffer(buf)
             .context("subscribe id")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let track_alias = read_variable_integer_from_buffer(buf)
-            .context("track alias")
             .map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let track_namespace_tuple_length = u8::try_from(
             read_variable_integer_from_buffer(buf)
@@ -69,8 +65,9 @@ impl MOQTMessage for Subscribe {
             read_variable_bytes_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
-        .context("track name")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        tracing::warn!("qqq track name: {:?}", track_name);
+        tracing::warn!("qqq buffer: {:?}", buf);
         let subscriber_priority = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .context("subscriber priority")
@@ -138,7 +135,6 @@ impl MOQTMessage for Subscribe {
 
         Ok(Subscribe {
             request_id: subscribe_id,
-            track_alias,
             track_namespace: track_namespace_tuple,
             track_name,
             subscriber_priority,
@@ -154,7 +150,6 @@ impl MOQTMessage for Subscribe {
     fn packetize(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.extend(write_variable_integer(self.request_id));
-        payload.extend(write_variable_integer(self.track_alias));
         // Track Namespace Number of elements
         let track_namespace_tuple_length = self.track_namespace.len();
         payload.extend(write_variable_integer(track_namespace_tuple_length as u64));
@@ -163,7 +158,7 @@ impl MOQTMessage for Subscribe {
             payload.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
         }
         payload.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
-        payload.extend(self.subscriber_priority.to_be_bytes());
+        payload.extend(write_variable_integer(self.subscriber_priority as u64));
         payload.extend(u8::from(self.group_order).to_be_bytes());
         payload.extend((self.forward as u8).to_be_bytes());
         payload.extend(write_variable_integer(u8::from(self.filter_type) as u64));
@@ -214,7 +209,6 @@ mod tests {
         #[test]
         fn packetize_latest_group() {
             let request_id = 0;
-            let track_alias = 0;
             let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
@@ -230,7 +224,6 @@ mod tests {
 
             let subscribe = Subscribe {
                 request_id,
-                track_alias,
                 track_namespace,
                 track_name,
                 subscriber_priority,
@@ -271,7 +264,6 @@ mod tests {
         #[test]
         fn packetize_absolute_start() {
             let request_id = 0;
-            let track_alias = 0;
             let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
@@ -290,7 +282,6 @@ mod tests {
 
             let subscribe = Subscribe {
                 request_id,
-                track_alias,
                 track_namespace,
                 track_name,
                 subscriber_priority,
@@ -307,7 +298,6 @@ mod tests {
             let expected_bytes_array = [
                 37, // Message Length(i)
                 0,  // Subscribe ID (i)
-                0,  // Track Alias (i)
                 2,  // Track Namespace(tuple): Number of elements
                 4,  // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -333,7 +323,6 @@ mod tests {
         #[test]
         fn packetize_absolute_range() {
             let request_id = 0;
-            let track_alias = 0;
             let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
@@ -352,7 +341,6 @@ mod tests {
 
             let subscribe = Subscribe {
                 request_id,
-                track_alias,
                 track_namespace,
                 track_name,
                 subscriber_priority,
@@ -369,7 +357,6 @@ mod tests {
             let expected_bytes_array = [
                 38, // Message Length(i)
                 0,  // Subscribe ID (i)
-                0,  // Track Alias (i)
                 2,  // Track Namespace(tuple): Number of elements
                 4,  // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -398,7 +385,6 @@ mod tests {
             let bytes_array = [
                 35, // Message Length(i)
                 0,  // Subscribe ID (i)
-                0,  // Track Alias (i)
                 2,  // Track Namespace(tuple): Number of elements
                 4,  // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -421,7 +407,6 @@ mod tests {
             let depacketized_subscribe = Subscribe::depacketize(&mut buf).unwrap();
 
             let request_id = 0;
-            let track_alias = 0;
             let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
@@ -436,7 +421,6 @@ mod tests {
             let subscribe_parameters = vec![version_specific_parameter];
             let expected_subscribe = Subscribe {
                 request_id,
-                track_alias,
                 track_namespace,
                 track_name,
                 subscriber_priority,
@@ -456,7 +440,6 @@ mod tests {
             let bytes_array = [
                 37, // Message Length(i)
                 0,  // Subscribe ID (i)
-                0,  // Track Alias (i)
                 2,  // Track Namespace(tuple): Number of elements
                 4,  // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -481,7 +464,6 @@ mod tests {
             let depacketized_subscribe = Subscribe::depacketize(&mut buf).unwrap();
 
             let request_id = 0;
-            let track_alias = 0;
             let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
@@ -499,7 +481,6 @@ mod tests {
             let subscribe_parameters = vec![version_specific_parameter];
             let expected_subscribe = Subscribe {
                 request_id,
-                track_alias,
                 track_namespace,
                 track_name,
                 subscriber_priority,
@@ -519,7 +500,6 @@ mod tests {
             let bytes_array = [
                 38, // Message Length(i)
                 0,  // Subscribe ID (i)
-                0,  // Track Alias (i)
                 2,  // Track Namespace(tuple): Number of elements
                 4,  // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -551,7 +531,6 @@ mod tests {
             };
 
             let request_id = 0;
-            let track_alias = 0;
             let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
             let track_name = "track_name".to_string();
             let subscriber_priority = 0;
@@ -569,7 +548,6 @@ mod tests {
             let subscribe_parameters = vec![version_specific_parameter];
             let expected_subscribe = Subscribe {
                 request_id,
-                track_alias,
                 track_namespace,
                 track_name,
                 subscriber_priority,

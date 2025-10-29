@@ -26,6 +26,7 @@ impl SubscribeHandler {
         session: Arc<SessionContext<T>>,
         mut bytes_mut: BytesMut,
     ) {
+        tracing::debug!("qqq: {:#?}", bytes_mut);
         let result = Subscribe::depacketize(&mut bytes_mut);
         if let Err(e) = result.as_ref() {
             let err = RequestError {
@@ -36,11 +37,8 @@ impl SubscribeHandler {
             };
             let bytes = utils::create_full_message(ControlMessageType::SubscribeError, err);
             match session.send_stream.send(&bytes).await {
-                Ok(_) => tracing::info!("send `Subscribe_Namespace_Error` OK."),
-                Err(e) => tracing::error!(
-                    "send `Subscribe_Namespace_Error` failed: {}.",
-                    e.to_string()
-                ),
+                Ok(_) => tracing::info!("send `SubscribeError` OK."),
+                Err(e) => tracing::error!("send `SubscribeError` failed: {}.", e.to_string()),
             }
         }
         let result = result.unwrap();
@@ -77,7 +75,7 @@ impl SubscribeHandler {
         tracing::info!("Subscribe OK");
         let subscribe_namespace_ok = SubscribeOk {
             request_id: result.request_id,
-            track_alias: result.track_alias,
+            track_alias: 0,
             expires: 0,
             group_order: result.group_order,
             content_exists: false,
@@ -93,7 +91,7 @@ impl SubscribeHandler {
                 let session_event = SessionEvent::Subscribe(
                     namespace,
                     result.track_name,
-                    result.track_alias,
+                    0,
                     result.subscriber_priority,
                     result.group_order,
                     false,

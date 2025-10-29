@@ -3,7 +3,7 @@ use std::sync::Arc;
 use dashmap::DashSet;
 
 use crate::modules::{
-    core::subscriber::Accepted,
+    core::subscriber::Acceptance,
     enums::{FilterType, Location},
     relaies::{relay::Relay, relay_manager::RelayManager, relay_properties::RelayProperties},
     relations::Relations,
@@ -192,7 +192,7 @@ impl SequenceHandler {
         self.tables
             .published_tracks
             .insert(full_track_namespace.clone(), session_id);
-        tracing::debug!("publisher_namespaces: {:?}", self.tables.published_tracks);
+        tracing::debug!("publisher_tracks: {:?}", self.tables.published_tracks);
         // The draft defines that the relay requires to send `PUBLISH_NAMESPACE` message to
         // any subscriber that has interests in the namespace
         // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
@@ -224,7 +224,7 @@ impl SequenceHandler {
                     Ok(_) => {
                         tracing::info!("Sent publish '{}' to {}", full_track_namespace, session_id)
                     }
-                    Err(_) => tracing::error!("Failed to send publish namespace"),
+                    Err(_) => tracing::error!("Failed to send publish"),
                 }
             } else {
                 tracing::warn!("No publisher");
@@ -237,17 +237,13 @@ impl SequenceHandler {
             .get_subscriber(session_id)
             .await;
         if let Some(subscriber) = subscriber {
-            let _ = subscriber
-                .send_subscribe(track_namespace, track_name, track_alias)
-                .await
-                .inspect_err(|_| tracing::error!("Failed to send subscribe"));
             let datagram_receiver = subscriber.accept_stream_or_datagram(track_alias).await;
             if datagram_receiver.is_err() {
                 tracing::error!("Failed to accept stream or datagram");
                 return;
             }
             let datagram_receiver = datagram_receiver.unwrap();
-            if let Accepted::Datagram(datagram_receiver, object) = datagram_receiver {
+            if let Acceptance::Datagram(datagram_receiver, object) = datagram_receiver {
                 if self.relay_manager.relay_map.contains_key(&track_alias) {
                     self.relay_manager
                         .relay_map
@@ -288,6 +284,20 @@ impl SequenceHandler {
             full_track_namespace,
             track_alias
         );
+        if let Some(subscriber_id) = self.tables.published_tracks.get(&full_track_namespace) {
+            if let Some(subscriber) = self
+                .session_repo
+                .lock()
+                .await
+                .get_subscriber(*subscriber_id.value())
+                .await
+            {
+                let _ = subscriber
+                    .send_subscribe(namespaces, track_name, track_alias)
+                    .await
+                    .inspect_err(|_| tracing::error!("Failed to send subscribe"));
+            }
+        }
         if let Some(publisher) = self
             .session_repo
             .lock()

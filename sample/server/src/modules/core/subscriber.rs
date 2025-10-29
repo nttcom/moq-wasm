@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::modules::core::datagram_receiver::DatagramReceiver;
 
-pub(crate) enum Accepted {
+pub(crate) enum Acceptance {
     Datagram(Box<dyn DatagramReceiver>, moqt::DatagramObject),
 }
 
@@ -22,9 +22,8 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         &self,
         track_namespace: String,
         track_name: String,
-        track_alias: u64,
     ) -> anyhow::Result<Subscription>;
-    async fn accept_stream_or_datagram(&self, track_alias: u64) -> anyhow::Result<Accepted>;
+    async fn accept_stream_or_datagram(&self, track_alias: u64) -> anyhow::Result<Acceptance>;
 }
 
 #[async_trait]
@@ -36,13 +35,11 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
         &self,
         track_namespace: String,
         track_name: String,
-        track_alias: u64,
     ) -> anyhow::Result<Subscription> {
         let result = self
             .subscribe(
                 track_namespace,
                 track_name,
-                track_alias,
                 moqt::SubscribeOption::default(),
             )
             .await?;
@@ -56,12 +53,12 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
         })
     }
 
-    async fn accept_stream_or_datagram(&self, track_alias: u64) -> anyhow::Result<Accepted> {
+    async fn accept_stream_or_datagram(&self, track_alias: u64) -> anyhow::Result<Acceptance> {
         let result = self.accept_stream_or_datagram(track_alias).await?;
         match result {
-            moqt::Accepted::Stream(stream) => todo!(),
-            moqt::Accepted::Datagram(datagram, object) => {
-                Ok(Accepted::Datagram(Box::new(datagram), object))
+            moqt::Acceptance::Stream(stream) => todo!(),
+            moqt::Acceptance::Datagram(datagram, object) => {
+                Ok(Acceptance::Datagram(Box::new(datagram), object))
             }
         }
     }

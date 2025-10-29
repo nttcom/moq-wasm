@@ -36,7 +36,7 @@ pub struct Subscription {
     pub start_location_object_id: Option<u64>,
 }
 
-pub enum Accepted<T: TransportProtocol> {
+pub enum Acceptance<T: TransportProtocol> {
     Stream(StreamReceiver<T>),
     Datagram(DatagramReceiver, DatagramObject),
 }
@@ -86,7 +86,6 @@ impl<T: TransportProtocol> Subscriber<T> {
         &self,
         track_namespace: String,
         track_name: String,
-        track_alias: u64,
         option: SubscribeOption,
     ) -> anyhow::Result<Subscription> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
@@ -97,9 +96,8 @@ impl<T: TransportProtocol> Subscriber<T> {
             .lock()
             .await
             .insert(request_id, sender);
-        let publish_namespace = Subscribe {
+        let subscribe = Subscribe {
             request_id,
-            track_alias,
             track_namespace: vec_namespace,
             track_name,
             subscriber_priority: option.subscriber_priority,
@@ -110,10 +108,9 @@ impl<T: TransportProtocol> Subscriber<T> {
             end_group: option.end_group,
             subscribe_parameters: vec![],
         };
-        let bytes =
-            utils::create_full_message(ControlMessageType::SubscribeNamespace, publish_namespace);
+        let bytes = utils::create_full_message(ControlMessageType::Subscribe, subscribe);
         self.session.send_stream.send(&bytes).await?;
-        tracing::info!("Subscribe namespace");
+        tracing::info!("Subscribe");
         let result = receiver.await;
         if let Err(e) = result {
             bail!("Failed to receive message: {}", e.to_string())
@@ -157,16 +154,19 @@ impl<T: TransportProtocol> Subscriber<T> {
         }
     }
 
-    pub async fn accept_stream_or_datagram(&self, track_alias: u64) -> anyhow::Result<Accepted<T>> {
+    pub async fn accept_stream_or_datagram(
+        &self,
+        track_alias: u64,
+    ) -> anyhow::Result<Acceptance<T>> {
         let mut datagram_receiver = DatagramReceiver::new(self.session.clone(), track_alias).await;
 
         tokio::select! {
             stream = self.session.transport_connection.accept_uni() => {
-                Ok(Accepted::Stream(StreamReceiver::new(stream?)))
+                Ok(Acceptance::Stream(StreamReceiver::new(stream?)))
             }
             datagram = datagram_receiver.receive() => {
                 if let Ok(datagram) = datagram {
-                    Ok(Accepted::Datagram(datagram_receiver, datagram))
+                    Ok(Acceptance::Datagram(datagram_receiver, datagram))
                 } else {
                     bail!("Failed to receive datagram")
                 }

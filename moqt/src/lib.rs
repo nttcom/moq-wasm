@@ -18,7 +18,7 @@ pub use modules::moqt::protocol::QUIC;
 pub use modules::moqt::protocol::TransportProtocol;
 pub use modules::moqt::sessions::publisher::Publisher;
 pub use modules::moqt::sessions::session::Session;
-pub use modules::moqt::sessions::subscriber::Accepted;
+pub use modules::moqt::sessions::subscriber::Acceptance;
 pub use modules::moqt::sessions::subscriber::Subscriber;
 pub use modules::moqt::streams::datagram::datagram_receiver::DatagramReceiver;
 pub use modules::moqt::streams::datagram::datagram_sender::DatagramHeader;
