@@ -16,6 +16,7 @@ use crate::{
     },
 };
 
+#[derive(Debug, Clone)]
 pub struct PublishNamespaceHandler<T: TransportProtocol> {
     session_context: Arc<SessionContext<T>>,
     request_id: u64,

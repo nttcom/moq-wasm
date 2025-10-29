@@ -4,7 +4,6 @@ use quinn::{self, RecvStream};
 use crate::modules::transport::transport_receive_stream::TransportReceiveStream;
 
 #[derive(Debug)]
-
 pub struct QUICReceiveStream {
     pub(crate) stable_id: usize,
     pub(crate) stream_id: u64,

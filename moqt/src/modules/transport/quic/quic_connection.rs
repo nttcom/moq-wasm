@@ -6,6 +6,7 @@ use crate::modules::transport::quic::quic_receive_stream::QUICReceiveStream;
 use crate::modules::transport::quic::quic_send_stream::QUICSendStream;
 use crate::modules::transport::transport_connection::TransportConnection;
 
+#[derive(Debug)]
 pub struct QUICConnection {
     connection: quinn::Connection,
 }

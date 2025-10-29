@@ -13,7 +13,7 @@ use crate::modules::moqt::threads::datagram_receive_thread::DatagramReceiveThrea
 
 pub struct Session<T: TransportProtocol> {
     inner: Arc<SessionContext<T>>,
-    event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent>>,
+    event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent<T>>>,
     message_receive_join_handle: tokio::task::JoinHandle<()>,
     datagram_receive_thread: tokio::task::JoinHandle<()>,
 }
@@ -21,7 +21,7 @@ pub struct Session<T: TransportProtocol> {
 impl<T: TransportProtocol> Session<T> {
     pub(crate) fn new(
         inner: SessionContext<T>,
-        event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
+        event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent<T>>,
     ) -> Self {
         let inner = Arc::new(inner);
         let message_receive_join_handle = ControlMessageReceiveThread::run(Arc::downgrade(&inner));
@@ -56,7 +56,7 @@ impl<T: TransportProtocol> Session<T> {
         subscribed_namespaces.clone()
     }
 
-    pub async fn receive_event(&self) -> anyhow::Result<SessionEvent> {
+    pub async fn receive_event(&self) -> anyhow::Result<SessionEvent<T>> {
         match self.event_receiver.lock().await.recv().await {
             Some(v) => Ok(v),
             None => bail!("Sender has been dropped."),

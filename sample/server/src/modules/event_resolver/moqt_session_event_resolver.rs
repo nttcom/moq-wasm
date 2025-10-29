@@ -72,7 +72,7 @@ impl MOQTSessionEventResolver {
                     delivery_timeout,
                 )
             }
-            moqt::SessionEvent::FatalError() => todo!(),
+            moqt::SessionEvent::ProtocolViolation() => todo!(),
         }
     }
 }
