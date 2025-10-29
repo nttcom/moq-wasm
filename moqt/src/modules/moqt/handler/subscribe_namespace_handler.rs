@@ -6,8 +6,7 @@ use crate::{
         messages::{
             control_message_type::ControlMessageType,
             control_messages::{
-                namespace_ok::NamespaceOk,
-                request_error::RequestError,
+                namespace_ok::NamespaceOk, request_error::RequestError,
                 subscribe_namespace::SubscribeNamespace,
             },
         },
@@ -16,6 +15,7 @@ use crate::{
     },
 };
 
+#[derive(Debug, Clone)]
 pub struct SubscribeNamespaceHandler<T: TransportProtocol> {
     session_context: Arc<SessionContext<T>>,
     request_id: u64,

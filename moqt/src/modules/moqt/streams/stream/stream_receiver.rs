@@ -4,6 +4,7 @@ use crate::modules::{
     moqt::protocol::TransportProtocol, transport::transport_receive_stream::TransportReceiveStream,
 };
 
+#[derive(Debug)]
 pub struct StreamReceiver<T: TransportProtocol> {
     receive_stream: tokio::sync::Mutex<T::ReceiveStream>,
 }

@@ -1,5 +1,15 @@
-use crate::modules::moqt::messages::control_messages::{
-    enums::FilterType, group_order::GroupOrder, location::Location,
+use crate::{
+    TransportProtocol,
+    modules::moqt::{
+        handler::{
+            publish_handler::PublishHandler, publish_namespace_handler::PublishNamespaceHandler,
+            subscribe_handler::SubscribeHandler,
+            subscribe_namespace_handler::SubscribeNamespaceHandler,
+        },
+        messages::control_messages::{
+            enums::FilterType, group_order::GroupOrder, location::Location, subscribe::Subscribe,
+        },
+    },
 };
 
 // message aliases
@@ -28,34 +38,15 @@ pub type DeliveryTimeout = u64;
 pub type MaxCacheDuration = u64;
 
 #[derive(Clone, Debug)]
-pub enum SessionEvent {
-    PublishNamespace(TrackNamespace),
-    SubscribeNameSpace(TrackNamespace),
-    Publish(
-        TrackNamespace,
-        TrackName,
-        TrackAlias,
-        GroupOrder,
-        ContentExists,
-        Option<Location>,
-        Forward,
-        DeliveryTimeout,
-        MaxCacheDuration,
-    ),
-    Subscribe(
-        TrackNamespace,
-        TrackName,
-        TrackAlias,
-        SubscriberPriority,
-        GroupOrder,
-        ContentExists,
-        Forward,
-        FilterType,
-        DeliveryTimeout,
-    ),
-    FatalError(),
+pub enum SessionEvent<T: TransportProtocol> {
+    PublishNamespace(PublishNamespaceHandler<T>),
+    SubscribeNameSpace(SubscribeNamespaceHandler<T>),
+    Publish(PublishHandler<T>),
+    Subscribe(SubscribeHandler<T>),
+    ProtocolViolation(),
 }
 
+#[derive(Clone, Debug)]
 pub(crate) enum ResponseMessage {
     SubscribeNameSpaceOk(RequestId),
     SubscribeNameSpaceError(RequestId, ErrorCode, ErrorPhrase),
@@ -84,6 +75,5 @@ pub(crate) enum ResponseMessage {
 
 pub enum StreamMessage {
     Header(),
-    ObjectField
+    ObjectField,
 }
-

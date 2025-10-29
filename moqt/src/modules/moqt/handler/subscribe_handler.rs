@@ -15,6 +15,7 @@ use crate::{
     },
 };
 
+#[derive(Debug, Clone)]
 pub struct SubscribeHandler<T: TransportProtocol> {
     session_context: Arc<SessionContext<T>>,
     request_id: u64,
