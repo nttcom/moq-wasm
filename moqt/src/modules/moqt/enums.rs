@@ -6,9 +6,7 @@ use crate::{
             subscribe_handler::SubscribeHandler,
             subscribe_namespace_handler::SubscribeNamespaceHandler,
         },
-        messages::control_messages::{
-            enums::FilterType, group_order::GroupOrder, location::Location, subscribe::Subscribe,
-        },
+        messages::control_messages::{publish_ok::PublishOk, subscribe_ok::SubscribeOk},
     },
 };
 
@@ -52,24 +50,9 @@ pub(crate) enum ResponseMessage {
     SubscribeNameSpaceError(RequestId, ErrorCode, ErrorPhrase),
     PublishNamespaceOk(RequestId),
     PublishNamespaceError(RequestId, ErrorCode, ErrorPhrase),
-    PublishOk(
-        RequestId,
-        GroupOrder,
-        SubscriberPriority,
-        Forward,
-        FilterType,
-        Option<Location>,
-        Option<EndGroup>,
-    ),
+    PublishOk(PublishOk),
     PublishError(RequestId, ErrorCode, ErrorPhrase),
-    SubscribeOk(
-        RequestId,
-        TrackAlias,
-        Expires,
-        GroupOrder,
-        ContentExists,
-        Option<Location>,
-    ),
+    SubscribeOk(SubscribeOk),
     SubscribeError(RequestId, ErrorCode, ErrorPhrase),
 }
 

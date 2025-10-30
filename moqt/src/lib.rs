@@ -11,15 +11,21 @@ pub use modules::moqt::enums::{
     Authorization, ContentExists, DeliveryTimeout, Forward, MaxCacheDuration, RequestId,
     SubscriberPriority, TrackNamespace,
 };
+pub use modules::moqt::handler::publish_handler::PublishHandler;
+pub use modules::moqt::handler::publish_namespace_handler::PublishNamespaceHandler;
+pub use modules::moqt::handler::subscribe_handler::SubscribeHandler;
+pub use modules::moqt::handler::subscribe_namespace_handler::SubscribeNamespaceHandler;
 pub use modules::moqt::messages::object::datagram_object::DatagramObject;
 pub use modules::moqt::options::PublishOption;
 pub use modules::moqt::options::SubscribeOption;
 pub use modules::moqt::protocol::QUIC;
 pub use modules::moqt::protocol::TransportProtocol;
+pub use modules::moqt::sessions::publication::Publication;
 pub use modules::moqt::sessions::publisher::Publisher;
 pub use modules::moqt::sessions::session::Session;
-pub use modules::moqt::sessions::subscriber::Acceptance;
 pub use modules::moqt::sessions::subscriber::Subscriber;
+pub use modules::moqt::sessions::subscription::Acceptance;
+pub use modules::moqt::sessions::subscription::Subscription;
 pub use modules::moqt::streams::datagram::datagram_receiver::DatagramReceiver;
 pub use modules::moqt::streams::datagram::datagram_sender::DatagramHeader;
 pub use modules::moqt::streams::datagram::datagram_sender::DatagramSender;

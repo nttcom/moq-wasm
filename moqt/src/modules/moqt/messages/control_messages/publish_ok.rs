@@ -22,6 +22,7 @@ pub enum FilterTypePair {
     AbsoluteRange(Location, u64),
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct PublishOk {
     pub(crate) request_id: u64,
     pub(crate) forward: bool,

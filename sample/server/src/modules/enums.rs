@@ -1,6 +1,12 @@
-use crate::modules::types::{
-    DeliveryTimeout, GroupOrder, IsContentExist, IsForward, MaxCacheDuration,
-    SessionId, SubscriberPriority, TrackAlias, TrackName, TrackNamespace, TrackNamespacePrefix,
+use crate::modules::{
+    core::handler::{
+        publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
+        subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
+    },
+    types::{
+        DeliveryTimeout, GroupOrder, IsContentExist, IsForward, MaxCacheDuration, SessionId,
+        SubscriberPriority, TrackAlias, TrackName, TrackNamespace, TrackNamespacePrefix,
+    },
 };
 
 pub(crate) struct Location {
@@ -16,30 +22,9 @@ pub enum FilterType {
 }
 
 pub(crate) enum MOQTMessageReceived {
-    PublishNameSpace(SessionId, TrackNamespace),
-    SubscribeNameSpace(SessionId, TrackNamespacePrefix),
-    Publish(
-        SessionId,
-        TrackNamespace,
-        TrackName,
-        TrackAlias,
-        GroupOrder,
-        IsContentExist,
-        Option<Location>,
-        IsForward,
-        DeliveryTimeout,
-        MaxCacheDuration,
-    ),
-    Subscribe(
-        SessionId,
-        TrackNamespace,
-        TrackName,
-        TrackAlias,
-        SubscriberPriority,
-        GroupOrder,
-        IsContentExist,
-        IsForward,
-        FilterType,
-        DeliveryTimeout,
-    ),
+    PublishNameSpace(SessionId, Box<dyn PublishNamespaceHandler>),
+    SubscribeNameSpace(SessionId, Box<dyn SubscribeNamespaceHandler>),
+    Publish(SessionId, Box<dyn PublishHandler>),
+    Subscribe(SessionId, Box<dyn SubscribeHandler>),
+    ProtocolViolation(),
 }

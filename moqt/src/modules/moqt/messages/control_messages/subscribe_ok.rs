@@ -18,7 +18,7 @@ pub enum ContentExistsPair {
     True(Location),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct SubscribeOk {
     pub(crate) request_id: u64,
     pub(crate) track_alias: u64,
