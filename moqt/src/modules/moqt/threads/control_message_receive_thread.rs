@@ -120,15 +120,9 @@ impl ControlMessageReceiveThread {
                         );
                     }
                 };
-                let reponse = ResponseMessage::SubscribeOk(
-                    result.request_id,
-                    result.track_alias,
-                    result.expires,
-                    result.group_order,
-                    result.content_exists,
-                    result.largest_location,
-                );
-                DepacketizeResult::ResponseMessage(result.request_id, reponse)
+                let request_id = result.request_id;
+                let reponse = ResponseMessage::SubscribeOk(result);
+                DepacketizeResult::ResponseMessage(request_id, reponse)
             }
             ControlMessageType::SubscribeError => {
                 let result = match RequestError::depacketize(&mut bytes_mut) {
@@ -169,16 +163,9 @@ impl ControlMessageReceiveThread {
                         );
                     }
                 };
-                let reponse = ResponseMessage::PublishOk(
-                    result.request_id,
-                    result.group_order,
-                    result.subscriber_priority,
-                    result.forward,
-                    result.filter_type,
-                    result.start_location,
-                    result.end_group,
-                );
-                DepacketizeResult::ResponseMessage(result.request_id, reponse)
+                let request_id = result.request_id;
+                let reponse = ResponseMessage::PublishOk(result);
+                DepacketizeResult::ResponseMessage(request_id, reponse)
             }
             ControlMessageType::PublishError => {
                 let result = match RequestError::depacketize(&mut bytes_mut) {

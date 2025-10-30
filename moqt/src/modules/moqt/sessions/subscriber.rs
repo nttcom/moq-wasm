@@ -2,44 +2,17 @@ use std::sync::Arc;
 
 use anyhow::bail;
 
-use crate::{
-    DatagramObject,
-    modules::{
-        moqt::{
-            enums::ResponseMessage,
-            messages::{
-                control_message_type::ControlMessageType,
-                control_messages::{
-                    group_order::GroupOrder, subscribe::Subscribe,
-                    subscribe_namespace::SubscribeNamespace,
-                },
-            },
-            options::SubscribeOption,
-            protocol::TransportProtocol,
-            sessions::session_context::SessionContext,
-            streams::{
-                datagram::datagram_receiver::DatagramReceiver,
-                stream::stream_receiver::StreamReceiver,
-            },
-            utils,
-        },
-        transport::transport_connection::TransportConnection,
+use crate::modules::moqt::{
+    enums::ResponseMessage,
+    messages::{
+        control_message_type::ControlMessageType,
+        control_messages::{subscribe::Subscribe, subscribe_namespace::SubscribeNamespace},
     },
+    options::SubscribeOption,
+    protocol::TransportProtocol,
+    sessions::{session_context::SessionContext, subscription::Subscription},
+    utils,
 };
-
-pub struct Subscription {
-    pub track_alias: u64,
-    pub expires: u64,
-    pub group_order: GroupOrder,
-    pub content_exists: bool,
-    pub start_location_group_id: Option<u64>,
-    pub start_location_object_id: Option<u64>,
-}
-
-pub enum Acceptance<T: TransportProtocol> {
-    Stream(StreamReceiver<T>),
-    Datagram(DatagramReceiver, DatagramObject),
-}
 
 pub struct Subscriber<T: TransportProtocol> {
     pub(crate) session: Arc<SessionContext<T>>,
@@ -87,7 +60,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         track_namespace: String,
         track_name: String,
         option: SubscribeOption,
-    ) -> anyhow::Result<Subscription> {
+    ) -> anyhow::Result<Subscription<T>> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -117,33 +90,12 @@ impl<T: TransportProtocol> Subscriber<T> {
         }
         let response = result.unwrap();
         match response {
-            ResponseMessage::SubscribeOk(
-                response_request_id,
-                track_alias,
-                expires,
-                group_order,
-                content_exists,
-                option_location,
-            ) => {
-                if request_id != response_request_id {
+            ResponseMessage::SubscribeOk(message) => {
+                if request_id != message.request_id {
                     bail!("Protocol violation")
                 } else {
                     tracing::info!("Subscribe namespace ok");
-                    let (start_location_group_id, start_location_object_id) =
-                        if option_location.is_some() {
-                            let location = option_location.unwrap();
-                            (Some(location.group_id), Some(location.object_id))
-                        } else {
-                            (None, None)
-                        };
-                    Ok(Subscription {
-                        track_alias,
-                        expires,
-                        group_order,
-                        content_exists,
-                        start_location_group_id,
-                        start_location_object_id,
-                    })
+                    Ok(Subscription::new(self.session.clone(), message))
                 }
             }
             ResponseMessage::SubscribeError(_, _, _) => {
@@ -151,26 +103,6 @@ impl<T: TransportProtocol> Subscriber<T> {
                 bail!("Subscribe namespace error")
             }
             _ => bail!("Protocol violation"),
-        }
-    }
-
-    pub async fn accept_stream_or_datagram(
-        &self,
-        track_alias: u64,
-    ) -> anyhow::Result<Acceptance<T>> {
-        let mut datagram_receiver = DatagramReceiver::new(self.session.clone(), track_alias).await;
-
-        tokio::select! {
-            stream = self.session.transport_connection.accept_uni() => {
-                Ok(Acceptance::Stream(StreamReceiver::new(stream?)))
-            }
-            datagram = datagram_receiver.receive() => {
-                if let Ok(datagram) = datagram {
-                    Ok(Acceptance::Datagram(datagram_receiver, datagram))
-                } else {
-                    bail!("Failed to receive datagram")
-                }
-            }
         }
     }
 }

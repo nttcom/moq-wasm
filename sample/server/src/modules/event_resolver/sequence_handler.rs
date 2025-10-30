@@ -3,12 +3,18 @@ use std::sync::Arc;
 use dashmap::DashSet;
 
 use crate::modules::{
-    core::subscriber::Acceptance,
+    core::{
+        handler::{
+            self, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
+            subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
+        },
+        subscriber::Acceptance,
+    },
     enums::{FilterType, Location},
     relaies::{relay::Relay, relay_manager::RelayManager, relay_properties::RelayProperties},
     relations::Relations,
     repositories::session_repository::SessionRepository,
-    types::{GroupOrder, SessionId, TrackNamespace, TrackNamespacePrefix},
+    types::{GroupOrder, SessionId},
 };
 
 pub(crate) struct SequenceHandler {
@@ -29,11 +35,16 @@ impl SequenceHandler {
     pub(crate) async fn publish_namespace(
         &mut self,
         session_id: SessionId,
-        track_namespace: TrackNamespace,
+        handler: Box<dyn PublishNamespaceHandler>,
     ) {
         tracing::info!("publish namespace");
+        let track_namespace = handler.track_namespace();
 
-        if let Some(dash_set) = self.tables.publisher_namespaces.get_mut(&track_namespace) {
+        if let Some(dash_set) = self
+            .tables
+            .publisher_namespaces
+            .get_mut(handler.track_namespace())
+        {
             tracing::info!(
                 "'{}' has been registered for namespace publication.",
                 track_namespace
@@ -45,7 +56,7 @@ impl SequenceHandler {
             dash_set.insert(session_id);
             self.tables
                 .publisher_namespaces
-                .insert(track_namespace.clone(), dash_set);
+                .insert(track_namespace.to_string(), dash_set);
         }
         tracing::debug!(
             "publisher_namespaces: {:?}",
@@ -60,7 +71,7 @@ impl SequenceHandler {
         self.tables
             .subscriber_namespaces
             .iter()
-            .filter(|entry| entry.key().starts_with(track_namespace.as_str()))
+            .filter(|entry| entry.key().starts_with(track_namespace))
             .for_each(|entry| {
                 entry.value().iter().for_each(|session_id| {
                     combined.insert(*session_id);
@@ -76,7 +87,7 @@ impl SequenceHandler {
                 .await;
             if let Some(publisher) = publisher {
                 match publisher
-                    .send_publish_namespace(track_namespace.clone())
+                    .send_publish_namespace(track_namespace.to_string())
                     .await
                 {
                     Ok(_) => tracing::info!(
@@ -90,19 +101,24 @@ impl SequenceHandler {
                 tracing::warn!("No publisher");
             }
         }
+
+        match handler.ok().await {
+            Ok(_) => tracing::info!("OK"),
+            Err(e) => tracing::error!("Publish Namespace Error: {:?}", e),
+        }
     }
 
     pub(crate) async fn subscribe_namespace(
         &mut self,
         session_id: SessionId,
-        track_namespace_prefix: TrackNamespacePrefix,
+        handler: Box<dyn SubscribeNamespaceHandler>,
     ) {
         tracing::info!("subscribe namespace");
-
+        let track_namespace_prefix = handler.track_namespace_prefix();
         if let Some(dash_set) = self
             .tables
             .subscriber_namespaces
-            .get_mut(&track_namespace_prefix)
+            .get_mut(track_namespace_prefix)
         {
             tracing::info!(
                 "The namespace prefix '{}' has been registered for namespace subscription.",
@@ -118,7 +134,7 @@ impl SequenceHandler {
             dash_set.insert(session_id);
             self.tables
                 .subscriber_namespaces
-                .insert(track_namespace_prefix.clone(), dash_set);
+                .insert(track_namespace_prefix.to_string(), dash_set);
         }
         tracing::info!(
             "New namespace prefix '{}' has been subscribed.",
@@ -135,7 +151,7 @@ impl SequenceHandler {
         );
         let mut filtered = Vec::new();
         for entry in self.tables.publisher_namespaces.iter() {
-            if entry.key().starts_with(track_namespace_prefix.as_str()) {
+            if entry.key().starts_with(track_namespace_prefix) {
                 filtered.push(entry.key().clone());
             }
         }
@@ -167,21 +183,12 @@ impl SequenceHandler {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn publish(
-        &self,
-        session_id: SessionId,
-        track_namespace: String,
-        track_name: String,
-        track_alias: u64,
-        _group_order: GroupOrder,
-        _is_content_exist: bool,
-        _location: Option<Location>,
-        _is_forward: bool,
-        _delivery_timeout: u64,
-        _max_cache_duration: u64,
-    ) {
+    pub(crate) async fn publish(&self, session_id: SessionId, handler: Box<dyn PublishHandler>) {
         tracing::info!("publish");
+        let track_namespace = handler.track_namespace();
+        let track_name = handler.track_name();
+        let track_alias = handler.track_alias();
+
         let full_track_namespace = format!("{}:{}", track_namespace, track_name);
 
         tracing::info!(
@@ -202,7 +209,7 @@ impl SequenceHandler {
         self.tables
             .subscriber_namespaces
             .iter()
-            .filter(|entry| entry.key().starts_with(track_namespace.as_str()))
+            .filter(|entry| entry.key().starts_with(track_namespace))
             .for_each(|entry| {
                 entry.value().iter().for_each(|session_id| {
                     combined.insert(*session_id);
@@ -218,7 +225,11 @@ impl SequenceHandler {
                 .await;
             if let Some(publisher) = publisher {
                 match publisher
-                    .send_publish(track_namespace.clone(), track_name.clone(), track_alias)
+                    .send_publish(
+                        track_namespace.to_string(),
+                        track_name.to_string(),
+                        track_alias,
+                    )
                     .await
                 {
                     Ok(_) => {
@@ -230,60 +241,19 @@ impl SequenceHandler {
                 tracing::warn!("No publisher");
             }
         }
-        let subscriber = self
-            .session_repo
-            .lock()
-            .await
-            .get_subscriber(session_id)
-            .await;
-        if let Some(subscriber) = subscriber {
-            let datagram_receiver = subscriber.accept_stream_or_datagram(track_alias).await;
-            if datagram_receiver.is_err() {
-                tracing::error!("Failed to accept stream or datagram");
-                return;
-            }
-            let datagram_receiver = datagram_receiver.unwrap();
-            if let Acceptance::Datagram(datagram_receiver, object) = datagram_receiver {
-                if self.relay_manager.relay_map.contains_key(&track_alias) {
-                    self.relay_manager
-                        .relay_map
-                        .get_mut(&track_alias)
-                        .unwrap()
-                        .add_object_receiver(track_alias, datagram_receiver, object);
-                } else {
-                    let mut relay = Relay {
-                        relay_properties: RelayProperties::new(),
-                    };
-                    relay.add_object_receiver(track_alias, datagram_receiver, object);
-                    self.relay_manager.relay_map.insert(track_alias, relay);
-                }
-            }
-        } else {
-            tracing::warn!("No subscriber");
-        }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn subscribe(
         &self,
         session_id: SessionId,
-        namespaces: String,
-        track_name: String,
-        track_alias: u64,
-        _subscriber_priority: u8,
-        _group_order: GroupOrder,
-        _is_content_exist: bool,
-        _is_forward: bool,
-        _filter_type: FilterType,
-        _delivery_timeout: u64,
+        handler: Box<dyn SubscribeHandler>,
     ) {
         tracing::info!("subscribe");
-        let full_track_namespace = format!("{}:{}", namespaces, track_name);
-        tracing::debug!(
-            "New track '{}' (alias '{}') has been subscribed.",
-            full_track_namespace,
-            track_alias
-        );
+        let track_namespace = handler.track_namespace();
+        let track_name = handler.track_name();
+        let full_track_namespace = format!("{}:{}", track_namespace, track_name);
+        tracing::debug!("New track '{}' has been subscribed.", full_track_namespace,);
+
         if let Some(subscriber_id) = self.tables.published_tracks.get(&full_track_namespace) {
             if let Some(subscriber) = self
                 .session_repo
@@ -293,7 +263,7 @@ impl SequenceHandler {
                 .await
             {
                 let _ = subscriber
-                    .send_subscribe(namespaces, track_name, track_alias)
+                    .send_subscribe(track_namespace.to_string(), track_name.to_string())
                     .await
                     .inspect_err(|_| tracing::error!("Failed to send subscribe"));
             }

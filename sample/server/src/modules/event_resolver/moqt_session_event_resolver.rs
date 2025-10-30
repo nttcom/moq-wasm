@@ -1,4 +1,5 @@
 use crate::modules::{
+    core::session_event::SessionEvent,
     enums::{FilterType, Location, MOQTMessageReceived},
     types::SessionId,
 };
@@ -6,73 +7,17 @@ use crate::modules::{
 pub(crate) struct MOQTSessionEventResolver;
 
 impl MOQTSessionEventResolver {
-    pub(crate) fn resolve(session_id: SessionId, event: moqt::SessionEvent) -> MOQTMessageReceived {
+    pub(crate) fn resolve(session_id: SessionId, event: SessionEvent) -> MOQTMessageReceived {
         match event {
-            moqt::SessionEvent::PublishNamespace(namespaces) => {
-                MOQTMessageReceived::PublishNameSpace(session_id, namespaces)
+            SessionEvent::PublishNamespace(handler) => {
+                MOQTMessageReceived::PublishNameSpace(session_id, handler)
             }
-            moqt::SessionEvent::SubscribeNameSpace(namespaces) => {
-                MOQTMessageReceived::SubscribeNameSpace(session_id, namespaces)
+            SessionEvent::SubscribeNamespace(handler) => {
+                MOQTMessageReceived::SubscribeNameSpace(session_id, handler)
             }
-            moqt::SessionEvent::Publish(
-                namespaces,
-                track_name,
-                track_alias,
-                group_order,
-                is_content_exist,
-                location,
-                is_forward,
-                delivery_timeout,
-                max_cache_duration,
-            ) => {
-                let location = location.map(|location| Location {
-                    group_id: location.group_id,
-                    object_id: location.object_id,
-                });
-                MOQTMessageReceived::Publish(
-                    session_id,
-                    namespaces,
-                    track_name,
-                    track_alias,
-                    group_order,
-                    is_content_exist,
-                    location,
-                    is_forward,
-                    delivery_timeout,
-                    max_cache_duration,
-                )
-            }
-            moqt::SessionEvent::Subscribe(
-                namespaces,
-                track_name,
-                track_alias,
-                subscriber_priority,
-                group_order,
-                is_content_exist,
-                is_forward,
-                filter_type,
-                delivery_timeout,
-            ) => {
-                let filter_type = match filter_type {
-                    moqt::FilterType::LatestGroup => FilterType::LatestGroup,
-                    moqt::FilterType::LatestObject => FilterType::LatestObject,
-                    moqt::FilterType::AbsoluteStart => FilterType::AbsoluteStart,
-                    moqt::FilterType::AbsoluteRange => FilterType::AbsoluteRange,
-                };
-                MOQTMessageReceived::Subscribe(
-                    session_id,
-                    namespaces,
-                    track_name,
-                    track_alias,
-                    subscriber_priority,
-                    group_order,
-                    is_content_exist,
-                    is_forward,
-                    filter_type,
-                    delivery_timeout,
-                )
-            }
-            moqt::SessionEvent::ProtocolViolation() => todo!(),
+            SessionEvent::Publish(handler) => MOQTMessageReceived::Publish(session_id, handler),
+            SessionEvent::Subscribe(handler) => MOQTMessageReceived::Subscribe(session_id, handler),
+            SessionEvent::ProtocolViolation() => MOQTMessageReceived::ProtocolViolation(),
         }
     }
 }

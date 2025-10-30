@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    FilterType, GroupOrder, TransportProtocol,
+    FilterType, GroupOrder, Publication, TransportProtocol,
     modules::moqt::{
         messages::{
             control_message_type::ControlMessageType,
@@ -74,5 +74,9 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         };
         let bytes = utils::create_full_message(ControlMessageType::SubscribeNamespaceError, err);
         self.session_context.send_stream.send(&bytes).await
+    }
+
+    pub fn into_publication(&self, track_alias: u64) -> Publication<T> {
+        Publication::from_subscribe_handler(self.session_context.clone(), track_alias, self)
     }
 }
