@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::modules::{
     core::publication::Publication,
-    enums::{FilterType, Location},
+    enums::{FilterType, GroupOrder, Location},
 };
 
 #[async_trait]
@@ -10,7 +10,7 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     fn track_namespace(&self) -> &str;
     fn track_name(&self) -> &str;
     fn subscriber_priority(&self) -> u8;
-    fn group_order(&self) -> moqt::GroupOrder;
+    fn group_order(&self) -> GroupOrder;
     fn forward(&self) -> bool;
     fn filter_type(&self) -> FilterType;
     fn start_location(&self) -> Option<Location>;
@@ -34,29 +34,17 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
     fn subscriber_priority(&self) -> u8 {
         self.subscriber_priority
     }
-    fn group_order(&self) -> moqt::GroupOrder {
-        self.group_order
+    fn group_order(&self) -> GroupOrder {
+        GroupOrder::from(self.group_order)
     }
     fn forward(&self) -> bool {
         self.forward
     }
     fn filter_type(&self) -> FilterType {
-        match self.filter_type {
-            moqt::FilterType::LatestGroup => FilterType::LatestGroup,
-            moqt::FilterType::LatestObject => FilterType::LatestObject,
-            moqt::FilterType::AbsoluteStart => FilterType::AbsoluteStart,
-            moqt::FilterType::AbsoluteRange => FilterType::AbsoluteRange,
-        }
+        FilterType::from(self.filter_type)
     }
     fn start_location(&self) -> Option<Location> {
-        if let Some(largest_location) = self.start_location {
-            Some(Location {
-                object_id: largest_location.object_id,
-                group_id: largest_location.group_id,
-            })
-        } else {
-            None
-        }
+        self.start_location.map(Location::from)
     }
     fn end_group(&self) -> Option<u64> {
         self.end_group

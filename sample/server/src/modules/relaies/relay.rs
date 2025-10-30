@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
 
-use moqt::DatagramObject;
-
 use crate::modules::{
     core::{datagram_receiver::DatagramReceiver, datagram_sender::DatagramSender},
     relaies::relay_properties::RelayProperties,
