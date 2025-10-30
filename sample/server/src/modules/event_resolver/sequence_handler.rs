@@ -3,18 +3,16 @@ use std::sync::Arc;
 use dashmap::DashSet;
 
 use crate::modules::{
-    core::{
-        handler::{
-            self, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
-            subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
-        },
-        subscriber::Acceptance,
+    core::handler::{
+        publish::{PublishHandler, SubscribeOption},
+        publish_namespace::PublishNamespaceHandler,
+        subscribe::SubscribeHandler,
+        subscribe_namespace::SubscribeNamespaceHandler,
     },
-    enums::{FilterType, Location},
     relaies::{relay::Relay, relay_manager::RelayManager, relay_properties::RelayProperties},
     relations::Relations,
     repositories::session_repository::SessionRepository,
-    types::{GroupOrder, SessionId},
+    types::SessionId,
 };
 
 pub(crate) struct SequenceHandler {
@@ -183,10 +181,10 @@ impl SequenceHandler {
         }
     }
 
-    pub(crate) async fn publish(&self, session_id: SessionId, handler: Box<dyn PublishHandler>) {
+    pub(crate) async fn publish(&self, _session_id: SessionId, handler: Box<dyn PublishHandler>) {
         tracing::info!("publish");
-        let track_namespace = handler.track_namespace();
-        let track_name = handler.track_name();
+        let track_namespace = handler.track_namespace().to_string();
+        let track_name = handler.track_name().to_string();
         let track_alias = handler.track_alias();
 
         let full_track_namespace = format!("{}:{}", track_namespace, track_name);
@@ -196,10 +194,7 @@ impl SequenceHandler {
             full_track_namespace,
             track_alias
         );
-        self.tables
-            .published_tracks
-            .insert(full_track_namespace.clone(), session_id);
-        tracing::debug!("publisher_tracks: {:?}", self.tables.published_tracks);
+        tracing::debug!("publisher_tracks: {:?}", self.tables.published_handlers);
         // The draft defines that the relay requires to send `PUBLISH_NAMESPACE` message to
         // any subscriber that has interests in the namespace
         // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
@@ -209,7 +204,7 @@ impl SequenceHandler {
         self.tables
             .subscriber_namespaces
             .iter()
-            .filter(|entry| entry.key().starts_with(track_namespace))
+            .filter(|entry| entry.key().starts_with(&track_namespace))
             .for_each(|entry| {
                 entry.value().iter().for_each(|session_id| {
                     combined.insert(*session_id);
@@ -225,11 +220,7 @@ impl SequenceHandler {
                 .await;
             if let Some(publisher) = publisher {
                 match publisher
-                    .send_publish(
-                        track_namespace.to_string(),
-                        track_name.to_string(),
-                        track_alias,
-                    )
+                    .send_publish(track_namespace.clone(), track_name.clone(), track_alias)
                     .await
                 {
                     Ok(_) => {
@@ -240,6 +231,13 @@ impl SequenceHandler {
             } else {
                 tracing::warn!("No publisher");
             }
+        }
+        // TODO:
+        // Send ok or error failed then close session.
+        // forward: true case. prepare to accept stream/datagram before it returns the result.
+        match handler.ok().await {
+            Ok(()) => self.tables.published_handlers.write().await.push(handler),
+            Err(_) => tracing::error!("failed to accept publish. close session."),
         }
     }
 
@@ -254,43 +252,33 @@ impl SequenceHandler {
         let full_track_namespace = format!("{}:{}", track_namespace, track_name);
         tracing::debug!("New track '{}' has been subscribed.", full_track_namespace,);
 
-        if let Some(subscriber_id) = self.tables.published_tracks.get(&full_track_namespace) {
-            if let Some(subscriber) = self
-                .session_repo
-                .lock()
-                .await
-                .get_subscriber(*subscriber_id.value())
+        let pub_handlers = self.tables.published_handlers.read().await;
+        let pub_handler = pub_handlers
+            .iter()
+            .find(|p| p.track_namespace() == track_namespace && p.track_name() == track_name);
+        if let Some(pub_handler) = pub_handler {
+            let option = SubscribeOption {
+                subscriber_priority: handler.subscriber_priority(),
+                group_order: handler.group_order(),
+                forward: handler.forward(),
+                start_location: handler.start_location(),
+                end_group: handler.end_group(),
+                filter_type: handler.filter_type(),
+            };
+            let subscription = pub_handler
+                .subscribe(track_namespace.to_string(), track_name.to_string(), option)
+                .await;
+        } else {
+            match handler
+                .error(
+                    0,
+                    "Designated namespace and track name do not exist.".to_string(),
+                )
                 .await
             {
-                let _ = subscriber
-                    .send_subscribe(track_namespace.to_string(), track_name.to_string())
-                    .await
-                    .inspect_err(|_| tracing::error!("Failed to send subscribe"));
+                Ok(_) => tracing::info!("send `SUBSCRIBE_ERROR` ok"),
+                Err(e) => tracing::error!("Failed to send `SUBSCRIBE_ERROR`. Session close."),
             }
-        }
-        if let Some(publisher) = self
-            .session_repo
-            .lock()
-            .await
-            .get_publisher(session_id)
-            .await
-        {
-            let datagram_sender = publisher.create_datagram(track_alias);
-            if self.relay_manager.relay_map.contains_key(&track_alias) {
-                self.relay_manager
-                    .relay_map
-                    .get_mut(&track_alias)
-                    .unwrap()
-                    .add_object_sender(track_alias, datagram_sender);
-            } else {
-                let mut relay = Relay {
-                    relay_properties: RelayProperties::new(),
-                };
-                relay.add_object_sender(track_alias, datagram_sender);
-                self.relay_manager.relay_map.insert(track_alias, relay);
-            }
-        } else {
-            tracing::warn!("No publisher");
         }
     }
 }

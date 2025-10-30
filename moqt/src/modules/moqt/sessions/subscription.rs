@@ -42,12 +42,9 @@ impl<T: TransportProtocol> Subscription<T> {
         }
     }
 
-    pub async fn accept_stream_or_datagram(
-        &self,
-        track_alias: u64,
-    ) -> anyhow::Result<Acceptance<T>> {
+    pub async fn accept_stream_or_datagram(&self) -> anyhow::Result<Acceptance<T>> {
         let mut datagram_receiver =
-            DatagramReceiver::new(self.session_context.clone(), track_alias).await;
+            DatagramReceiver::new(self.session_context.clone(), self.track_alias).await;
 
         tokio::select! {
             stream = self.session_context.transport_connection.accept_uni() => {

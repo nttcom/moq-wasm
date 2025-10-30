@@ -1,7 +1,9 @@
 use dashmap::{DashMap, DashSet};
+use tokio::sync::RwLock;
 
-use crate::modules::types::{
-    SessionId, TrackNamespace, TrackNamespacePrefix, TrackNamespaceWithTrackName,
+use crate::modules::{
+    core::handler::publish::PublishHandler,
+    types::{SessionId, TrackNamespace, TrackNamespacePrefix},
 };
 
 pub(crate) struct Relations {
@@ -14,8 +16,7 @@ pub(crate) struct Relations {
      */
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashSet<SessionId>>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashSet<SessionId>>,
-    pub(crate) published_tracks: DashMap<TrackNamespaceWithTrackName, SessionId>,
-    pub(crate) subscribed_tracks: DashMap<TrackNamespaceWithTrackName, SessionId>,
+    pub(crate) published_handlers: RwLock<Vec<Box<dyn PublishHandler>>>,
 }
 
 impl Relations {
@@ -23,8 +24,7 @@ impl Relations {
         Self {
             publisher_namespaces: DashMap::new(),
             subscriber_namespaces: DashMap::new(),
-            published_tracks: DashMap::new(),
-            subscribed_tracks: DashMap::new(),
+            published_handlers: RwLock::new(Vec::new()),
         }
     }
 }
