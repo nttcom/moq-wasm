@@ -5,7 +5,6 @@ use crate::modules::core::datagram_sender::DatagramSender;
 #[async_trait]
 pub(crate) trait Publication {
     async fn create_stream(&self) -> anyhow::Result<()>;
-
     fn create_datagram(&self) -> Box<dyn DatagramSender>;
 }
 
