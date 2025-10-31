@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::modules::core::datagram_sender::DatagramSender;
 
 #[async_trait]
-pub(crate) trait Publication {
+pub(crate) trait Publication: 'static + Send + Sync {
     async fn create_stream(&self) -> anyhow::Result<()>;
     fn create_datagram(&self) -> Box<dyn DatagramSender>;
 }

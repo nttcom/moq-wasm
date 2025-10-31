@@ -10,6 +10,7 @@ use crate::modules::{
         subscribe_namespace::SubscribeNamespaceHandler,
     },
     enums::FilterType,
+    event_resolver::stream_binder::StreamBinder,
     relaies::relay_manager::RelayManager,
     relations::Relations,
     repositories::session_repository::SessionRepository,
@@ -19,7 +20,7 @@ use crate::modules::{
 pub(crate) struct SequenceHandler {
     tables: Relations,
     session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-    relay_manager: RelayManager,
+    stream_handler: StreamBinder,
 }
 
 impl SequenceHandler {
@@ -27,7 +28,7 @@ impl SequenceHandler {
         Self {
             tables: Relations::new(),
             session_repo,
-            relay_manager: RelayManager::new(),
+            stream_handler: StreamBinder::new(),
         }
     }
 
@@ -317,8 +318,15 @@ impl SequenceHandler {
                     .ok(subscription.track_alias(), subscription.expires(), false)
                     .await
                 {
-                    Ok(_) => tracing::info!("send `SUBSCRIBE_OK` ok"),
-                    Err(e) => {
+                    Ok(_) => {
+                        tracing::info!("send `SUBSCRIBE_OK` ok");
+                        let track_alias = subscription.track_alias();
+                        let _ = self
+                            .stream_handler
+                            .bind_by_subscribe(subscription, handler.into_publication(track_alias))
+                            .await;
+                    }
+                    Err(_) => {
                         tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
                     }
                 }

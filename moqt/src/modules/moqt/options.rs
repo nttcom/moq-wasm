@@ -30,7 +30,7 @@ impl PublishOption {
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_nanos() as u64;
-        tracing::debug!("request_id: {}", id);
+        tracing::debug!("track alias: {}", id);
         id
     }
 }

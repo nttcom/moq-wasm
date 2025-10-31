@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::bail;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 
 use crate::{
     TransportProtocol,
@@ -45,7 +45,7 @@ impl<T: TransportProtocol> DatagramSender<T> {
     pub fn create_object_datagram(
         &self,
         datagram_header: DatagramHeader,
-        bytes: BytesMut,
+        bytes: &[u8],
     ) -> anyhow::Result<DatagramObject> {
         let (object_id, has_object_id) = if let Some(object_id) = datagram_header.object_id {
             (object_id, true)
@@ -74,7 +74,7 @@ impl<T: TransportProtocol> DatagramSender<T> {
             publisher_priority: datagram_header.publisher_priority,
             extension_headers,
             object_status: None,
-            object_payload: bytes.freeze(),
+            object_payload: Bytes::copy_from_slice(bytes),
         })
     }
 
