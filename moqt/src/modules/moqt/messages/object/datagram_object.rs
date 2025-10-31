@@ -43,7 +43,7 @@ pub struct DatagramObject {
     pub(crate) publisher_priority: u8,
     pub(crate) extension_headers: Vec<ExtensionHeader>,
     pub(crate) object_status: Option<ObjectStatus>,
-    pub(crate) object_payload: Bytes,
+    pub object_payload: Bytes,
 }
 
 impl DatagramObject {

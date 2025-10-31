@@ -82,7 +82,7 @@ impl<T: TransportProtocol> Publisher<T> {
         };
         let bytes = utils::create_full_message(ControlMessageType::Publish, publish);
         self.session.send_stream.send(&bytes).await?;
-        tracing::info!("Publish namespace");
+        tracing::info!("Publish");
         let result = receiver.await;
         if let Err(e) = result {
             bail!("Failed to receive message: {}", e.to_string())
