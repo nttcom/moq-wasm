@@ -1,21 +1,14 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Weak},
-};
+use std::{collections::HashMap, sync::Arc};
 
-use crate::modules::{
-    core::subscriber::Subscriber, thread_manager::ThreadManager, types::SessionId,
-};
+use crate::modules::{core::subscriber::Subscriber, types::SessionId};
 
 pub(crate) struct SubscriberRepository {
-    thread_manager: ThreadManager,
     subscribers: tokio::sync::Mutex<HashMap<SessionId, Arc<dyn Subscriber>>>,
 }
 
 impl SubscriberRepository {
     pub(crate) fn new() -> Self {
         Self {
-            thread_manager: ThreadManager::new(),
             subscribers: tokio::sync::Mutex::new(HashMap::new()),
         }
     }

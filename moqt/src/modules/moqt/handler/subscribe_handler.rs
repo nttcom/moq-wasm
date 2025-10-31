@@ -6,8 +6,8 @@ use crate::{
         messages::{
             control_message_type::ControlMessageType,
             control_messages::{
-                location::Location, namespace_ok::NamespaceOk, request_error::RequestError,
-                subscribe::Subscribe,
+                location::Location, request_error::RequestError, subscribe::Subscribe,
+                subscribe_ok::SubscribeOk,
             },
         },
         sessions::session_context::SessionContext,
@@ -54,14 +54,22 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         }
     }
 
-    pub async fn ok(&self) -> anyhow::Result<()> {
-        let publish_namespace_ok = NamespaceOk {
+    pub async fn ok(
+        &self,
+        track_alias: u64,
+        expires: u64,
+        content_exists: bool,
+    ) -> anyhow::Result<()> {
+        let subscribe_ok = SubscribeOk {
             request_id: self.request_id,
+            track_alias,
+            expires,
+            group_order: self.group_order,
+            content_exists,
+            largest_location: None,
+            subscribe_parameters: vec![],
         };
-        let bytes = utils::create_full_message(
-            ControlMessageType::SubscribeNamespaceOk,
-            publish_namespace_ok,
-        );
+        let bytes = utils::create_full_message(ControlMessageType::SubscribeOk, subscribe_ok);
         self.session_context.send_stream.send(&bytes).await
     }
 

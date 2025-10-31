@@ -28,7 +28,7 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
     fn authorization_token(&self) -> Option<String>;
     fn delivery_timeout(&self) -> Option<u64>;
     fn max_cache_duration(&self) -> Option<u64>;
-    async fn ok(&self) -> anyhow::Result<()>;
+    async fn ok(&self, subscriber_priority: u8, filter_type: FilterType) -> anyhow::Result<()>;
     async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
     async fn subscribe(
         &self,
@@ -71,8 +71,8 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
         self.max_cache_duration
     }
 
-    async fn ok(&self) -> anyhow::Result<()> {
-        self.ok().await
+    async fn ok(&self, subscriber_priority: u8, filter_type: FilterType) -> anyhow::Result<()> {
+        self.ok(subscriber_priority, filter_type.into_moqt()).await
     }
 
     async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()> {
