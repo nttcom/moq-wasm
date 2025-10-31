@@ -115,6 +115,7 @@ impl ControlMessageReceiveThread {
                 let result = match SubscribeOk::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
+                        tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
                         );
@@ -128,6 +129,7 @@ impl ControlMessageReceiveThread {
                 let result = match RequestError::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
+                        tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
                         );
@@ -146,7 +148,7 @@ impl ControlMessageReceiveThread {
             ControlMessageType::Publish => {
                 let result = Publish::depacketize(&mut bytes_mut);
                 if result.is_err() {
-                    tracing::warn!("Error has detected.");
+                    tracing::error!("Protocol violation is detected.");
                     DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
                 } else {
                     let result = result.unwrap();
@@ -158,6 +160,7 @@ impl ControlMessageReceiveThread {
                 let result = match PublishOk::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
+                        tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
                         );
@@ -171,6 +174,7 @@ impl ControlMessageReceiveThread {
                 let result = match RequestError::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
+                        tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
                         );
@@ -193,7 +197,7 @@ impl ControlMessageReceiveThread {
                 tracing::info!("Publish namespace");
                 let result = PublishNamespace::depacketize(&mut bytes_mut);
                 if result.is_err() {
-                    tracing::warn!("Error has detected.");
+                    tracing::error!("Protocol violation is detected.");
                     DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
                 } else {
                     let result = result.unwrap();
@@ -207,6 +211,7 @@ impl ControlMessageReceiveThread {
                 let result = match NamespaceOk::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
+                        tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
                         );
@@ -219,6 +224,7 @@ impl ControlMessageReceiveThread {
                 let result = match RequestError::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
+                        tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
                         );
@@ -236,7 +242,7 @@ impl ControlMessageReceiveThread {
             ControlMessageType::SubscribeNamespace => {
                 let result = SubscribeNamespace::depacketize(&mut bytes_mut);
                 if result.is_err() {
-                    tracing::warn!("Error has detected.");
+                    tracing::error!("Protocol violation is detected.");
                     DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
                 } else {
                     let result = result.unwrap();
@@ -247,9 +253,10 @@ impl ControlMessageReceiveThread {
                 }
             }
             ControlMessageType::SubscribeNamespaceOk => {
-                let result = match SubscribeOk::depacketize(&mut bytes_mut) {
+                let result = match NamespaceOk::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
+                        tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
                         );
@@ -262,6 +269,7 @@ impl ControlMessageReceiveThread {
                 let result = match RequestError::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
+                        tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
                         );

@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
 use anyhow::bail;
+use tracing_subscriber::filter;
 
 use crate::{
-    GroupOrder, SubscribeOption, Subscription, TransportProtocol,
+    FilterType, GroupOrder, SubscribeOption, Subscription, TransportProtocol,
     modules::moqt::{
         enums::ResponseMessage,
         messages::{
             control_message_type::ControlMessageType,
             control_messages::{
                 location::Location, namespace_ok::NamespaceOk, publish::Publish,
-                request_error::RequestError, subscribe::Subscribe,
+                publish_ok::PublishOk, request_error::RequestError, subscribe::Subscribe,
             },
         },
         sessions::session_context::SessionContext,
@@ -52,11 +53,18 @@ impl<T: TransportProtocol> PublishHandler<T> {
         }
     }
 
-    pub async fn ok(&self) -> anyhow::Result<()> {
-        let publish_namespace_ok = NamespaceOk {
+    pub async fn ok(&self, subscriber_priority: u8, filter_type: FilterType) -> anyhow::Result<()> {
+        let publish_ok = PublishOk {
             request_id: self.request_id,
+            forward: self.forward,
+            subscriber_priority,
+            group_order: self.group_order,
+            filter_type,
+            start_location: None,
+            end_group: None,
+            parameters: vec![],
         };
-        let bytes = utils::create_full_message(ControlMessageType::PublishOk, publish_namespace_ok);
+        let bytes = utils::create_full_message(ControlMessageType::PublishOk, publish_ok);
         self.session_context.send_stream.send(&bytes).await
     }
 
