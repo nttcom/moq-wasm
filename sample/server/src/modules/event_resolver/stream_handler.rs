@@ -5,7 +5,7 @@ use crate::modules::{
         publication::Publication,
         subscription::{Acceptance, Subscription},
     },
-    relaies::relay_manager::RelayManager,
+    relaies::{relay::Relay, relay_manager::RelayManager, relay_properties::RelayProperties},
 };
 
 struct Binder {
@@ -31,9 +31,15 @@ impl Binder {
         publication: Box<dyn Publication>,
     ) -> anyhow::Result<()> {
         let acceptance = subscription.accept_stream_or_datagram().await?;
+        let prop = RelayProperties::new();
         if let Acceptance::Datagram(receiver, object) = acceptance {
-            // let datagram_sender = publication.create_datagram();
-            // let relay = Relay;
+            let datagram_sender = publication.create_datagram();
+            let mut relay = Relay {
+                relay_properties: prop,
+            };
+            let track_alias = receiver.track_alias();
+            relay.add_object_receiver(receiver, object);
+            relay.add_object_sender(track_alias, datagram_sender);
         }
         Ok(())
     }

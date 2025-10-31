@@ -12,10 +12,10 @@ pub(crate) struct Relay {
 impl Relay {
     pub(crate) fn add_object_receiver(
         &mut self,
-        track_alias: u64,
         datagram_receiver: Box<dyn DatagramReceiver>,
         object_datagram: moqt::DatagramObject,
     ) {
+        let track_alias = datagram_receiver.track_alias();
         self.initialize_if_needed(track_alias);
         self.relay_properties
             .object_queue
@@ -53,7 +53,7 @@ impl Relay {
 
         self.relay_properties.joinset.spawn(async move {
             while let Ok(datagram_object) = receiver.recv().await {
-                if let Err(e) = datagram_sender.overwrite_track_alias_then_send(datagram_object) {
+                if let Err(e) = datagram_sender.send(datagram_object) {
                     tracing::error!(
                         "Failed to send datagram object to subscriber for {}: {:?}",
                         track_alias,

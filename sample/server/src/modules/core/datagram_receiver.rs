@@ -2,11 +2,16 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub(crate) trait DatagramReceiver: 'static + Send + Sync {
+    fn track_alias(&self) -> u64;
     async fn receive(&self) -> anyhow::Result<moqt::DatagramObject>;
 }
 
 #[async_trait]
 impl DatagramReceiver for moqt::DatagramReceiver {
+    fn track_alias(&self) -> u64 {
+        self.track_alias
+    }
+
     async fn receive(&self) -> anyhow::Result<moqt::DatagramObject> {
         self.receive().await
     }
