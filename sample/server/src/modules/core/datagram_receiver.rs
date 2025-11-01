@@ -1,7 +1,9 @@
+use std::fmt::Debug;
+
 use async_trait::async_trait;
 
 #[async_trait]
-pub(crate) trait DatagramReceiver: 'static + Send + Sync {
+pub(crate) trait DatagramReceiver: 'static + Send + Sync + Debug {
     fn track_alias(&self) -> u64;
     async fn receive(&self) -> anyhow::Result<moqt::DatagramObject>;
 }

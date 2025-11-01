@@ -95,7 +95,7 @@ impl Client {
                                     return;
                                 }
                             };
-                            Self::subscribe(label.clone(), &publish_handler, &runner).await;
+                            Self::subscribe(label.clone(), publish_handler, &runner).await;
                         }
                         moqt::SessionEvent::Subscribe(subscribe_handler) => {
                             tracing::info!("Received: {} Subscribe", label);
@@ -151,36 +151,36 @@ impl Client {
 
     async fn subscribe(
         label: String,
-        publish_handler: &moqt::PublishHandler<moqt::QUIC>,
+        publish_handler: moqt::PublishHandler<moqt::QUIC>,
         runner: &StreamTaskRunner,
     ) {
         let full_name = format!(
             "{}/{}",
             publish_handler.track_namespace, publish_handler.track_name
         );
-        tracing::info!("{} :subscribe {}", label, full_name);
-        let option = moqt::SubscribeOption {
-            subscriber_priority: 128,
-            group_order: publish_handler.group_order,
-            forward: publish_handler.forward,
-            filter_type: moqt::FilterType::LatestObject,
-            start_location: None,
-            end_group: None,
-        };
-        let subscription = publish_handler
-            .subscribe(
-                publish_handler.track_namespace.to_string(),
-                publish_handler.track_name.to_string(),
-                option,
-            )
-            .await;
-        if subscription.is_err() {
-            tracing::error!("{} :subscribe error", label);
-        } else {
-            tracing::info!("{} :subscribe ok", label);
-        }
-        let subscription = subscription.unwrap();
         let task = async move {
+            tracing::info!("{} :subscribe {}", label, full_name);
+            let option = moqt::SubscribeOption {
+                subscriber_priority: 128,
+                group_order: publish_handler.group_order,
+                forward: publish_handler.forward,
+                filter_type: moqt::FilterType::LatestObject,
+                start_location: None,
+                end_group: None,
+            };
+            let subscription = publish_handler
+                .subscribe(
+                    publish_handler.track_namespace.to_string(),
+                    publish_handler.track_name.to_string(),
+                    option,
+                )
+                .await;
+            if subscription.is_err() {
+                tracing::error!("{} :subscribe error", label);
+            } else {
+                tracing::info!("{} :subscribe ok", label);
+            }
+            let subscription = subscription.unwrap();
             let acceptance = match subscription.accept_stream_or_datagram().await {
                 Ok(acceptance) => acceptance,
                 Err(_) => {
@@ -207,7 +207,7 @@ impl Client {
                         let object = result.unwrap();
                         let text = String::from_utf8(object.object_payload.to_vec()).unwrap();
                         tracing::info!(
-                            "{} :subscribe datagram] track_alias:{}, message: {}",
+                            "{} :subscribe datagram track_alias:{}, message: {}",
                             label,
                             object.track_alias,
                             text
@@ -226,6 +226,15 @@ impl Client {
     ) {
         tracing::info!("{} :create stream", label);
         let datagram = publication.create_datagram();
+        // let _ = publication
+        //     .create_stream()
+        //     .await
+        //     .inspect(|_| {
+        //         tracing::info!("{} :create stream ok", label);
+        //     })
+        //     .inspect_err(|_| {
+        //         tracing::error!("{} :create stream error", label);
+        //     });
         let task = async move {
             let mut id = 0;
             tracing::info!("{} :create stream start", label);
@@ -243,7 +252,10 @@ impl Client {
                     .create_object_datagram(header, format_text.as_bytes())
                     .unwrap();
                 match datagram.send(obj) {
-                    Ok(_) => id += 1,
+                    Ok(_) => {
+                        tracing::info!("{} :send datagram ok", label);
+                        id += 1
+                    },
                     Err(_) => {
                         tracing::error!("failed to send");
                         break;

@@ -43,6 +43,7 @@ impl StreamBinder {
                     return;
                 }
             };
+            tracing::debug!("accepct type: {:?}", acceptance);
             let prop = RelayProperties::new();
             if let Acceptance::Datagram(receiver, object) = acceptance {
                 tracing::info!("bind by datagram");
