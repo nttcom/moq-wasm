@@ -22,7 +22,7 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
         tracing::info!("Certificates already exist");
         Ok(())
     } else {
-        let subject_alt_names = vec!["localhost".to_string()];
+        let subject_alt_names = vec!["moqt.research.skyway.io".to_string()];
         let CertifiedKey { cert, signing_key } =
             generate_simple_self_signed(subject_alt_names).unwrap();
         let key_pem = signing_key.serialize_pem();
