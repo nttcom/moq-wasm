@@ -23,7 +23,7 @@ pub(crate) struct Client {
 impl Client {
     pub(crate) async fn new(cert_path: String, label: String) -> anyhow::Result<Self> {
         let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
-        let url = url::Url::from_str("moqt://localhost:4433")?;
+        let url = url::Url::from_str("moqt://moqt.research.skyway.io:4434")?;
         let host = url.host_str().unwrap();
         let remote_address = (host, url.port().unwrap_or(4433))
             .to_socket_addrs()?
@@ -255,7 +255,7 @@ impl Client {
                     Ok(_) => {
                         tracing::info!("{} :send datagram ok", label);
                         id += 1
-                    },
+                    }
                     Err(_) => {
                         tracing::error!("failed to send");
                         break;

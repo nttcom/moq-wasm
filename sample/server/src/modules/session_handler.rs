@@ -19,7 +19,7 @@ impl SessionHandler {
         session_event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
     ) -> Self {
         let config = moqt::ServerConfig {
-            port: 4433,
+            port: 4434,
             cert_path,
             key_path,
             keep_alive_interval_sec: 15,
