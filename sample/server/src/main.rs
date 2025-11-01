@@ -9,12 +9,64 @@ use std::{fs, path::Path};
 use crate::modules::enums::MOQTMessageReceived;
 use crate::modules::repositories::session_repository::SessionRepository;
 
+use console_subscriber::ConsoleLayer;
+use tracing_appender::rolling;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{self, EnvFilter, Layer, Registry, filter::LevelFilter, fmt};
+pub fn init_logging(log_level: String) {
+    // tokio-console用のレイヤーとフィルタ(For Development)
+    let console_filter = EnvFilter::new("tokio::task=trace");
+    let console_layer = ConsoleLayer::builder()
+        .retention(std::time::Duration::from_secs(3600)) // Default: 3600
+        .spawn()
+        .with_filter(console_filter);
+    // tokio-console用のレイヤーとフィルタ(For Debug)
+    let debug_console_filter =
+        EnvFilter::new("tokio::task=trace,tokio::sync=trace,tokio::timer=trace");
+    let debug_console_layer = ConsoleLayer::builder()
+        .event_buffer_capacity(1024 * 250) // Default: 102400
+        .client_buffer_capacity(1024 * 7) // Default: 1024
+        .retention(std::time::Duration::from_secs(600)) // Default: 3600
+        .spawn()
+        .with_filter(debug_console_filter);
+
+    // 標準出力用のレイヤーとフィルタ
+    let stdout_layer = fmt::layer()
+        .with_writer(std::io::stdout)
+        .with_ansi(true)
+        .with_filter(
+            EnvFilter::builder()
+                .with_default_directive(log_level.parse().unwrap())
+                .from_env_lossy(),
+        );
+
+    // ログファイル用のレイヤーとフィルタ
+    let file_layer = fmt::layer()
+        .with_writer(rolling::hourly("./log", "output"))
+        // Multi Writer with_ansi option doesn't work https://github.com/tokio-rs/tracing/issues/3116
+        // .with_ansi(false)
+        .with_filter(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::DEBUG.into())
+                .from_env_lossy(),
+        );
+
+    Registry::default()
+        .with(console_layer)
+        .with(debug_console_layer)
+        .with(stdout_layer)
+        .with(file_layer)
+        .init();
+}
+
 fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_line_number(true)
-        .try_init()
-        .ok();
+    // tracing_subscriber::fmt()
+    //     .with_max_level(tracing::Level::DEBUG)
+    //     .with_line_number(true)
+    //     .try_init()
+    //     .ok();
+    init_logging("INFO".to_string());
     let current = std::env::current_dir()?;
     tracing::info!("current path: {}", current.to_str().unwrap());
 
@@ -22,7 +74,7 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
         tracing::info!("Certificates already exist");
         Ok(())
     } else {
-        let subject_alt_names = vec!["moqt.research.skyway.io".to_string()];
+        let subject_alt_names = vec!["localhost".to_string()];
         let CertifiedKey { cert, signing_key } =
             generate_simple_self_signed(subject_alt_names).unwrap();
         let key_pem = signing_key.serialize_pem();
@@ -36,12 +88,7 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_line_number(true)
-        .try_init()
-        .ok();
-    // create_certs_for_test_if_needed()?;
+    create_certs_for_test_if_needed()?;
     // console_subscriber::init();
     let current_path = std::env::current_dir().expect("failed to get current path");
     let key_path = format!(

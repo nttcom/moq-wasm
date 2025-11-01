@@ -12,6 +12,7 @@ anyhow = { version = "1.0.75", features = ["backtrace"] }
 uuid = { version = "1.18,1", features = ["v4"]}
 dashmap = "6.1.0"
 rcgen = "0.14.3"
-tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 bytes = "1"
 console-subscriber = "0.4"
+tracing-appender = "0.2.3"
