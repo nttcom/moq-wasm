@@ -4,6 +4,6 @@ pub(crate) trait StreamSender: 'static + Send + Sync {
 
 impl<T: moqt::TransportProtocol> StreamSender for moqt::DatagramSender<T> {
     fn send(&self, object: moqt::DatagramObject) -> anyhow::Result<()> {
-        self.send(object)
+        todo!()
     }
 }

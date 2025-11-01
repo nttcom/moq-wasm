@@ -149,11 +149,14 @@ impl<T: TransportProtocol> DatagramSender<T> {
         extension_headers
     }
 
-    pub fn send(&self, object: DatagramObject) -> anyhow::Result<()> {
+    pub async fn send(&self, object: DatagramObject) -> anyhow::Result<()> {
         let bytes = object.packetize();
-        self.session_context
+        let result = self
+            .session_context
             .transport_connection
-            .send_datagram(bytes)
+            .send_datagram(bytes);
+        tokio::task::yield_now().await;
+        result
     }
 
     pub fn overwrite_track_alias_then_send(

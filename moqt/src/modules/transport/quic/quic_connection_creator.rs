@@ -51,6 +51,8 @@ impl QUICConnectionCreator {
         transport_config.packet_threshold(5);
         transport_config.stream_receive_window(VarInt::from_u32(1024 * 1024)); // initial_max_stream_data_uniと同義。デフォルトは65,536 バイト (64KB)なので1MBにする
 
+        tracing::warn!("datagram setting: {:?}", transport_config);
+
         let transport_arc = Arc::new(transport_config);
         server_config.transport_config(transport_arc);
 

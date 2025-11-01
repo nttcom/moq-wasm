@@ -81,7 +81,10 @@ impl TransportConnection for QUICConnection {
     async fn receive_datagram(&self) -> anyhow::Result<bytes::BytesMut> {
         match self.connection.read_datagram().await {
             Ok(bytes) => Ok(BytesMut::from(&bytes[..])),
-            Err(e) => bail!("Failed to receive datagram: {:?}", e),
+            Err(e) => {
+                tracing::error!("Failed to receive datagram: {:?}", e);
+                bail!("Failed to receive datagram: {:?}", e)
+            }
         }
     }
 }

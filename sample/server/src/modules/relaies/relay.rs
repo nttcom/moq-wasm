@@ -57,7 +57,7 @@ impl Relay {
             tracing::info!("add object sender");
             while let Ok(datagram_object) = receiver.recv().await {
                 tracing::info!("receive object: datagram sender");
-                if let Err(e) = datagram_sender.send(datagram_object) {
+                if let Err(e) = datagram_sender.send(datagram_object).await {
                     tracing::error!(
                         "Failed to send datagram object to subscriber for {}: {:?}",
                         track_alias,
@@ -112,6 +112,7 @@ impl Relay {
                             }
                         }
                     }
+                    tokio::task::yield_now().await;
                 }
             });
         }
