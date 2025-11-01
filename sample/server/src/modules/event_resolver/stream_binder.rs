@@ -33,6 +33,7 @@ impl StreamBinder {
         subscription: Box<dyn Subscription>,
         publication: Box<dyn Publication>,
     ) {
+        tracing::info!("bind by subscribe");
         let relay_manager = self.relay_manager.clone();
         let task = async move {
             let acceptance = match subscription.accept_stream_or_datagram().await {
@@ -44,6 +45,7 @@ impl StreamBinder {
             };
             let prop = RelayProperties::new();
             if let Acceptance::Datagram(receiver, object) = acceptance {
+                tracing::info!("bind by datagram");
                 let datagram_sender = publication.create_datagram();
                 let mut relay = Relay {
                     relay_properties: prop,

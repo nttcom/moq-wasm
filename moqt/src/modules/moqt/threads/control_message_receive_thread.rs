@@ -93,13 +93,13 @@ impl ControlMessageReceiveThread {
         message_type: ControlMessageType,
         mut bytes_mut: BytesMut,
     ) -> DepacketizeResult<T> {
-        tracing::debug!("message_type: {:?}", message_type);
+        tracing::debug!("Event: message_type: {:?}", message_type);
         match message_type {
             ControlMessageType::GoAway => todo!(),
             ControlMessageType::MaxSubscribeId => todo!(),
             ControlMessageType::RequestsBlocked => todo!(),
             ControlMessageType::Subscribe => {
-                tracing::debug!("Subscribe");
+                tracing::debug!("Event: Subscribe");
                 let result = Subscribe::depacketize(&mut bytes_mut);
                 if result.is_err() {
                     tracing::warn!("Error has detected.");
@@ -112,6 +112,7 @@ impl ControlMessageReceiveThread {
                 }
             }
             ControlMessageType::SubscribeOk => {
+                tracing::debug!("Event: Subscribe ok");
                 let result = match SubscribeOk::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
@@ -126,6 +127,7 @@ impl ControlMessageReceiveThread {
                 DepacketizeResult::ResponseMessage(request_id, reponse)
             }
             ControlMessageType::SubscribeError => {
+                tracing::debug!("Event: Subscribe error");
                 let result = match RequestError::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
@@ -146,6 +148,7 @@ impl ControlMessageReceiveThread {
             ControlMessageType::UnSubscribe => todo!(),
             ControlMessageType::PublishDone => todo!(),
             ControlMessageType::Publish => {
+                tracing::debug!("Event: Publish");
                 let result = Publish::depacketize(&mut bytes_mut);
                 if result.is_err() {
                     tracing::error!("Protocol violation is detected.");
@@ -157,6 +160,7 @@ impl ControlMessageReceiveThread {
                 }
             }
             ControlMessageType::PublishOk => {
+                tracing::debug!("Event: Publish ok");
                 let result = match PublishOk::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
@@ -171,6 +175,7 @@ impl ControlMessageReceiveThread {
                 DepacketizeResult::ResponseMessage(request_id, reponse)
             }
             ControlMessageType::PublishError => {
+                tracing::debug!("Event: Publish error");
                 let result = match RequestError::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
@@ -194,7 +199,7 @@ impl ControlMessageReceiveThread {
             ControlMessageType::TrackStatusRequest => todo!(),
             ControlMessageType::TrackStatus => todo!(),
             ControlMessageType::PublishNamespace => {
-                tracing::info!("Publish namespace");
+                tracing::debug!("Event: Publish namespace");
                 let result = PublishNamespace::depacketize(&mut bytes_mut);
                 if result.is_err() {
                     tracing::error!("Protocol violation is detected.");
@@ -208,6 +213,7 @@ impl ControlMessageReceiveThread {
                 }
             }
             ControlMessageType::PublishNamespaceOk => {
+                tracing::debug!("Event: Publish namespace ok");
                 let result = match NamespaceOk::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
@@ -221,6 +227,7 @@ impl ControlMessageReceiveThread {
                 DepacketizeResult::ResponseMessage(result.request_id, reponse)
             }
             ControlMessageType::PublishNamespaceError => {
+                tracing::debug!("Event: Publish namespace error");
                 let result = match RequestError::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
@@ -240,6 +247,7 @@ impl ControlMessageReceiveThread {
             ControlMessageType::PublishNamespaceDone => todo!(),
             ControlMessageType::PublishNamespaceCancel => todo!(),
             ControlMessageType::SubscribeNamespace => {
+                tracing::debug!("Event: Subscribe namespace");
                 let result = SubscribeNamespace::depacketize(&mut bytes_mut);
                 if result.is_err() {
                     tracing::error!("Protocol violation is detected.");
@@ -253,6 +261,7 @@ impl ControlMessageReceiveThread {
                 }
             }
             ControlMessageType::SubscribeNamespaceOk => {
+                tracing::debug!("Event: Subscribe namespace ok");
                 let result = match NamespaceOk::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {
@@ -266,6 +275,7 @@ impl ControlMessageReceiveThread {
                 DepacketizeResult::ResponseMessage(result.request_id, reponse)
             }
             ControlMessageType::SubscribeNamespaceError => {
+                tracing::debug!("Event: Subscribe namespace error");
                 let result = match RequestError::depacketize(&mut bytes_mut) {
                     Ok(v) => v,
                     Err(_) => {

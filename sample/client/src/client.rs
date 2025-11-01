@@ -224,9 +224,11 @@ impl Client {
         publication: moqt::Publication<moqt::QUIC>,
         runner: &StreamTaskRunner,
     ) {
+        tracing::info!("{} :create stream", label);
         let datagram = publication.create_datagram();
         let task = async move {
             let mut id = 0;
+            tracing::info!("{} :create stream start", label);
             loop {
                 let header = DatagramHeader {
                     group_id: id,

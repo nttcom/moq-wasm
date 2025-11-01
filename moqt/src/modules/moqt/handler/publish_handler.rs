@@ -118,13 +118,13 @@ impl<T: TransportProtocol> PublishHandler<T> {
                 if request_id != message.request_id {
                     bail!("Protocol violation")
                 } else {
-                    tracing::info!("Subscribe namespace ok");
+                    tracing::info!("Subscribe ok");
                     Ok(Subscription::new(self.session_context.clone(), message))
                 }
             }
             ResponseMessage::SubscribeError(_, _, _) => {
-                tracing::info!("Subscribe namespace error");
-                bail!("Subscribe namespace error")
+                tracing::info!("Subscribe error");
+                bail!("Subscribe error")
             }
             _ => bail!("Protocol violation"),
         }
