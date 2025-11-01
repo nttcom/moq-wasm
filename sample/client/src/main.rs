@@ -30,7 +30,7 @@ fn create_client_thread2(
     mut signal_receiver: tokio::sync::broadcast::Receiver<()>,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::task::spawn(async move {
-        sleep(Duration::from_secs(3)).await;
+        sleep(Duration::from_secs(5)).await;
         let client = Client::new(cert_path, "user2".to_string()).await?;
         client.publish_namespace("room2/user2".to_string()).await;
         client.subscribe_namespace("room1".to_string()).await;
@@ -47,6 +47,7 @@ fn create_client_thread2(
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
+        .with_line_number(true)
         .try_init()
         .ok();
 

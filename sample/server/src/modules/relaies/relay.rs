@@ -24,7 +24,9 @@ impl Relay {
             .push_back(object_datagram);
         let queue = self.relay_properties.object_queue.clone();
         self.relay_properties.joinset.spawn(async move {
+            tracing::info!("add object receiver");
             while let Ok(datagram_object) = datagram_receiver.receive().await {
+                tracing::info!("receive object");
                 let queue = queue.get_mut(&datagram_object.track_alias);
                 if queue.is_none() {
                     tracing::error!(
@@ -52,7 +54,9 @@ impl Relay {
             .subscribe();
 
         self.relay_properties.joinset.spawn(async move {
+            tracing::info!("add object sender");
             while let Ok(datagram_object) = receiver.recv().await {
+                tracing::info!("receive object: datagram sender");
                 if let Err(e) = datagram_sender.send(datagram_object) {
                     tracing::error!(
                         "Failed to send datagram object to subscriber for {}: {:?}",

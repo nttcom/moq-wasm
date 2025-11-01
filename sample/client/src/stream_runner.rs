@@ -26,6 +26,7 @@ impl StreamTaskRunner {
                 loop {
                     tokio::select! {
                         Some(task) = receiver.recv() => {
+                            tracing::info!("receive task");
                             join_set.spawn(task);
                         }
                         Some(_) = join_set.join_next() => {
@@ -38,6 +39,7 @@ impl StreamTaskRunner {
     }
 
     pub(crate) async fn add_task(&self, task: Pin<Box<dyn Future<Output = ()> + Send + 'static>>) {
+        tracing::info!("add task");
         let _ = self.sender.send(task).await;
     }
 }

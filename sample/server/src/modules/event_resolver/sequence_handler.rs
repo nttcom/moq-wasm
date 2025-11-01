@@ -37,7 +37,7 @@ impl SequenceHandler {
         session_id: SessionId,
         handler: Box<dyn PublishNamespaceHandler>,
     ) {
-        tracing::info!("publish namespace");
+        tracing::info!("SequenceHandler::publish namespace: {}", session_id);
         let track_namespace = handler.track_namespace();
 
         tracing::debug!(
@@ -117,7 +117,7 @@ impl SequenceHandler {
         session_id: SessionId,
         handler: Box<dyn SubscribeNamespaceHandler>,
     ) {
-        tracing::info!("subscribe namespace");
+        tracing::info!("SequenceHandler::subscribe namespace: {}", session_id);
         let track_namespace_prefix = handler.track_namespace_prefix();
         tracing::info!(
             "New namespace prefix '{}' has been subscribed.",
@@ -192,6 +192,7 @@ impl SequenceHandler {
             }
         }
 
+        tracing::info!("subscribe ok will be sent.");
         match handler.ok().await {
             Ok(_) => tracing::info!("OK"),
             Err(e) => {
@@ -223,8 +224,8 @@ impl SequenceHandler {
         }
     }
 
-    pub(crate) async fn publish(&self, _session_id: SessionId, handler: Box<dyn PublishHandler>) {
-        tracing::info!("publish");
+    pub(crate) async fn publish(&self, session_id: SessionId, handler: Box<dyn PublishHandler>) {
+        tracing::info!("SequenceHandler::publish: {}", session_id);
         let track_namespace = handler.track_namespace().to_string();
         let track_name = handler.track_name().to_string();
         let track_alias = handler.track_alias();
@@ -288,7 +289,7 @@ impl SequenceHandler {
         session_id: SessionId,
         handler: Box<dyn SubscribeHandler>,
     ) {
-        tracing::info!("subscribe");
+        tracing::info!("SequenceHandler::subscribe: {}", session_id);
         let track_namespace = handler.track_namespace();
         let track_name = handler.track_name();
         let full_track_namespace = format!("{}:{}", track_namespace, track_name);
@@ -299,6 +300,12 @@ impl SequenceHandler {
             .iter()
             .find(|p| p.track_namespace() == track_namespace && p.track_name() == track_name);
         if let Some(pub_handler) = pub_handler {
+            tracing::info!(
+                "publisher found. {}/{} (alias {})",
+                pub_handler.track_namespace(),
+                pub_handler.track_name(),
+                pub_handler.track_alias()
+            );
             let option = SubscribeOption {
                 subscriber_priority: handler.subscriber_priority(),
                 group_order: handler.group_order(),

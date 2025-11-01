@@ -66,8 +66,6 @@ impl MOQTMessage for Subscribe {
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        tracing::warn!("qqq track name: {:?}", track_name);
-        tracing::warn!("qqq buffer: {:?}", buf);
         let subscriber_priority = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .context("subscriber priority")
