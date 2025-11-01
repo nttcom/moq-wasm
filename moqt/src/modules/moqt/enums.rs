@@ -1,12 +1,26 @@
+use crate::{
+    TransportProtocol,
+    modules::moqt::{
+        handler::{
+            publish_handler::PublishHandler, publish_namespace_handler::PublishNamespaceHandler,
+            subscribe_handler::SubscribeHandler,
+            subscribe_namespace_handler::SubscribeNamespaceHandler,
+        },
+        messages::control_messages::{publish_ok::PublishOk, subscribe_ok::SubscribeOk},
+    },
+};
+
 // message aliases
 pub type RequestId = u64;
 pub type TrackNamespace = String;
 pub type TrackAlias = u64;
-pub type GroupOrder = u8;
-pub type IsContentExist = u8;
-pub type IsForward = u8;
+pub type ContentExists = bool;
+pub type Forward = bool;
 pub type SubscriberPriority = u8;
-pub type FilterType = u64;
+pub type Expires = u64;
+pub type TrackName = String;
+pub type EndGroup = u64;
+
 pub(crate) type ErrorCode = u64;
 pub(crate) type ErrorPhrase = String;
 
@@ -22,37 +36,27 @@ pub type DeliveryTimeout = u64;
 pub type MaxCacheDuration = u64;
 
 #[derive(Clone, Debug)]
-pub enum SessionEvent {
-    PublishNamespace(TrackNamespace),
-    SubscribeNameSpace(TrackNamespace),
-    Publish(
-        RequestId,
-        TrackNamespace,
-        TrackAlias,
-        GroupOrder,
-        IsContentExist,
-        IsForward,
-        Vec<Authorization>,
-        Vec<DeliveryTimeout>,
-        Vec<MaxCacheDuration>,
-    ),
-    Subscribe(
-        RequestId,
-        TrackNamespace,
-        SubscriberPriority,
-        GroupOrder,
-        IsContentExist,
-        IsForward,
-        FilterType,
-        Vec<Authorization>,
-        Vec<DeliveryTimeout>,
-    ),
-    FatalError(),
+pub enum SessionEvent<T: TransportProtocol> {
+    PublishNamespace(PublishNamespaceHandler<T>),
+    SubscribeNameSpace(SubscribeNamespaceHandler<T>),
+    Publish(PublishHandler<T>),
+    Subscribe(SubscribeHandler<T>),
+    ProtocolViolation(),
 }
 
+#[derive(Clone, Debug)]
 pub(crate) enum ResponseMessage {
     SubscribeNameSpaceOk(RequestId),
     SubscribeNameSpaceError(RequestId, ErrorCode, ErrorPhrase),
     PublishNamespaceOk(RequestId),
     PublishNamespaceError(RequestId, ErrorCode, ErrorPhrase),
+    PublishOk(PublishOk),
+    PublishError(RequestId, ErrorCode, ErrorPhrase),
+    SubscribeOk(SubscribeOk),
+    SubscribeError(RequestId, ErrorCode, ErrorPhrase),
+}
+
+pub enum StreamMessage {
+    Header(),
+    ObjectField,
 }

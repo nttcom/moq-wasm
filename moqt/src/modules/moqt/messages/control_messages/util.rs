@@ -5,6 +5,7 @@ use bytes::{Buf, BytesMut};
 
 use crate::modules::moqt::messages::{
     control_message_type::ControlMessageType,
+    moqt_message_error::MOQTMessageError,
     variable_integer::{read_variable_integer, write_variable_integer},
 };
 
@@ -32,7 +33,7 @@ pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
             payload_length,
             read_buf.len()
         );
-        return false;
+        false
     } else {
         true
     }
@@ -44,4 +45,15 @@ pub(crate) fn add_payload_length(payload: BytesMut) -> BytesMut {
     buffer.extend(write_variable_integer(payload.len() as u64));
     buffer.unsplit(payload);
     buffer
+}
+
+pub(super) fn u8_to_bool(value: u8) -> Result<bool, MOQTMessageError> {
+    match value {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => {
+            tracing::error!("Invalid value for bool: {}", value);
+            Err(MOQTMessageError::ProtocolViolation)
+        }
+    }
 }

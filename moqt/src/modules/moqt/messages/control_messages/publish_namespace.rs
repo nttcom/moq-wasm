@@ -189,7 +189,6 @@ mod tests {
             #[test]
             fn with_parameter() {
                 let bytes_array = [
-                    6,  // Message Type(u64)
                     19, // Message Length
                     0,  // request id(u64)
                     2,  // Track Namespace(tuple): Number of elements
@@ -222,7 +221,6 @@ mod tests {
             #[test]
             fn without_parameter() {
                 let bytes_array = [
-                    6,  // Message Type(u64)
                     13, // Message Length
                     0,  // request id(u64)
                     2,  // Track Namespace(tuple): Number of elements

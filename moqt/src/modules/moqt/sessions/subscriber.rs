@@ -9,12 +9,12 @@ use crate::modules::moqt::{
         control_messages::subscribe_namespace::SubscribeNamespace,
     },
     protocol::TransportProtocol,
-    sessions::inner_session::InnerSession,
+    sessions::session_context::SessionContext,
     utils,
 };
 
 pub struct Subscriber<T: TransportProtocol> {
-    pub(crate) session: Arc<InnerSession<T>>,
+    pub(crate) session: Arc<SessionContext<T>>,
 }
 
 impl<T: TransportProtocol> Subscriber<T> {
