@@ -36,6 +36,11 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_line_number(true)
+        .try_init()
+        .ok();
     // create_certs_for_test_if_needed()?;
     // console_subscriber::init();
     let current_path = std::env::current_dir().expect("failed to get current path");
