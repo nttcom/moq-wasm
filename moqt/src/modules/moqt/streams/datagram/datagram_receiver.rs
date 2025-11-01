@@ -10,6 +10,7 @@ use crate::{
     },
 };
 
+#[derive(Debug)]
 pub struct DatagramReceiver {
     pub track_alias: u64,
     receiver: tokio::sync::mpsc::UnboundedReceiver<DatagramObject>,

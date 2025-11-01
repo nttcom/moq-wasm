@@ -1,7 +1,9 @@
+use anyhow::bail;
 use async_trait::async_trait;
 
 use crate::modules::{core::datagram_receiver::DatagramReceiver, enums::GroupOrder};
 
+#[derive(Debug)]
 pub(crate) enum Acceptance {
     Datagram(Box<dyn DatagramReceiver>, moqt::DatagramObject),
 }
@@ -32,7 +34,10 @@ impl<T: moqt::TransportProtocol> Subscription for moqt::Subscription<T> {
     async fn accept_stream_or_datagram(&self) -> anyhow::Result<Acceptance> {
         let result = self.accept_stream_or_datagram().await?;
         match result {
-            moqt::Acceptance::Stream(stream) => todo!(),
+            moqt::Acceptance::Stream(stream) => {
+                tracing::info!("stream accepted");
+                bail!("stream accepted, but not implemented yet")
+            }
             moqt::Acceptance::Datagram(datagram, object) => {
                 Ok(Acceptance::Datagram(Box::new(datagram), object))
             }

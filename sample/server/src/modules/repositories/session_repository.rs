@@ -1,7 +1,6 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Weak},
-};
+use std::sync::{Arc, Weak};
+
+use dashmap::DashMap;
 
 use crate::modules::{
     core::{publisher::Publisher, session::Session, subscriber::Subscriber},
@@ -14,8 +13,8 @@ use crate::modules::{
 
 pub(crate) struct SessionRepository {
     thread_manager: ThreadManager,
-    sessions: tokio::sync::Mutex<HashMap<SessionId, Arc<dyn Session>>>,
-    publishers: tokio::sync::Mutex<HashMap<SessionId, Arc<dyn Publisher>>>,
+    sessions: DashMap<SessionId, Arc<dyn Session>>,
+    publishers: DashMap<SessionId, Arc<dyn Publisher>>,
     subscriber_repo: SubscriberRepository,
 }
 
@@ -23,8 +22,8 @@ impl SessionRepository {
     pub(crate) fn new() -> Self {
         Self {
             thread_manager: ThreadManager::new(),
-            sessions: tokio::sync::Mutex::new(HashMap::new()),
-            publishers: tokio::sync::Mutex::new(HashMap::new()),
+            sessions: DashMap::new(),
+            publishers: DashMap::new(),
             subscriber_repo: SubscriberRepository::new(),
         }
     }
@@ -39,11 +38,8 @@ impl SessionRepository {
         let (publisher, subscriber) = arc_session.new_publisher_subscriber_pair();
         let arc_publisher = Arc::from(publisher);
         self.start_receive(session_id, Arc::downgrade(&arc_session), event_sender);
-        self.sessions.lock().await.insert(session_id, arc_session);
-        self.publishers
-            .lock()
-            .await
-            .insert(session_id, arc_publisher);
+        self.sessions.insert(session_id, arc_session);
+        self.publishers.insert(session_id, arc_publisher);
         self.subscriber_repo.add(session_id, subscriber).await;
     }
 
@@ -77,8 +73,8 @@ impl SessionRepository {
     }
 
     pub(crate) async fn get_session(&self, session_id: SessionId) -> Option<Arc<dyn Session>> {
-        let sessions = self.sessions.lock().await;
-        sessions.get(&session_id).cloned()
+        let sessions = self.sessions.get(&session_id)?;
+        Some(sessions.value().clone())
     }
 
     pub(crate) async fn get_subscriber(
@@ -89,9 +85,8 @@ impl SessionRepository {
     }
 
     pub(crate) async fn get_publisher(&self, session_id: SessionId) -> Option<Arc<dyn Publisher>> {
-        let publishers = self.publishers.lock().await;
-        let result = publishers.get(&session_id);
-        if let Some(publisher) = result {
+        let publishers = self.publishers.get(&session_id);
+        if let Some(publisher) = publishers {
             Some(publisher.clone())
         } else {
             None

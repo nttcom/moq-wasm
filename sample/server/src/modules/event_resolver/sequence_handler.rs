@@ -11,7 +11,6 @@ use crate::modules::{
     },
     enums::FilterType,
     event_resolver::stream_binder::StreamBinder,
-    relaies::relay_manager::RelayManager,
     relations::Relations,
     repositories::session_repository::SessionRepository,
     types::SessionId,
@@ -110,6 +109,7 @@ impl SequenceHandler {
                 .publisher_namespaces
                 .insert(track_namespace.to_string(), dash_set);
         }
+        tracing::info!("SequenceHandler::publish namespace: {} DONE", session_id);
     }
 
     pub(crate) async fn subscribe_namespace(
@@ -222,6 +222,7 @@ impl SequenceHandler {
                 .subscriber_namespaces
                 .insert(track_namespace_prefix.to_string(), dash_set);
         }
+        tracing::info!("SequenceHandler::subscribe namespace: {} DONE", session_id);
     }
 
     pub(crate) async fn publish(&self, session_id: SessionId, handler: Box<dyn PublishHandler>) {
@@ -282,6 +283,7 @@ impl SequenceHandler {
             Ok(()) => self.tables.published_handlers.write().await.push(handler),
             Err(_) => tracing::error!("failed to accept publish. close session."),
         }
+        tracing::info!("SequenceHandler::publish: {} DONE", session_id);
     }
 
     pub(crate) async fn subscribe(
@@ -350,5 +352,6 @@ impl SequenceHandler {
                 Err(e) => tracing::error!("Failed to send `SUBSCRIBE_ERROR`. Session close."),
             }
         }
+        tracing::info!("SequenceHandler::subscribe: {} DONE", session_id);
     }
 }

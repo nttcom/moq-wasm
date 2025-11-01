@@ -5,5 +5,7 @@ pub(crate) mod publication;
 pub(crate) mod publisher;
 pub(crate) mod session;
 pub(crate) mod session_event;
+pub(crate) mod stream_receiver;
+pub(crate) mod stream_sender;
 pub(crate) mod subscriber;
 pub(crate) mod subscription;

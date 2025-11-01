@@ -14,3 +14,4 @@ dashmap = "6.1.0"
 rcgen = "0.14.3"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 bytes = "1"
+console-subscriber = "0.4"

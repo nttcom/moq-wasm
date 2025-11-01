@@ -30,6 +30,8 @@ pub use modules::moqt::sessions::subscription::Subscription;
 pub use modules::moqt::streams::datagram::datagram_receiver::DatagramReceiver;
 pub use modules::moqt::streams::datagram::datagram_sender::DatagramHeader;
 pub use modules::moqt::streams::datagram::datagram_sender::DatagramSender;
+pub use modules::moqt::streams::stream::stream_receiver::StreamReceiver;
+pub use modules::moqt::streams::stream::stream_sender::StreamSender;
 
 pub struct ServerConfig {
     pub port: u16,

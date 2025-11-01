@@ -47,8 +47,8 @@ impl<T: TransportProtocol> Subscription<T> {
             DatagramReceiver::new(self.session_context.clone(), self.track_alias).await;
 
         tokio::select! {
-            stream = self.session_context.transport_connection.accept_uni() => {
-                Ok(Acceptance::Stream(StreamReceiver::new(stream?)))
+            Ok(stream) = self.session_context.transport_connection.accept_uni() => {
+                Ok(Acceptance::Stream(StreamReceiver::new(stream)))
             }
             datagram = datagram_receiver.receive() => {
                 if let Ok(datagram) = datagram {
