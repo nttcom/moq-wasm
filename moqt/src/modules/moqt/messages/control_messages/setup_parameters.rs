@@ -1,8 +1,7 @@
-use crate::{
-    modules::moqt::messages::moqt_payload::MOQTPayload,
-    modules::moqt::messages::variable_integer::{
-        read_variable_integer_from_buffer, write_variable_integer,
-    },
+use crate::modules::moqt::messages::{
+    moqt_payload::MOQTPayload,
+    variable_bytes::read_variable_bytes_from_buffer,
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 use anyhow::{Context, Result, bail};
 use bytes::BytesMut;
@@ -14,6 +13,7 @@ use std::any::Any;
 pub enum SetupParameter {
     Path(Path),
     MaxSubscribeID(MaxSubscribeID),
+    MOQTimplementation(MOQTimplementation),
     Unknown(u8),
 }
 
@@ -46,6 +46,10 @@ impl MOQTPayload for SetupParameter {
 
                 Ok(SetupParameter::MaxSubscribeID(MaxSubscribeID::new(value)))
             }
+            SetupParameterType::MOQTimplementation => {
+                let value = String::from_utf8(read_variable_bytes_from_buffer(buf)?)?;
+                Ok(SetupParameter::MOQTimplementation(MOQTimplementation::new(value)))
+            }
         }
     }
 
@@ -61,6 +65,11 @@ impl MOQTPayload for SetupParameter {
                 //   The value is of type varint (from MAX_SUBSCRIBE_ID message format).
                 buf.extend(write_variable_integer(param.value));
             }
+            SetupParameter::MOQTimplementation(param) => {
+                buf.extend(write_variable_integer(u8::from(param.key) as u64));
+                buf.extend(write_variable_integer(param.length));
+                buf.extend(param.value.as_bytes());
+            }
             SetupParameter::Unknown(_) => unimplemented!("Unknown SETUP parameter"),
         }
     }
@@ -75,6 +84,7 @@ impl MOQTPayload for SetupParameter {
 pub enum SetupParameterType {
     Path = 0x01,
     MaxSubscribeID = 0x02,
+    MOQTimplementation = 0x05,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -108,6 +118,24 @@ impl MaxSubscribeID {
             key: SetupParameterType::MaxSubscribeID,
             length,
             value: max_subscribe_id,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct MOQTimplementation {
+    pub key: SetupParameterType,
+    pub length: u64,
+    pub value: String,
+}
+
+impl MOQTimplementation {
+    pub fn new(value: String) -> Self {
+        let length = value.len() as u64;
+        MOQTimplementation {
+            key: SetupParameterType::MOQTimplementation,
+            length,
+            value,
         }
     }
 }

@@ -15,7 +15,7 @@ use crate::{
             control_messages::{
                 client_setup::ClientSetup,
                 server_setup::ServerSetup,
-                setup_parameters::{MaxSubscribeID, SetupParameter},
+                setup_parameters::{MOQTimplementation, MaxSubscribeID, SetupParameter},
             },
             moqt_message::MOQTMessage,
         },
@@ -84,9 +84,13 @@ impl<T: TransportProtocol> SessionContext<T> {
         receive_stream: &StreamReceiver<T>,
     ) -> anyhow::Result<()> {
         let max_id = MaxSubscribeID::new(1000);
+        let param = MOQTimplementation::new("MOQ-WASM".to_string());
         let payload = ClientSetup::new(
             vec![constants::MOQ_TRANSPORT_VERSION],
-            vec![SetupParameter::MaxSubscribeID(max_id)],
+            vec![
+                SetupParameter::MaxSubscribeID(max_id),
+                SetupParameter::MOQTimplementation(param),
+            ],
         )
         .packetize();
         let bytes = add_message_type(ControlMessageType::ClientSetup, payload);

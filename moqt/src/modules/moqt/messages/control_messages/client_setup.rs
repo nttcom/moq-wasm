@@ -106,7 +106,7 @@ mod test {
             messages::{
                 control_messages::{
                     client_setup::ClientSetup,
-                    setup_parameters::{MaxSubscribeID, SetupParameter},
+                    setup_parameters::{MOQTimplementation, MaxSubscribeID, SetupParameter},
                 },
                 moqt_message::MOQTMessage,
             },
@@ -116,20 +116,26 @@ mod test {
         #[test]
         fn packetize() {
             let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-            let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000))];
+            let moqt_implementation =
+                SetupParameter::MOQTimplementation(MOQTimplementation::new("MOQ-WASM".to_string()));
+            let setup_parameters = vec![
+                SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000)),
+                moqt_implementation,
+            ];
             let client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
             let buf = client_setup.packetize();
 
             let expected_bytes_array = [
-                14,  // Payload length
+                24,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff000008) in 62bit
-                1,   // Number of Parameters (i)
+                0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000008) in 62bit
+                2,   // Number of Parameters (i)
                 2,   // Parameter Type (i): Type(MaxSubscribeID)
                 2,   // Parameter Length (i)
                 71,  // Parameter Value (..): Length(01 of 2MSB)
                 208, // Parameter Value (..): Value(2000) in 62bit
+                5, 8, 77, 79, 81, 45, 87, 65, 83, 77,
             ];
 
             assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -138,22 +144,28 @@ mod test {
         #[test]
         fn depacketize() {
             let bytes_array = [
-                14,  // Payload length
+                24,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff000008) in 62bit
-                1,   // Number of Parameters (i)
+                0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000008) in 62bit
+                2,   // Number of Parameters (i)
                 2,   // Parameter Type (i): Type(MaxSubscribeID)
                 2,   // Parameter Length (i)
                 71,  // Parameter Value (..): Length(01 of 2MSB)
                 208, // Parameter Value (..): Value(2000) in 62bit
+                5, 8, 77, 79, 81, 45, 87, 65, 83, 77,
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let depacketized_client_setup = ClientSetup::depacketize(&mut buf).unwrap();
 
             let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-            let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000))];
+            let moqt_implementaion =
+                SetupParameter::MOQTimplementation(MOQTimplementation::new("MOQ-WASM".to_string()));
+            let setup_parameters = vec![
+                SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000)),
+                moqt_implementaion,
+            ];
             let expected_client_setup =
                 ClientSetup::new(supported_versions, setup_parameters.clone());
 
