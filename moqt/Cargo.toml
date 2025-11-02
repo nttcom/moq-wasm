@@ -21,7 +21,7 @@ serde = { version = "1.0.188", features = ["derive"] }
 num_enum = "0.7.0"
 mockall="0.13.1"
 rustls-native-certs="0.8.1"
-rustls_pemfile="2.2.0"
+rustls-pemfile="2.2.0"
 thiserror = "2.0.16"
 
 [dev-dependencies]
