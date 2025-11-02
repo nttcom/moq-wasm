@@ -44,7 +44,10 @@ impl SessionHandler {
                         tracing::error!("failed to accept: {}", e);
                     }) {
                         Ok(s) => s,
-                        Err(_) => break,
+                        Err(_) => {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     };
                     let session_id = Uuid::new_v4();
                     tracing::info!("Session ID: {}", session_id);

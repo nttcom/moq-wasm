@@ -16,15 +16,16 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{self, EnvFilter, Layer, Registry, filter::LevelFilter, fmt};
 pub fn init_logging(log_level: String) {
     // tokio-console用のレイヤーとフィルタ(For Development)
-    let console_filter = EnvFilter::new("tokio::task=trace");
-    let console_layer = ConsoleLayer::builder()
-        .retention(std::time::Duration::from_secs(3600)) // Default: 3600
-        .spawn()
-        .with_filter(console_filter);
+    // let console_filter = EnvFilter::new("tokio::task=trace");
+    // let console_layer = ConsoleLayer::builder()
+    //     .retention(std::time::Duration::from_secs(3600)) // Default: 3600
+    //     .spawn()
+    //     .with_filter(console_filter);
     // tokio-console用のレイヤーとフィルタ(For Debug)
     let debug_console_filter =
         EnvFilter::new("tokio::task=trace,tokio::sync=trace,tokio::timer=trace");
     let debug_console_layer = ConsoleLayer::builder()
+        .server_addr(([127, 0, 0, 1], 6669))
         .event_buffer_capacity(1024 * 250) // Default: 102400
         .client_buffer_capacity(1024 * 7) // Default: 1024
         .retention(std::time::Duration::from_secs(600)) // Default: 3600
@@ -53,7 +54,7 @@ pub fn init_logging(log_level: String) {
         );
 
     Registry::default()
-        .with(console_layer)
+        // .with(console_layer)
         .with(debug_console_layer)
         .with(stdout_layer)
         .with(file_layer)
@@ -66,6 +67,7 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
     //     .with_line_number(true)
     //     .try_init()
     //     .ok();
+    unsafe { std::env::set_var("RUST_BACKTRACE", "full") };
     init_logging("INFO".to_string());
     let current = std::env::current_dir()?;
     tracing::info!("current path: {}", current.to_str().unwrap());

@@ -253,6 +253,7 @@ impl Client {
                     .unwrap();
                 match datagram.send(obj).await {
                     Ok(_) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
                         id += 1
                     }
                     Err(_) => {
