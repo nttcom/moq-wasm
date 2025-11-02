@@ -62,13 +62,8 @@ pub fn init_logging(log_level: String) {
 }
 
 fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
-    // tracing_subscriber::fmt()
-    //     .with_max_level(tracing::Level::DEBUG)
-    //     .with_line_number(true)
-    //     .try_init()
-    //     .ok();
-    unsafe { std::env::set_var("RUST_BACKTRACE", "full") };
-    init_logging("INFO".to_string());
+    // unsafe { std::env::set_var("RUST_BACKTRACE", "full") };
+    // init_logging("INFO".to_string());
     let current = std::env::current_dir()?;
     tracing::info!("current path: {}", current.to_str().unwrap());
 
@@ -76,7 +71,7 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
         tracing::info!("Certificates already exist");
         Ok(())
     } else {
-        let subject_alt_names = vec!["localhost".to_string()];
+        let subject_alt_names = vec!["localhost".to_string(), "moqt.research.skyway.io".to_string()];
         let CertifiedKey { cert, signing_key } =
             generate_simple_self_signed(subject_alt_names).unwrap();
         let key_pem = signing_key.serialize_pem();
@@ -90,7 +85,12 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    create_certs_for_test_if_needed()?;
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_line_number(true)
+        .try_init()
+        .ok();
+    // create_certs_for_test_if_needed()?;
     // console_subscriber::init();
     let current_path = std::env::current_dir().expect("failed to get current path");
     let key_path = format!(
