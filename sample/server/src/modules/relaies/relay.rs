@@ -108,11 +108,17 @@ impl Relay {
                                     track_alias,
                                     e
                                 );
-                                break;
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                continue;
                             }
+                        } else {
+                            tracing::error!("Track alias {} not found in sender map", track_alias);
+                            break;
                         }
+                    } else {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
-                    tokio::task::yield_now().await;
+                    // tokio::task::yield_now().await;
                 }
             });
         }

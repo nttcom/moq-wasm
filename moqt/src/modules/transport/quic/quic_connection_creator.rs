@@ -134,8 +134,14 @@ impl TransportConnectionCreator for QUICConnectionCreator {
     }
 
     async fn accept_new_transport(&mut self) -> anyhow::Result<Self::Connection> {
-        let incoming = self.endpoint.accept().await.expect("failed to accept");
-        let connection = incoming.await.expect("failed to create connection");
+        let incoming = self
+            .endpoint
+            .accept()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Endpoint is closing"))?;
+        let connection = incoming
+            .await
+            .inspect_err(|e| tracing::error!("failed to create connection: {:?}", e.to_string()))?;
 
         Ok(QUICConnection::new(connection))
     }

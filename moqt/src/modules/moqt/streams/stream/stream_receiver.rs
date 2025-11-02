@@ -32,6 +32,7 @@ impl<T: TransportProtocol> StreamReceiver<T> {
                 total_message.extend_from_slice(&bytes[..size]);
                 if size == Self::RECEIVE_BYTES_CAPACITY {
                     tracing::debug!("Retry...");
+                    tokio::task::yield_now().await;
                 } else {
                     tracing::debug!("message length: {}", total_message.len());
                     return Ok(total_message);
