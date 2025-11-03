@@ -34,7 +34,7 @@ impl MOQTMessage for ServerSetup {
         if !validate_payload_length(buf) {
             return Err(MOQTMessageError::ProtocolViolation);
         }
-
+        
         let selected_version = u32::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
@@ -103,6 +103,7 @@ mod tests {
             let buf = server_setup.packetize();
 
             let expected_bytes_array = [
+                0,
                 13,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff000a) in 62bit
@@ -119,6 +120,7 @@ mod tests {
         #[test]
         fn depacketize() {
             let bytes_array = [
+                0,
                 13,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff00000a) in 62bit

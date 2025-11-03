@@ -1,5 +1,5 @@
 use anyhow::Context;
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 
 use crate::modules::moqt::messages::{
     control_messages::{
@@ -57,12 +57,7 @@ impl MOQTMessage for PublishOk {
         .context("forward")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let forward = util::u8_to_bool(forward_u8)?;
-        let subscriber_priority = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .context("subscriber priority")
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let subscriber_priority = buf.get_u8();
         let group_order_u8 = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,

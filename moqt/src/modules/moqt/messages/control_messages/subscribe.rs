@@ -13,7 +13,7 @@ use crate::modules::moqt::messages::{
     variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 use anyhow::Context;
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use tracing;
 
 pub enum FilterTypePair {
@@ -66,12 +66,7 @@ impl MOQTMessage for Subscribe {
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let subscriber_priority = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .context("subscriber priority")
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let subscriber_priority = buf.get_u8();
         let group_order_u8 = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .context("group order")

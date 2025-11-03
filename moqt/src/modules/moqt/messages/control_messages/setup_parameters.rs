@@ -36,13 +36,7 @@ impl MOQTPayload for SetupParameter {
                 unimplemented!("Not implemented as only WebTransport is supported.")
             }
             SetupParameterType::MaxSubscribeID => {
-                let length = read_variable_integer_from_buffer(buf)?;
                 let value = read_variable_integer_from_buffer(buf).context("max subscribe id")?;
-
-                if write_variable_integer(value).len() as u64 != length {
-                    // TODO: return TerminationError
-                    bail!("Invalid value length in MAX_SUBSCRIBE_ID parameter");
-                }
 
                 Ok(SetupParameter::MaxSubscribeID(MaxSubscribeID::new(value)))
             }
@@ -84,7 +78,7 @@ impl MOQTPayload for SetupParameter {
 pub enum SetupParameterType {
     Path = 0x01,
     MaxSubscribeID = 0x02,
-    MOQTimplementation = 0x05,
+    MOQTimplementation = 0x07,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
