@@ -126,6 +126,7 @@ mod test {
             let buf = client_setup.packetize();
 
             let expected_bytes_array = [
+                0, 
                 24,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
@@ -144,6 +145,7 @@ mod test {
         #[test]
         fn depacketize() {
             let bytes_array = [
+                0,
                 24,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)

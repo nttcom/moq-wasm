@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use anyhow::bail;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::moqt::messages::{
     control_message_type::ControlMessageType,
@@ -23,9 +23,8 @@ pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<Contro
 }
 
 pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
-    let mut read_cur = Cursor::new(&read_buf[..]);
-    let payload_length = read_variable_integer(&mut read_cur).unwrap();
-    read_buf.advance(read_cur.position() as usize);
+    let mut head = read_buf.split_to(2);
+    let payload_length = head.get_u16();
 
     if read_buf.len() != payload_length as usize {
         tracing::error!(
@@ -42,7 +41,7 @@ pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
 pub(crate) fn add_payload_length(payload: BytesMut) -> BytesMut {
     let mut buffer = BytesMut::new();
     // Message Type
-    buffer.extend(write_variable_integer(payload.len() as u64));
+    buffer.put_u16(payload.len() as u16);
     buffer.unsplit(payload);
     buffer
 }
