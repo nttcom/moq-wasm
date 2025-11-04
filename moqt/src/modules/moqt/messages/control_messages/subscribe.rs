@@ -1,4 +1,6 @@
 use crate::modules::moqt::messages::{
+    byte_reader::ByteReader,
+    byte_writer::ByteWriter,
     control_messages::{
         enums::FilterType,
         group_order::GroupOrder,
@@ -66,7 +68,7 @@ impl MOQTMessage for Subscribe {
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let subscriber_priority = buf.get_u8();
+        let subscriber_priority = ByteReader::get_u8(buf);
         let group_order_u8 = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .context("group order")
@@ -151,7 +153,7 @@ impl MOQTMessage for Subscribe {
             payload.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
         }
         payload.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
-        payload.extend(write_variable_integer(self.subscriber_priority as u64));
+        ByteWriter::put_u8(&mut payload, self.subscriber_priority);
         payload.extend(u8::from(self.group_order).to_be_bytes());
         payload.extend((self.forward as u8).to_be_bytes());
         payload.extend(write_variable_integer(u8::from(self.filter_type) as u64));
