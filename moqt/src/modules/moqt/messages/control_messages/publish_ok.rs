@@ -2,17 +2,13 @@ use anyhow::Context;
 use bytes::{Buf, BytesMut};
 
 use crate::modules::moqt::messages::{
-    control_messages::{
+    byte_reader::ByteReader, byte_writer::ByteWriter, control_messages::{
         enums::FilterType,
         group_order::GroupOrder,
         location::Location,
         util::{self, add_payload_length, validate_payload_length},
         version_specific_parameters::VersionSpecificParameter,
-    },
-    moqt_message::MOQTMessage,
-    moqt_message_error::MOQTMessageError,
-    moqt_payload::MOQTPayload,
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+    }, moqt_message::MOQTMessage, moqt_message_error::MOQTMessageError, moqt_payload::MOQTPayload, variable_integer::{read_variable_integer_from_buffer, write_variable_integer}
 };
 
 pub enum FilterTypePair {
@@ -57,7 +53,7 @@ impl MOQTMessage for PublishOk {
         .context("forward")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let forward = util::u8_to_bool(forward_u8)?;
-        let subscriber_priority = buf.get_u8();
+        let subscriber_priority = ByteReader::get_u8(buf);
         let group_order_u8 = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
@@ -123,7 +119,7 @@ impl MOQTMessage for PublishOk {
         let mut payload = BytesMut::new();
         payload.extend(write_variable_integer(self.request_id));
         payload.extend(write_variable_integer(self.forward as u64));
-        payload.extend(write_variable_integer(self.subscriber_priority as u64));
+        ByteWriter::put_u8(&mut payload, self.subscriber_priority);
         payload.extend(write_variable_integer(self.group_order as u64));
         payload.extend(write_variable_integer(self.filter_type as u64));
         match self.filter_type {
