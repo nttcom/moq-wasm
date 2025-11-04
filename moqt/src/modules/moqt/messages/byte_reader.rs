@@ -1,8 +1,8 @@
 use bytes::{Buf, BytesMut};
 
-pub(crate) struct ByteDecoder;
+pub(crate) struct ByteReader;
 
-impl ByteDecoder {
+impl ByteReader {
     pub(crate) fn get_u8(bytes: &mut BytesMut) -> u8 {
         bytes.get_u8()
     }
@@ -56,70 +56,70 @@ mod tests {
     #[test]
     fn get_u8_ok() {
         let mut bytes = BytesMut::from(&[1, 2, 3, 4][..]);
-        let result = ByteDecoder::get_u8(&mut bytes);
+        let result = ByteReader::get_u8(&mut bytes);
         assert_eq!(result, 1);
     }
 
     #[test]
     fn get_u16_within_u8_range_ok() {
         let mut bytes = BytesMut::from(&[64, 2][..]);
-        let result = ByteDecoder::get_u16(&mut bytes);
+        let result = ByteReader::get_u16(&mut bytes);
         assert_eq!(result, 2);
     }
 
     #[test]
     fn get_u16_ok() {
         let mut bytes = BytesMut::from(&[64, 70][..]);
-        let result = ByteDecoder::get_u16(&mut bytes);
+        let result = ByteReader::get_u16(&mut bytes);
         assert_eq!(result, 70);
     }
 
     #[test]
     fn get_u32_within_u16_range_ok() {
         let mut bytes = BytesMut::from(&[128, 0, 0, 85][..]);
-        let result = ByteDecoder::get_u32(&mut bytes);
+        let result = ByteReader::get_u32(&mut bytes);
         assert_eq!(result, 85);
     }
 
     #[test]
     fn get_u32_ok() {
         let mut bytes = BytesMut::from(&[128, 1, 1, 2][..]);
-        let result = ByteDecoder::get_u32(&mut bytes);
+        let result = ByteReader::get_u32(&mut bytes);
         assert_eq!(result, 65794);
     }
 
     #[test]
     fn get_varint_1_byte() {
         let mut bytes = BytesMut::from(&[3, 4, 5, 6][..]);
-        let result = ByteDecoder::get_varint(&mut bytes);
+        let result = ByteReader::get_varint(&mut bytes);
         assert_eq!(result, Some(3));
     }
 
     #[test]
     fn get_varint_2_bytes() {
         let mut bytes = BytesMut::from(&[64, 5, 15, 27][..]);
-        let result = ByteDecoder::get_varint(&mut bytes);
+        let result = ByteReader::get_varint(&mut bytes);
         assert_eq!(result, Some(5));
     }
 
     #[test]
     fn get_varint_4_bytes() {
         let mut bytes = BytesMut::from(&[128, 0, 0, 8, 5][..]);
-        let result = ByteDecoder::get_varint(&mut bytes);
+        let result = ByteReader::get_varint(&mut bytes);
         assert_eq!(result, Some(8));
     }
 
     #[test]
     fn get_varint_8_bytes() {
         let mut bytes = BytesMut::from(&[192, 0, 0, 0, 0, 0, 0, 14, 9][..]);
-        let result = ByteDecoder::get_varint(&mut bytes);
+        let result = ByteReader::get_varint(&mut bytes);
         assert_eq!(result, Some(14));
     }
 
     #[test]
     fn get_string_ok() {
         let mut bytes = BytesMut::from(&[0x04, 0x61, 0x62, 0x63, 0x64][..]);
-        let (len, result) = ByteDecoder::get_string(&mut bytes).unwrap();
+        let (len, result) = ByteReader::get_string(&mut bytes).unwrap();
         assert_eq!(len, 4);
         assert_eq!(result, "abcd");
     }

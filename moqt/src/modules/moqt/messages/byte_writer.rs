@@ -1,8 +1,8 @@
 use bytes::{BufMut, BytesMut};
 
-pub(crate) struct ByteEncoder;
+pub(crate) struct ByteWriter;
 
-impl ByteEncoder {
+impl ByteWriter {
     pub(crate) fn put_u8(bytes: &mut BytesMut, value: u8) {
         bytes.put_u8(value);
     }
@@ -45,77 +45,77 @@ mod tests {
     mod success {
         use bytes::BytesMut;
 
-        use crate::modules::moqt::messages::byte_decoder::ByteDecoder;
-        use crate::modules::moqt::messages::byte_encoder::ByteEncoder;
+        use crate::modules::moqt::messages::byte_reader::ByteReader;
+        use crate::modules::moqt::messages::byte_writer::ByteWriter;
 
         #[test]
         fn put_u8_ok() {
             let mut bytes = BytesMut::new();
-            ByteEncoder::put_u8(&mut bytes, 1);
-            assert_eq!(ByteDecoder::get_u8(&mut bytes), 1);
+            ByteWriter::put_u8(&mut bytes, 1);
+            assert_eq!(ByteReader::get_u8(&mut bytes), 1);
         }
 
         #[test]
         fn put_u16_within_u8_range_ok() {
             let mut bytes = BytesMut::new();
-            ByteEncoder::put_u16(&mut bytes, 2);
-            assert_eq!(ByteDecoder::get_u16(&mut bytes), 2);
+            ByteWriter::put_u16(&mut bytes, 2);
+            assert_eq!(ByteReader::get_u16(&mut bytes), 2);
         }
 
         #[test]
         fn put_u16_ok() {
             let mut bytes = BytesMut::new();
-            ByteEncoder::put_u16(&mut bytes, 68);
-            assert_eq!(ByteDecoder::get_u16(&mut bytes), 68);
+            ByteWriter::put_u16(&mut bytes, 68);
+            assert_eq!(ByteReader::get_u16(&mut bytes), 68);
         }
 
         #[test]
         fn put_u32_ok() {
             let mut bytes = BytesMut::new();
-            ByteEncoder::put_u32(&mut bytes, 30000);
-            assert_eq!(ByteDecoder::get_u32(&mut bytes), 30000);
+            ByteWriter::put_u32(&mut bytes, 30000);
+            assert_eq!(ByteReader::get_u32(&mut bytes), 30000);
         }
 
         #[test]
         fn put_u64_ok() {
             let mut bytes = BytesMut::new();
-            ByteEncoder::put_u64(&mut bytes, 4000000000000000);
-            assert_eq!(ByteDecoder::get_u64(&mut bytes), 4000000000000000);
+            ByteWriter::put_u64(&mut bytes, 4000000000000000);
+            assert_eq!(ByteReader::get_u64(&mut bytes), 4000000000000000);
         }
 
         #[test]
         fn put_varint_1_byte() {
             let mut bytes = BytesMut::new();
-            ByteEncoder::put_varint(&mut bytes, 3);
-            assert_eq!(ByteDecoder::get_varint(&mut bytes), Some(3));
+            ByteWriter::put_varint(&mut bytes, 3);
+            assert_eq!(ByteReader::get_varint(&mut bytes), Some(3));
         }
 
         #[test]
         fn put_varint_2_bytes() {
             let mut bytes = BytesMut::new();
-            ByteEncoder::put_varint(&mut bytes, 75);
-            assert_eq!(ByteDecoder::get_varint(&mut bytes), Some(75));
+            ByteWriter::put_varint(&mut bytes, 75);
+            assert_eq!(ByteReader::get_varint(&mut bytes), Some(75));
         }
 
         #[test]
         fn put_varint_4_bytes() {
             let mut bytes = BytesMut::new();
-            ByteEncoder::put_varint(&mut bytes, 70000);
-            assert_eq!(ByteDecoder::get_varint(&mut bytes), Some(70000));
+            ByteWriter::put_varint(&mut bytes, 70000);
+            assert_eq!(ByteReader::get_varint(&mut bytes), Some(70000));
         }
 
         #[test]
         fn put_varint_8_bytes() {
             let mut bytes = BytesMut::new();
-            ByteEncoder::put_varint(&mut bytes, 15000000000);
-            assert_eq!(ByteDecoder::get_varint(&mut bytes), Some(15000000000));
+            ByteWriter::put_varint(&mut bytes, 15000000000);
+            assert_eq!(ByteReader::get_varint(&mut bytes), Some(15000000000));
         }
 
         #[test]
         fn put_string_ok() {
             let mut bytes = BytesMut::new();
-            ByteEncoder::put_string_with_length(&mut bytes, "abcd");
-            let (len, result) = ByteDecoder::get_string(&mut bytes).unwrap();
+            ByteWriter::put_string_with_length(&mut bytes, "abcd");
+            let (len, result) = ByteReader::get_string(&mut bytes).unwrap();
             assert_eq!(len, 4);
             assert_eq!(result, "abcd");
         }

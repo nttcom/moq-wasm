@@ -1,8 +1,8 @@
 pub mod control_message_type;
 pub mod control_messages;
 pub mod data_streams;
-pub(crate) mod byte_decoder;
-pub(crate) mod byte_encoder;
+pub(crate) mod byte_reader;
+pub(crate) mod byte_writer;
 pub mod message_process_result;
 pub(crate) mod moqt_message;
 pub(crate) mod moqt_message_error;
