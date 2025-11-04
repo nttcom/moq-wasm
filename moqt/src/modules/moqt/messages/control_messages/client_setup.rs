@@ -1,4 +1,5 @@
 use crate::modules::moqt::messages::{
+    byte_reader::ByteReader,
     control_messages::{
         setup_parameters::SetupParameter,
         util::{add_payload_length, validate_payload_length},
@@ -14,18 +15,18 @@ use std::vec;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientSetup {
-    pub number_of_supported_versions: u8,
+    pub number_of_supported_versions: u64,
     pub supported_versions: Vec<u32>,
-    pub(crate) number_of_parameters: u8,
+    pub(crate) number_of_parameters: u64,
     pub setup_parameters: Vec<SetupParameter>,
 }
 
 impl ClientSetup {
     pub fn new(supported_versions: Vec<u32>, setup_parameters: Vec<SetupParameter>) -> ClientSetup {
         ClientSetup {
-            number_of_supported_versions: supported_versions.len() as u8,
+            number_of_supported_versions: supported_versions.len() as u64,
             supported_versions,
-            number_of_parameters: setup_parameters.len() as u8,
+            number_of_parameters: setup_parameters.len() as u64,
             setup_parameters,
         }
     }
@@ -37,12 +38,8 @@ impl MOQTMessage for ClientSetup {
             return Err(MOQTMessageError::ProtocolViolation);
         }
 
-        let number_of_supported_versions = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .context("number of supported versions")
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let number_of_supported_versions =
+            ByteReader::get_varint(buf).ok_or(MOQTMessageError::ProtocolViolation)?;
 
         let mut supported_versions = Vec::with_capacity(number_of_supported_versions as usize);
         for _ in 0..number_of_supported_versions {
@@ -55,12 +52,9 @@ impl MOQTMessage for ClientSetup {
             supported_versions.push(supported_version);
         }
 
-        let number_of_parameters = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .context("number of parameters")
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let number_of_parameters = read_variable_integer_from_buffer(buf)
+            .context("number of parameters")
+            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
 
         let mut setup_parameters = vec![];
         for _ in 0..number_of_parameters {
@@ -82,14 +76,12 @@ impl MOQTMessage for ClientSetup {
 
     fn packetize(&self) -> BytesMut {
         let mut payload = BytesMut::new();
-        payload.extend(write_variable_integer(
-            self.number_of_supported_versions as u64,
-        ));
+        payload.extend(write_variable_integer(self.number_of_supported_versions));
         for supported_version in &self.supported_versions {
             payload.extend(write_variable_integer(*supported_version as u64));
         }
 
-        payload.extend(write_variable_integer(self.number_of_parameters as u64));
+        payload.extend(write_variable_integer(self.number_of_parameters));
         for setup_parameter in &self.setup_parameters {
             setup_parameter.packetize(&mut payload);
         }
@@ -126,8 +118,7 @@ mod test {
             let buf = client_setup.packetize();
 
             let expected_bytes_array = [
-                0, 
-                24,  // Payload length
+                64, 24,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000008) in 62bit
@@ -145,8 +136,7 @@ mod test {
         #[test]
         fn depacketize() {
             let bytes_array = [
-                0,
-                24,  // Payload length
+                64, 24,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000008) in 62bit
