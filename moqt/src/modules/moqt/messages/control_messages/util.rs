@@ -4,9 +4,8 @@ use anyhow::bail;
 use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::moqt::messages::{
-    control_message_type::ControlMessageType,
-    moqt_message_error::MOQTMessageError,
-    variable_integer::{read_variable_integer, write_variable_integer},
+    byte_reader::ByteReader, byte_writer::ByteWriter, control_message_type::ControlMessageType,
+    moqt_message_error::MOQTMessageError, variable_integer::read_variable_integer,
 };
 
 pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<ControlMessageType> {
@@ -23,8 +22,7 @@ pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<Contro
 }
 
 pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
-    let mut head = read_buf.split_to(2);
-    let payload_length = head.get_u16();
+    let payload_length = ByteReader::get_u16(read_buf);
 
     if read_buf.len() != payload_length as usize {
         tracing::error!(
@@ -41,7 +39,7 @@ pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
 pub(crate) fn add_payload_length(payload: BytesMut) -> BytesMut {
     let mut buffer = BytesMut::new();
     // Message Type
-    buffer.put_u16(payload.len() as u16);
+    ByteWriter::put_u16(&mut buffer, payload.len() as u16);
     buffer.unsplit(payload);
     buffer
 }
