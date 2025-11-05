@@ -55,7 +55,7 @@ impl ControlMessageReceiveThread {
                         let message_type = match get_message_type(&mut bytes_mut) {
                             Ok(m) => m,
                             Err(e) => {
-                                tracing::error!("Protocol violation: {:?}", e);
+                                tracing::error!("Receiving error: {:?}", e);
                                 break;
                             }
                         };

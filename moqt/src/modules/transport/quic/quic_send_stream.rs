@@ -15,10 +15,6 @@ pub struct QUICSendStream {
 #[async_trait]
 impl TransportSendStream for QUICSendStream {
     async fn send(&mut self, buffer: &BytesMut) -> anyhow::Result<()> {
-        let _ = self.send_stream.write_all(buffer).await?;
-        match self.send_stream.finish() {
-            Ok(()) => Ok(()),
-            Err(_) => bail!("Failed to send message."),
-        }
+        Ok(self.send_stream.write_all(buffer).await?)
     }
 }

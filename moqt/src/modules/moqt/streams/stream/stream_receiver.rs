@@ -38,8 +38,7 @@ impl<T: TransportProtocol> StreamReceiver<T> {
                     return Ok(total_message);
                 }
             } else {
-                tracing::debug!("message length: {}", total_message.len());
-                bail!("failed to receive message")
+                bail!("BiStream closed.")
             }
         }
     }
