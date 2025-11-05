@@ -22,7 +22,7 @@ pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<Contro
 }
 
 pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
-    let payload_length = ByteReader::get_u16(read_buf);
+    let payload_length = read_buf.get_u16();
 
     if read_buf.len() != payload_length as usize {
         tracing::error!(
@@ -39,7 +39,7 @@ pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
 pub(crate) fn add_payload_length(payload: BytesMut) -> BytesMut {
     let mut buffer = BytesMut::new();
     // Message Type
-    ByteWriter::put_u16(&mut buffer, payload.len() as u16);
+    buffer.put_u16(payload.len() as u16);
     buffer.unsplit(payload);
     buffer
 }

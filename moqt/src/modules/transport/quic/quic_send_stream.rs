@@ -1,3 +1,4 @@
+use anyhow::bail;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use quinn::{self};
@@ -14,6 +15,10 @@ pub struct QUICSendStream {
 #[async_trait]
 impl TransportSendStream for QUICSendStream {
     async fn send(&mut self, buffer: &BytesMut) -> anyhow::Result<()> {
-        Ok(self.send_stream.write_all(buffer).await?)
+        let _ = self.send_stream.write_all(buffer).await?;
+        match self.send_stream.finish() {
+            Ok(()) => Ok(()),
+            Err(_) => bail!("Failed to send message."),
+        }
     }
 }
