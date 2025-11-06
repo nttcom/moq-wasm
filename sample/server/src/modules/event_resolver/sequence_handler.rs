@@ -3,13 +3,16 @@ use std::sync::Arc;
 use dashmap::DashSet;
 
 use crate::modules::{
-    core::handler::{
-        publish::{PublishHandler, SubscribeOption},
-        publish_namespace::PublishNamespaceHandler,
-        subscribe::SubscribeHandler,
-        subscribe_namespace::SubscribeNamespaceHandler,
+    core::{
+        handler::{
+            publish::{PublishHandler, SubscribeOption},
+            publish_namespace::PublishNamespaceHandler,
+            subscribe::SubscribeHandler,
+            subscribe_namespace::SubscribeNamespaceHandler,
+        },
+        session,
     },
-    enums::FilterType,
+    enums::{FilterType, GroupOrder},
     event_resolver::stream_binder::StreamBinder,
     relations::Relations,
     repositories::session_repository::SessionRepository,
@@ -337,6 +340,48 @@ impl SequenceHandler {
                     }
                     Err(_) => {
                         tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
+                    }
+                }
+            }
+        } else if let Some(session_ids) = self.tables.publisher_namespaces.get(track_namespace) {
+            for session_id in session_ids.iter() {
+                if let Some(subscriber) = self
+                    .session_repo
+                    .lock()
+                    .await
+                    .get_subscriber(*session_id)
+                    .await
+                {
+                    let option = SubscribeOption {
+                        subscriber_priority: 128,
+                        group_order: GroupOrder::Ascending,
+                        forward: true,
+                        filter_type: FilterType::LatestObject,
+                        start_location: None,
+                        end_group: None,
+                    };
+                    let subscription = subscriber
+                        .send_subscribe(track_namespace.to_string(), track_name.to_string(), option)
+                        .await;
+                    let subscription = subscription.unwrap();
+                    match handler
+                        .ok(subscription.track_alias(), subscription.expires(), false)
+                        .await
+                    {
+                        Ok(_) => {
+                            tracing::info!("send `SUBSCRIBE_OK` ok");
+                            let track_alias = subscription.track_alias();
+                            let _ = self
+                                .stream_handler
+                                .bind_by_subscribe(
+                                    subscription,
+                                    handler.into_publication(track_alias),
+                                )
+                                .await;
+                        }
+                        Err(_) => {
+                            tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
+                        }
                     }
                 }
             }
