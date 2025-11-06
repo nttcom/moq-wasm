@@ -30,12 +30,7 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
     fn max_cache_duration(&self) -> Option<u64>;
     async fn ok(&self, subscriber_priority: u8, filter_type: FilterType) -> anyhow::Result<()>;
     async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
-    async fn subscribe(
-        &self,
-        track_namespace: String,
-        track_name: String,
-        option: SubscribeOption,
-    ) -> anyhow::Result<Box<dyn Subscription>>;
+    fn into_subscription(&self, expires: u64) -> Box<dyn Subscription>;
 }
 
 #[async_trait]
@@ -79,25 +74,8 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
         self.error(code, reason_phrase).await
     }
 
-    async fn subscribe(
-        &self,
-        track_namespace: String,
-        track_name: String,
-        option: SubscribeOption,
-    ) -> anyhow::Result<Box<dyn Subscription>> {
-        let group_order = option.group_order.into_moqt();
-        let filter_type = option.filter_type.into_moqt();
-        let start_location = option.start_location.map(|location| location.into_moqt());
-
-        let option = moqt::SubscribeOption {
-            subscriber_priority: option.subscriber_priority,
-            group_order,
-            forward: option.forward,
-            filter_type,
-            start_location,
-            end_group: option.end_group,
-        };
-        let subscribe_handler = self.subscribe(track_namespace, track_name, option).await?;
-        Ok(Box::new(subscribe_handler))
+    fn into_subscription(&self, expires: u64) -> Box<dyn Subscription> {
+        let subscription = self.into_subscription(expires);
+        Box::new(subscription)
     }
 }

@@ -319,28 +319,21 @@ impl SequenceHandler {
                 end_group: handler.end_group(),
                 filter_type: handler.filter_type(),
             };
-            let subscription = pub_handler
-                .subscribe(track_namespace.to_string(), track_name.to_string(), option)
-                .await;
-            if subscription.is_err() {
-                let _ = handler.error(0, "failed to subscribe".to_string()).await;
-            } else {
-                let subscription = subscription.unwrap();
-                match handler
-                    .ok(subscription.track_alias(), subscription.expires(), false)
-                    .await
-                {
-                    Ok(_) => {
-                        tracing::info!("send `SUBSCRIBE_OK` ok");
-                        let track_alias = subscription.track_alias();
-                        let _ = self
-                            .stream_handler
-                            .bind_by_subscribe(subscription, handler.into_publication(track_alias))
-                            .await;
-                    }
-                    Err(_) => {
-                        tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
-                    }
+            let subscription = pub_handler.into_subscription(0);
+            match handler
+                .ok(subscription.track_alias(), subscription.expires(), false)
+                .await
+            {
+                Ok(_) => {
+                    tracing::info!("send `SUBSCRIBE_OK` ok");
+                    let track_alias = subscription.track_alias();
+                    let _ = self
+                        .stream_handler
+                        .bind_by_subscribe(subscription, handler.into_publication(track_alias))
+                        .await;
+                }
+                Err(_) => {
+                    tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
                 }
             }
         } else if let Some(session_ids) = self.tables.publisher_namespaces.get(track_namespace) {
