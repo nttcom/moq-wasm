@@ -79,54 +79,15 @@ impl<T: TransportProtocol> PublishHandler<T> {
         self.session_context.send_stream.send(&bytes).await
     }
 
-    pub async fn subscribe(
-        &self,
-        track_namespace: String,
-        track_name: String,
-        option: SubscribeOption,
-    ) -> anyhow::Result<Subscription<T>> {
-        let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
-        let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
-        let request_id = self.session_context.get_request_id();
-        self.session_context
-            .sender_map
-            .lock()
-            .await
-            .insert(request_id, sender);
-        let subscribe = Subscribe {
-            request_id,
-            track_namespace: vec_namespace,
-            track_name,
-            subscriber_priority: option.subscriber_priority,
-            group_order: option.group_order,
-            forward: option.forward,
-            filter_type: option.filter_type,
-            start_location: option.start_location,
-            end_group: option.end_group,
-            subscribe_parameters: vec![],
-        };
-        let bytes = utils::create_full_message(ControlMessageType::Subscribe, subscribe);
-        self.session_context.send_stream.send(&bytes).await?;
-        tracing::info!("Subscribe");
-        let result = receiver.await;
-        if let Err(e) = result {
-            bail!("Failed to receive message: {}", e.to_string())
-        }
-        let response = result.unwrap();
-        match response {
-            ResponseMessage::SubscribeOk(message) => {
-                if request_id != message.request_id {
-                    bail!("Protocol violation")
-                } else {
-                    tracing::info!("Subscribe ok");
-                    Ok(Subscription::new(self.session_context.clone(), message))
-                }
-            }
-            ResponseMessage::SubscribeError(_, _, _) => {
-                tracing::info!("Subscribe error");
-                bail!("Subscribe error")
-            }
-            _ => bail!("Protocol violation"),
+    pub fn into_subscription(&self, expires: u64) -> Subscription<T> {
+        Subscription::<T> {
+            session_context: self.session_context.clone(),
+            track_alias: self.track_alias,
+            expires,
+            group_order: self.group_order,
+            content_exists: self.content_exists,
+            largest_location: self.largest_location,
+            derivery_timeout: self.delivery_timeout,
         }
     }
 }
