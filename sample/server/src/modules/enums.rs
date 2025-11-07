@@ -55,6 +55,7 @@ impl FilterType {
 }
 
 pub(crate) enum GroupOrder {
+    Publisher = 0x0,
     Ascending = 0x1,
     Descending = 0x2,
 }
@@ -62,6 +63,7 @@ pub(crate) enum GroupOrder {
 impl GroupOrder {
     pub(crate) fn from(group_order: moqt::GroupOrder) -> Self {
         match group_order {
+            moqt::GroupOrder::Publisher => Self::Publisher,
             moqt::GroupOrder::Ascending => Self::Ascending,
             moqt::GroupOrder::Descending => Self::Descending,
         }
@@ -69,6 +71,7 @@ impl GroupOrder {
 
     pub(crate) fn into_moqt(&self) -> moqt::GroupOrder {
         match self {
+            Self::Publisher => moqt::GroupOrder::Publisher,
             Self::Ascending => moqt::GroupOrder::Ascending,
             Self::Descending => moqt::GroupOrder::Descending,
         }
