@@ -48,17 +48,26 @@ pub struct DatagramObject {
 
 impl DatagramObject {
     pub(crate) fn depacketize(buf: &mut BytesMut) -> anyhow::Result<Self> {
+        tracing::warn!("qqq {:?}", buf);
         let message_type = read_variable_integer_from_buffer(buf)?;
+        tracing::warn!("qqq message_type: {:?}", message_type);
         if !Self::validate_message_type(message_type) {
             bail!("Invalid message type: {}", message_type);
         }
         let track_alias = read_variable_integer_from_buffer(buf)?;
+        tracing::warn!("qqq track_alias: {:?}", track_alias);
         let group_id = read_variable_integer_from_buffer(buf)?;
+        tracing::warn!("qqq group_id: {:?}", group_id);
         let object_id = Self::read_object_id(message_type, buf)?;
+        tracing::warn!("qqq object_id: {:?}", object_id);
         let publisher_priority = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+        tracing::warn!("qqq publisher_priority: {:?}", publisher_priority);
         let extension_headers = Self::read_extension_headers(message_type, buf)?;
+        tracing::warn!("qqq extension_headers: {:?}", extension_headers);
         let object_status = Self::read_object_status(message_type, buf)?;
+        tracing::warn!("qqq object_status: {:?}", object_status);
         let object_payload = buf.split_to(buf.len()).to_vec();
+        tracing::warn!("qqq object_payload: {:?}", object_payload);
         Ok(Self {
             message_type,
             track_alias,
