@@ -80,7 +80,7 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
             error_code,
             reason_phrase,
         };
-        let bytes = utils::create_full_message(ControlMessageType::SubscribeNamespaceError, err);
+        let bytes = utils::create_full_message(ControlMessageType::SubscribeError, err);
         self.session_context.send_stream.send(&bytes).await
     }
 
