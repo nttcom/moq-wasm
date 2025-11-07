@@ -85,7 +85,7 @@ impl MOQTMessage for Subscribe {
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        tracing::warn!("qqq subscribe priority: {:?}", group_order_u8);
+        tracing::warn!("qqq group_order: {:?}", group_order_u8);
 
         // Values larger than 0x2 are a Protocol Violation.
         let group_order = match GroupOrder::try_from(group_order_u8).context("group order") {
@@ -101,6 +101,7 @@ impl MOQTMessage for Subscribe {
         )
         .context("forward")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        tracing::warn!("qqq forward_u8: {:?}", forward_u8);
         let forward = util::u8_to_bool(forward_u8)?;
         tracing::warn!("qqq forward: {:?}", forward);
         let filter_type_u64 = read_variable_integer_from_buffer(buf)
