@@ -41,18 +41,25 @@ pub struct Subscribe {
 
 impl MOQTMessage for Subscribe {
     fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
+        tracing::warn!("qqq {:?}", buf);
         if !validate_payload_length(buf) {
+            tracing::warn!("qqq payload length");
             return Err(MOQTMessageError::ProtocolViolation);
         }
         let subscribe_id = read_variable_integer_from_buffer(buf)
             .context("subscribe id")
             .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        tracing::warn!("qqq request id: {}", subscribe_id);
         let track_namespace_tuple_length = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .context("track namespace length")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        tracing::warn!(
+            "qqq track namespace length: {}",
+            track_namespace_tuple_length
+        );
         let mut track_namespace_tuple: Vec<String> = Vec::new();
         for _ in 0..track_namespace_tuple_length {
             let track_namespace = String::from_utf8(
@@ -63,18 +70,22 @@ impl MOQTMessage for Subscribe {
             .map_err(|_| MOQTMessageError::ProtocolViolation)?;
             track_namespace_tuple.push(track_namespace);
         }
+        tracing::warn!("qqq track namespace tuple: {:?}", track_namespace_tuple);
         let track_name = String::from_utf8(
             read_variable_bytes_from_buffer(buf)
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        tracing::warn!("qqq track name: {:?}", track_name);
         let subscriber_priority = buf.get_u8();
+        tracing::warn!("qqq subscribe priority: {:?}", subscriber_priority);
         let group_order_u8 = u8::try_from(
             read_variable_integer_from_buffer(buf)
                 .context("group order")
                 .map_err(|_| MOQTMessageError::ProtocolViolation)?,
         )
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        tracing::warn!("qqq subscribe priority: {:?}", group_order_u8);
 
         // Values larger than 0x2 are a Protocol Violation.
         let group_order = match GroupOrder::try_from(group_order_u8).context("group order") {
@@ -91,8 +102,10 @@ impl MOQTMessage for Subscribe {
         .context("forward")
         .map_err(|_| MOQTMessageError::ProtocolViolation)?;
         let forward = util::u8_to_bool(forward_u8)?;
+        tracing::warn!("qqq forward: {:?}", forward);
         let filter_type_u64 = read_variable_integer_from_buffer(buf)
             .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        tracing::warn!("qqq filter type: {:?}", filter_type_u64);
         let filter_type = FilterType::try_from(filter_type_u64 as u8)
             .map_err(|_| MOQTMessageError::ProtocolViolation)?;
         // A filter type other than the above MUST be treated as error.
@@ -112,6 +125,8 @@ impl MOQTMessage for Subscribe {
                 (None, None)
             }
         };
+        tracing::warn!("qqq start location: {:?}", start_location);
+        tracing::warn!("qqq end group: {:?}", end_group);
         let number_of_parameters = read_variable_integer_from_buffer(buf)
             .context("number of parameters")
             .map_err(|_| MOQTMessageError::ProtocolViolation)?;
@@ -125,7 +140,7 @@ impl MOQTMessage for Subscribe {
                 subscribe_parameters.push(version_specific_parameter);
             }
         }
-
+        tracing::warn!("qqq subscribe parameters: {:?}", subscribe_parameters);
         tracing::trace!("Depacketized Subscribe message.");
 
         Ok(Subscribe {
