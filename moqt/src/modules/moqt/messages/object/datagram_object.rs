@@ -1,5 +1,5 @@
 use anyhow::bail;
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::modules::moqt::messages::{
     object::{key_value_pair::KeyValuePair, object_status::ObjectStatus},
@@ -60,7 +60,7 @@ impl DatagramObject {
         tracing::warn!("qqq group_id: {:?}", group_id);
         let object_id = Self::read_object_id(message_type, buf)?;
         tracing::warn!("qqq object_id: {:?}", object_id);
-        let publisher_priority = u8::try_from(read_variable_integer_from_buffer(buf)?)?;
+        let publisher_priority = buf.get_u8();
         tracing::warn!("qqq publisher_priority: {:?}", publisher_priority);
         let extension_headers = Self::read_extension_headers(message_type, buf)?;
         tracing::warn!("qqq extension_headers: {:?}", extension_headers);
@@ -136,7 +136,7 @@ impl DatagramObject {
         if self.message_type <= 0x03 || self.message_type == 0x20 || self.message_type == 0x21 {
             buf.extend(write_variable_integer(self.object_id));
         }
-        buf.extend(write_variable_integer(self.publisher_priority as u64));
+        buf.put_u8(self.publisher_priority);
         self.write_extension_headers(&mut buf);
         self.write_object_status_or_payload(&mut buf);
         buf
