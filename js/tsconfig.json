@@ -8,9 +8,20 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["@types/dom-mediacapture-transform"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["examples/call/src/*"],
+      "@moqt/*": ["lib/moqt/*"]
+    },
+    "types": ["@types/dom-mediacapture-transform", "@types/react", "@types/react-dom"],
     "lib": ["esnext", "webworker", "dom"]
   },
-  "include": ["examples/**/*.ts", "examples/**/*.tsx", "examples/media/publisher/files/decoder.js"],
+  "include": [
+    "examples/**/*.ts",
+    "examples/**/*.tsx",
+    "examples/media/publisher/files/decoder.js",
+    "lib/**/*.ts",
+    "pkg/**/*.d.ts"
+  ],
   "exclude": ["node_modules"]
 }

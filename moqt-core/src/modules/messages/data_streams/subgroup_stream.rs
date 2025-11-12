@@ -149,6 +149,10 @@ impl Object {
     pub fn extension_headers(&self) -> &Vec<ExtensionHeader> {
         &self.extension_headers
     }
+
+    pub fn object_payload(&self) -> &[u8] {
+        &self.object_payload
+    }
 }
 
 impl DataStreams for Object {

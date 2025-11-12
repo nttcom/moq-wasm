@@ -1,3 +1,5 @@
+import { createBitrateLogger } from '../bitrate'
+
 let videoEncoder: VideoEncoder | undefined
 let keyframeInterval: number
 
@@ -8,54 +10,38 @@ let keyframeInterval: number
 // 5.0: 32 5.1: 33 5.2: 34
 // M1 macではHWEncoderがL1T1しかサポートしていない
 
-// const HW_VIDEO_ENCODER_CONFIG = {
-//   codec: 'avc1.640028',
-//   avc: {
-//     format: 'annexb'
-//   } as any,
-//   hardwareAcceleration: 'prefer-hardware' as any,
-//   width: 1920,
-//   height: 1080,
-//   bitrate: 5_000_000, //5 Mbps
-//   scalabilityMode: 'L1T1',
-//   framerate: 30,
-//   latencyMode: 'realtime' as any
-//   // latencyMode: 'quality' as any
-// }
-
-const SW_VIDEO_ENCODER_CONFIG = {
-  codec: 'av01.0.08M.08',
+const VIDEO_ENCODER_CONFIG = {
+  codec: 'avc1.640028',
+  avc: {
+    format: 'annexb'
+  } as any,
+  // hardwareAcceleration: 'prefer-hardware' as any,
   width: 1920,
   height: 1080,
-  bitrate: 15_000_000, //10 Mbps
-  // scalabilityMode: 'L1T3',
+  bitrate: 1_000_000, //1 Mbps
   scalabilityMode: 'L1T1',
-  framerate: 30
+  framerate: 30,
+  latencyMode: 'realtime' as any
+  // latencyMode: 'quality' as any
 }
 
-// Mbps計測用の関数
-function createBitrateLogger() {
-  let bytesThisSecond = 0
-  let lastLogTime = performance.now()
-  return {
-    addBytes(byteLength: number) {
-      bytesThisSecond += byteLength
-      const now = performance.now()
-      if (now - lastLogTime >= 1000) {
-        const mbps = (bytesThisSecond * 8) / 1_000_000
-        console.log(`Encoded bitrate: ${mbps.toFixed(2)} Mbps`)
-        bytesThisSecond = 0
-        lastLogTime = now
-      }
-    }
-  }
-}
+// const VIDEO_ENCODER_CONFIG = {
+//   codec: 'av01.0.08M.08',
+//   width: 1280,
+//   height: 720,
+//   bitrate: 1_000_000, //10 Mbps
+//   // scalabilityMode: 'L1T3',
+//   scalabilityMode: 'L1T1',
+//   framerate: 30
+// }
 
-const bitrateLogger = createBitrateLogger()
+const videoBitrateLogger = createBitrateLogger((kbps) => {
+  self.postMessage({ type: 'bitrate', kbps })
+})
 
 function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoChunkMetadata | undefined) {
-  bitrateLogger.addBytes(chunk.byteLength)
-  self.postMessage({ chunk, metadata })
+  videoBitrateLogger.addBytes(chunk.byteLength)
+  self.postMessage({ type: 'chunk', chunk, metadata })
 }
 
 async function initializeVideoEncoder() {
@@ -65,9 +51,9 @@ async function initializeVideoEncoder() {
       console.log(e.message)
     }
   }
-  console.log('isEncoderConfig Supported', await VideoEncoder.isConfigSupported(SW_VIDEO_ENCODER_CONFIG))
+  console.log('isEncoderConfig Supported', await VideoEncoder.isConfigSupported(VIDEO_ENCODER_CONFIG))
   const encoder = new VideoEncoder(init)
-  encoder.configure(SW_VIDEO_ENCODER_CONFIG)
+  encoder.configure(VIDEO_ENCODER_CONFIG)
   return encoder
 }
 
@@ -100,6 +86,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
 }
 
 self.onmessage = async (event) => {
+  console.log('videoEncoder worker received message', event.data)
   if (event.data.type === 'keyframeInterval') {
     keyframeInterval = event.data.keyframeInterval
   } else if (event.data.type === 'videoStream') {

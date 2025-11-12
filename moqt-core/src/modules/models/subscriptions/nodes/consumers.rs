@@ -113,6 +113,24 @@ impl SubscriptionNodeRegistry for Consumer {
         })
     }
 
+    fn get_track_aliases_for_track(
+        &self,
+        track_namespace: TrackNamespace,
+        track_name: String,
+    ) -> Result<Vec<TrackAlias>> {
+        let aliases = self
+            .subscriptions
+            .values()
+            .filter(|subscription| {
+                subscription.get_track_namespace_and_name()
+                    == (track_namespace.clone(), track_name.clone())
+            })
+            .map(|subscription| subscription.get_track_alias())
+            .collect();
+
+        Ok(aliases)
+    }
+
     fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool> {
         let subscription = self.subscriptions.get_mut(&subscribe_id).unwrap();
         let is_activated = subscription.activate();
@@ -183,6 +201,31 @@ impl SubscriptionNodeRegistry for Consumer {
 
     fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectStart>> {
         unimplemented!("subscribe_id: {}", subscribe_id)
+    }
+
+    fn set_subscription_success(&mut self, subscribe_id: SubscribeId) -> Result<()> {
+        if let Some(subscription) = self.subscriptions.get_mut(&subscribe_id) {
+            subscription.mark_success();
+            Ok(())
+        } else {
+            bail!("subscription not found: {}", subscribe_id)
+        }
+    }
+
+    fn set_subscription_failed(&mut self, subscribe_id: SubscribeId) -> Result<()> {
+        if let Some(subscription) = self.subscriptions.get_mut(&subscribe_id) {
+            subscription.mark_error();
+            Ok(())
+        } else {
+            bail!("subscription not found: {}", subscribe_id)
+        }
+    }
+
+    fn is_failed(&self, subscribe_id: SubscribeId) -> bool {
+        self.subscriptions
+            .get(&subscribe_id)
+            .map(|subscription| subscription.is_failed())
+            .unwrap_or(false)
     }
 
     fn set_stream_id(
