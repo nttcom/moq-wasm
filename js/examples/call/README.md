@@ -121,7 +121,3 @@ src/
 - **shadcn/ui**: UIコンポーネントライブラリ
 - **Vite**: ビルドツール
 - **MoQT (WASM)**: Media over QUIC Transport プロトコル実装
-
-## ライセンス
-
-ISC
