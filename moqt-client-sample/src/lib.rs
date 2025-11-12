@@ -1,9 +1,17 @@
 mod utils;
 
 #[cfg(feature = "web_sys_unstable_apis")]
+mod messages;
+
+#[cfg(feature = "web_sys_unstable_apis")]
+pub use messages::*;
+
+#[cfg(feature = "web_sys_unstable_apis")]
 use anyhow::Result;
 #[cfg(feature = "web_sys_unstable_apis")]
 use bytes::{Buf, BufMut, BytesMut};
+#[cfg(feature = "web_sys_unstable_apis")]
+use js_sys::BigInt;
 #[cfg(feature = "web_sys_unstable_apis")]
 use moqt_core::{
     control_message_type::ControlMessageType,
@@ -181,14 +189,22 @@ impl MOQTClient {
     }
 
     #[wasm_bindgen(js_name = onSubgroupStreamObject)]
-    pub fn set_subgroup_stream_object_callback(
-        &mut self,
-        track_alias: u64,
-        callback: js_sys::Function,
-    ) {
+    pub fn set_subgroup_stream_object_callback(&mut self, callback: js_sys::Function) {
         self.callbacks
             .borrow_mut()
-            .set_subgroup_stream_object_callback(track_alias, callback);
+            .set_subgroup_stream_object_callback(callback);
+    }
+
+    #[wasm_bindgen(js_name = onConnectionClosed)]
+    pub fn set_connection_closed_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_connection_closed_callback(callback);
+    }
+
+    #[wasm_bindgen(js_name = isConnected)]
+    pub fn is_connected(&self) -> bool {
+        self.transport.borrow().is_some()
     }
 
     #[wasm_bindgen(js_name = sendSetupMessage)]
@@ -196,7 +212,7 @@ impl MOQTClient {
         &mut self,
         versions: Vec<u64>,
         max_subscribe_id: u64,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<(), JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
             let versions = versions.iter().map(|v| *v as u32).collect::<Vec<u32>>();
@@ -222,7 +238,7 @@ impl MOQTClient {
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 // Setup nodes along with the role
-                Ok(ok) => {
+                Ok(_) => {
                     log(std::format!("sent: client_setup: {:#x?}", client_setup_message).as_str());
                     self.subscription_node
                         .borrow_mut()
@@ -231,7 +247,7 @@ impl MOQTClient {
                         .borrow_mut()
                         .setup_as_subscriber(max_subscribe_id);
 
-                    Ok(ok)
+                    Ok(())
                 }
                 Err(e) => Err(e),
             }
@@ -244,26 +260,25 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendAnnounceMessage)]
     pub async fn send_announce_message(
         &self,
-        track_namespace: js_sys::Array,
+        track_namespace: Vec<String>,
         auth_info: String, // param[0]
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<(), JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
             let auth_info_parameter =
                 VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
 
-            let length = track_namespace.length();
-            let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
-            for i in 0..length {
-                let js_element = track_namespace.get(i);
-                let string_element = js_element
-                    .as_string()
-                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
-                track_namespace_vec.push(string_element);
+            let already_announced = !self
+                .subscription_node
+                .borrow_mut()
+                .register_publisher_namespace(track_namespace.clone());
+
+            if already_announced {
+                return Ok(());
             }
 
             let announce_message =
-                Announce::new(track_namespace_vec.clone(), vec![auth_info_parameter]);
+                Announce::new(track_namespace.clone(), vec![auth_info_parameter]);
             let mut announce_message_buf = BytesMut::new();
             announce_message.packetize(&mut announce_message_buf);
 
@@ -280,11 +295,16 @@ impl MOQTClient {
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
+                Ok(_) => {
                     log(std::format!("sent: announce: {:#x?}", announce_message).as_str());
-                    Ok(ok)
+                    Ok(())
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    self.subscription_node
+                        .borrow_mut()
+                        .unregister_publisher_namespace(track_namespace);
+                    Err(e)
+                }
             }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
@@ -294,21 +314,11 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendAnnounceOkMessage)]
     pub async fn send_announce_ok_message(
         &self,
-        track_namespace: js_sys::Array,
-    ) -> Result<JsValue, JsValue> {
+        track_namespace: Vec<String>,
+    ) -> Result<(), JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
-            let length = track_namespace.length();
-            let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
-            for i in 0..length {
-                let js_element = track_namespace.get(i);
-                let string_element = js_element
-                    .as_string()
-                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
-                track_namespace_vec.push(string_element);
-            }
-
-            let announce_ok_message = AnnounceOk::new(track_namespace_vec.clone());
+            let announce_ok_message = AnnounceOk::new(track_namespace.clone());
             let mut announce_ok_message_buf = BytesMut::new();
             announce_ok_message.packetize(&mut announce_ok_message_buf);
 
@@ -325,9 +335,9 @@ impl MOQTClient {
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
+                Ok(_) => {
                     log(std::format!("sent: announce_ok: {:#x?}", announce_ok_message).as_str());
-                    Ok(ok)
+                    Ok(())
                 }
                 Err(e) => Err(e),
             }
@@ -339,22 +349,19 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendUnannounceMessage)]
     pub async fn send_unannounce_message(
         &self,
-        track_namespace: js_sys::Array,
-    ) -> Result<JsValue, JsValue> {
+        track_namespace: Vec<String>,
+    ) -> Result<(), JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
-            // TODO: construct UnAnnounce
-            let length = track_namespace.length();
-            let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
-            for i in 0..length {
-                let js_element = track_namespace.get(i);
-                let string_element = js_element
-                    .as_string()
-                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
-                track_namespace_vec.push(string_element);
+            {
+                let mut node = self.subscription_node.borrow_mut();
+                if !node.publisher_has_namespace(&track_namespace) {
+                    return Ok(());
+                }
+                let _ = node.unregister_publisher_namespace(track_namespace.clone());
             }
 
-            let unannounce_message = UnAnnounce::new(track_namespace_vec);
+            let unannounce_message = UnAnnounce::new(track_namespace.clone());
             let mut unannounce_message_buf = BytesMut::new();
             unannounce_message.packetize(&mut unannounce_message_buf);
 
@@ -371,11 +378,16 @@ impl MOQTClient {
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
+                Ok(_) => {
                     log(std::format!("sent: unannounce: {:#x?}", unannounce_message).as_str());
-                    Ok(ok)
+                    Ok(())
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    self.subscription_node
+                        .borrow_mut()
+                        .register_publisher_namespace(track_namespace);
+                    Err(e)
+                }
             }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
@@ -389,7 +401,7 @@ impl MOQTClient {
         &self,
         subscribe_id: u64,
         track_alias: u64,
-        track_namespace: js_sys::Array,
+        track_namespace: Vec<String>,
         track_name: String,
         priority: u8,
         group_order: u8,
@@ -398,21 +410,12 @@ impl MOQTClient {
         start_object: u64,
         end_group: u64,
         auth_info: String,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<(), JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
             // This is equal to `Now example`
             let auth_info =
                 VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
-            let length = track_namespace.length();
-            let mut track_namespace_vec: Vec<String> = Vec::with_capacity(length as usize);
-            for i in 0..length {
-                let js_element = track_namespace.get(i);
-                let string_element = js_element
-                    .as_string()
-                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
-                track_namespace_vec.push(string_element);
-            }
 
             let group_order = GroupOrder::try_from(group_order).unwrap();
             let filter_type = FilterType::try_from(filter_type).unwrap();
@@ -437,7 +440,7 @@ impl MOQTClient {
             let subscribe_message = Subscribe::new(
                 subscribe_id,
                 track_alias,
-                track_namespace_vec.clone(),
+                track_namespace.clone(),
                 track_name.clone(),
                 priority,
                 group_order,
@@ -450,6 +453,23 @@ impl MOQTClient {
             .unwrap();
             let mut subscribe_message_buf = BytesMut::new();
             subscribe_message.packetize(&mut subscribe_message_buf);
+
+            let is_already_subscribed = !self.subscription_node.borrow_mut().start_subscription(
+                subscribe_id,
+                track_alias,
+                track_namespace.clone(),
+                track_name.clone(),
+                priority,
+                group_order,
+                filter_type,
+                start_group,
+                start_object,
+                end_group,
+            );
+
+            if is_already_subscribed {
+                return Ok(());
+            }
 
             let mut buf = Vec::new();
             // Message Type
@@ -464,31 +484,63 @@ impl MOQTClient {
             buffer.copy_from(&buf);
 
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
+                Ok(_) => {
                     log(std::format!("sent: subscribe: {:#x?}", subscribe_message).as_str());
-                    // Register the subscribing track
+                    Ok(())
+                }
+                Err(e) => {
                     self.subscription_node
                         .borrow_mut()
-                        .set_subscribing_subscription(
-                            subscribe_id,
-                            track_alias,
-                            track_namespace_vec,
-                            track_name,
-                            priority,
-                            group_order,
-                            filter_type,
-                            start_group,
-                            start_object,
-                            end_group,
-                        );
-
-                    Ok(ok)
+                        .cancel_subscription(subscribe_id);
+                    Err(e)
                 }
-                Err(e) => Err(e),
             }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
         }
+    }
+
+    #[wasm_bindgen(js_name = isSubscribed)]
+    pub fn is_subscribed(&self, subscribe_id: u64) -> bool {
+        self.subscription_node.borrow().is_subscribing(subscribe_id)
+    }
+
+    #[wasm_bindgen(js_name = getTrackSubscribers)]
+    pub fn get_track_subscribers(
+        &self,
+        track_namespace: Vec<String>,
+        track_name: String,
+    ) -> Vec<u64> {
+        self.subscription_node
+            .borrow()
+            .get_publishing_track_aliases(track_namespace, track_name)
+    }
+
+    #[wasm_bindgen(js_name = getSubgroupState)]
+    pub fn get_subgroup_state(&self, track_alias: u64) -> SubgroupState {
+        let mut node = self.subscription_node.borrow_mut();
+        node.current_subgroup_state(track_alias)
+    }
+
+    #[wasm_bindgen(js_name = markSubgroupHeaderSent)]
+    pub fn mark_subgroup_header_sent(&self, track_alias: u64) {
+        self.subscription_node
+            .borrow_mut()
+            .mark_subgroup_header_sent(track_alias);
+    }
+
+    #[wasm_bindgen(js_name = incrementSubgroupObject)]
+    pub fn increment_subgroup_object(&self, track_alias: u64) {
+        self.subscription_node
+            .borrow_mut()
+            .increment_subgroup_object(track_alias);
+    }
+
+    #[wasm_bindgen(js_name = resetSubgroupState)]
+    pub fn reset_subgroup_state(&self, track_alias: u64) {
+        self.subscription_node
+            .borrow_mut()
+            .reset_subgroup_state(track_alias);
     }
 
     #[wasm_bindgen(js_name = sendSubscribeOkMessage)]
@@ -498,7 +550,7 @@ impl MOQTClient {
         expires: u64,
         auth_info: String,
         fowarding_preference: String,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<(), JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
             let auth_info =
@@ -544,7 +596,7 @@ impl MOQTClient {
             buffer.copy_from(&buf);
 
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
+                Ok(_) => {
                     log(std::format!("sent: subscribe_ok: {:#x?}", subscribe_ok_message).as_str());
                     self.subscription_node
                         .borrow_mut()
@@ -572,7 +624,7 @@ impl MOQTClient {
                         _ => {}
                     }
 
-                    Ok(ok)
+                    Ok(())
                 }
                 Err(e) => Err(e),
             }
@@ -584,26 +636,28 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendSubscribeAnnouncesMessage)]
     pub async fn send_subscribe_announces_message(
         &self,
-        track_namespace_prefix: js_sys::Array,
+        track_namespace_prefix: Vec<String>,
         auth_info: String,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<(), JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
             let auth_info =
                 VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
-            let length = track_namespace_prefix.length();
-            let mut track_namespace_prefix_vec: Vec<String> = Vec::with_capacity(length as usize);
-            for i in 0..length {
-                let js_element = track_namespace_prefix.get(i);
-                let string_element = js_element
-                    .as_string()
-                    .ok_or_else(|| JsValue::from_str("Array contains a non-string element"))?;
-                track_namespace_prefix_vec.push(string_element);
+
+            let already_subscribed = !self
+                .subscription_node
+                .borrow_mut()
+                .register_subscriber_namespace_prefix(track_namespace_prefix.clone());
+
+            if already_subscribed {
+                return Ok(());
             }
 
             let version_specific_parameters = vec![auth_info];
-            let subscribe_announces_message =
-                SubscribeAnnounces::new(track_namespace_prefix_vec, version_specific_parameters);
+            let subscribe_announces_message = SubscribeAnnounces::new(
+                track_namespace_prefix.clone(),
+                version_specific_parameters,
+            );
             let mut subscribe_announces_message_buf = BytesMut::new();
             subscribe_announces_message.packetize(&mut subscribe_announces_message_buf);
 
@@ -622,15 +676,20 @@ impl MOQTClient {
             buffer.copy_from(&buf);
 
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
+                Ok(_) => {
                     log(std::format!(
                         "sent: subscribe_announces: {:#x?}",
                         subscribe_announces_message
                     )
                     .as_str());
-                    Ok(ok)
+                    Ok(())
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    self.subscription_node
+                        .borrow_mut()
+                        .unregister_subscriber_namespace_prefix(track_namespace_prefix);
+                    Err(e)
+                }
             }
         } else {
             Err(JsValue::from_str("control_stream_writer is None"))
@@ -643,7 +702,7 @@ impl MOQTClient {
         subscribe_id: u64,
         error_code: u64,
         reason_phrase: String,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<(), JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
             // Find unused subscribe_id and track_alias automatically
@@ -676,12 +735,12 @@ impl MOQTClient {
             buffer.copy_from(&buf);
 
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
+                Ok(_) => {
                     log(
                         std::format!("sent: subscribe_error: {:#x?}", subscribe_error_message)
                             .as_str(),
                     );
-                    Ok(ok)
+                    Ok(())
                 }
                 Err(e) => Err(e),
             }
@@ -691,7 +750,7 @@ impl MOQTClient {
     }
 
     #[wasm_bindgen(js_name = sendUnsubscribeMessage)]
-    pub async fn send_unsubscribe_message(&self, subscribe_id: u64) -> Result<JsValue, JsValue> {
+    pub async fn send_unsubscribe_message(&self, subscribe_id: u64) -> Result<(), JsValue> {
         let writer = self.control_stream_writer.borrow().clone();
         if let Some(writer) = writer {
             let unsubscribe_message = Unsubscribe::new(subscribe_id);
@@ -711,9 +770,9 @@ impl MOQTClient {
             buffer.copy_from(&buf);
 
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
+                Ok(_) => {
                     log(std::format!("sent: unsubscribe: {:#x?}", unsubscribe_message).as_str());
-                    Ok(ok)
+                    Ok(())
                 }
                 Err(e) => Err(e),
             }
@@ -730,7 +789,7 @@ impl MOQTClient {
         object_id: u64,
         publisher_priority: u8,
         object_payload: Vec<u8>,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<(), JsValue> {
         let writer = self.datagram_writer.borrow().clone();
         if let Some(writer) = writer {
             let extension_headers = vec![];
@@ -756,9 +815,9 @@ impl MOQTClient {
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
+                Ok(_) => {
                     log(std::format!("sent: object id: {:#?}", object_id).as_str());
-                    Ok(ok)
+                    Ok(())
                 }
                 Err(e) => {
                     log(std::format!("err: {:?}", e).as_str());
@@ -778,7 +837,7 @@ impl MOQTClient {
         object_id: u64,
         publisher_priority: u8,
         object_status: u8,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<(), JsValue> {
         let writer = self.datagram_writer.borrow().clone();
         if let Some(writer) = writer {
             let extension_headers = vec![];
@@ -804,9 +863,9 @@ impl MOQTClient {
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
+                Ok(_) => {
                     log(std::format!("sent: object id: {:#?}", object_id).as_str());
-                    Ok(ok)
+                    Ok(())
                 }
                 Err(e) => {
                     log(std::format!("err: {:?}", e).as_str());
@@ -873,7 +932,7 @@ impl MOQTClient {
         group_id: u64,
         subgroup_id: u64,
         publisher_priority: u8,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<(), JsValue> {
         let subscribe_id = match self
             .subscription_node
             .borrow()
@@ -903,7 +962,9 @@ impl MOQTClient {
 
         let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
         buffer.copy_from(&buf);
-        JsFuture::from(writer.write_with_chunk(&buffer)).await
+        JsFuture::from(writer.write_with_chunk(&buffer))
+            .await
+            .map(|_| ())
     }
 
     #[wasm_bindgen(js_name = sendSubgroupStreamObject)]
@@ -915,7 +976,7 @@ impl MOQTClient {
         object_id: u64,
         object_status: Option<u8>,
         object_payload: Vec<u8>,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<(), JsValue> {
         let subscribe_id = match self
             .subscription_node
             .borrow()
@@ -948,7 +1009,7 @@ impl MOQTClient {
             let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(ok) => {
+                Ok(_) => {
                     // log(std::format!(
                     //     "sent: trackAlias: {:#?} object . group_id: {:#?} subgroup_id: {:#?} object_id: {:#?} object_status: {:#?}",
                     //     track_alias,
@@ -958,7 +1019,7 @@ impl MOQTClient {
                     //     object_status,
                     // )
                     // .as_str());
-                    Ok(ok)
+                    Ok(())
                 }
                 Err(e) => {
                     log(std::format!("err: {:?}", e).as_str());
@@ -970,7 +1031,7 @@ impl MOQTClient {
         }
     }
 
-    pub async fn start(&self) -> Result<JsValue, JsValue> {
+    pub async fn start(&self) -> Result<(), JsValue> {
         let transport = WebTransport::new(self.url.as_str());
         match &transport {
             Ok(v) => console_log!("{:#?}", v),
@@ -983,7 +1044,37 @@ impl MOQTClient {
         let transport = transport?;
         // Keep it for sending object messages
         *self.transport.borrow_mut() = Some(transport.clone());
-        JsFuture::from(transport.ready()).await?;
+
+        if let Err(err) = JsFuture::from(transport.ready()).await {
+            self.transport.borrow_mut().take();
+            return Err(err);
+        }
+
+        if let Err(err) = self.setup_transport(&transport).await {
+            self.transport.borrow_mut().take();
+            return Err(err);
+        }
+
+        Ok(())
+    }
+
+    async fn setup_transport(&self, transport: &WebTransport) -> Result<(), JsValue> {
+        let callbacks = self.callbacks.clone();
+        let transport_cell = self.transport.clone();
+        let closed_promise = transport.closed();
+        wasm_bindgen_futures::spawn_local(async move {
+            let closed_result = JsFuture::from(closed_promise).await;
+            transport_cell.borrow_mut().take();
+
+            if let Some(callback) = callbacks.borrow().connection_closed_callback() {
+                if let Err(error) = &closed_result {
+                    console_log!("WebTransport closed with error: {:?}", error);
+                }
+                if let Err(err) = callback.call0(&JsValue::NULL) {
+                    console_log!("connection_closed callback error: {:?}", err);
+                }
+            }
+        });
 
         // All control messages are sent on same bidirectional stream which is called "control stream"
         let control_stream = WebTransportBidirectionalStream::from(
@@ -1010,7 +1101,7 @@ impl MOQTClient {
             .await;
         });
 
-        // // For receiving object messages as datagrams
+        // For receiving object messages as datagrams
         let datagram_reader_readable = transport.datagrams().readable();
         let datagram_reader = ReadableStreamDefaultReader::new(&datagram_reader_readable)?;
         let callbacks = self.callbacks.clone();
@@ -1028,7 +1119,17 @@ impl MOQTClient {
             let _ = receive_unidirectional_thread(callbacks, &incoming_uni_stream_reader).await;
         });
 
-        Ok(JsValue::null())
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = close)]
+    pub async fn close(&self) -> Result<(), JsValue> {
+        let transport = self.transport.borrow().clone();
+        if let Some(transport) = transport {
+            transport.close();
+            JsFuture::from(transport.closed()).await?;
+        }
+        Ok(())
     }
 
     pub fn array_buffer_sample_method(&self, buf: Vec<u8>) {
@@ -1139,8 +1240,10 @@ async fn control_message_handler(
                             .as_str(),
                     );
                     if let Some(callback) = callbacks.borrow().setup_callback() {
-                        let v = serde_wasm_bindgen::to_value(&server_setup_message).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                        let wrapper = ServerSetupMessage::from(&server_setup_message);
+                        callback
+                            .call1(&JsValue::null(), &JsValue::from(wrapper))
+                            .unwrap();
                     }
                 }
                 ControlMessageType::Announce => {
@@ -1148,8 +1251,11 @@ async fn control_message_handler(
                     log(std::format!("recv: announce_message: {:#x?}", announce_message).as_str());
 
                     if let Some(callback) = callbacks.borrow().announce_callback() {
-                        let v = serde_wasm_bindgen::to_value(&announce_message).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                        // Convert to JavaScript-friendly wrapper
+                        let wrapper = AnnounceMessage::from(&announce_message);
+                        callback
+                            .call1(&JsValue::null(), &JsValue::from(wrapper))
+                            .unwrap();
                     }
                 }
                 ControlMessageType::AnnounceOk => {
@@ -1164,8 +1270,10 @@ async fn control_message_handler(
                         .set_namespace(announce_ok_message.track_namespace().clone());
 
                     if let Some(callback) = callbacks.borrow().announce_response_callback() {
-                        let v = serde_wasm_bindgen::to_value(&announce_ok_message).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                        let wrapper = AnnounceOkMessage::from(&announce_ok_message);
+                        callback
+                            .call1(&JsValue::null(), &JsValue::from(wrapper))
+                            .unwrap();
                     }
                 }
                 ControlMessageType::AnnounceError => {
@@ -1177,8 +1285,10 @@ async fn control_message_handler(
                     .as_str());
 
                     if let Some(callback) = callbacks.borrow().announce_response_callback() {
-                        let v = serde_wasm_bindgen::to_value(&announce_error_message).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                        let wrapper = AnnounceErrorMessage::from(&announce_error_message);
+                        callback
+                            .call1(&JsValue::null(), &JsValue::from(wrapper))
+                            .unwrap();
                     }
                 }
                 ControlMessageType::Subscribe => {
@@ -1192,14 +1302,19 @@ async fn control_message_handler(
                         .validation_and_register_subscription(subscribe_message.clone());
 
                     if let Some(callback) = callbacks.borrow().subscribe_callback() {
-                        let v = serde_wasm_bindgen::to_value(&subscribe_message).unwrap();
+                        let wrapper = SubscribeMessage::from(&subscribe_message);
 
                         match result {
                             Ok(_) => {
                                 let is_success = JsValue::from_bool(true);
                                 let empty = JsValue::null();
                                 callback
-                                    .call3(&JsValue::null(), &(v), &(is_success), &(empty))
+                                    .call3(
+                                        &JsValue::null(),
+                                        &JsValue::from(wrapper),
+                                        &(is_success),
+                                        &(empty),
+                                    )
                                     .unwrap();
                             }
                             Err(e) => {
@@ -1207,7 +1322,12 @@ async fn control_message_handler(
                                 if let Some(e_u8) = e.downcast_ref::<u8>() {
                                     let code = JsValue::from_f64(*e_u8 as f64);
                                     callback
-                                        .call3(&JsValue::null(), &(v), &(is_success), &(code))
+                                        .call3(
+                                            &JsValue::null(),
+                                            &JsValue::from(wrapper),
+                                            &(is_success),
+                                            &(code),
+                                        )
                                         .unwrap();
                                 }
                             }
@@ -1221,13 +1341,17 @@ async fn control_message_handler(
                             .as_str(),
                     );
 
-                    subscription_node
-                        .borrow_mut()
-                        .activate_as_subscriber(subscribe_ok_message.subscribe_id());
+                    {
+                        let mut node = subscription_node.borrow_mut();
+                        node.mark_subscription_success(subscribe_ok_message.subscribe_id());
+                        node.activate_as_subscriber(subscribe_ok_message.subscribe_id());
+                    }
 
                     if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
-                        let v = serde_wasm_bindgen::to_value(&subscribe_ok_message).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                        let wrapper = SubscribeOkMessage::from(&subscribe_ok_message);
+                        callback
+                            .call1(&JsValue::null(), &JsValue::from(wrapper))
+                            .unwrap();
                     }
                 }
                 ControlMessageType::SubscribeError => {
@@ -1238,9 +1362,15 @@ async fn control_message_handler(
                     )
                     .as_str());
 
+                    subscription_node
+                        .borrow_mut()
+                        .mark_subscription_failed(subscribe_error_message.subscribe_id());
+
                     if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
-                        let v = serde_wasm_bindgen::to_value(&subscribe_error_message).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                        let wrapper = SubscribeErrorMessage::from(&subscribe_error_message);
+                        callback
+                            .call1(&JsValue::null(), &JsValue::from(wrapper))
+                            .unwrap();
                     }
                 }
                 ControlMessageType::SubscribeAnnouncesOk => {
@@ -1261,9 +1391,11 @@ async fn control_message_handler(
                     if let Some(callback) =
                         callbacks.borrow().subscribe_announces_response_callback()
                     {
-                        let v =
-                            serde_wasm_bindgen::to_value(&subscribe_announces_ok_message).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
+                        let wrapper =
+                            SubscribeAnnouncesOkMessage::from(&subscribe_announces_ok_message);
+                        callback
+                            .call1(&JsValue::null(), &JsValue::from(wrapper))
+                            .unwrap();
                     }
                 }
                 ControlMessageType::SubscribeAnnouncesError => {
@@ -1278,9 +1410,12 @@ async fn control_message_handler(
                     if let Some(callback) =
                         callbacks.borrow().subscribe_announces_response_callback()
                     {
-                        let v = serde_wasm_bindgen::to_value(&subscribe_announces_error_message)
+                        let wrapper = SubscribeAnnouncesErrorMessage::from(
+                            &subscribe_announces_error_message,
+                        );
+                        callback
+                            .call1(&JsValue::null(), &JsValue::from(wrapper))
                             .unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
                     }
                 }
                 _ => {
@@ -1550,13 +1685,14 @@ async fn subgroup_stream_object_handler(
         }
     };
 
-    if let Some(callback) = callbacks
-        .borrow()
-        .get_subgroup_stream_object_callback(subgroup_stream_header.track_alias())
-    {
-        let v = serde_wasm_bindgen::to_value(&subgroup_stream_object).unwrap();
-        let group_id = serde_wasm_bindgen::to_value(&subgroup_stream_header.group_id()).unwrap();
-        callback.call2(&JsValue::null(), &(group_id), &(v)).unwrap();
+    if let Some(callback) = callbacks.borrow().get_subgroup_stream_object_callback() {
+        let wasm_object = SubgroupStreamObjectMessage::from(&subgroup_stream_object);
+        let object_js = JsValue::from(wasm_object);
+        let group_id = JsValue::from(BigInt::from(subgroup_stream_header.group_id()));
+        let track_alias = JsValue::from(BigInt::from(subgroup_stream_header.track_alias()));
+        callback
+            .call3(&JsValue::NULL, &track_alias, &group_id, &object_js)
+            .unwrap();
     }
 
     Ok(subgroup_stream_object)
@@ -1566,6 +1702,7 @@ async fn subgroup_stream_object_handler(
 struct SubscriptionNode {
     consumer: Option<Consumer>,
     producer: Option<Producer>,
+    subgroup_states: HashMap<u64, SubgroupState>,
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]
@@ -1574,6 +1711,7 @@ impl SubscriptionNode {
         SubscriptionNode {
             consumer: None,
             producer: None,
+            subgroup_states: HashMap::new(),
         }
     }
 
@@ -1583,6 +1721,76 @@ impl SubscriptionNode {
 
     fn setup_as_subscriber(&mut self, max_subscribe_id: u64) {
         self.consumer = Some(Consumer::new(max_subscribe_id));
+    }
+
+    fn register_publisher_namespace(&mut self, namespace: Vec<String>) -> bool {
+        if let Some(producer) = &mut self.producer {
+            producer.set_namespace(namespace).is_ok()
+        } else {
+            false
+        }
+    }
+
+    fn publisher_has_namespace(&self, namespace: &[String]) -> bool {
+        if let Some(producer) = &self.producer {
+            producer.has_namespace(namespace.to_vec())
+        } else {
+            false
+        }
+    }
+
+    fn unregister_publisher_namespace(&mut self, namespace: Vec<String>) -> bool {
+        if let Some(producer) = &mut self.producer {
+            if producer.has_namespace(namespace.clone()) {
+                let _ = producer.delete_namespace(namespace);
+                return true;
+            }
+        }
+        false
+    }
+
+    fn register_subscriber_namespace_prefix(&mut self, namespace_prefix: Vec<String>) -> bool {
+        if let Some(consumer) = &mut self.consumer {
+            consumer.set_namespace_prefix(namespace_prefix).is_ok()
+        } else {
+            false
+        }
+    }
+
+    fn unregister_subscriber_namespace_prefix(&mut self, namespace_prefix: Vec<String>) -> bool {
+        if let Some(consumer) = &mut self.consumer {
+            if consumer
+                .get_namespace_prefixes()
+                .map(|prefixes| prefixes.contains(&namespace_prefix))
+                .unwrap_or(false)
+            {
+                let _ = consumer.delete_namespace_prefix(namespace_prefix);
+                return true;
+            }
+        }
+        false
+    }
+
+    fn subgroup_state_entry(&mut self, track_alias: u64) -> &mut SubgroupState {
+        self.subgroup_states
+            .entry(track_alias)
+            .or_insert_with(|| SubgroupState::with_track(track_alias))
+    }
+
+    fn current_subgroup_state(&mut self, track_alias: u64) -> SubgroupState {
+        self.subgroup_state_entry(track_alias).clone()
+    }
+
+    fn mark_subgroup_header_sent(&mut self, track_alias: u64) {
+        self.subgroup_state_entry(track_alias).mark_header_sent();
+    }
+
+    fn increment_subgroup_object(&mut self, track_alias: u64) {
+        self.subgroup_state_entry(track_alias).increment_object_id();
+    }
+
+    fn reset_subgroup_state(&mut self, track_alias: u64) {
+        self.subgroup_states.remove(&track_alias);
     }
 
     fn set_namespace(&mut self, track_namespace: Vec<String>) {
@@ -1606,7 +1814,7 @@ impl SubscriptionNode {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn set_subscribing_subscription(
+    fn start_subscription(
         &mut self,
         subscribe_id: u64,
         track_alias: u64,
@@ -1618,8 +1826,16 @@ impl SubscriptionNode {
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-    ) {
+    ) -> bool {
         if let Some(consumer) = &mut self.consumer {
+            if consumer
+                .get_subscription(subscribe_id)
+                .map(|option| option.is_some())
+                .unwrap_or(false)
+            {
+                return false;
+            }
+
             let _ = consumer.set_subscription(
                 subscribe_id,
                 track_alias,
@@ -1632,6 +1848,38 @@ impl SubscriptionNode {
                 start_object,
                 end_group,
             );
+            true
+        } else {
+            false
+        }
+    }
+
+    fn cancel_subscription(&mut self, subscribe_id: u64) {
+        let track_alias = if let Some(consumer) = &mut self.consumer {
+            let track_alias = consumer
+                .get_subscription(subscribe_id)
+                .ok()
+                .and_then(|subscription| subscription.map(|s| s.get_track_alias()));
+            let _ = consumer.delete_subscription(subscribe_id);
+            track_alias
+        } else {
+            None
+        };
+
+        if let Some(alias) = track_alias {
+            self.reset_subgroup_state(alias);
+        }
+    }
+
+    fn mark_subscription_success(&mut self, subscribe_id: u64) {
+        if let Some(consumer) = &mut self.consumer {
+            let _ = consumer.set_subscription_success(subscribe_id);
+        }
+    }
+
+    fn mark_subscription_failed(&mut self, subscribe_id: u64) {
+        if let Some(consumer) = &mut self.consumer {
+            let _ = consumer.set_subscription_failed(subscribe_id);
         }
     }
 
@@ -1732,6 +1980,20 @@ impl SubscriptionNode {
         }
     }
 
+    fn get_publishing_track_aliases(
+        &self,
+        track_namespace: Vec<String>,
+        track_name: String,
+    ) -> Vec<u64> {
+        if let Some(producer) = &self.producer {
+            producer
+                .get_track_aliases_for_track(track_namespace, track_name)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    }
+
     fn activate_as_publisher(&mut self, subscribe_id: u64) {
         if let Some(producer) = &mut self.producer {
             let _ = producer.activate_subscription(subscribe_id);
@@ -1753,6 +2015,14 @@ impl SubscriptionNode {
             None
         }
     }
+
+    fn is_subscribing(&self, subscribe_id: u64) -> bool {
+        if let Some(consumer) = &self.consumer {
+            consumer.get_subscription(subscribe_id).unwrap().is_some()
+        } else {
+            false
+        }
+    }
 }
 
 // Due to the lifetime issue of `spawn_local`, it needs to be kept separate from MOQTClient.
@@ -1769,7 +2039,8 @@ struct MOQTCallbacks {
     datagram_object_callback: Option<js_sys::Function>,
     datagram_object_status_callback: Option<js_sys::Function>,
     subgroup_stream_header_callback: Option<js_sys::Function>,
-    subgroup_stream_object_callbacks: HashMap<u64, js_sys::Function>,
+    subgroup_stream_object_callback: Option<js_sys::Function>,
+    connection_closed_callback: Option<js_sys::Function>,
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]
@@ -1786,7 +2057,8 @@ impl MOQTCallbacks {
             datagram_object_callback: None,
             datagram_object_status_callback: None,
             subgroup_stream_header_callback: None,
-            subgroup_stream_object_callbacks: HashMap::new(),
+            subgroup_stream_object_callback: None,
+            connection_closed_callback: None,
         }
     }
 
@@ -1866,19 +2138,19 @@ impl MOQTCallbacks {
         self.subgroup_stream_header_callback = Some(callback);
     }
 
-    pub fn get_subgroup_stream_object_callback(
-        &self,
-        track_alias: u64,
-    ) -> Option<&js_sys::Function> {
-        self.subgroup_stream_object_callbacks.get(&track_alias)
+    pub fn get_subgroup_stream_object_callback(&self) -> Option<js_sys::Function> {
+        self.subgroup_stream_object_callback.clone()
     }
 
-    pub fn set_subgroup_stream_object_callback(
-        &mut self,
-        track_alias: u64,
-        callback: js_sys::Function,
-    ) {
-        self.subgroup_stream_object_callbacks
-            .insert(track_alias, callback);
+    pub fn set_subgroup_stream_object_callback(&mut self, callback: js_sys::Function) {
+        self.subgroup_stream_object_callback = Some(callback);
+    }
+
+    pub fn connection_closed_callback(&self) -> Option<js_sys::Function> {
+        self.connection_closed_callback.clone()
+    }
+
+    pub fn set_connection_closed_callback(&mut self, callback: js_sys::Function) {
+        self.connection_closed_callback = Some(callback);
     }
 }

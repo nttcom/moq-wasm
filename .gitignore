@@ -9,9 +9,12 @@ target/
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 
+node_modules/*
 js/node_modules/*
+js/examples/*/node_modules/*
 js/dist/*
 js/pkg/*
+js/examples/*/dist/*
 # Added by cargo
 
 /target
@@ -19,6 +22,10 @@ js/pkg/*
 *.pem
 .DS_Store
 
+
+
 log/*
+
+
 
 cargo-flamegraph.trace/*

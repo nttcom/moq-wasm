@@ -9,6 +9,7 @@ use crate::{
 enum Status {
     Requesting,
     Active,
+    Failed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +74,10 @@ impl Subscription {
         self.status == Status::Requesting
     }
 
+    pub fn is_failed(&self) -> bool {
+        self.status == Status::Failed
+    }
+
     pub fn get_filter_type(&self) -> FilterType {
         self.filter_type
     }
@@ -127,6 +132,14 @@ impl Subscription {
 
     pub fn get_actual_object_start(&self) -> Option<ObjectStart> {
         self.actual_object_start.clone()
+    }
+
+    pub fn mark_success(&mut self) {
+        self.status = Status::Active;
+    }
+
+    pub fn mark_error(&mut self) {
+        self.status = Status::Failed;
     }
 }
 

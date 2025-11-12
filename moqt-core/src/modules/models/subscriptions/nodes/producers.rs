@@ -109,6 +109,24 @@ impl SubscriptionNodeRegistry for Producer {
         })
     }
 
+    fn get_track_aliases_for_track(
+        &self,
+        track_namespace: TrackNamespace,
+        track_name: String,
+    ) -> Result<Vec<TrackAlias>> {
+        let aliases = self
+            .subscriptions
+            .values()
+            .filter(|subscription| {
+                subscription.get_track_namespace_and_name()
+                    == (track_namespace.clone(), track_name.clone())
+            })
+            .map(|subscription| subscription.get_track_alias())
+            .collect();
+
+        Ok(aliases)
+    }
+
     fn get_all_subscribe_ids(&self) -> Result<Vec<SubscribeId>> {
         Ok(self.subscriptions.keys().cloned().collect())
     }
@@ -189,6 +207,31 @@ impl SubscriptionNodeRegistry for Producer {
             .unwrap();
 
         Ok(actual_object_start)
+    }
+
+    fn set_subscription_success(&mut self, subscribe_id: SubscribeId) -> Result<()> {
+        if let Some(subscription) = self.subscriptions.get_mut(&subscribe_id) {
+            subscription.mark_success();
+            Ok(())
+        } else {
+            bail!("subscription not found: {}", subscribe_id)
+        }
+    }
+
+    fn set_subscription_failed(&mut self, subscribe_id: SubscribeId) -> Result<()> {
+        if let Some(subscription) = self.subscriptions.get_mut(&subscribe_id) {
+            subscription.mark_error();
+            Ok(())
+        } else {
+            bail!("subscription not found: {}", subscribe_id)
+        }
+    }
+
+    fn is_failed(&self, subscribe_id: SubscribeId) -> bool {
+        self.subscriptions
+            .get(&subscribe_id)
+            .map(|subscription| subscription.is_failed())
+            .unwrap_or(false)
     }
 
     fn set_stream_id(
