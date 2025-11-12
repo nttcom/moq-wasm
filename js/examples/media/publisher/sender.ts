@@ -1,3 +1,9 @@
+import { MOQTClient } from '../../../pkg/moqt_client_sample'
+import { createBitrateLogger } from '../../../utils/media/logger'
+
+const chunkDataBitrateLogger = createBitrateLogger('chunkData bitrate')
+const videoGroupStates = new Map<bigint, { groupId: bigint; lastObjectId: bigint }>()
+
 function packMetaAndChunk(chunk: {
   type: string
   timestamp: number
@@ -10,44 +16,16 @@ function packMetaAndChunk(chunk: {
   const metaBytes = new TextEncoder().encode(metaJson)
   const metaLen = metaBytes.length
 
-  // chunkデータをUint8Arrayに変換
   const chunkArray = new Uint8Array(chunk.byteLength)
   chunk.copyTo(chunkArray)
 
   const totalLen = 4 + metaLen + chunkArray.length
   const payload = new Uint8Array(totalLen)
   const view = new DataView(payload.buffer)
-  view.setUint32(0, metaLen) // 先頭4バイトにメタデータ長
+  view.setUint32(0, metaLen)
   payload.set(metaBytes, 4)
   payload.set(chunkArray, 4 + metaLen)
   return payload
-}
-// chunkDataのビットレート計測用
-function createChunkDataBitrateLogger() {
-  let bytesThisSecond = 0
-  let lastLogTime = performance.now()
-  return {
-    addBytes(byteLength: number) {
-      bytesThisSecond += byteLength
-      const now = performance.now()
-      if (now - lastLogTime >= 1000) {
-        const mbps = (bytesThisSecond * 8) / 1_000_000
-        console.log(`chunkData bitrate: ${mbps.toFixed(2)} Mbps`)
-        bytesThisSecond = 0
-        lastLogTime = now
-      }
-    }
-  }
-}
-
-const chunkDataBitrateLogger = createChunkDataBitrateLogger()
-import { MOQTClient } from '../../../pkg/moqt_client_sample'
-import { KEYFRAME_INTERVAL } from './const'
-
-let currentVideoId = {
-  groupId: BigInt(0),
-  subgroupId: BigInt(0),
-  objectId: BigInt(0)
 }
 
 export async function sendVideoObjectMessage(
@@ -58,25 +36,19 @@ export async function sendVideoObjectMessage(
   chunk: EncodedVideoChunk,
   client: MOQTClient
 ) {
+  const previousState = videoGroupStates.get(trackAlias)
+  if (previousState && previousState.groupId !== groupId) {
+    const endObjectId = previousState.lastObjectId + 1n
+    await client.sendSubgroupStreamObject(trackAlias, previousState.groupId, 0n, endObjectId, 3, new Uint8Array(0))
+    console.log(
+      `[MediaPublisher] Sent EndOfGroup trackAlias=${trackAlias} groupId=${previousState.groupId} subgroupId=0 objectId=${endObjectId}`
+    )
+  }
+
   chunkDataBitrateLogger.addBytes(chunk.byteLength)
   const payload = packMetaAndChunk(chunk)
   await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, payload)
-
-  // groupIdが変わったら、EndOfGroupを送信
-  // subgroupIdはなんでも良いが0とする
-  if (groupId > currentVideoId.groupId) {
-    await client.sendSubgroupStreamObject(
-      BigInt(trackAlias),
-      currentVideoId.groupId,
-      BigInt(0),
-      BigInt(KEYFRAME_INTERVAL),
-      3, // 0x3: EndOfGroup
-      Uint8Array.from([])
-    )
-    console.log('send Object(ObjectStatus=EndOfGroup)')
-  }
-
-  currentVideoId = { groupId, subgroupId, objectId }
+  videoGroupStates.set(trackAlias, { groupId, lastObjectId: objectId })
 }
 
 export async function sendAudioObjectMessage(
@@ -87,7 +59,6 @@ export async function sendAudioObjectMessage(
   chunk: EncodedAudioChunk,
   client: MOQTClient
 ) {
-  // `EncodedAudioChunk` のデータを Uint8Array に変換
   const payload = packMetaAndChunk(chunk)
 
   await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, payload)
