@@ -93,7 +93,15 @@ interface MemberCardProps {
   details: ReactNode
 }
 
-function MemberCard({ title, videoStream, videoOverlay, audioStream, placeholder, muted = false, details }: MemberCardProps) {
+function MemberCard({
+  title,
+  videoStream,
+  videoOverlay,
+  audioStream,
+  placeholder,
+  muted = false,
+  details
+}: MemberCardProps) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/10 p-6 shadow-xl backdrop-blur">
       <h3 className="mb-3 text-xl font-semibold text-white">{title}</h3>

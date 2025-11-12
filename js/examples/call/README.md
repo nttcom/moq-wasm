@@ -24,16 +24,13 @@ MoQT (Media over QUIC Transport) を使用したビデオ通話アプリケー�
 ### メッセージシーケンス
 
 1. **接続とセットアップ**
-
    - `SETUP` メッセージでサーバーと接続を確立
 
 2. **ルーム参加**
-
    - `SUBSCRIBE_ANNOUNCES` で `/{RoomName}/` のANNOUNCEを購読
    - 既存参加者と新規参加者のANNOUNCEを受信
 
 3. **メディア配信**
-
    - カメラ/マイクを選択
    - `ANNOUNCE` メッセージで `/{RoomName}/{UserName}` を通知
    - 他の参加者から `SUBSCRIBE` メッセージを受信
@@ -105,7 +102,6 @@ src/
    ```
 
 2. `useLocalSession.ts` 内のコメントアウトされたコードを有効化
-
    - `import init, { MOQTClient }` のインポート
    - `init()` の呼び出し
    - `MOQTClient` インスタンスの作成

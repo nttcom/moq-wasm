@@ -25,13 +25,7 @@ export function MediaStreamVideo({
 
   return (
     <div className={`relative w-full aspect-video overflow-hidden rounded-lg bg-black ${className}`}>
-      <video
-        ref={ref}
-        className="w-full h-full object-contain"
-        autoPlay
-        playsInline
-        muted={muted}
-      />
+      <video ref={ref} className="w-full h-full object-contain" autoPlay playsInline muted={muted} />
       {overlay && (
         <div className="pointer-events-none absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-xs font-medium text-white">
           {overlay}
