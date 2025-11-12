@@ -1,9 +1,24 @@
-import init, { MOQTClient } from '../../../pkg/moqt_client_sample'
-import { AUTH_INFO, KEYFRAME_INTERVAL } from './const'
+import { MoqtClientWrapper } from '@moqt/moqtClient'
+import type { MOQTClient } from '../../../pkg/moqt_client_sample'
+import { AUTH_INFO } from './const'
 import { sendVideoObjectMessage, sendAudioObjectMessage } from './sender'
 import { getFormElement } from './utils'
+import { MediaTransportState } from '../../../utils/media/transportState'
+import { sendVideoChunkViaMoqt } from '../../../utils/media/videoTransport'
+import { KEYFRAME_INTERVAL } from '../../../utils/media/constants'
 
 let mediaStream: MediaStream | null = null
+const moqtClient = new MoqtClientWrapper()
+const transportState = new MediaTransportState()
+
+function ensureClient(): MOQTClient {
+  const client = moqtClient.getRawClient()
+  if (!client) {
+    throw new Error('MOQT client not connected')
+  }
+  return client
+}
+
 function setUpStartGetUserMediaButton() {
   const startGetUserMediaBtn = document.getElementById('startGetUserMediaBtn') as HTMLButtonElement
   startGetUserMediaBtn.addEventListener('click', async () => {
@@ -22,151 +37,54 @@ function setUpStartGetUserMediaButton() {
   })
 }
 
-const LatestMediaTrackInfo: {
-  video: {
-    objectId: bigint
-    groupId: bigint
-    subgroups: {}
-  }
-  audio: {
-    objectId: bigint
-    groupId: bigint
-    subgroups: {
-      [key: number]: {
-        isSendedSubgroupHeader: boolean
-      }
-    }
-  }
-} = {
-  video: {
-    objectId: 0n,
-    groupId: -1n,
-    subgroups: {
-      0: {}
-      // 1: {},
-      // 2: {}
-    }
-  },
-  audio: {
-    objectId: 0n,
-    groupId: 0n,
-    subgroups: {
-      0: { isSendedSubgroupHeader: false }
-    }
-  }
-}
+const videoEncoderWorker = new Worker(new URL('../../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
+  type: 'module'
+})
+const audioEncoderWorker = new Worker(new URL('../../../utils/media/encoders/audioEncoder.ts', import.meta.url), {
+  type: 'module'
+})
 
-const videoEncoderWorker = new Worker(new URL('./videoEncoder.ts', import.meta.url), { type: 'module' })
-async function handleVideoChunkMessage(
-  chunk: EncodedVideoChunk,
-  metadata: EncodedVideoChunkMetadata | undefined,
-  client: MOQTClient
-) {
-  const form = getFormElement()
-  const trackAlias = form['video-object-track-alias'].value
-  const publisherPriority = form['video-publisher-priority'].value
+type VideoEncoderWorkerMessage =
+  | { type: 'chunk'; chunk: EncodedVideoChunk; metadata: EncodedVideoChunkMetadata | undefined }
+  | { type: 'bitrate'; kbps: number }
 
-  // Increment the groupId and reset the objectId at the timing of the keyframe
-  // Then, resend the SubgroupStreamHeader
-  if (chunk.type === 'key') {
-    LatestMediaTrackInfo['video'].groupId++
-    LatestMediaTrackInfo['video'].objectId = BigInt(0)
-
-    const subgroupKeys = Object.keys(LatestMediaTrackInfo['video'].subgroups).map(BigInt)
-    for (const subgroup of subgroupKeys) {
-      await client.sendSubgroupStreamHeaderMessage(
-        BigInt(trackAlias),
-        LatestMediaTrackInfo['video'].groupId,
-        // @ts-ignore - The SVC property is not defined in the standard but actually exists
-        subgroup,
-        publisherPriority
-      )
-      console.log('send subgroup stream header')
-    }
-  }
-
-  sendVideoObjectMessage(
-    trackAlias,
-    LatestMediaTrackInfo['video'].groupId,
-    // @ts-ignore - The SVC property is not defined in the standard but actually exists
-    BigInt(metadata?.svc.temporalLayerId), // = subgroupId
-    LatestMediaTrackInfo['video'].objectId,
-    chunk,
-    client
-  )
-  LatestMediaTrackInfo['video'].objectId++
-}
-
-const audioEncoderWorker = new Worker(new URL('./audioEncoder.ts', import.meta.url), { type: 'module' })
+type AudioEncoderWorkerMessage =
+  | { type: 'chunk'; chunk: EncodedAudioChunk; metadata: EncodedAudioChunkMetadata | undefined }
+  | { type: 'bitrate'; media: 'audio'; kbps: number }
 async function handleAudioChunkMessage(
   chunk: EncodedAudioChunk,
   metadata: EncodedAudioChunkMetadata | undefined,
   client: MOQTClient
 ) {
   const form = getFormElement()
-  const trackAlias = form['audio-object-track-alias'].value
-  const publisherPriority = form['audio-publisher-priority'].value
+  const trackAlias = BigInt(form['audio-object-track-alias'].value)
+  const publisherPriority = Number(form['audio-publisher-priority'].value)
   const subgroupId = 0
+  transportState.ensureAudioSubgroup(subgroupId)
 
-  if (!LatestMediaTrackInfo['audio']['subgroups'][subgroupId].isSendedSubgroupHeader) {
+  if (transportState.shouldSendAudioHeader(trackAlias, subgroupId)) {
     await client.sendSubgroupStreamHeaderMessage(
-      BigInt(trackAlias),
-      LatestMediaTrackInfo['audio'].groupId,
+      trackAlias,
+      transportState.getAudioGroupId(),
       BigInt(subgroupId),
       publisherPriority
     )
     console.log('send subgroup stream header')
-    LatestMediaTrackInfo['audio']['subgroups'][subgroupId].isSendedSubgroupHeader = true
+    transportState.markAudioHeaderSent(trackAlias, subgroupId)
   }
 
   sendAudioObjectMessage(
     trackAlias,
-    LatestMediaTrackInfo['audio'].groupId,
+    transportState.getAudioGroupId(),
     BigInt(subgroupId),
-    LatestMediaTrackInfo['audio'].objectId,
+    transportState.getAudioObjectId(),
     chunk,
     client
   )
-  LatestMediaTrackInfo['audio'].objectId++
+  transportState.incrementAudioObject()
 }
 
-function setupClientCallbacks(client: MOQTClient): void {
-  client.onSetup(async (serverSetup: any) => {
-    console.log({ serverSetup })
-  })
-
-  client.onAnnounce(async (announceMessage: any) => {
-    console.log({ announceMessage })
-    const announcedNamespace = announceMessage.track_namespace
-
-    await client.sendAnnounceOkMessage(announcedNamespace)
-  })
-
-  client.onAnnounceResponse(async (announceResponseMessage: any) => {
-    console.log({ announceResponseMessage })
-  })
-
-  client.onSubscribe(async (subscribeMessage: any, isSuccess: any, code: any) => {
-    console.log({ subscribeMessage })
-    const form = getFormElement()
-    const receivedSubscribeId = BigInt(subscribeMessage.subscribe_id)
-    const receivedTrackAlias = BigInt(subscribeMessage.track_alias)
-    console.log('subscribeId', receivedSubscribeId, 'trackAlias', receivedTrackAlias)
-
-    if (isSuccess) {
-      const expire = 0n
-      const forwardingPreference = (Array.from(form['forwarding-preference']) as HTMLInputElement[]).filter(
-        (elem) => elem.checked
-      )[0].value
-      await client.sendSubscribeOkMessage(receivedSubscribeId, expire, AUTH_INFO, forwardingPreference)
-    } else {
-      const reasonPhrase = 'subscribe error'
-      await client.sendSubscribeErrorMessage(subscribeMessage.subscribe_id, code, reasonPhrase)
-    }
-  })
-}
-
-function sendSetupButtonClickHandler(client: MOQTClient): void {
+function sendSetupButtonClickHandler(): void {
   const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
   sendSetupBtn.addEventListener('click', async () => {
     const form = getFormElement()
@@ -174,21 +92,21 @@ function sendSetupButtonClickHandler(client: MOQTClient): void {
     const versions = new BigUint64Array('0xff00000A'.split(',').map(BigInt))
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
 
-    await client.sendSetupMessage(versions, maxSubscribeId)
+    await moqtClient.sendSetupMessage(versions, maxSubscribeId)
   })
 }
 
-function sendAnnounceButtonClickHandler(client: MOQTClient): void {
+function sendAnnounceButtonClickHandler(): void {
   const sendAnnounceBtn = document.getElementById('sendAnnounceBtn') as HTMLButtonElement
   sendAnnounceBtn.addEventListener('click', async () => {
     const form = getFormElement()
     const trackNamespace = form['announce-track-namespace'].value.split('/')
 
-    await client.sendAnnounceMessage(trackNamespace, AUTH_INFO)
+    await moqtClient.announce(trackNamespace, AUTH_INFO)
   })
 }
 
-function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
+function sendSubgroupObjectButtonClickHandler(): void {
   const sendSubgroupObjectBtn = document.getElementById('sendSubgroupObjectBtn') as HTMLButtonElement
   sendSubgroupObjectBtn.addEventListener('click', async () => {
     console.log('clicked sendSubgroupObjectBtn')
@@ -196,19 +114,40 @@ function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
       console.error('mediaStream is null')
       return
     }
-    videoEncoderWorker.onmessage = async (e: MessageEvent) => {
-      const { chunk, metadata } = e.data as {
-        chunk: EncodedVideoChunk
-        metadata: EncodedVideoChunkMetadata | undefined
-      }
-      // console.log(chunk, metadata)
-      handleVideoChunkMessage(chunk, metadata, client)
+    let client: MOQTClient
+    try {
+      client = ensureClient()
+    } catch (error) {
+      console.error(error)
+      return
     }
-    audioEncoderWorker.onmessage = async (e: MessageEvent) => {
-      const { chunk, metadata } = e.data as {
-        chunk: EncodedAudioChunk
-        metadata: EncodedAudioChunkMetadata | undefined
+
+    videoEncoderWorker.onmessage = async (event: MessageEvent<VideoEncoderWorkerMessage>) => {
+      const data = event.data
+      if (data.type !== 'chunk') {
+        return
       }
+      const { chunk, metadata } = data
+      const form = getFormElement()
+      const trackAlias = BigInt(form['video-object-track-alias'].value)
+      const publisherPriority = Number(form['video-publisher-priority'].value)
+
+      await sendVideoChunkViaMoqt({
+        chunk,
+        metadata,
+        trackAliases: [trackAlias],
+        publisherPriority,
+        client,
+        transportState,
+        sender: sendVideoObjectMessage
+      })
+    }
+    audioEncoderWorker.onmessage = async (event: MessageEvent<AudioEncoderWorkerMessage>) => {
+      const data = event.data
+      if (data.type !== 'chunk') {
+        return
+      }
+      const { chunk, metadata } = data
       handleAudioChunkMessage(chunk, metadata, client)
     }
 
@@ -227,23 +166,53 @@ function sendSubgroupObjectButtonClickHandler(client: MOQTClient): void {
   })
 }
 
-function setupButtonClickHandler(client: MOQTClient): void {
-  sendSetupButtonClickHandler(client)
-  sendAnnounceButtonClickHandler(client)
-  sendSubgroupObjectButtonClickHandler(client)
+function setupButtonClickHandler(): void {
+  sendSetupButtonClickHandler()
+  sendAnnounceButtonClickHandler()
+  sendSubgroupObjectButtonClickHandler()
 }
 
-init().then(async () => {
-  setUpStartGetUserMediaButton()
-
-  const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
-  connectBtn.addEventListener('click', async () => {
-    const form = getFormElement()
-    const url = form.url.value
-    const client = new MOQTClient(url)
-    setupClientCallbacks(client)
-    setupButtonClickHandler(client)
-
-    await client.start()
+function setupClientCallbacks(): void {
+  moqtClient.setOnServerSetupHandler((serverSetup: any) => {
+    console.log({ serverSetup })
   })
+
+  moqtClient.setOnAnnounceHandler(async (announceMessage) => {
+    console.log({ announceMessage })
+    const client = ensureClient()
+    await client.sendAnnounceOkMessage(announceMessage.trackNamespace)
+  })
+
+  moqtClient.setOnSubscribeResponseHandler((announceResponseMessage) => {
+    console.log({ announceResponseMessage })
+  })
+
+  moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
+    console.log({ subscribeMessage: subscribe })
+    const form = getFormElement()
+    const forwardingPreference = (Array.from(form['forwarding-preference']) as HTMLInputElement[]).filter(
+      (elem) => elem.checked
+    )[0].value
+
+    if (isSuccess) {
+      const expire = 0n
+      await respondOk(expire, AUTH_INFO, forwardingPreference)
+      return
+    }
+
+    const reasonPhrase = 'subscribe error'
+    await respondError(BigInt(code), reasonPhrase)
+  })
+}
+
+setUpStartGetUserMediaButton()
+setupClientCallbacks()
+
+const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
+connectBtn.addEventListener('click', async () => {
+  const form = getFormElement()
+  const url = form.url.value
+
+  await moqtClient.connect(url, { sendSetup: false })
+  setupButtonClickHandler()
 })

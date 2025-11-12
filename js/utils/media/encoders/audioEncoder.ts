@@ -1,3 +1,5 @@
+import { createBitrateLogger } from '../bitrate'
+
 let audioEncoder: AudioEncoder | undefined
 const AUDIO_ENCODER_CONFIG = {
   codec: 'opus',
@@ -6,8 +8,13 @@ const AUDIO_ENCODER_CONFIG = {
   bitrate: 64000 // 64kbpsのビットレート
 }
 
+const audioBitrateLogger = createBitrateLogger((kbps) => {
+  self.postMessage({ type: 'bitrate', media: 'audio', kbps })
+})
+
 function sendAudioChunkMessage(chunk: EncodedAudioChunk, metadata: EncodedAudioChunkMetadata | undefined) {
-  self.postMessage({ chunk, metadata })
+  audioBitrateLogger.addBytes(chunk.byteLength)
+  self.postMessage({ type: 'chunk', chunk, metadata })
 }
 
 async function initializeAudioEncoder() {
