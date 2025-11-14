@@ -1,7 +1,10 @@
-use anyhow::bail;
-use moqt::{Endpoint, QUIC};
-use std::{net::ToSocketAddrs, str::FromStr, sync::Arc, time::Duration};
+use std::time::Duration;
 use tokio::time::sleep;
+
+use crate::client::Client;
+
+mod client;
+mod stream_runner;
 
 // room/user2 is notified from `Publish Namespace`.
 fn create_client_thread(
@@ -9,38 +12,14 @@ fn create_client_thread(
     mut signal_receiver: tokio::sync::broadcast::Receiver<()>,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::task::spawn(async move {
-        let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
-        let url = url::Url::from_str("moqt://localhost:4433")?;
-        let host = url.host_str().unwrap();
-        let remote_address = (host, url.port().unwrap_or(4433))
-            .to_socket_addrs()?
-            .next()
-            .unwrap();
-
-        tracing::info!("remote_address: {} host: {}", remote_address, host);
-
-        let session = match endpoint.connect(remote_address, host).await {
-            Ok(s) => s,
-            Err(e) => {
-                bail!("test failed: {:?}", e)
-            }
-        };
-        let session = Arc::new(session);
-        let th = create_receive_thread("thread_1".to_string(), session.clone());
-        tracing::info!("create session ok");
-        let (publisher, subscriber) = session.create_publisher_subscriber_pair();
-        let result = publisher.publish_namespace("room/user1".to_string()).await;
-        if result.is_err() {
-            tracing::info!("publish namespace error");
-        } else {
-            tracing::info!("publish namespace ok");
-        }
-        let result = subscriber
-            .subscribe_namespace("room/user2".to_string())
+        let client = Client::new(cert_path, "user1".to_string()).await?;
+        client.publish_namespace("room1/user1".to_string()).await;
+        client.subscribe_namespace("room2".to_string()).await;
+        client
+            .publish("room1/user1".to_string(), "video".to_string())
             .await;
         // await until the application is shut down.
         let _ = signal_receiver.recv().await.ok();
-        th.abort();
         Ok(())
     })
 }
@@ -51,55 +30,16 @@ fn create_client_thread2(
     mut signal_receiver: tokio::sync::broadcast::Receiver<()>,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::task::spawn(async move {
-        sleep(Duration::from_secs(3)).await;
-        let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
-        let url = url::Url::from_str("moqt://localhost:4433")?;
-        let host = url.host_str().unwrap();
-        let remote_address = (host, url.port().unwrap_or(4433))
-            .to_socket_addrs()?
-            .next()
-            .unwrap();
-
-        tracing::info!("remote_address: {} host: {}", remote_address, host);
-
-        let session = match endpoint.connect(remote_address, host).await {
-            Ok(s) => s,
-            Err(e) => {
-                bail!("test failed: {:?}", e)
-            }
-        };
-        let session = Arc::new(session);
-        let th = create_receive_thread("thread_2".to_string(), session.clone());
-        tracing::info!("create session ok");
-        let (publisher, subscriber) = session.create_publisher_subscriber_pair();
-        let result = publisher.publish_namespace("room/user2".to_string()).await;
-        if result.is_err() {
-            tracing::info!("publish namespace error");
-        } else {
-            tracing::info!("publish namespace ok");
-        }
-        let result = subscriber.subscribe_namespace("room".to_string()).await;
+        sleep(Duration::from_secs(5)).await;
+        let client = Client::new(cert_path, "user2".to_string()).await?;
+        client.publish_namespace("room2/user2".to_string()).await;
+        client.subscribe_namespace("room1".to_string()).await;
+        // client
+        //     .publish("room2/user2".to_string(), "video".to_string())
+        //     .await;
         // await until the application is shut down.
         let _ = signal_receiver.recv().await.ok();
-        th.abort();
         Ok(())
-    })
-}
-
-fn create_receive_thread(
-    label: String,
-    session: Arc<moqt::Session<QUIC>>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::task::spawn(async move {
-        loop {
-            let result = session.receive_event().await;
-            if let Err(e) = result {
-                tracing::error!("Failed to receive event: {}", e);
-                break;
-            }
-            let event = result.unwrap();
-            tracing::info!("Received: label: {} event: {:?}", label, event);
-        }
     })
 }
 
@@ -107,6 +47,7 @@ fn create_receive_thread(
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
+        .with_line_number(true)
         .try_init()
         .ok();
 

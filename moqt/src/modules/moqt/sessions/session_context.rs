@@ -6,81 +6,88 @@ use std::{
 use anyhow::bail;
 
 use crate::{
+    DatagramObject, RequestId, SessionEvent, TransportProtocol,
     modules::moqt::{
         constants,
-        controls::{control_receiver::ControlReceiver, control_sender::ControlSender},
         enums::ResponseMessage,
         messages::{
             control_message_type::ControlMessageType,
             control_messages::{
                 client_setup::ClientSetup,
                 server_setup::ServerSetup,
-                setup_parameters::{MaxSubscribeID, SetupParameter},
+                setup_parameters::{MOQTimplementation, MaxSubscribeID, SetupParameter},
             },
             moqt_message::MOQTMessage,
         },
+        streams::stream::{stream_receiver::StreamReceiver, stream_sender::StreamSender},
         utils::{self, add_message_type},
-    }, RequestId, SessionEvent, TransportProtocol
+    },
 };
 
-pub(crate) struct InnerSession<T: TransportProtocol> {
-    _transport_connection: T::Connection,
-    pub(crate) send_stream: ControlSender<T>,
-    pub(crate) receive_stream: ControlReceiver<T>,
+#[derive(Debug)]
+pub(crate) struct SessionContext<T: TransportProtocol> {
+    pub(crate) transport_connection: T::Connection,
+    pub(crate) send_stream: StreamSender<T>,
     request_id: AtomicU64,
-    pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     pub(crate) sender_map:
         tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
+    pub(crate) datagram_sender_map:
+        tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<DatagramObject>>>,
     pub(crate) subscribed_namespaces: tokio::sync::Mutex<HashSet<String>>,
 }
 
-impl<T: TransportProtocol> InnerSession<T> {
+impl<T: TransportProtocol> SessionContext<T> {
     pub(crate) async fn client(
         transport_connection: T::Connection,
-        mut send_stream: ControlSender<T>,
-        receive_stream: ControlReceiver<T>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>
+        mut send_stream: StreamSender<T>,
+        receive_stream: &StreamReceiver<T>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     ) -> anyhow::Result<Self> {
-        Self::setup_client(&mut send_stream, &receive_stream).await?;
+        Self::setup_client(&mut send_stream, receive_stream).await?;
 
         Ok(Self {
-            _transport_connection: transport_connection,
+            transport_connection,
             send_stream,
-            receive_stream,
             request_id: AtomicU64::new(0),
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
+            datagram_sender_map: tokio::sync::RwLock::new(HashMap::new()),
             subscribed_namespaces: tokio::sync::Mutex::new(HashSet::new()),
         })
     }
 
     pub(crate) async fn server(
         transport_connection: T::Connection,
-        mut send_stream: ControlSender<T>,
-        receive_stream: ControlReceiver<T>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>
+        mut send_stream: StreamSender<T>,
+        receive_stream: &StreamReceiver<T>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     ) -> anyhow::Result<Self> {
-        Self::setup_server(&mut send_stream, &receive_stream).await?;
+        Self::setup_server(&mut send_stream, receive_stream).await?;
 
         Ok(Self {
-            _transport_connection: transport_connection,
+            transport_connection,
             send_stream,
-            receive_stream,
             request_id: AtomicU64::new(1),
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
+            datagram_sender_map: tokio::sync::RwLock::new(HashMap::new()),
             subscribed_namespaces: tokio::sync::Mutex::new(HashSet::new()),
         })
     }
 
     async fn setup_client(
-        send_stream: &mut ControlSender<T>,
-        receive_stream: &ControlReceiver<T>,
+        send_stream: &mut StreamSender<T>,
+        receive_stream: &StreamReceiver<T>,
     ) -> anyhow::Result<()> {
         let max_id = MaxSubscribeID::new(1000);
+        let param = MOQTimplementation::new("MOQ-WASM".to_string());
         let payload = ClientSetup::new(
             vec![constants::MOQ_TRANSPORT_VERSION],
-            vec![SetupParameter::MaxSubscribeID(max_id)],
+            vec![
+                SetupParameter::MaxSubscribeID(max_id),
+                SetupParameter::MOQTimplementation(param),
+            ],
         )
         .packetize();
         let bytes = add_message_type(ControlMessageType::ClientSetup, payload);
@@ -104,8 +111,8 @@ impl<T: TransportProtocol> InnerSession<T> {
     }
 
     async fn setup_server(
-        send_stream: &mut ControlSender<T>,
-        receive_stream: &ControlReceiver<T>,
+        send_stream: &mut StreamSender<T>,
+        receive_stream: &StreamReceiver<T>,
     ) -> anyhow::Result<()> {
         tracing::info!("Waiting for server setup.");
         let bytes = receive_stream.receive().await?;
@@ -142,7 +149,7 @@ impl<T: TransportProtocol> InnerSession<T> {
     }
 }
 
-impl<T: TransportProtocol> Drop for InnerSession<T> {
+impl<T: TransportProtocol> Drop for SessionContext<T> {
     fn drop(&mut self) {
         tracing::info!("Session has been dropped.");
         // send goaway

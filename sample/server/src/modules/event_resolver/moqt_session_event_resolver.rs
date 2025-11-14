@@ -1,39 +1,23 @@
-use crate::modules::{enums::MOQTMessageReceived, types::SessionId};
+use crate::modules::{
+    core::session_event::SessionEvent,
+    enums::{FilterType, Location, MOQTMessageReceived},
+    types::SessionId,
+};
 
 pub(crate) struct MOQTSessionEventResolver;
 
 impl MOQTSessionEventResolver {
-    pub(crate) fn resolve(session_id: SessionId, event: moqt::SessionEvent) -> MOQTMessageReceived {
+    pub(crate) fn resolve(session_id: SessionId, event: SessionEvent) -> MOQTMessageReceived {
         match event {
-            moqt::SessionEvent::PublishNamespace(namespaces) => {
-                MOQTMessageReceived::PublishNameSpace(session_id, namespaces)
+            SessionEvent::PublishNamespace(handler) => {
+                MOQTMessageReceived::PublishNameSpace(session_id, handler)
             }
-            moqt::SessionEvent::SubscribeNameSpace(namespaces) => {
-                MOQTMessageReceived::SubscribeNameSpace(session_id, namespaces)
+            SessionEvent::SubscribeNamespace(handler) => {
+                MOQTMessageReceived::SubscribeNameSpace(session_id, handler)
             }
-            moqt::SessionEvent::Publish(
-                request_id,
-                namespaces,
-                track_alias,
-                group_order,
-                is_content_exist,
-                is_forward,
-                authorization,
-                delivery_timeout,
-                max_cache_duration,
-            ) => todo!(),
-            moqt::SessionEvent::Subscribe(
-                request_id,
-                namespaces,
-                subscriber_priority,
-                group_order,
-                is_content_exist,
-                is_forward,
-                filter_type,
-                authorization,
-                delivery_timeout,
-            ) => todo!(),
-            moqt::SessionEvent::FatalError() => todo!(),
+            SessionEvent::Publish(handler) => MOQTMessageReceived::Publish(session_id, handler),
+            SessionEvent::Subscribe(handler) => MOQTMessageReceived::Subscribe(session_id, handler),
+            SessionEvent::ProtocolViolation() => MOQTMessageReceived::ProtocolViolation(),
         }
     }
 }

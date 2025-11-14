@@ -1,11 +1,11 @@
 use std::io::Cursor;
 
 use anyhow::bail;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::moqt::messages::{
-    control_message_type::ControlMessageType,
-    variable_integer::{read_variable_integer, write_variable_integer},
+    control_message_type::ControlMessageType, moqt_message_error::MOQTMessageError,
+    variable_integer::read_variable_integer,
 };
 
 pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<ControlMessageType> {
@@ -22,9 +22,13 @@ pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<Contro
 }
 
 pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
-    let mut read_cur = Cursor::new(&read_buf[..]);
-    let payload_length = read_variable_integer(&mut read_cur).unwrap();
-    read_buf.advance(read_cur.position() as usize);
+    let payload_length = match read_buf.try_get_u16() {
+        Ok(v) => v,
+        Err(_) => {
+            tracing::error!("Failed to read payload length");
+            return false;
+        }
+    };
 
     if read_buf.len() != payload_length as usize {
         tracing::error!(
@@ -32,7 +36,7 @@ pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
             payload_length,
             read_buf.len()
         );
-        return false;
+        false
     } else {
         true
     }
@@ -41,7 +45,18 @@ pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
 pub(crate) fn add_payload_length(payload: BytesMut) -> BytesMut {
     let mut buffer = BytesMut::new();
     // Message Type
-    buffer.extend(write_variable_integer(payload.len() as u64));
+    buffer.put_u16(payload.len() as u16);
     buffer.unsplit(payload);
     buffer
+}
+
+pub(super) fn u8_to_bool(value: u8) -> Result<bool, MOQTMessageError> {
+    match value {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => {
+            tracing::error!("Invalid value for bool: {}", value);
+            Err(MOQTMessageError::ProtocolViolation)
+        }
+    }
 }

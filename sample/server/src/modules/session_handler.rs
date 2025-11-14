@@ -3,7 +3,9 @@ use std::sync::Arc;
 use moqt::{Endpoint, QUIC};
 use uuid::Uuid;
 
-use crate::modules::{enums::MOQTMessageReceived, repositories::session_repository::SessionRepository};
+use crate::modules::{
+    enums::MOQTMessageReceived, repositories::session_repository::SessionRepository,
+};
 
 pub struct SessionHandler {
     join_handle: tokio::task::JoinHandle<()>,
@@ -17,7 +19,7 @@ impl SessionHandler {
         session_event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
     ) -> Self {
         let config = moqt::ServerConfig {
-            port: 4433,
+            port: 4434,
             cert_path,
             key_path,
             keep_alive_interval_sec: 15,
@@ -42,7 +44,10 @@ impl SessionHandler {
                         tracing::error!("failed to accept: {}", e);
                     }) {
                         Ok(s) => s,
-                        Err(_) => break,
+                        Err(_) => {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     };
                     let session_id = Uuid::new_v4();
                     tracing::info!("Session ID: {}", session_id);

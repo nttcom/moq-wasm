@@ -31,39 +31,23 @@ impl EventHandler {
                 loop {
                     if let Some(event) = receiver.recv().await {
                         match event {
-                            MOQTMessageReceived::PublishNameSpace(session_id, items) => {
-                                sequense_handler.publish_namespace(session_id, items).await
-                            }
-                            MOQTMessageReceived::SubscribeNameSpace(session_id, items) => {
+                            MOQTMessageReceived::PublishNameSpace(session_id, handler) => {
                                 sequense_handler
-                                    .subscribe_namespace(session_id, items)
+                                    .publish_namespace(session_id, handler)
+                                    .await
+                            }
+                            MOQTMessageReceived::SubscribeNameSpace(session_id, handler) => {
+                                sequense_handler
+                                    .subscribe_namespace(session_id, handler)
                                     .await;
                             }
-                            MOQTMessageReceived::Publish(
-                                session_id,
-                                _,
-                                items,
-                                _,
-                                _,
-                                _,
-                                _,
-                                _,
-                                items1,
-                                items2,
-                                items3,
-                            ) => todo!(),
-                            MOQTMessageReceived::Subscribe(
-                                session_id,
-                                _,
-                                items,
-                                _,
-                                _,
-                                _,
-                                _,
-                                _,
-                                items1,
-                                items2,
-                            ) => todo!(),
+                            MOQTMessageReceived::Publish(session_id, handler) => {
+                                sequense_handler.publish(session_id, handler).await
+                            }
+                            MOQTMessageReceived::Subscribe(session_id, handler) => {
+                                sequense_handler.subscribe(session_id, handler).await
+                            }
+                            MOQTMessageReceived::ProtocolViolation() => todo!(),
                         }
                     } else {
                         tracing::error!("Failed to receive session event");
