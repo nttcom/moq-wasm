@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::bail;
 
 use crate::Publisher;
+use crate::StreamReceiver;
 use crate::Subscriber;
 use crate::modules::moqt::enums::SessionEvent;
 use crate::modules::moqt::protocol::TransportProtocol;
@@ -20,11 +21,13 @@ pub struct Session<T: TransportProtocol> {
 
 impl<T: TransportProtocol> Session<T> {
     pub(crate) fn new(
+        receive_stream: StreamReceiver<T>,
         inner: SessionContext<T>,
         event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent<T>>,
     ) -> Self {
         let inner = Arc::new(inner);
-        let message_receive_join_handle = ControlMessageReceiveThread::run(Arc::downgrade(&inner));
+        let message_receive_join_handle =
+            ControlMessageReceiveThread::run(receive_stream, Arc::downgrade(&inner));
         let datagram_receive_thread = DatagramReceiveThread::run(inner.clone());
 
         Self {

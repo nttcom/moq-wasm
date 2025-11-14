@@ -4,8 +4,8 @@ use anyhow::bail;
 use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::moqt::messages::{
-    byte_reader::ByteReader, byte_writer::ByteWriter, control_message_type::ControlMessageType,
-    moqt_message_error::MOQTMessageError, variable_integer::read_variable_integer,
+    control_message_type::ControlMessageType, moqt_message_error::MOQTMessageError,
+    variable_integer::read_variable_integer,
 };
 
 pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<ControlMessageType> {
@@ -22,7 +22,13 @@ pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<Contro
 }
 
 pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
-    let payload_length = read_buf.get_u16();
+    let payload_length = match read_buf.try_get_u16() {
+        Ok(v) => v,
+        Err(_) => {
+            tracing::error!("Failed to read payload length");
+            return false;
+        }
+    };
 
     if read_buf.len() != payload_length as usize {
         tracing::error!(

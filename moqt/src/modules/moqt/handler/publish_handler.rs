@@ -1,17 +1,13 @@
 use std::sync::Arc;
 
-use anyhow::bail;
-use tracing_subscriber::filter;
-
 use crate::{
-    FilterType, GroupOrder, SubscribeOption, Subscription, TransportProtocol,
+    FilterType, GroupOrder, Subscription, TransportProtocol,
     modules::moqt::{
-        enums::ResponseMessage,
         messages::{
             control_message_type::ControlMessageType,
             control_messages::{
-                location::Location, namespace_ok::NamespaceOk, publish::Publish,
-                publish_ok::PublishOk, request_error::RequestError, subscribe::Subscribe,
+                location::Location, publish::Publish,
+                publish_ok::PublishOk, request_error::RequestError,
             },
         },
         sessions::session_context::SessionContext,

@@ -1,13 +1,14 @@
-use crate::modules::moqt::messages::{
-    byte_reader::ByteReader,
-    control_messages::{
-        setup_parameters::SetupParameter,
-        util::{add_payload_length, validate_payload_length},
+use crate::modules::{
+    extensions::{bytes_reader::BytesReader, bytes_writer::BytesWriter},
+    moqt::messages::{
+        control_messages::{
+            setup_parameters::SetupParameter,
+            util::{add_payload_length, validate_payload_length},
+        },
+        moqt_message::MOQTMessage,
+        moqt_message_error::MOQTMessageError,
+        moqt_payload::MOQTPayload,
     },
-    moqt_message::MOQTMessage,
-    moqt_message_error::MOQTMessageError,
-    moqt_payload::MOQTPayload,
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 use anyhow::Context;
 use bytes::BytesMut;
@@ -38,21 +39,20 @@ impl MOQTMessage for ClientSetup {
             return Err(MOQTMessageError::ProtocolViolation);
         }
 
-        let number_of_supported_versions =
-            ByteReader::get_varint(buf).ok_or(MOQTMessageError::ProtocolViolation)?;
+        let number_of_supported_versions = buf
+            .try_get_varint()
+            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
 
         let mut supported_versions = Vec::with_capacity(number_of_supported_versions as usize);
         for _ in 0..number_of_supported_versions {
-            let supported_version = u32::try_from(
-                read_variable_integer_from_buffer(buf)
-                    .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-            )
-            .context("supported version")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-            supported_versions.push(supported_version);
+            let supported_version = buf
+                .try_get_varint()
+                .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+            supported_versions.push(supported_version as u32);
         }
 
-        let number_of_parameters = read_variable_integer_from_buffer(buf)
+        let number_of_parameters = buf
+            .try_get_varint()
             .context("number of parameters")
             .map_err(|_| MOQTMessageError::ProtocolViolation)?;
 
@@ -76,12 +76,12 @@ impl MOQTMessage for ClientSetup {
 
     fn packetize(&self) -> BytesMut {
         let mut payload = BytesMut::new();
-        payload.extend(write_variable_integer(self.number_of_supported_versions));
+        payload.put_varint(self.number_of_supported_versions);
         for supported_version in &self.supported_versions {
-            payload.extend(write_variable_integer(*supported_version as u64));
+            payload.put_varint(*supported_version as u64);
         }
 
-        payload.extend(write_variable_integer(self.number_of_parameters));
+        payload.put_varint(self.number_of_parameters);
         for setup_parameter in &self.setup_parameters {
             setup_parameter.packetize(&mut payload);
         }
@@ -118,16 +118,15 @@ mod test {
             let buf = client_setup.packetize();
 
             let expected_bytes_array = [
-                64, 24,  // Payload length
+                0, 23,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000008) in 62bit
                 2,   // Number of Parameters (i)
                 2,   // Parameter Type (i): Type(MaxSubscribeID)
-                2,   // Parameter Length (i)
                 71,  // Parameter Value (..): Length(01 of 2MSB)
                 208, // Parameter Value (..): Value(2000) in 62bit
-                5, 8, 77, 79, 81, 45, 87, 65, 83, 77,
+                7, 8, 77, 79, 81, 45, 87, 65, 83, 77,
             ];
 
             assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -136,16 +135,15 @@ mod test {
         #[test]
         fn depacketize() {
             let bytes_array = [
-                64, 24,  // Payload length
+                0, 23,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000008) in 62bit
                 2,   // Number of Parameters (i)
                 2,   // Parameter Type (i): Type(MaxSubscribeID)
-                2,   // Parameter Length (i)
                 71,  // Parameter Value (..): Length(01 of 2MSB)
                 208, // Parameter Value (..): Value(2000) in 62bit
-                5, 8, 77, 79, 81, 45, 87, 65, 83, 77,
+                7, 8, 77, 79, 81, 45, 87, 65, 83, 77,
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);

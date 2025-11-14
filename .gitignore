@@ -27,3 +27,5 @@ key.pem
 cert.pem
 
 Cargo.lock
+
+**.log
