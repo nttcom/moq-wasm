@@ -26,10 +26,11 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let moqt_sender = StreamSender::<T>::new(send_stream);
         let moqt_receiver = StreamReceiver::<T>::new(receive_stream);
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        let inner = SessionContext::<T>::client(transport_conn, moqt_sender, moqt_receiver, sender)
-            .await
-            .inspect(|_| tracing::info!("Session has been created."))?;
-        Ok(Session::<T>::new(inner, receiver))
+        let inner =
+            SessionContext::<T>::client(transport_conn, moqt_sender, &moqt_receiver, sender)
+                .await
+                .inspect(|_| tracing::info!("Session has been created."))?;
+        Ok(Session::<T>::new(moqt_receiver, inner, receiver))
     }
 
     pub(crate) async fn accept_new_connection(&mut self) -> anyhow::Result<Session<T>> {
@@ -39,9 +40,10 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let moqt_sender = StreamSender::<T>::new(send_stream);
         let moqt_receiver = StreamReceiver::<T>::new(receive_stream);
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        let inner = SessionContext::<T>::server(transport_conn, moqt_sender, moqt_receiver, sender)
-            .await
-            .inspect(|_| tracing::info!("Session has been established."))?;
-        Ok(Session::<T>::new(inner, receiver))
+        let inner =
+            SessionContext::<T>::server(transport_conn, moqt_sender, &moqt_receiver, sender)
+                .await
+                .inspect(|_| tracing::info!("Session has been established."))?;
+        Ok(Session::<T>::new(moqt_receiver, inner, receiver))
     }
 }

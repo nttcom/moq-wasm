@@ -28,7 +28,6 @@ use crate::{
 pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) transport_connection: T::Connection,
     pub(crate) send_stream: StreamSender<T>,
-    pub(crate) receive_stream: StreamReceiver<T>,
     request_id: AtomicU64,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     pub(crate) sender_map:
@@ -42,15 +41,14 @@ impl<T: TransportProtocol> SessionContext<T> {
     pub(crate) async fn client(
         transport_connection: T::Connection,
         mut send_stream: StreamSender<T>,
-        receive_stream: StreamReceiver<T>,
+        receive_stream: &StreamReceiver<T>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     ) -> anyhow::Result<Self> {
-        Self::setup_client(&mut send_stream, &receive_stream).await?;
+        Self::setup_client(&mut send_stream, receive_stream).await?;
 
         Ok(Self {
             transport_connection,
             send_stream,
-            receive_stream,
             request_id: AtomicU64::new(0),
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
@@ -62,15 +60,14 @@ impl<T: TransportProtocol> SessionContext<T> {
     pub(crate) async fn server(
         transport_connection: T::Connection,
         mut send_stream: StreamSender<T>,
-        receive_stream: StreamReceiver<T>,
+        receive_stream: &StreamReceiver<T>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     ) -> anyhow::Result<Self> {
-        Self::setup_server(&mut send_stream, &receive_stream).await?;
+        Self::setup_server(&mut send_stream, receive_stream).await?;
 
         Ok(Self {
             transport_connection,
             send_stream,
-            receive_stream,
             request_id: AtomicU64::new(1),
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
