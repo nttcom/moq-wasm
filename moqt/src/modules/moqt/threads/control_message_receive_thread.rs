@@ -3,7 +3,7 @@ use std::sync::{Arc, Weak};
 use bytes::BytesMut;
 
 use crate::{
-    SessionEvent, TransportProtocol,
+    SessionEvent, StreamReceiver, TransportProtocol,
     modules::moqt::{
         enums::ResponseMessage,
         handler::{
@@ -34,6 +34,7 @@ pub(crate) struct ControlMessageReceiveThread;
 
 impl ControlMessageReceiveThread {
     pub(crate) fn run<T: TransportProtocol>(
+        receive_stream: StreamReceiver<T>,
         session_context: Weak<SessionContext<T>>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
@@ -43,7 +44,7 @@ impl ControlMessageReceiveThread {
                     if let Some(session) = session_context.upgrade() {
                         tracing::debug!("Session is alive.");
 
-                        let bytes = match session.receive_stream.receive().await {
+                        let bytes = match receive_stream.receive().await {
                             Ok(b) => b,
                             Err(e) => {
                                 tracing::error!("failed to receive message: {:?}", e);

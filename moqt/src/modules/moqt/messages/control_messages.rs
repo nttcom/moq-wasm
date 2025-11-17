@@ -1,3 +1,4 @@
+pub mod authorization_token;
 pub mod client_setup;
 pub mod enums;
 pub mod go_away;

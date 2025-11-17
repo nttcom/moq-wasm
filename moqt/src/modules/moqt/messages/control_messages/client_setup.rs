@@ -1,90 +1,60 @@
 use crate::modules::{
     extensions::{bytes_reader::BytesReader, bytes_writer::BytesWriter},
-    moqt::messages::{
-        control_messages::{
-            setup_parameters::SetupParameter,
-            util::{add_payload_length, validate_payload_length},
-        },
-        moqt_message::MOQTMessage,
-        moqt_message_error::MOQTMessageError,
-        moqt_payload::MOQTPayload,
+    moqt::messages::control_messages::{
+        setup_parameters::SetupParameter,
+        util::{add_payload_length, validate_payload_length},
     },
 };
-use anyhow::Context;
 use bytes::BytesMut;
-use std::vec;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientSetup {
     pub number_of_supported_versions: u64,
     pub supported_versions: Vec<u32>,
-    pub(crate) number_of_parameters: u64,
-    pub setup_parameters: Vec<SetupParameter>,
+    pub setup_parameters: SetupParameter,
 }
 
 impl ClientSetup {
-    pub fn new(supported_versions: Vec<u32>, setup_parameters: Vec<SetupParameter>) -> ClientSetup {
+    pub fn new(supported_versions: Vec<u32>, setup_parameters: SetupParameter) -> ClientSetup {
         ClientSetup {
             number_of_supported_versions: supported_versions.len() as u64,
             supported_versions,
-            number_of_parameters: setup_parameters.len() as u64,
             setup_parameters,
         }
     }
 }
 
-impl MOQTMessage for ClientSetup {
-    fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
+impl ClientSetup {
+    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
         if !validate_payload_length(buf) {
-            return Err(MOQTMessageError::ProtocolViolation);
+            return None;
         }
 
-        let number_of_supported_versions = buf
-            .try_get_varint()
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let number_of_supported_versions = buf.try_get_varint().ok()?;
 
         let mut supported_versions = Vec::with_capacity(number_of_supported_versions as usize);
         for _ in 0..number_of_supported_versions {
-            let supported_version = buf
-                .try_get_varint()
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+            let supported_version = buf.try_get_varint().ok()?;
             supported_versions.push(supported_version as u32);
         }
-
-        let number_of_parameters = buf
-            .try_get_varint()
-            .context("number of parameters")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-
-        let mut setup_parameters = vec![];
-        for _ in 0..number_of_parameters {
-            setup_parameters.push(
-                SetupParameter::depacketize(buf)
-                    .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-            );
-        }
+        let setup_parameters = SetupParameter::decode(buf)?;
 
         let client_setup_message = ClientSetup {
             number_of_supported_versions,
             supported_versions,
-            number_of_parameters,
             setup_parameters,
         };
 
-        Ok(client_setup_message)
+        Some(client_setup_message)
     }
 
-    fn packetize(&self) -> BytesMut {
+    pub(crate) fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.number_of_supported_versions);
         for supported_version in &self.supported_versions {
             payload.put_varint(*supported_version as u64);
         }
-
-        payload.put_varint(self.number_of_parameters);
-        for setup_parameter in &self.setup_parameters {
-            setup_parameter.packetize(&mut payload);
-        }
+        payload.unsplit(self.setup_parameters.encode());
 
         add_payload_length(payload)
     }
@@ -95,27 +65,25 @@ mod test {
     mod success {
         use crate::modules::moqt::{
             constants::MOQ_TRANSPORT_VERSION,
-            messages::{
-                control_messages::{
-                    client_setup::ClientSetup,
-                    setup_parameters::{MOQTimplementation, MaxSubscribeID, SetupParameter},
-                },
-                moqt_message::MOQTMessage,
+            messages::control_messages::{
+                client_setup::ClientSetup, setup_parameters::SetupParameter,
             },
         };
         use bytes::BytesMut;
 
         #[test]
-        fn packetize() {
+        fn encode() {
             let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-            let moqt_implementation =
-                SetupParameter::MOQTimplementation(MOQTimplementation::new("MOQ-WASM".to_string()));
-            let setup_parameters = vec![
-                SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000)),
-                moqt_implementation,
-            ];
-            let client_setup = ClientSetup::new(supported_versions, setup_parameters.clone());
-            let buf = client_setup.packetize();
+            let setup_params = SetupParameter {
+                max_request_id: 2000,
+                path: None,
+                authorization_token: vec![],
+                max_auth_token_cache_size: None,
+                authority: None,
+                moq_implementation: Some("MOQ-WASM".to_string()),
+            };
+            let client_setup = ClientSetup::new(supported_versions, setup_params);
+            let buf = client_setup.encode();
 
             let expected_bytes_array = [
                 0, 23,  // Payload length
@@ -133,7 +101,7 @@ mod test {
         }
 
         #[test]
-        fn depacketize() {
+        fn decode() {
             let bytes_array = [
                 0, 23,  // Payload length
                 1,   // Number of Supported Versions (i)
@@ -147,19 +115,23 @@ mod test {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let depacketized_client_setup = ClientSetup::depacketize(&mut buf).unwrap();
+            let depacketized_client_setup = ClientSetup::decode(&mut buf).unwrap();
 
-            let supported_versions = vec![MOQ_TRANSPORT_VERSION];
-            let moqt_implementaion =
-                SetupParameter::MOQTimplementation(MOQTimplementation::new("MOQ-WASM".to_string()));
-            let setup_parameters = vec![
-                SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000)),
-                moqt_implementaion,
-            ];
-            let expected_client_setup =
-                ClientSetup::new(supported_versions, setup_parameters.clone());
-
-            assert_eq!(depacketized_client_setup, expected_client_setup);
+            assert_eq!(depacketized_client_setup.number_of_supported_versions, 1);
+            assert_eq!(
+                depacketized_client_setup.supported_versions,
+                vec![0xff00000e]
+            );
+            assert_eq!(
+                depacketized_client_setup.setup_parameters.max_request_id,
+                2000
+            );
+            assert_eq!(
+                depacketized_client_setup
+                    .setup_parameters
+                    .moq_implementation,
+                Some("MOQ-WASM".to_string())
+            );
         }
     }
 }

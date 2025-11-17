@@ -142,7 +142,7 @@ impl<T: TransportProtocol> DatagramSender<T> {
         if !immutable_extensions.is_empty() {
             let extension_header = KeyValuePair {
                 key: ExtensionHeaderType::ImmutableExtensions as u64,
-                value: VariantType::Odd(immutable_extensions),
+                value: VariantType::Odd(Bytes::copy_from_slice(&immutable_extensions)),
             };
             extension_headers.push(extension_header);
         }
