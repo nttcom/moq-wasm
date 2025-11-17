@@ -1,13 +1,10 @@
-use bytes::BytesMut;
+use bytes::{Buf, Bytes, BytesMut};
 
-use crate::modules::moqt::messages::{
-    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
-};
+use crate::modules::extensions::{bytes_reader::BytesReader, bytes_writer::BytesWriter};
 
 #[derive(Debug, Clone)]
 pub enum VariantType {
-    Odd(Vec<u8>),
+    Odd(Bytes),
     Even(u64),
 }
 
@@ -18,32 +15,43 @@ pub struct KeyValuePair {
 }
 
 impl KeyValuePair {
-    pub(crate) fn depacketize(bytes: &mut BytesMut) -> anyhow::Result<Self> {
-        let key = read_variable_integer_from_buffer(bytes)?;
+    pub(crate) fn decode(bytes: &mut BytesMut) -> Option<Self> {
+        let key = bytes
+            .try_get_varint()
+            .inspect_err(|e| tracing::error!("Failed to get key: {:?}", e))
+            .ok()?;
         if key % 2 == 0 {
-            let value = read_variable_integer_from_buffer(bytes)?;
-            Ok(Self {
+            let value = bytes
+                .try_get_varint()
+                .inspect_err(|e| tracing::error!("Failed to get key: {:?}", e))
+                .ok()?;
+            Some(Self {
                 key,
                 value: VariantType::Even(value),
             })
         } else {
-            let value = read_variable_bytes_from_buffer(bytes)?;
-            Ok(Self {
+            let length = bytes
+                .try_get_varint()
+                .inspect_err(|e| tracing::error!("Failed to get key: {:?}", e))
+                .ok()?;
+            let value = bytes.copy_to_bytes(length as usize);
+            Some(Self {
                 key,
                 value: VariantType::Odd(value),
             })
         }
     }
 
-    pub(crate) fn packetize(&self) -> BytesMut {
+    pub(crate) fn encode(&self) -> BytesMut {
         let mut buf = BytesMut::new();
-        buf.extend(write_variable_integer(self.key));
+        buf.put_varint(self.key);
         match &self.value {
             VariantType::Odd(value) => {
-                buf.extend(write_variable_bytes(value));
+                buf.put_varint(value.len() as u64);
+                buf.extend_from_slice(value);
             }
             VariantType::Even(value) => {
-                buf.extend(write_variable_integer(*value));
+                buf.put_varint(*value);
             }
         }
         buf
@@ -54,6 +62,8 @@ impl KeyValuePair {
 mod tests {
     mod success {
 
+        use bytes::Bytes;
+
         use crate::modules::moqt::messages::object::key_value_pair::{KeyValuePair, VariantType};
 
         #[test]
@@ -63,8 +73,8 @@ mod tests {
                 value: VariantType::Even(10),
             };
 
-            let mut buf = kv_pair.packetize();
-            let depacketized = KeyValuePair::depacketize(&mut buf).unwrap();
+            let mut buf = kv_pair.encode();
+            let depacketized = KeyValuePair::decode(&mut buf).unwrap();
 
             assert_eq!(kv_pair.key, depacketized.key);
             match depacketized.value {
@@ -78,11 +88,11 @@ mod tests {
         fn packetize_and_depacketize_odd_key() {
             let kv_pair = KeyValuePair {
                 key: 0x0b, // ImmutableExtensions (odd)
-                value: VariantType::Odd(vec![0x01, 0x02, 0x03]),
+                value: VariantType::Odd(Bytes::from(vec![0x01, 0x02, 0x03])),
             };
 
-            let mut buf = kv_pair.packetize();
-            let depacketized = KeyValuePair::depacketize(&mut buf).unwrap();
+            let mut buf = kv_pair.encode();
+            let depacketized = KeyValuePair::decode(&mut buf).unwrap();
 
             assert_eq!(kv_pair.key, depacketized.key);
             match depacketized.value {
@@ -99,7 +109,7 @@ mod tests {
                 value: VariantType::Even(10),
             };
 
-            let buf = kv_pair.packetize();
+            let buf = kv_pair.encode();
 
             // key (0x3c) + value (10)
             let expected_bytes = vec![0x3c, 0x0a];
@@ -110,10 +120,10 @@ mod tests {
         fn packetize_check_bytes_odd_key() {
             let kv_pair = KeyValuePair {
                 key: 0x0b,
-                value: VariantType::Odd(vec![0x01, 0x02, 0x03]),
+                value: VariantType::Odd(Bytes::from(vec![0x01, 0x02, 0x03])),
             };
 
-            let buf = kv_pair.packetize();
+            let buf = kv_pair.encode();
 
             // key (0x0b) + value length (3) + value ([0x01, 0x02, 0x03])
             let expected_bytes = vec![0x0b, 0x03, 0x01, 0x02, 0x03];

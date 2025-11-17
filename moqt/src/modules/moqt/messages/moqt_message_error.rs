@@ -5,5 +5,5 @@ pub(crate) enum MOQTMessageError {
     #[error("Protocol violation.")]
     ProtocolViolation,
     #[error("Message unmatches")]
-    MessageUnmatches
+    InvalidValue
 }

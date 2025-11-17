@@ -160,7 +160,8 @@ impl SubgroupObjectField {
         let mut extension_headers_bytes = buf.split_to(extension_headers_total_len as usize);
         let mut extension_headers = Vec::new();
         while !extension_headers_bytes.is_empty() {
-            let header = ExtensionHeader::depacketize(&mut extension_headers_bytes)?;
+            let header = ExtensionHeader::decode(&mut extension_headers_bytes)
+                .ok_or_else(|| anyhow::anyhow!("Failed to decode extension header"))?;
             extension_headers.push(header);
         }
         // The remaining bytes in `buf` are the object payload
@@ -179,7 +180,7 @@ impl SubgroupObjectField {
 
         let mut headers_buf = BytesMut::new();
         for header in &self.extension_headers {
-            let header_bytes = header.packetize();
+            let header_bytes = header.encode();
             headers_buf.extend_from_slice(&header_bytes);
         }
         buf.extend(write_variable_integer(headers_buf.len() as u64)); // Write total byte length
@@ -193,6 +194,8 @@ impl SubgroupObjectField {
 #[cfg(test)]
 mod tests {
     mod success {
+        use bytes::Bytes;
+
         use crate::modules::moqt::messages::object::{
             key_value_pair::{KeyValuePair, VariantType},
             subgroup::{SubgroupHeader, SubgroupId, SubgroupObjectField},
@@ -315,7 +318,7 @@ mod tests {
                     },
                     KeyValuePair {
                         key: 0x0b, // ImmutableExtensions
-                        value: VariantType::Odd(vec![0x01, 0x02]),
+                        value: VariantType::Odd(Bytes::from(vec![0x01, 0x02])),
                     },
                 ],
                 object_payload: vec![0x11, 0x22, 0x33],

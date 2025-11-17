@@ -4,23 +4,22 @@ use std::{
 };
 
 use anyhow::bail;
+use bytes::BytesMut;
 
 use crate::{
     DatagramObject, RequestId, SessionEvent, TransportProtocol,
     modules::moqt::{
-        constants,
+        constants::{self, MOQ_TRANSPORT_VERSION},
         enums::ResponseMessage,
         messages::{
             control_message_type::ControlMessageType,
             control_messages::{
-                client_setup::ClientSetup,
-                server_setup::ServerSetup,
-                setup_parameters::{MOQTimplementation, MaxSubscribeID, SetupParameter},
+                client_setup::ClientSetup, server_setup::ServerSetup,
+                setup_parameters::SetupParameter, util,
             },
-            moqt_message::MOQTMessage,
         },
         streams::stream::{stream_receiver::StreamReceiver, stream_sender::StreamSender},
-        utils::{self, add_message_type},
+        utils::add_message_type,
     },
 };
 
@@ -80,16 +79,16 @@ impl<T: TransportProtocol> SessionContext<T> {
         send_stream: &mut StreamSender<T>,
         receive_stream: &StreamReceiver<T>,
     ) -> anyhow::Result<()> {
-        let max_id = MaxSubscribeID::new(1000);
-        let param = MOQTimplementation::new("MOQ-WASM".to_string());
-        let payload = ClientSetup::new(
-            vec![constants::MOQ_TRANSPORT_VERSION],
-            vec![
-                SetupParameter::MaxSubscribeID(max_id),
-                SetupParameter::MOQTimplementation(param),
-            ],
-        )
-        .packetize();
+        let setup_param = SetupParameter {
+            path: None,
+            max_request_id: 1000,
+            authorization_token: vec![],
+            max_auth_token_cache_size: None,
+            authority: None,
+            moq_implementation: Some("MOQ-WASM".to_string()),
+        };
+        let payload =
+            ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_param).encode();
         let bytes = add_message_type(ControlMessageType::ClientSetup, payload);
         send_stream
             .send(&bytes)
@@ -98,15 +97,16 @@ impl<T: TransportProtocol> SessionContext<T> {
         tracing::info!("Sent client setup.");
 
         let bytes = receive_stream.receive().await?;
-        match utils::depacketize::<ServerSetup>(ControlMessageType::ServerSetup, bytes) {
-            Ok(_) => {
-                tracing::info!("Received server setup.");
-                Ok(())
-            }
-            Err(e) => {
-                tracing::error!("Protocol violation. {}", e.to_string());
-                bail!("Protocol violation.")
-            }
+        let mut bytes_mut = BytesMut::from(bytes.as_slice());
+        let message_type = util::get_message_type(&mut bytes_mut)?;
+        if message_type == ControlMessageType::ServerSetup {
+            tracing::info!("Received server setup.");
+            let _ = ServerSetup::decode(&mut bytes_mut)
+                .ok_or_else(|| anyhow::anyhow!("Failed to decode server setup."))?;
+            Ok(())
+        } else {
+            tracing::error!("Protocol violation.");
+            bail!("Protocol violation.")
         }
     }
 
@@ -116,23 +116,26 @@ impl<T: TransportProtocol> SessionContext<T> {
     ) -> anyhow::Result<()> {
         tracing::info!("Waiting for server setup.");
         let bytes = receive_stream.receive().await?;
-        match utils::depacketize::<ClientSetup>(ControlMessageType::ClientSetup, bytes) {
-            Ok(_) => {
-                tracing::info!("Received client setup.");
-            }
-            Err(e) => {
-                tracing::error!("Protocol violation. {}", e.to_string());
-                bail!("Protocol violation.")
-            }
-        };
+        let mut bytes_mut = BytesMut::from(bytes.as_slice());
+        let message_type = util::get_message_type(&mut bytes_mut)?;
+        if message_type == ControlMessageType::ClientSetup {
+            tracing::info!("Received client setup.");
+            let _ = ClientSetup::decode(&mut bytes_mut)
+                .ok_or_else(|| anyhow::anyhow!("Failed to decode client setup."))?;
+        } else {
+            tracing::error!("Protocol violation.");
+            bail!("Protocol violation.")
+        }
         tracing::info!("Received client setup.");
-
-        let max_id = MaxSubscribeID::new(1000);
-        let payload = ServerSetup::new(
-            constants::MOQ_TRANSPORT_VERSION,
-            vec![SetupParameter::MaxSubscribeID(max_id)],
-        )
-        .packetize();
+        let setup_param = SetupParameter {
+            path: None,
+            max_request_id: 1000,
+            authorization_token: vec![],
+            authority: None,
+            max_auth_token_cache_size: None,
+            moq_implementation: Some("MOQ-WASM".to_string()),
+        };
+        let payload = ServerSetup::new(MOQ_TRANSPORT_VERSION, setup_param).encode();
         let bytes = add_message_type(ControlMessageType::ServerSetup, payload);
         send_stream
             .send(&bytes)

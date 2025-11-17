@@ -109,7 +109,8 @@ impl DatagramObject {
             let mut extension_headers_bytes = bytes.split_to(extension_headers_length as usize); // consume the bytes
             let mut extension_headers = Vec::new();
             while !extension_headers_bytes.is_empty() {
-                let result = ExtensionHeader::depacketize(&mut extension_headers_bytes)?; // this will consume bytes from extension_headers_bytes
+                let result = ExtensionHeader::decode(&mut extension_headers_bytes)
+                    .ok_or_else(|| anyhow::anyhow!("failed to decode extension header"))?; // this will consume bytes from extension_headers_bytes
                 extension_headers.push(result);
             }
             Ok(extension_headers)
@@ -146,7 +147,7 @@ impl DatagramObject {
         if self.message_type % 2 != 0 {
             let mut headers_buf = BytesMut::new();
             for header in &self.extension_headers {
-                let header = header.packetize();
+                let header = header.encode();
                 headers_buf.extend_from_slice(&header);
             }
             bytes.extend(write_variable_integer(headers_buf.len() as u64));

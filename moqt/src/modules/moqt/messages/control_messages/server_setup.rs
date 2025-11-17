@@ -1,81 +1,48 @@
-use crate::modules::moqt::messages::{
-    control_messages::{
+use crate::modules::{
+    extensions::{bytes_reader::BytesReader, bytes_writer::BytesWriter},
+    moqt::messages::control_messages::{
         setup_parameters::SetupParameter,
         util::{add_payload_length, validate_payload_length},
     },
-    moqt_message::MOQTMessage,
-    moqt_message_error::MOQTMessageError,
-    moqt_payload::MOQTPayload,
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-use anyhow::Context;
 use bytes::BytesMut;
-use serde::Serialize;
 
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ServerSetup {
     pub selected_version: u32,
-    pub number_of_parameters: u8,
-    pub setup_parameters: Vec<SetupParameter>,
+    pub setup_parameters: SetupParameter,
 }
 
 impl ServerSetup {
-    pub fn new(selected_version: u32, setup_parameters: Vec<SetupParameter>) -> Self {
+    pub fn new(selected_version: u32, setup_parameters: SetupParameter) -> Self {
         ServerSetup {
             selected_version,
-            number_of_parameters: setup_parameters.len() as u8,
             setup_parameters,
         }
     }
 }
 
-impl MOQTMessage for ServerSetup {
-    fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
+impl ServerSetup {
+    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
         if !validate_payload_length(buf) {
-            return Err(MOQTMessageError::ProtocolViolation);
+            return None;
         }
-        
-        let selected_version = u32::try_from(
-            read_variable_integer_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .context("Depacketize selected version")
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let number_of_parameters = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .context("Depacketize number of parameters")
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let mut setup_parameters = vec![];
-        for _ in 0..number_of_parameters {
-            setup_parameters.push(
-                SetupParameter::depacketize(buf)
-                    .context("Depacketize setup parameter")
-                    .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-            );
-        }
+
+        let selected_version = buf.try_get_varint().ok()?;
+        let setup_parameters = SetupParameter::decode(buf)?;
 
         let server_setup_message = ServerSetup {
-            selected_version,
-            number_of_parameters,
+            selected_version: selected_version as u32,
             setup_parameters,
         };
-        Ok(server_setup_message)
+        Some(server_setup_message)
     }
 
-    fn packetize(&self) -> BytesMut {
+    pub(crate) fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
+        payload.put_varint(self.selected_version as u64);
+        payload.extend_from_slice(&self.setup_parameters.encode());
 
-        let version_buf = write_variable_integer(self.selected_version as u64);
-        payload.extend(version_buf);
-
-        let number_of_parameters_buf = write_variable_integer(self.number_of_parameters as u64);
-        payload.extend(number_of_parameters_buf);
-
-        for setup_parameter in self.setup_parameters.iter() {
-            setup_parameter.packetize(&mut payload);
-        }
         add_payload_length(payload)
     }
 }
@@ -85,26 +52,28 @@ mod tests {
     mod success {
         use crate::modules::moqt::{
             constants::MOQ_TRANSPORT_VERSION,
-            messages::{
-                control_messages::{
-                    server_setup::ServerSetup,
-                    setup_parameters::{MaxSubscribeID, SetupParameter},
-                },
-                moqt_message::MOQTMessage,
+            messages::control_messages::{
+                server_setup::ServerSetup, setup_parameters::SetupParameter,
             },
         };
         use bytes::BytesMut;
 
         #[test]
-        fn packetize() {
+        fn encode() {
             let selected_version = MOQ_TRANSPORT_VERSION;
-            let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000))];
+            let setup_parameters = SetupParameter {
+                max_request_id: 2000,
+                path: None,
+                authorization_token: vec![],
+                max_auth_token_cache_size: None,
+                authority: None,
+                moq_implementation: Some("MOQ-WASM".to_string()),
+            };
             let server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
-            let buf = server_setup.packetize();
+            let buf = server_setup.encode();
 
             let expected_bytes_array = [
-                0,
-                13,  // Payload length
+                0, 13,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff000a) in 62bit
                 1,   // Number of Parameters (i)
@@ -118,10 +87,9 @@ mod tests {
         }
 
         #[test]
-        fn depacketize() {
+        fn decode() {
             let bytes_array = [
-                0,
-                13,  // Payload length
+                0, 13,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff00000a) in 62bit
                 1,   // Number of Parameters (i)
@@ -132,14 +100,18 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let depacketized_server_setup = ServerSetup::depacketize(&mut buf).unwrap();
-
-            let selected_version = MOQ_TRANSPORT_VERSION;
-            let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(2000))];
-            let expected_server_setup =
-                ServerSetup::new(selected_version, setup_parameters.clone());
-
-            assert_eq!(depacketized_server_setup, expected_server_setup);
+            let depacketized_server_setup = ServerSetup::decode(&mut buf).unwrap();
+            assert_eq!(depacketized_server_setup.selected_version, 0xff00000a);
+            assert_eq!(
+                depacketized_server_setup.setup_parameters.max_request_id,
+                2000
+            );
+            assert_eq!(
+                depacketized_server_setup
+                    .setup_parameters
+                    .moq_implementation,
+                Some("MOQ-WASM".to_string())
+            );
         }
     }
 }
