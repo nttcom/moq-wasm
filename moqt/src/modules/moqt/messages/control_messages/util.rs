@@ -3,9 +3,11 @@ use std::io::Cursor;
 use anyhow::bail;
 use bytes::{Buf, BufMut, BytesMut};
 
-use crate::modules::moqt::messages::{
-    control_message_type::ControlMessageType, moqt_message_error::MOQTMessageError,
-    variable_integer::read_variable_integer,
+use crate::modules::{
+    extensions::result_ext::ResultExt,
+    moqt::messages::{
+        control_message_type::ControlMessageType, variable_integer::read_variable_integer,
+    },
 };
 
 pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<ControlMessageType> {
@@ -22,7 +24,7 @@ pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<Contro
 }
 
 pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
-    let payload_length = match read_buf.try_get_u16() {
+    let payload_length = match read_buf.try_get_u16().log_context("payload length") {
         Ok(v) => v,
         Err(_) => {
             tracing::error!("Failed to read payload length");
@@ -50,13 +52,13 @@ pub(crate) fn add_payload_length(payload: BytesMut) -> BytesMut {
     buffer
 }
 
-pub(super) fn u8_to_bool(value: u8) -> Result<bool, MOQTMessageError> {
+pub(super) fn u8_to_bool(value: u8) -> anyhow::Result<bool> {
     match value {
         0 => Ok(false),
         1 => Ok(true),
         _ => {
             tracing::error!("Invalid value for bool: {}", value);
-            Err(MOQTMessageError::ProtocolViolation)
+            bail!("Invalid value for bool")
         }
     }
 }

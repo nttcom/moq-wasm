@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::modules::{
     core::publication::Publication,
-    enums::{FilterType, GroupOrder, Location},
+    enums::{ContentExists, FilterType, GroupOrder},
 };
 
 #[async_trait]
@@ -13,12 +13,15 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     fn group_order(&self) -> GroupOrder;
     fn forward(&self) -> bool;
     fn filter_type(&self) -> FilterType;
-    fn start_location(&self) -> Option<Location>;
-    fn end_group(&self) -> Option<u64>;
     fn authorization_token(&self) -> Option<String>;
     fn max_cache_duration(&self) -> Option<u64>;
     fn delivery_timeout(&self) -> Option<u64>;
-    async fn ok(&self, track_alias: u64, expires: u64, content_exists: bool) -> anyhow::Result<()>;
+    async fn ok(
+        &self,
+        track_alias: u64,
+        expires: u64,
+        content_exists: ContentExists,
+    ) -> anyhow::Result<()>;
     async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
     fn into_publication(&self, track_alias: u64) -> Box<dyn Publication>;
 }
@@ -43,12 +46,6 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
     fn filter_type(&self) -> FilterType {
         FilterType::from(self.filter_type)
     }
-    fn start_location(&self) -> Option<Location> {
-        self.start_location.map(Location::from)
-    }
-    fn end_group(&self) -> Option<u64> {
-        self.end_group
-    }
     fn authorization_token(&self) -> Option<String> {
         self.authorization_token.clone()
     }
@@ -59,8 +56,14 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
         self.delivery_timeout
     }
 
-    async fn ok(&self, track_alias: u64, expires: u64, content_exists: bool) -> anyhow::Result<()> {
-        self.ok(track_alias, expires, content_exists).await
+    async fn ok(
+        &self,
+        track_alias: u64,
+        expires: u64,
+        content_exists: ContentExists,
+    ) -> anyhow::Result<()> {
+        self.ok(track_alias, expires, content_exists.into_moqt())
+            .await
     }
 
     async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()> {

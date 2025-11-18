@@ -1,5 +1,5 @@
 use crate::modules::{
-    extensions::{bytes_reader::BytesReader, bytes_writer::BytesWriter},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::messages::control_messages::{
         setup_parameters::SetupParameter,
         util::{add_payload_length, validate_payload_length},
@@ -28,7 +28,7 @@ impl ServerSetup {
             return None;
         }
 
-        let selected_version = buf.try_get_varint().ok()?;
+        let selected_version = buf.try_get_varint().log_context("selected version").ok()?;
         let setup_parameters = SetupParameter::decode(buf)?;
 
         let server_setup_message = ServerSetup {

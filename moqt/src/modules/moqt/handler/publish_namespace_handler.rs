@@ -6,8 +6,7 @@ use crate::{
         messages::{
             control_message_type::ControlMessageType,
             control_messages::{
-                namespace_ok::NamespaceOk,
-                publish_namespace::PublishNamespace,
+                namespace_ok::NamespaceOk, publish_namespace::PublishNamespace,
                 request_error::RequestError,
             },
         },
@@ -43,7 +42,7 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
         };
         let bytes = utils::create_full_message(
             ControlMessageType::PublishNamespaceOk,
-            publish_namespace_ok,
+            publish_namespace_ok.encode(),
         );
         self.session_context.send_stream.send(&bytes).await
     }
@@ -55,7 +54,8 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
             error_code,
             reason_phrase,
         };
-        let bytes = utils::create_full_message(ControlMessageType::PublishNamespaceError, err);
+        let bytes =
+            utils::create_full_message(ControlMessageType::PublishNamespaceError, err.encode());
         self.session_context.send_stream.send(&bytes).await
     }
 }

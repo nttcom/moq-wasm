@@ -1,31 +1,31 @@
 use anyhow::bail;
 use bytes::{Buf, BufMut, BytesMut, TryGetError};
 
-pub(crate) trait BytesReader: BufMut {
+pub(crate) trait BufGetExt: BufMut {
     fn try_get_varint(&mut self) -> Result<u64, TryGetError>;
     fn try_get_string(&mut self) -> anyhow::Result<String>;
 }
 
-impl BytesReader for BytesMut {
+impl BufGetExt for BytesMut {
     fn try_get_varint(&mut self) -> Result<u64, TryGetError> {
         if let Some(head) = self.first() {
             let def_head = *head;
             match def_head >> 6 {
                 0 => match self.try_get_u8() {
                     Ok(v) => Ok(v as u64),
-                    Err(e) => return Err(e),
+                    Err(e) => Err(e),
                 },
                 1 => match self.try_get_u16() {
                     Ok(v) => Ok((v & 0x3FFF) as u64),
-                    Err(e) => return Err(e),
+                    Err(e) => Err(e),
                 },
                 2 => match self.try_get_u32() {
                     Ok(v) => Ok((v & 0x3FFF_FFFF) as u64),
-                    Err(e) => return Err(e),
+                    Err(e) => Err(e),
                 },
                 3 => match self.try_get_u64() {
                     Ok(v) => Ok(v & 0x3FFF_FFFF_FFFF_FFFF),
-                    Err(e) => return Err(e),
+                    Err(e) => Err(e),
                 },
                 _ => unreachable!(),
             }
@@ -54,7 +54,7 @@ impl BytesReader for BytesMut {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::extensions::bytes_reader::BytesReader;
+        use crate::modules::extensions::buf_get_ext::BufGetExt;
         use bytes::BytesMut;
 
         #[test]
@@ -95,7 +95,7 @@ mod tests {
     mod failure {
         use bytes::BytesMut;
 
-        use crate::modules::extensions::bytes_reader::BytesReader;
+        use crate::modules::extensions::buf_get_ext::BufGetExt;
 
         #[test]
         fn try_get_varint_failed() {

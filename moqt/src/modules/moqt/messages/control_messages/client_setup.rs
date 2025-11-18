@@ -1,5 +1,5 @@
 use crate::modules::{
-    extensions::{bytes_reader::BytesReader, bytes_writer::BytesWriter},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::messages::control_messages::{
         setup_parameters::SetupParameter,
         util::{add_payload_length, validate_payload_length},
@@ -30,11 +30,14 @@ impl ClientSetup {
             return None;
         }
 
-        let number_of_supported_versions = buf.try_get_varint().ok()?;
+        let number_of_supported_versions = buf
+            .try_get_varint()
+            .log_context("number_of_supported_versions")
+            .ok()?;
 
         let mut supported_versions = Vec::with_capacity(number_of_supported_versions as usize);
         for _ in 0..number_of_supported_versions {
-            let supported_version = buf.try_get_varint().ok()?;
+            let supported_version = buf.try_get_varint().log_context("supported_version").ok()?;
             supported_versions.push(supported_version as u32);
         }
         let setup_parameters = SetupParameter::decode(buf)?;

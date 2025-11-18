@@ -19,7 +19,6 @@ use crate::{
                 subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
                 util::get_message_type,
             },
-            moqt_message::MOQTMessage,
         },
         sessions::session_context::SessionContext,
     },
@@ -101,8 +100,8 @@ impl ControlMessageReceiveThread {
             ControlMessageType::RequestsBlocked => todo!(),
             ControlMessageType::Subscribe => {
                 tracing::debug!("Event: Subscribe");
-                let result = Subscribe::depacketize(&mut bytes_mut);
-                if result.is_err() {
+                let result = Subscribe::decode(&mut bytes_mut);
+                if result.is_none() {
                     tracing::warn!("Error has detected.");
                     DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
                 } else {
@@ -114,9 +113,9 @@ impl ControlMessageReceiveThread {
             }
             ControlMessageType::SubscribeOk => {
                 tracing::debug!("Event: Subscribe ok");
-                let result = match SubscribeOk::depacketize(&mut bytes_mut) {
-                    Ok(v) => v,
-                    Err(_) => {
+                let result = match SubscribeOk::decode(&mut bytes_mut) {
+                    Some(v) => v,
+                    None => {
                         tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
@@ -129,9 +128,9 @@ impl ControlMessageReceiveThread {
             }
             ControlMessageType::SubscribeError => {
                 tracing::debug!("Event: Subscribe error");
-                let result = match RequestError::depacketize(&mut bytes_mut) {
-                    Ok(v) => v,
-                    Err(_) => {
+                let result = match RequestError::decode(&mut bytes_mut) {
+                    Some(v) => v,
+                    None => {
                         tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
@@ -150,8 +149,8 @@ impl ControlMessageReceiveThread {
             ControlMessageType::PublishDone => todo!(),
             ControlMessageType::Publish => {
                 tracing::debug!("Event: Publish");
-                let result = Publish::depacketize(&mut bytes_mut);
-                if result.is_err() {
+                let result = Publish::decode(&mut bytes_mut);
+                if result.is_none() {
                     tracing::error!("Protocol violation is detected.");
                     DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
                 } else {
@@ -162,9 +161,9 @@ impl ControlMessageReceiveThread {
             }
             ControlMessageType::PublishOk => {
                 tracing::debug!("Event: Publish ok");
-                let result = match PublishOk::depacketize(&mut bytes_mut) {
-                    Ok(v) => v,
-                    Err(_) => {
+                let result = match PublishOk::decode(&mut bytes_mut) {
+                    Some(v) => v,
+                    None => {
                         tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
@@ -177,9 +176,9 @@ impl ControlMessageReceiveThread {
             }
             ControlMessageType::PublishError => {
                 tracing::debug!("Event: Publish error");
-                let result = match RequestError::depacketize(&mut bytes_mut) {
-                    Ok(v) => v,
-                    Err(_) => {
+                let result = match RequestError::decode(&mut bytes_mut) {
+                    Some(v) => v,
+                    None => {
                         tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
@@ -201,8 +200,8 @@ impl ControlMessageReceiveThread {
             ControlMessageType::TrackStatus => todo!(),
             ControlMessageType::PublishNamespace => {
                 tracing::debug!("Event: Publish namespace");
-                let result = PublishNamespace::depacketize(&mut bytes_mut);
-                if result.is_err() {
+                let result = PublishNamespace::decode(&mut bytes_mut);
+                if result.is_none() {
                     tracing::error!("Protocol violation is detected.");
                     DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
                 } else {
@@ -215,9 +214,9 @@ impl ControlMessageReceiveThread {
             }
             ControlMessageType::PublishNamespaceOk => {
                 tracing::debug!("Event: Publish namespace ok");
-                let result = match NamespaceOk::depacketize(&mut bytes_mut) {
-                    Ok(v) => v,
-                    Err(_) => {
+                let result = match NamespaceOk::decode(&mut bytes_mut) {
+                    Some(v) => v,
+                    None => {
                         tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
@@ -229,9 +228,9 @@ impl ControlMessageReceiveThread {
             }
             ControlMessageType::PublishNamespaceError => {
                 tracing::debug!("Event: Publish namespace error");
-                let result = match RequestError::depacketize(&mut bytes_mut) {
-                    Ok(v) => v,
-                    Err(_) => {
+                let result = match RequestError::decode(&mut bytes_mut) {
+                    Some(v) => v,
+                    None => {
                         tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
@@ -249,8 +248,8 @@ impl ControlMessageReceiveThread {
             ControlMessageType::PublishNamespaceCancel => todo!(),
             ControlMessageType::SubscribeNamespace => {
                 tracing::debug!("Event: Subscribe namespace");
-                let result = SubscribeNamespace::depacketize(&mut bytes_mut);
-                if result.is_err() {
+                let result = SubscribeNamespace::decode(&mut bytes_mut);
+                if result.is_none() {
                     tracing::error!("Protocol violation is detected.");
                     DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
                 } else {
@@ -263,9 +262,9 @@ impl ControlMessageReceiveThread {
             }
             ControlMessageType::SubscribeNamespaceOk => {
                 tracing::debug!("Event: Subscribe namespace ok");
-                let result = match NamespaceOk::depacketize(&mut bytes_mut) {
-                    Ok(v) => v,
-                    Err(_) => {
+                let result = match NamespaceOk::decode(&mut bytes_mut) {
+                    Some(v) => v,
+                    None => {
                         tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),
@@ -277,9 +276,9 @@ impl ControlMessageReceiveThread {
             }
             ControlMessageType::SubscribeNamespaceError => {
                 tracing::debug!("Event: Subscribe namespace error");
-                let result = match RequestError::depacketize(&mut bytes_mut) {
-                    Ok(v) => v,
-                    Err(_) => {
+                let result = match RequestError::decode(&mut bytes_mut) {
+                    Some(v) => v,
+                    None => {
                         tracing::error!("Protocol violation is detected.");
                         return DepacketizeResult::SessionEvent(
                             SessionEvent::<T>::ProtocolViolation(),

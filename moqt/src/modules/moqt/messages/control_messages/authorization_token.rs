@@ -1,7 +1,9 @@
 use bytes::Bytes;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-use crate::modules::extensions::{bytes_reader::BytesReader, bytes_writer::BytesWriter};
+use crate::modules::extensions::{
+    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
+};
 
 #[repr(u64)]
 #[derive(Debug, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
@@ -31,13 +33,13 @@ pub(crate) enum AuthorizationToken {
 
 impl AuthorizationToken {
     pub(crate) fn decode(buf: &mut bytes::BytesMut) -> Option<Self> {
-        let token_alias = buf.try_get_varint().ok()?;
+        let token_alias = buf.try_get_varint().log_context("alias type").ok()?;
         if let Ok(token_alias) = AliasType::try_from(token_alias) {
             match token_alias {
                 AliasType::Delete => Some(AuthorizationToken::Delete),
                 AliasType::Register => {
-                    let token_alias = buf.try_get_varint().ok()?;
-                    let token_type = buf.try_get_varint().ok()?;
+                    let token_alias = buf.try_get_varint().log_context("token alias").ok()?;
+                    let token_type = buf.try_get_varint().log_context("token type").ok()?;
                     let token_value = Bytes::copy_from_slice(buf);
                     Some(AuthorizationToken::Register {
                         token_alias,
@@ -46,11 +48,11 @@ impl AuthorizationToken {
                     })
                 }
                 AliasType::UseAlias => {
-                    let token_alias = buf.try_get_varint().ok()?;
+                    let token_alias = buf.try_get_varint().log_context("token alias").ok()?;
                     Some(AuthorizationToken::UseAlias { token_alias })
                 }
                 AliasType::UseValue => {
-                    let token_type = buf.try_get_varint().ok()?;
+                    let token_type = buf.try_get_varint().log_context("token type").ok()?;
                     let token_value = Bytes::copy_from_slice(buf);
                     Some(AuthorizationToken::UseValue {
                         token_type,

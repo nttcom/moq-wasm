@@ -28,10 +28,10 @@ impl Location {
 }
 
 pub(crate) enum FilterType {
-    LatestGroup = 0x1,
-    LatestObject = 0x2,
-    AbsoluteStart = 0x3,
-    AbsoluteRange = 0x4,
+    LatestGroup,
+    LatestObject,
+    AbsoluteStart { location: Location },
+    AbsoluteRange { location: Location, end_group: u64 },
 }
 
 impl FilterType {
@@ -39,8 +39,16 @@ impl FilterType {
         match filter_type {
             moqt::FilterType::LatestGroup => Self::LatestGroup,
             moqt::FilterType::LatestObject => Self::LatestObject,
-            moqt::FilterType::AbsoluteStart => Self::AbsoluteStart,
-            moqt::FilterType::AbsoluteRange => Self::AbsoluteRange,
+            moqt::FilterType::AbsoluteStart { location } => Self::AbsoluteStart {
+                location: Location::from(location),
+            },
+            moqt::FilterType::AbsoluteRange {
+                location,
+                end_group,
+            } => Self::AbsoluteRange {
+                location: Location::from(location),
+                end_group,
+            },
         }
     }
 
@@ -48,8 +56,16 @@ impl FilterType {
         match self {
             FilterType::LatestGroup => moqt::FilterType::LatestGroup,
             FilterType::LatestObject => moqt::FilterType::LatestObject,
-            FilterType::AbsoluteStart => moqt::FilterType::AbsoluteStart,
-            FilterType::AbsoluteRange => moqt::FilterType::AbsoluteRange,
+            FilterType::AbsoluteStart { location } => moqt::FilterType::AbsoluteStart {
+                location: location.into_moqt(),
+            },
+            FilterType::AbsoluteRange {
+                location,
+                end_group,
+            } => moqt::FilterType::AbsoluteRange {
+                location: location.into_moqt(),
+                end_group: *end_group,
+            },
         }
     }
 }
@@ -74,6 +90,31 @@ impl GroupOrder {
             Self::Publisher => moqt::GroupOrder::Publisher,
             Self::Ascending => moqt::GroupOrder::Ascending,
             Self::Descending => moqt::GroupOrder::Descending,
+        }
+    }
+}
+
+pub(crate) enum ContentExists {
+    False,
+    True { location: Location },
+}
+
+impl ContentExists {
+    pub(crate) fn from(content_exists: moqt::ContentExists) -> Self {
+        match content_exists {
+            moqt::ContentExists::False => Self::False,
+            moqt::ContentExists::True { location } => Self::True {
+                location: Location::from(location),
+            },
+        }
+    }
+
+    pub(crate) fn into_moqt(&self) -> moqt::ContentExists {
+        match self {
+            ContentExists::False => moqt::ContentExists::False,
+            ContentExists::True { location } => moqt::ContentExists::True {
+                location: location.into_moqt(),
+            },
         }
     }
 }

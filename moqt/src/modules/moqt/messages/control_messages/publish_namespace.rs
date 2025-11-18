@@ -1,15 +1,13 @@
-use crate::modules::moqt::messages::{
-    control_messages::{
-        util::{add_payload_length, validate_payload_length},
-        version_specific_parameters::VersionSpecificParameter,
+use crate::modules::{
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    moqt::messages::{
+        control_messages::{
+            util::{add_payload_length, validate_payload_length},
+            version_specific_parameters::VersionSpecificParameter,
+        },
+        moqt_payload::MOQTPayload,
     },
-    moqt_message::MOQTMessage,
-    moqt_message_error::MOQTMessageError,
-    moqt_payload::MOQTPayload,
-    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-use anyhow::{Context, Result};
 use bytes::BytesMut;
 use serde::Serialize;
 
@@ -17,7 +15,7 @@ use serde::Serialize;
 pub struct PublishNamespace {
     pub(crate) request_id: u64,
     pub(crate) track_namespace: Vec<String>,
-    pub(crate) number_of_parameters: u8,
+    pub(crate) number_of_parameters: u64,
     pub(crate) parameters: Vec<VersionSpecificParameter>,
 }
 
@@ -27,7 +25,7 @@ impl PublishNamespace {
         track_namespace: Vec<String>,
         parameters: Vec<VersionSpecificParameter>,
     ) -> Self {
-        let number_of_parameters = parameters.len() as u8;
+        let number_of_parameters = parameters.len() as u64;
         PublishNamespace {
             request_id,
             track_namespace,
@@ -37,43 +35,29 @@ impl PublishNamespace {
     }
 }
 
-impl MOQTMessage for PublishNamespace {
-    fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
+impl PublishNamespace {
+    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
         if !validate_payload_length(buf) {
-            return Err(MOQTMessageError::ProtocolViolation);
+            return None;
         }
 
-        let request_id = match read_variable_integer_from_buffer(buf) {
-            Ok(v) => v,
-            Err(_) => return Err(MOQTMessageError::ProtocolViolation),
-        };
-
-        let track_namespace_tuple_length = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .context("track namespace length")
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let request_id = buf.try_get_varint().log_context("request id").ok()?;
+        let track_namespace_tuple_length = buf
+            .try_get_varint()
+            .log_context("track namespace tuple length")
+            .ok()?;
         let mut track_namespace_tuple: Vec<String> = Vec::new();
         for _ in 0..track_namespace_tuple_length {
-            let track_namespace = String::from_utf8(
-                read_variable_bytes_from_buffer(buf)
-                    .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-            )
-            .context("track namespace")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+            let track_namespace = buf.try_get_string().log_context("track namespace").ok()?;
             track_namespace_tuple.push(track_namespace);
         }
-        let number_of_parameters = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .context("number of parameters")
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let number_of_parameters = buf
+            .try_get_varint()
+            .log_context("number of parameters")
+            .ok()?;
         let mut parameters = vec![];
         for _ in 0..number_of_parameters {
-            let version_specific_parameter = VersionSpecificParameter::depacketize(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+            let version_specific_parameter = VersionSpecificParameter::depacketize(buf).ok()?;
             if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
                 tracing::warn!("unknown track request parameter {}", code);
             } else {
@@ -88,18 +72,18 @@ impl MOQTMessage for PublishNamespace {
             parameters,
         };
 
-        Ok(announce_message)
+        Some(announce_message)
     }
 
-    fn packetize(&self) -> BytesMut {
+    pub(crate) fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
-        payload.extend(write_variable_integer(self.request_id));
+        payload.put_varint(self.request_id);
         let track_namespace_tuple_length = self.track_namespace.len();
-        payload.extend(write_variable_integer(track_namespace_tuple_length as u64));
-        for track_namespace in &self.track_namespace {
-            payload.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
-        }
-        payload.extend(write_variable_integer(self.number_of_parameters as u64));
+        payload.put_varint(track_namespace_tuple_length as u64);
+        self.track_namespace
+            .iter()
+            .for_each(|track_namespace| payload.put_string(track_namespace));
+        payload.put_varint(self.number_of_parameters);
         // Parameters
         for param in &self.parameters {
             param.packetize(&mut payload);
@@ -115,12 +99,9 @@ mod tests {
     mod success {
 
         mod packetize {
-            use crate::modules::moqt::messages::{
-                control_messages::{
-                    publish_namespace::PublishNamespace,
-                    version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-                },
-                moqt_message::MOQTMessage,
+            use crate::modules::moqt::messages::control_messages::{
+                publish_namespace::PublishNamespace,
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             };
 
             #[test]
@@ -135,7 +116,7 @@ mod tests {
                 let parameters = vec![parameter];
                 let announce_message =
                     PublishNamespace::new(request_id, track_namespace.clone(), parameters);
-                let buf = announce_message.packetize();
+                let buf = announce_message.encode();
 
                 let expected_bytes_array = [
                     19, // Message Length
@@ -160,7 +141,7 @@ mod tests {
                 let parameters = vec![];
                 let announce_message =
                     PublishNamespace::new(request_id, track_namespace.clone(), parameters);
-                let buf = announce_message.packetize();
+                let buf = announce_message.encode();
 
                 let expected_bytes_array = [
                     13, // Message Length
@@ -178,12 +159,9 @@ mod tests {
         }
 
         mod depacketize {
-            use crate::modules::moqt::messages::{
-                control_messages::{
-                    publish_namespace::PublishNamespace,
-                    version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-                },
-                moqt_message::MOQTMessage,
+            use crate::modules::moqt::messages::control_messages::{
+                publish_namespace::PublishNamespace,
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             };
             use bytes::BytesMut;
             #[test]
@@ -203,8 +181,7 @@ mod tests {
                 ];
                 let mut buf = BytesMut::with_capacity(bytes_array.len());
                 buf.extend_from_slice(&bytes_array);
-                let depacketized_announce_message =
-                    PublishNamespace::depacketize(&mut buf).unwrap();
+                let depacketized_announce_message = PublishNamespace::decode(&mut buf).unwrap();
                 let request_id = 0;
                 let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
                 let parameter_value = "test".to_string();
@@ -232,8 +209,7 @@ mod tests {
                 ];
                 let mut buf = BytesMut::with_capacity(bytes_array.len());
                 buf.extend_from_slice(&bytes_array);
-                let depacketized_announce_message =
-                    PublishNamespace::depacketize(&mut buf).unwrap();
+                let depacketized_announce_message = PublishNamespace::decode(&mut buf).unwrap();
 
                 let request_id = 0;
                 let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);

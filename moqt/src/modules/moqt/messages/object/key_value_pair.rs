@@ -1,6 +1,8 @@
 use bytes::{Buf, Bytes, BytesMut};
 
-use crate::modules::extensions::{bytes_reader::BytesReader, bytes_writer::BytesWriter};
+use crate::modules::extensions::{
+    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
+};
 
 #[derive(Debug, Clone)]
 pub enum VariantType {
@@ -18,12 +20,12 @@ impl KeyValuePair {
     pub(crate) fn decode(bytes: &mut BytesMut) -> Option<Self> {
         let key = bytes
             .try_get_varint()
-            .inspect_err(|e| tracing::error!("Failed to get key: {:?}", e))
+            .log_context("KeyValuePair key")
             .ok()?;
         if key % 2 == 0 {
             let value = bytes
                 .try_get_varint()
-                .inspect_err(|e| tracing::error!("Failed to get key: {:?}", e))
+                .log_context("KeyValuePair value")
                 .ok()?;
             Some(Self {
                 key,
@@ -32,7 +34,7 @@ impl KeyValuePair {
         } else {
             let length = bytes
                 .try_get_varint()
-                .inspect_err(|e| tracing::error!("Failed to get key: {:?}", e))
+                .log_context("KeyValuePair length")
                 .ok()?;
             let value = bytes.copy_to_bytes(length as usize);
             Some(Self {

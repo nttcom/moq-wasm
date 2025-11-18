@@ -6,7 +6,7 @@ use crate::{
         messages::{
             control_message_type::ControlMessageType,
             control_messages::{
-                location::Location, request_error::RequestError, subscribe::Subscribe,
+                enums::ContentExists, request_error::RequestError, subscribe::Subscribe,
                 subscribe_ok::SubscribeOk,
             },
         },
@@ -25,8 +25,6 @@ pub struct SubscribeHandler<T: TransportProtocol> {
     pub group_order: GroupOrder,
     pub forward: bool,
     pub filter_type: FilterType,
-    pub start_location: Option<Location>,
-    pub end_group: Option<u64>,
     pub authorization_token: Option<String>,
     pub max_cache_duration: Option<u64>,
     pub delivery_timeout: Option<u64>,
@@ -46,8 +44,6 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
             group_order: subscribe_message.group_order,
             forward: subscribe_message.forward,
             filter_type: subscribe_message.filter_type,
-            start_location: subscribe_message.start_location,
-            end_group: subscribe_message.end_group,
             authorization_token: None,
             max_cache_duration: None,
             delivery_timeout: None,
@@ -58,7 +54,7 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         &self,
         track_alias: u64,
         expires: u64,
-        content_exists: bool,
+        content_exists: ContentExists,
     ) -> anyhow::Result<()> {
         let subscribe_ok = SubscribeOk {
             request_id: self.request_id,
@@ -66,10 +62,10 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
             expires,
             group_order: self.group_order,
             content_exists,
-            largest_location: None,
             subscribe_parameters: vec![],
         };
-        let bytes = utils::create_full_message(ControlMessageType::SubscribeOk, subscribe_ok);
+        let bytes =
+            utils::create_full_message(ControlMessageType::SubscribeOk, subscribe_ok.encode());
         self.session_context.send_stream.send(&bytes).await
     }
 
@@ -80,7 +76,7 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
             error_code,
             reason_phrase,
         };
-        let bytes = utils::create_full_message(ControlMessageType::SubscribeError, err);
+        let bytes = utils::create_full_message(ControlMessageType::SubscribeError, err.encode());
         self.session_context.send_stream.send(&bytes).await
     }
 

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::modules::{
     core::subscription::Subscription,
-    enums::{FilterType, GroupOrder, Location},
+    enums::{ContentExists, FilterType, GroupOrder},
 };
 
 pub(crate) struct SubscribeOption {
@@ -12,8 +12,6 @@ pub(crate) struct SubscribeOption {
     pub(crate) group_order: GroupOrder,
     pub(crate) forward: bool,
     pub(crate) filter_type: FilterType,
-    pub(crate) start_location: Option<Location>,
-    pub(crate) end_group: Option<u64>,
 }
 
 #[async_trait]
@@ -22,8 +20,7 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
     fn track_name(&self) -> &str;
     fn track_alias(&self) -> u64;
     fn group_order(&self) -> GroupOrder;
-    fn content_exists(&self) -> bool;
-    fn largest_location(&self) -> Option<Location>;
+    fn content_exists(&self) -> ContentExists;
     fn forward(&self) -> bool;
     fn authorization_token(&self) -> Option<String>;
     fn delivery_timeout(&self) -> Option<u64>;
@@ -47,11 +44,8 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
     fn group_order(&self) -> GroupOrder {
         GroupOrder::from(self.group_order)
     }
-    fn content_exists(&self) -> bool {
-        self.content_exists
-    }
-    fn largest_location(&self) -> Option<Location> {
-        self.largest_location.map(Location::from)
+    fn content_exists(&self) -> ContentExists {
+        ContentExists::from(self.content_exists)
     }
     fn forward(&self) -> bool {
         self.forward

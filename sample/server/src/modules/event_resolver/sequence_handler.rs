@@ -3,16 +3,13 @@ use std::sync::Arc;
 use dashmap::DashSet;
 
 use crate::modules::{
-    core::{
-        handler::{
-            publish::{PublishHandler, SubscribeOption},
-            publish_namespace::PublishNamespaceHandler,
-            subscribe::SubscribeHandler,
-            subscribe_namespace::SubscribeNamespaceHandler,
-        },
-        session,
+    core::handler::{
+        publish::{PublishHandler, SubscribeOption},
+        publish_namespace::PublishNamespaceHandler,
+        subscribe::SubscribeHandler,
+        subscribe_namespace::SubscribeNamespaceHandler,
     },
-    enums::{FilterType, GroupOrder},
+    enums::{ContentExists, FilterType, GroupOrder},
     event_resolver::stream_binder::StreamBinder,
     relations::Relations,
     repositories::session_repository::SessionRepository,
@@ -311,17 +308,13 @@ impl SequenceHandler {
                 pub_handler.track_name(),
                 pub_handler.track_alias()
             );
-            let option = SubscribeOption {
-                subscriber_priority: handler.subscriber_priority(),
-                group_order: handler.group_order(),
-                forward: handler.forward(),
-                start_location: handler.start_location(),
-                end_group: handler.end_group(),
-                filter_type: handler.filter_type(),
-            };
             let subscription = pub_handler.into_subscription(0);
             match handler
-                .ok(subscription.track_alias(), subscription.expires(), false)
+                .ok(
+                    subscription.track_alias(),
+                    subscription.expires(),
+                    ContentExists::False,
+                )
                 .await
             {
                 Ok(_) => {
@@ -350,15 +343,17 @@ impl SequenceHandler {
                         group_order: GroupOrder::Ascending,
                         forward: true,
                         filter_type: FilterType::LatestObject,
-                        start_location: None,
-                        end_group: None,
                     };
                     let subscription = subscriber
                         .send_subscribe(track_namespace.to_string(), track_name.to_string(), option)
                         .await;
                     let subscription = subscription.unwrap();
                     match handler
-                        .ok(subscription.track_alias(), subscription.expires(), false)
+                        .ok(
+                            subscription.track_alias(),
+                            subscription.expires(),
+                            ContentExists::False,
+                        )
                         .await
                     {
                         Ok(_) => {
@@ -387,7 +382,7 @@ impl SequenceHandler {
                 .await
             {
                 Ok(_) => tracing::info!("send `SUBSCRIBE_ERROR` ok"),
-                Err(e) => tracing::error!("Failed to send `SUBSCRIBE_ERROR`. Session close."),
+                Err(_) => tracing::error!("Failed to send `SUBSCRIBE_ERROR`. Session close."),
             }
         }
         tracing::info!("SequenceHandler::subscribe: {} DONE", session_id);

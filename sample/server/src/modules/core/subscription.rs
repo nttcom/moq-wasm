@@ -1,7 +1,10 @@
 use anyhow::bail;
 use async_trait::async_trait;
 
-use crate::modules::{core::datagram_receiver::DatagramReceiver, enums::GroupOrder};
+use crate::modules::{
+    core::datagram_receiver::DatagramReceiver,
+    enums::{ContentExists, GroupOrder},
+};
 
 #[derive(Debug)]
 pub(crate) enum Acceptance {
@@ -13,7 +16,7 @@ pub trait Subscription: 'static + Send + Sync {
     fn track_alias(&self) -> u64;
     fn expires(&self) -> u64;
     fn group_order(&self) -> GroupOrder;
-    fn content_exists(&self) -> bool;
+    fn content_exists(&self) -> ContentExists;
     async fn accept_stream_or_datagram(&self) -> anyhow::Result<Acceptance>;
 }
 
@@ -28,8 +31,8 @@ impl<T: moqt::TransportProtocol> Subscription for moqt::Subscription<T> {
     fn group_order(&self) -> GroupOrder {
         GroupOrder::from(self.group_order)
     }
-    fn content_exists(&self) -> bool {
-        self.content_exists
+    fn content_exists(&self) -> ContentExists {
+        ContentExists::from(self.content_exists)
     }
     async fn accept_stream_or_datagram(&self) -> anyhow::Result<Acceptance> {
         let result = self.accept_stream_or_datagram().await?;

@@ -1,11 +1,11 @@
 use bytes::{BufMut, BytesMut};
 
-pub(crate) trait BytesWriter: BufMut {
+pub(crate) trait BufPutExt: BufMut {
     fn put_varint(&mut self, value: u64);
     fn put_string(&mut self, value: &str);
 }
 
-impl BytesWriter for BytesMut {
+impl BufPutExt for BytesMut {
     fn put_varint(&mut self, value: u64) {
         if value < 0x40 {
             self.put_u8(value as u8)
@@ -30,7 +30,7 @@ impl BytesWriter for BytesMut {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::extensions::{bytes_reader::BytesReader, bytes_writer::BytesWriter};
+        use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
         use bytes::BytesMut;
 
         #[test]

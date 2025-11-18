@@ -12,14 +12,6 @@ use crate::{
 
 // message aliases
 pub type RequestId = u64;
-pub type TrackNamespace = String;
-pub type TrackAlias = u64;
-pub type ContentExists = bool;
-pub type Forward = bool;
-pub type SubscriberPriority = u8;
-pub type Expires = u64;
-pub type TrackName = String;
-pub type EndGroup = u64;
 
 pub(crate) type ErrorCode = u64;
 pub(crate) type ErrorPhrase = String;
