@@ -30,8 +30,6 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
             group_order: option.group_order.into_moqt(),
             forward: option.forward,
             filter_type: option.filter_type.into_moqt(),
-            start_location: None,
-            end_group: option.end_group,
         };
         let subscription = self.subscribe(track_namespace, track_name, option).await?;
         Ok(Box::new(subscription))

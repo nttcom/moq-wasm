@@ -1,29 +1,17 @@
-use crate::modules::moqt::messages::{
-    byte_reader::ByteReader,
-    byte_writer::ByteWriter,
-    control_messages::{
-        enums::FilterType,
-        group_order::GroupOrder,
-        location::Location,
-        util::{self, add_payload_length, validate_payload_length},
-        version_specific_parameters::VersionSpecificParameter,
+use crate::modules::{
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    moqt::messages::{
+        control_messages::{
+            enums::FilterType,
+            group_order::GroupOrder,
+            util::{self, add_payload_length, validate_payload_length},
+            version_specific_parameters::VersionSpecificParameter,
+        },
+        moqt_payload::MOQTPayload,
     },
-    moqt_message::MOQTMessage,
-    moqt_message_error::MOQTMessageError,
-    moqt_payload::MOQTPayload,
-    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 use tracing;
-
-pub enum FilterTypePair {
-    LatestObject,
-    LatestGroup,
-    AbsoluteStart(Location),
-    AbsoluteRange(Location, u64),
-}
 
 #[derive(Debug, PartialEq)]
 pub struct Subscribe {
@@ -34,170 +22,80 @@ pub struct Subscribe {
     pub(crate) group_order: GroupOrder,
     pub(crate) forward: bool,
     pub(crate) filter_type: FilterType,
-    pub(crate) start_location: Option<Location>,
-    pub(crate) end_group: Option<u64>,
     pub(crate) subscribe_parameters: Vec<VersionSpecificParameter>,
 }
 
-impl MOQTMessage for Subscribe {
-    fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
-        tracing::warn!("qqq {:?}", buf);
+impl Subscribe {
+    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
         if !validate_payload_length(buf) {
-            tracing::warn!("qqq payload length");
-            return Err(MOQTMessageError::ProtocolViolation);
+            return None;
         }
-        let subscribe_id = read_variable_integer_from_buffer(buf)
-            .context("subscribe id")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        tracing::warn!("qqq request id: {}", subscribe_id);
-        let track_namespace_tuple_length = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .context("track namespace length")
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        tracing::warn!(
-            "qqq track namespace length: {}",
-            track_namespace_tuple_length
-        );
+        let request_id = buf.try_get_varint().log_context("request id").ok()?;
+        let track_namespace_tuple_length = buf
+            .try_get_varint()
+            .log_context("track namespace length")
+            .ok()?;
         let mut track_namespace_tuple: Vec<String> = Vec::new();
         for _ in 0..track_namespace_tuple_length {
-            let track_namespace = String::from_utf8(
-                read_variable_bytes_from_buffer(buf)
-                    .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-            )
-            .context("track namespace")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+            let track_namespace = buf.try_get_string().log_context("track namespace").ok()?;
             track_namespace_tuple.push(track_namespace);
         }
-        tracing::warn!("qqq track namespace tuple: {:?}", track_namespace_tuple);
-        let track_name = String::from_utf8(
-            read_variable_bytes_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        tracing::warn!("qqq track name: {:?}", track_name);
-        let subscriber_priority = buf.get_u8();
-        tracing::warn!("qqq subscribe priority: {:?}", subscriber_priority);
-        let group_order_u8 = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .context("group order")
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        tracing::warn!("qqq group_order: {:?}", group_order_u8);
-
-        // Values larger than 0x2 are a Protocol Violation.
-        let group_order = match GroupOrder::try_from(group_order_u8).context("group order") {
-            Ok(group_order) => group_order,
-            Err(_) => {
-                // TODO: return Termination Error Code
-                return Err(MOQTMessageError::ProtocolViolation);
-            }
-        };
-        let forward_u8 = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .context("forward")
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        tracing::warn!("qqq forward_u8: {:?}", forward_u8);
-        let forward = util::u8_to_bool(forward_u8)?;
-        tracing::warn!("qqq forward: {:?}", forward);
-        let filter_type_u64 = read_variable_integer_from_buffer(buf)
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        tracing::warn!("qqq filter type: {:?}", filter_type_u64);
-        let filter_type = FilterType::try_from(filter_type_u64 as u8)
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        // A filter type other than the above MUST be treated as error.
-        let (start_location, end_group) = match filter_type {
-            FilterType::AbsoluteStart => (Some(Location::depacketize(buf)?), None),
-            FilterType::AbsoluteRange => {
-                let start_location = Location::depacketize(buf)?;
-                let end_group = read_variable_integer_from_buffer(buf)
-                    .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-                (Some(start_location), Some(end_group))
-            }
-            _ => {
-                tracing::info!(
-                    "Filter Type: {:?} has no start location, end group as well",
-                    filter_type
-                );
-                (None, None)
-            }
-        };
-        tracing::warn!("qqq start location: {:?}", start_location);
-        tracing::warn!("qqq end group: {:?}", end_group);
-        let number_of_parameters = read_variable_integer_from_buffer(buf)
-            .context("number of parameters")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let track_name = buf.try_get_string().log_context("track name").ok()?;
+        let subscriber_priority = buf.try_get_u8().log_context("subscriber priority").ok()?;
+        let group_order_u8 = buf.try_get_u8().log_context("group order u8").ok()?;
+        let group_order = GroupOrder::try_from(group_order_u8)
+            .log_context("group order")
+            .ok()?;
+        let forward_u8 = buf.try_get_u8().log_context("forward u8").ok()?;
+        let forward = util::u8_to_bool(forward_u8).log_context("forward").ok()?;
+        let filter_type = FilterType::decode(buf)?;
+        let number_of_parameters = buf
+            .try_get_varint()
+            .log_context("number of parameters")
+            .ok()?;
         let mut subscribe_parameters = Vec::new();
         for _ in 0..number_of_parameters {
-            let version_specific_parameter = VersionSpecificParameter::depacketize(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+            let version_specific_parameter = VersionSpecificParameter::depacketize(buf).ok()?;
             if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
                 tracing::warn!("unknown track request parameter {}", code);
             } else {
                 subscribe_parameters.push(version_specific_parameter);
             }
         }
-        tracing::warn!("qqq subscribe parameters: {:?}", subscribe_parameters);
         tracing::trace!("Depacketized Subscribe message.");
 
-        Ok(Subscribe {
-            request_id: subscribe_id,
+        Some(Subscribe {
+            request_id,
             track_namespace: track_namespace_tuple,
             track_name,
             subscriber_priority,
             group_order,
             forward,
             filter_type,
-            start_location,
-            end_group,
             subscribe_parameters,
         })
     }
 
-    fn packetize(&self) -> BytesMut {
+    pub(crate) fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
-        payload.extend(write_variable_integer(self.request_id));
+        payload.put_varint(self.request_id);
         // Track Namespace Number of elements
         let track_namespace_tuple_length = self.track_namespace.len();
-        payload.extend(write_variable_integer(track_namespace_tuple_length as u64));
-        for track_namespace in &self.track_namespace {
-            // Track Namespace
-            payload.extend(write_variable_bytes(&track_namespace.as_bytes().to_vec()));
-        }
-        payload.extend(write_variable_bytes(&self.track_name.as_bytes().to_vec()));
+        payload.put_varint(track_namespace_tuple_length as u64);
+        self.track_namespace.iter().for_each(|track_namespace| {
+            payload.put_string(track_namespace);
+        });
+        payload.put_string(&self.track_name);
         payload.put_u8(self.subscriber_priority);
-        payload.extend(u8::from(self.group_order).to_be_bytes());
-        payload.extend((self.forward as u8).to_be_bytes());
-        payload.extend(write_variable_integer(u8::from(self.filter_type) as u64));
-        match self.filter_type {
-            FilterType::AbsoluteStart => {
-                let bytes = self.start_location.as_ref().unwrap().packetize();
-                payload.extend(bytes);
-            }
-            FilterType::AbsoluteRange => {
-                let bytes = self.start_location.as_ref().unwrap().packetize();
-                payload.extend(bytes);
-                payload.extend(write_variable_integer(self.end_group.unwrap()));
-            }
-            _ => {
-                tracing::info!(
-                    "Filter Type: {:?} has no start location, end group as well",
-                    self.filter_type
-                );
-            }
-        };
-        payload.extend(write_variable_integer(
-            self.subscribe_parameters.len() as u64
-        ));
+        payload.put_u8(self.group_order as u8);
+        payload.put_u8(self.forward as u8);
+        payload.unsplit(self.filter_type.encode());
+        payload.put_varint(self.subscribe_parameters.len() as u64);
         for version_specific_parameter in &self.subscribe_parameters {
             version_specific_parameter.packetize(&mut payload);
         }
 
-        tracing::trace!("Packetized Subscribe OK message.");
+        tracing::trace!("Packetized Subscribe message.");
 
         add_payload_length(payload)
     }
@@ -208,13 +106,10 @@ mod tests {
     mod success {
         use bytes::BytesMut;
 
-        use crate::modules::moqt::messages::{
-            control_messages::{
-                location::Location,
-                subscribe::{FilterType, GroupOrder, Subscribe},
-                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-            },
-            moqt_message::MOQTMessage,
+        use crate::modules::moqt::messages::control_messages::{
+            location::Location,
+            subscribe::{FilterType, GroupOrder, Subscribe},
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
         };
 
         #[test]
@@ -226,8 +121,6 @@ mod tests {
             let group_order = GroupOrder::Ascending;
             let forward = false;
             let filter_type = FilterType::LatestGroup;
-            let start_location = None;
-            let end_group = None;
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -241,12 +134,10 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                start_location,
-                end_group,
                 subscribe_parameters,
             };
 
-            let buf = subscribe.packetize();
+            let buf = subscribe.encode();
 
             let expected_bytes_array = [
                 35, // Message Length(i)
@@ -280,12 +171,12 @@ mod tests {
             let subscriber_priority = 0;
             let group_order = GroupOrder::Descending;
             let forward = false;
-            let filter_type = FilterType::AbsoluteStart;
-            let start_location = Some(Location {
-                group_id: 10,
-                object_id: 20,
-            });
-            let end_group = None;
+            let filter_type = FilterType::AbsoluteStart {
+                location: Location {
+                    group_id: 10,
+                    object_id: 20,
+                },
+            };
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -299,12 +190,10 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                start_location,
-                end_group,
                 subscribe_parameters,
             };
 
-            let buf = subscribe.packetize();
+            let buf = subscribe.encode();
 
             let expected_bytes_array = [
                 37, // Message Length(i)
@@ -339,12 +228,13 @@ mod tests {
             let subscriber_priority = 0;
             let group_order = GroupOrder::Ascending;
             let forward = true;
-            let filter_type = FilterType::AbsoluteRange;
-            let start_location = Some(Location {
-                group_id: 10,
-                object_id: 20,
-            });
-            let end_group = Some(10);
+            let filter_type = FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 10,
+                    object_id: 20,
+                },
+                end_group: 10,
+            };
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -358,12 +248,10 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                start_location,
-                end_group,
                 subscribe_parameters,
             };
 
-            let buf = subscribe.packetize();
+            let buf = subscribe.encode();
 
             let expected_bytes_array = [
                 38, // Message Length(i)
@@ -415,7 +303,7 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let depacketized_subscribe = Subscribe::depacketize(&mut buf).unwrap();
+            let depacketized_subscribe = Subscribe::decode(&mut buf).unwrap();
 
             let request_id = 0;
             let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
@@ -424,8 +312,6 @@ mod tests {
             let group_order = GroupOrder::Ascending;
             let forward = true;
             let filter_type = FilterType::LatestGroup;
-            let start_location = None;
-            let end_group = None;
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -438,8 +324,6 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                start_location,
-                end_group,
                 subscribe_parameters,
             };
 
@@ -472,7 +356,7 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let depacketized_subscribe = Subscribe::depacketize(&mut buf).unwrap();
+            let depacketized_subscribe = Subscribe::decode(&mut buf).unwrap();
 
             let request_id = 0;
             let track_namespace = Vec::from(["test".to_string(), "test".to_string()]);
@@ -480,12 +364,12 @@ mod tests {
             let subscriber_priority = 0;
             let group_order = GroupOrder::Ascending;
             let forward = false;
-            let filter_type = FilterType::AbsoluteStart;
-            let start_location = Some(Location {
-                group_id: 5,
-                object_id: 10,
-            });
-            let end_group = None;
+            let filter_type = FilterType::AbsoluteStart {
+                location: Location {
+                    group_id: 5,
+                    object_id: 10,
+                },
+            };
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -498,8 +382,6 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                start_location,
-                end_group,
                 subscribe_parameters,
             };
 
@@ -533,11 +415,11 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let depacketized_subscribe = Subscribe::depacketize(&mut buf);
+            let depacketized_subscribe = Subscribe::decode(&mut buf);
             let depacketized_subscribe = match depacketized_subscribe {
-                Ok(s) => s,
-                Err(e) => {
-                    panic!("Failed to depacketize: {:?}", e)
+                Some(s) => s,
+                None => {
+                    panic!("Failed to depacketize")
                 }
             };
 
@@ -547,12 +429,13 @@ mod tests {
             let subscriber_priority = 0;
             let group_order = GroupOrder::Ascending;
             let forward = false;
-            let filter_type = FilterType::AbsoluteRange;
-            let start_location = Some(Location {
-                group_id: 5,
-                object_id: 10,
-            });
-            let end_group = Some(10);
+            let filter_type = FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 5,
+                    object_id: 10,
+                },
+                end_group: 10,
+            };
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -565,8 +448,6 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                start_location,
-                end_group,
                 subscribe_parameters,
             };
             assert_eq!(depacketized_subscribe, expected_subscribe);

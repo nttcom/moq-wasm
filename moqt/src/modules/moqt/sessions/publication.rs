@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use crate::{
-    DatagramSender, FilterType, GroupOrder, SubscribeHandler, SubscriberPriority,
-    TransportProtocol,
+    DatagramSender, FilterType, GroupOrder, SubscribeHandler, TransportProtocol,
     modules::{
         moqt::{
-            messages::control_messages::{location::Location, publish_ok::PublishOk},
+            messages::control_messages::publish_ok::PublishOk,
             sessions::session_context::SessionContext,
             streams::stream::stream_sender::StreamSender,
         },
@@ -19,11 +18,9 @@ pub struct Publication<T: TransportProtocol> {
     pub track_name: String,
     pub track_alias: u64,
     pub group_order: GroupOrder,
-    pub subscriber_priority: SubscriberPriority,
+    pub subscriber_priority: u8,
     pub forward: bool,
     pub filter_type: FilterType,
-    pub start_location: Option<Location>,
-    pub end_group: Option<u64>,
     pub delivery_timeout: Option<u64>,
 }
 
@@ -44,8 +41,6 @@ impl<T: TransportProtocol> Publication<T> {
             subscriber_priority: publish_ok.subscriber_priority,
             forward: publish_ok.forward,
             filter_type: publish_ok.filter_type,
-            start_location: publish_ok.start_location,
-            end_group: publish_ok.end_group,
             delivery_timeout: None,
         }
     }
@@ -64,8 +59,6 @@ impl<T: TransportProtocol> Publication<T> {
             subscriber_priority: handler.subscriber_priority,
             forward: handler.forward,
             filter_type: handler.filter_type,
-            start_location: handler.start_location,
-            end_group: handler.end_group,
             delivery_timeout: None,
         }
     }

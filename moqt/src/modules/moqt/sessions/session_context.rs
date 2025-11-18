@@ -7,10 +7,10 @@ use anyhow::bail;
 use bytes::BytesMut;
 
 use crate::{
-    DatagramObject, RequestId, SessionEvent, TransportProtocol,
+    DatagramObject, SessionEvent, TransportProtocol,
     modules::moqt::{
         constants::{self, MOQ_TRANSPORT_VERSION},
-        enums::ResponseMessage,
+        enums::{RequestId, ResponseMessage},
         messages::{
             control_message_type::ControlMessageType,
             control_messages::{

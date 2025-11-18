@@ -1,5 +1,5 @@
 use crate::modules::{
-    extensions::{bytes_reader::BytesReader, bytes_writer::BytesWriter},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::messages::{
         control_messages::authorization_token::AuthorizationToken,
         object::key_value_pair::{KeyValuePair, VariantType},
@@ -41,7 +41,7 @@ impl SetupParameter {
         let mut kv_pairs = Vec::new();
         let number_of_parameters = buf
             .try_get_varint()
-            .inspect_err(|_| tracing::error!("Failed to get number of parameters"))
+            .log_context("number of parameters")
             .ok()?;
         for _ in 0..number_of_parameters {
             let key_value_pair = KeyValuePair::decode(buf)?;
@@ -239,14 +239,14 @@ mod tests {
                 1, // Parameter Type (i): Type(Path)
                 4, // Parameter Type (i): Length
                 b'p', b'a', b't', b'h', // Parameter Type (i): Value("path")
-                2,   // Max Request ID
-                71,  // Parameter Value (..): Length(01 of 2MSB)
-                208, // Parameter Value (..): Value(2000) in 62bit
-                3,   // Parameter Type(i): Authorization token
-                8,   // Parameter Type(i): Length
-                1,   // Parameter Type(i): Alias Type(i)
-                1,   // Parameter Type(i): Token alias(i)
-                2,   // Parameter Type(i): Token Type(i)
+                2,    // Max Request ID
+                71,   // Parameter Value (..): Length(01 of 2MSB)
+                208,  // Parameter Value (..): Value(2000) in 62bit
+                3,    // Parameter Type(i): Authorization token
+                8,    // Parameter Type(i): Length
+                1,    // Parameter Type(i): Alias Type(i)
+                1,    // Parameter Type(i): Token alias(i)
+                2,    // Parameter Type(i): Token Type(i)
                 b't', b'o', b'k', b'e', b'n', // Parameter Type(i): Token(..)
                 4,    // Parameter Type(i): Length
                 10,   // Parameter Type(i): Value

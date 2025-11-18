@@ -1,15 +1,13 @@
-use crate::modules::moqt::messages::{
-    control_messages::{
-        util::{add_payload_length, validate_payload_length},
-        version_specific_parameters::VersionSpecificParameter,
+use crate::modules::{
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    moqt::messages::{
+        control_messages::{
+            util::{add_payload_length, validate_payload_length},
+            version_specific_parameters::VersionSpecificParameter,
+        },
+        moqt_payload::MOQTPayload,
     },
-    moqt_message::MOQTMessage,
-    moqt_message_error::MOQTMessageError,
-    moqt_payload::MOQTPayload,
-    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-use anyhow::{Context, Result};
 use bytes::BytesMut;
 use serde::Serialize;
 
@@ -37,42 +35,34 @@ impl SubscribeNamespace {
     }
 }
 
-impl MOQTMessage for SubscribeNamespace {
-    fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
+impl SubscribeNamespace {
+    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
         if !validate_payload_length(buf) {
-            return Err(MOQTMessageError::ProtocolViolation);
+            return None;
         }
 
-        let request_id = match read_variable_integer_from_buffer(buf) {
-            Ok(v) => v,
-            Err(_) => return Err(MOQTMessageError::ProtocolViolation),
-        };
-
-        let track_namespace_prefix_tuple_length = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .context("track namespace prefix length")
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let request_id = buf.try_get_varint().log_context("request id").ok()?;
+        let track_namespace_prefix_tuple_length = buf
+            .try_get_varint()
+            .log_context("track namespace prefix length")
+            .ok()?;
         let mut track_namespace_prefix_tuple: Vec<String> = Vec::new();
         for _ in 0..track_namespace_prefix_tuple_length {
-            let track_namespace_prefix = String::from_utf8(
-                read_variable_bytes_from_buffer(buf)
-                    .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-            )
-            .context("track namespace prefix")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+            let track_namespace_prefix = buf
+                .try_get_string()
+                .log_context("track namespace prefix")
+                .ok()?;
             track_namespace_prefix_tuple.push(track_namespace_prefix);
         }
 
-        let number_of_parameters = read_variable_integer_from_buffer(buf)
-            .context("number of parameters")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let number_of_parameters = buf
+            .try_get_varint()
+            .log_context("number of parameters")
+            .ok()?;
 
         let mut parameters = Vec::new();
         for _ in 0..number_of_parameters {
-            let version_specific_parameter = VersionSpecificParameter::depacketize(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+            let version_specific_parameter = VersionSpecificParameter::depacketize(buf).ok()?;
             if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
                 tracing::warn!("unknown track request parameter {}", code);
             } else {
@@ -80,7 +70,7 @@ impl MOQTMessage for SubscribeNamespace {
             }
         }
 
-        Ok(SubscribeNamespace {
+        Some(SubscribeNamespace {
             request_id,
             track_namespace_prefix: track_namespace_prefix_tuple,
             number_of_parameters,
@@ -88,19 +78,16 @@ impl MOQTMessage for SubscribeNamespace {
         })
     }
 
-    fn packetize(&self) -> BytesMut {
+    pub(crate) fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
-        payload.extend(write_variable_integer(self.request_id));
-        let track_namespace_prefix_tuple_length = self.track_namespace_prefix.len();
-        payload.extend(write_variable_integer(
-            track_namespace_prefix_tuple_length as u64,
-        ));
-        for track_namespace_prefix in &self.track_namespace_prefix {
-            payload.extend(write_variable_bytes(
-                &track_namespace_prefix.as_bytes().to_vec(),
-            ));
-        }
-        payload.extend(write_variable_integer(self.parameters.len() as u64));
+        payload.put_varint(self.request_id);
+        payload.put_varint(self.track_namespace_prefix.len() as u64);
+        self.track_namespace_prefix
+            .iter()
+            .for_each(|track_namespace_prefix| {
+                payload.put_string(track_namespace_prefix);
+            });
+        payload.put_varint(self.number_of_parameters);
         for parameter in &self.parameters {
             parameter.packetize(&mut payload);
         }
@@ -111,12 +98,9 @@ impl MOQTMessage for SubscribeNamespace {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::messages::{
-            control_messages::{
-                subscribe_namespace::SubscribeNamespace,
-                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-            },
-            moqt_message::MOQTMessage,
+        use crate::modules::moqt::messages::control_messages::{
+            subscribe_namespace::SubscribeNamespace,
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
         };
         use bytes::BytesMut;
 
@@ -130,7 +114,7 @@ mod tests {
             let parameters = vec![version_specific_parameter];
             let subscribe_announces =
                 SubscribeNamespace::new(request_id, track_namespace_prefix.clone(), parameters);
-            let buf = subscribe_announces.packetize();
+            let buf = subscribe_announces.encode();
 
             let expected_bytes_array = [
                 19, // Message Length(i)
@@ -165,7 +149,7 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let subscribe_announces = SubscribeNamespace::depacketize(&mut buf).unwrap();
+            let subscribe_announces = SubscribeNamespace::decode(&mut buf).unwrap();
 
             let request_id = 0;
             let track_namespace_prefix = Vec::from(["test".to_string(), "test".to_string()]);

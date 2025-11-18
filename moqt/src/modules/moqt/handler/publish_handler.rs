@@ -6,8 +6,8 @@ use crate::{
         messages::{
             control_message_type::ControlMessageType,
             control_messages::{
-                location::Location, publish::Publish,
-                publish_ok::PublishOk, request_error::RequestError,
+                enums::ContentExists, publish::Publish, publish_ok::PublishOk,
+                request_error::RequestError,
             },
         },
         sessions::session_context::SessionContext,
@@ -23,8 +23,7 @@ pub struct PublishHandler<T: TransportProtocol> {
     pub track_name: String,
     pub track_alias: u64,
     pub group_order: GroupOrder,
-    pub content_exists: bool,
-    pub largest_location: Option<Location>,
+    pub content_exists: ContentExists,
     pub forward: bool,
     pub authorization_token: Option<String>,
     pub max_cache_duration: Option<u64>,
@@ -41,7 +40,6 @@ impl<T: TransportProtocol> PublishHandler<T> {
             track_alias: publish_message.track_alias,
             group_order: publish_message.group_order,
             content_exists: publish_message.content_exists,
-            largest_location: publish_message.largest_location,
             forward: publish_message.forward,
             authorization_token: None,
             max_cache_duration: None,
@@ -56,11 +54,9 @@ impl<T: TransportProtocol> PublishHandler<T> {
             subscriber_priority,
             group_order: self.group_order,
             filter_type,
-            start_location: None,
-            end_group: None,
             parameters: vec![],
         };
-        let bytes = utils::create_full_message(ControlMessageType::PublishOk, publish_ok);
+        let bytes = utils::create_full_message(ControlMessageType::PublishOk, publish_ok.encode());
         self.session_context.send_stream.send(&bytes).await
     }
 
@@ -71,7 +67,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
             error_code,
             reason_phrase,
         };
-        let bytes = utils::create_full_message(ControlMessageType::PublishError, err);
+        let bytes = utils::create_full_message(ControlMessageType::PublishError, err.encode());
         self.session_context.send_stream.send(&bytes).await
     }
 
@@ -82,7 +78,6 @@ impl<T: TransportProtocol> PublishHandler<T> {
             expires,
             group_order: self.group_order,
             content_exists: self.content_exists,
-            largest_location: self.largest_location,
             derivery_timeout: self.delivery_timeout,
         }
     }

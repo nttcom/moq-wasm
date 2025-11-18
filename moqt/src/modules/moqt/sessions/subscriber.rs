@@ -31,8 +31,10 @@ impl<T: TransportProtocol> Subscriber<T> {
             .await
             .insert(request_id, sender);
         let publish_namespace = SubscribeNamespace::new(request_id, vec_namespace, vec![]);
-        let bytes =
-            utils::create_full_message(ControlMessageType::SubscribeNamespace, publish_namespace);
+        let bytes = utils::create_full_message(
+            ControlMessageType::SubscribeNamespace,
+            publish_namespace.encode(),
+        );
         self.session.send_stream.send(&bytes).await?;
         tracing::info!("Subscribe namespace");
         let result = receiver.await;
@@ -79,11 +81,9 @@ impl<T: TransportProtocol> Subscriber<T> {
             group_order: option.group_order,
             forward: option.forward,
             filter_type: option.filter_type,
-            start_location: option.start_location,
-            end_group: option.end_group,
             subscribe_parameters: vec![],
         };
-        let bytes = utils::create_full_message(ControlMessageType::Subscribe, subscribe);
+        let bytes = utils::create_full_message(ControlMessageType::Subscribe, subscribe.encode());
         self.session.send_stream.send(&bytes).await?;
         tracing::info!("Subscribe");
         let result = receiver.await;

@@ -42,7 +42,7 @@ impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
         };
         let bytes = utils::create_full_message(
             ControlMessageType::SubscribeNamespaceOk,
-            publish_namespace_ok,
+            publish_namespace_ok.encode(),
         );
         self.session_context.send_stream.send(&bytes).await
     }
@@ -54,7 +54,8 @@ impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
             error_code,
             reason_phrase,
         };
-        let bytes = utils::create_full_message(ControlMessageType::SubscribeNamespaceError, err);
+        let bytes =
+            utils::create_full_message(ControlMessageType::SubscribeNamespaceError, err.encode());
         self.session_context.send_stream.send(&bytes).await
     }
 }

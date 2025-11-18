@@ -1,22 +1,16 @@
-use crate::modules::moqt::messages::{
-    control_messages::{
-        group_order::GroupOrder,
-        location::Location,
-        util::{self, add_payload_length, validate_payload_length},
-        version_specific_parameters::VersionSpecificParameter,
+use crate::modules::{
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    moqt::messages::{
+        control_messages::{
+            enums::ContentExists,
+            group_order::GroupOrder,
+            util::{add_payload_length, validate_payload_length},
+            version_specific_parameters::VersionSpecificParameter,
+        },
+        moqt_payload::MOQTPayload,
     },
-    moqt_message::MOQTMessage,
-    moqt_message_error::MOQTMessageError,
-    moqt_payload::MOQTPayload,
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
-use anyhow::Context;
-use bytes::BytesMut;
-
-pub enum ContentExistsPair {
-    False,
-    True(Location),
-}
+use bytes::{Buf, BufMut, BytesMut};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct SubscribeOk {
@@ -24,62 +18,34 @@ pub struct SubscribeOk {
     pub(crate) track_alias: u64,
     pub(crate) expires: u64,
     pub(crate) group_order: GroupOrder,
-    pub(crate) content_exists: bool,
-    pub(crate) largest_location: Option<Location>,
+    pub(crate) content_exists: ContentExists,
     pub(crate) subscribe_parameters: Vec<VersionSpecificParameter>,
 }
 
-impl MOQTMessage for SubscribeOk {
-    fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
+impl SubscribeOk {
+    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
         if !validate_payload_length(buf) {
-            return Err(MOQTMessageError::ProtocolViolation);
+            return None;
         }
-        let request_id = read_variable_integer_from_buffer(buf)
-            .context("subscribe_id")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let track_alias = read_variable_integer_from_buffer(buf)
-            .context("track_alias")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let expires = read_variable_integer_from_buffer(buf)
-            .context("expires")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let group_order_u64 = read_variable_integer_from_buffer(buf)
-            .context("group order")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let group_order_u8 = u8::try_from(group_order_u64)
-            .context("group order")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let request_id = buf.try_get_varint().log_context("request id").ok()?;
+        let track_alias = buf.try_get_varint().log_context("track alias").ok()?;
+        let expires = buf.try_get_varint().log_context("expires").ok()?;
+        let group_order_u8 = buf.try_get_u8().log_context("group order u8").ok()?;
 
         // Values larger than 0x2 are a Protocol Violation.
-        let group_order = match GroupOrder::try_from(group_order_u8).context("group order") {
-            Ok(group_order) => group_order,
-            Err(_) => {
-                return Err(MOQTMessageError::ProtocolViolation);
-            }
-        };
+        let group_order = GroupOrder::try_from(group_order_u8)
+            .log_context("group order")
+            .ok()?;
 
-        let content_exists_u8 = u8::try_from(
-            read_variable_integer_from_buffer(buf)
-                .context("content_exists_u8")
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let content_exists = ContentExists::decode(buf)?;
 
-        let content_exists = util::u8_to_bool(content_exists_u8)?;
-
-        let largest_location = if content_exists {
-            Some(Location::depacketize(buf)?)
-        } else {
-            None
-        };
-
-        let number_of_parameters = read_variable_integer_from_buffer(buf)
-            .context("number of parameters")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+        let number_of_parameters = buf
+            .try_get_varint()
+            .log_context("number of parameters")
+            .ok()?;
         let mut subscribe_parameters = Vec::new();
         for _ in 0..number_of_parameters {
-            let version_specific_parameter = VersionSpecificParameter::depacketize(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?;
+            let version_specific_parameter = VersionSpecificParameter::depacketize(buf).ok()?;
             if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
                 tracing::warn!("unknown track request parameter {}", code);
             } else {
@@ -87,32 +53,24 @@ impl MOQTMessage for SubscribeOk {
             }
         }
 
-        Ok(SubscribeOk {
+        Some(SubscribeOk {
             request_id,
             track_alias,
             expires,
             group_order,
             content_exists,
-            largest_location,
             subscribe_parameters,
         })
     }
 
-    fn packetize(&self) -> BytesMut {
+    pub(crate) fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
-        payload.extend(write_variable_integer(self.request_id));
-        payload.extend(write_variable_integer(self.track_alias));
-        payload.extend(write_variable_integer(self.expires));
-        payload.extend(u8::from(self.group_order).to_be_bytes());
-        payload.extend(u8::from(self.content_exists).to_be_bytes());
-        if self.content_exists {
-            let largest_location = self.largest_location.as_ref().unwrap();
-            payload.extend(write_variable_integer(largest_location.group_id));
-            payload.extend(write_variable_integer(largest_location.object_id));
-        }
-        payload.extend(write_variable_integer(
-            self.subscribe_parameters.len() as u64
-        ));
+        payload.put_varint(self.request_id);
+        payload.put_varint(self.track_alias);
+        payload.put_varint(self.expires);
+        payload.put_u8(self.group_order as u8);
+        payload.unsplit(self.content_exists.encode());
+        payload.put_varint(self.subscribe_parameters.len() as u64);
         for version_specific_parameter in &self.subscribe_parameters {
             version_specific_parameter.packetize(&mut payload);
         }
@@ -123,13 +81,11 @@ impl MOQTMessage for SubscribeOk {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::messages::{
-            control_messages::{
-                location::Location,
-                subscribe_ok::{GroupOrder, SubscribeOk},
-                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-            },
-            moqt_message::MOQTMessage,
+        use crate::modules::moqt::messages::control_messages::{
+            enums::ContentExists,
+            location::Location,
+            subscribe_ok::{GroupOrder, SubscribeOk},
+            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
         };
         use bytes::BytesMut;
 
@@ -139,8 +95,7 @@ mod tests {
             let track_alias = 1;
             let expires = 1;
             let group_order = GroupOrder::Ascending;
-            let content_exists = false;
-            let largest_location = None;
+            let content_exists = ContentExists::False;
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -152,10 +107,9 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                largest_location,
                 subscribe_parameters,
             };
-            let buf = subscribe_ok.packetize();
+            let buf = subscribe_ok.encode();
 
             let expected_bytes_array = [
                 12, // Message Length(i)
@@ -178,11 +132,12 @@ mod tests {
             let track_alias = 2;
             let expires = 1;
             let group_order = GroupOrder::Descending;
-            let content_exists = true;
-            let largest_location = Some(Location {
-                group_id: 10,
-                object_id: 20,
-            });
+            let content_exists = ContentExists::True {
+                location: Location {
+                    group_id: 10,
+                    object_id: 20,
+                },
+            };
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -194,10 +149,9 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                largest_location,
                 subscribe_parameters,
             };
-            let buf = subscribe_ok.packetize();
+            let buf = subscribe_ok.encode();
 
             let expected_bytes_array = [
                 14, // Message Length(i)
@@ -232,14 +186,13 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf).unwrap();
+            let depacketized_subscribe_ok = SubscribeOk::decode(&mut buf).unwrap();
 
             let request_id = 0;
             let track_alias = 1;
             let expires = 1;
             let group_order = GroupOrder::Descending;
-            let content_exists = false;
-            let largest_location = None;
+            let content_exists = ContentExists::False;
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -251,7 +204,6 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                largest_location,
                 subscribe_parameters,
             };
 
@@ -276,17 +228,18 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let depacketized_subscribe_ok = SubscribeOk::depacketize(&mut buf).unwrap();
+            let depacketized_subscribe_ok = SubscribeOk::decode(&mut buf).unwrap();
 
             let request_id = 0;
             let track_alias = 2;
             let expires = 1;
             let group_order = GroupOrder::Ascending;
-            let content_exists = true;
-            let largest_location = Some(Location {
-                group_id: 0,
-                object_id: 5,
-            });
+            let content_exists = ContentExists::True {
+                location: Location {
+                    group_id: 0,
+                    object_id: 5,
+                },
+            };
             let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
                 AuthorizationInfo::new("test".to_string()),
             );
@@ -298,7 +251,6 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                largest_location,
                 subscribe_parameters,
             };
 

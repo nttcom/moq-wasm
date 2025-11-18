@@ -1,11 +1,7 @@
-use crate::modules::moqt::messages::{
-    control_messages::util::{add_payload_length, validate_payload_length},
-    moqt_message::MOQTMessage,
-    moqt_message_error::MOQTMessageError,
-    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
-    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+use crate::modules::{
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    moqt::messages::control_messages::util::{add_payload_length, validate_payload_length},
 };
-use anyhow::{Context, Result};
 use bytes::BytesMut;
 use serde::Serialize;
 
@@ -16,42 +12,28 @@ pub struct RequestError {
     pub(crate) reason_phrase: String,
 }
 
-impl MOQTMessage for RequestError {
-    fn depacketize(buf: &mut BytesMut) -> Result<Self, MOQTMessageError> {
+impl RequestError {
+    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
         if !validate_payload_length(buf) {
-            return Err(MOQTMessageError::ProtocolViolation);
+            return None;
         }
 
-        let request_id = match read_variable_integer_from_buffer(buf) {
-            Ok(v) => v,
-            Err(_) => return Err(MOQTMessageError::ProtocolViolation),
-        };
+        let request_id = buf.try_get_varint().log_context("request id").ok()?;
+        let error_code = buf.try_get_varint().log_context("error code").ok()?;
+        let reason_phrase = buf.try_get_string().log_context("reason phrase").ok()?;
 
-        let error_code = read_variable_integer_from_buffer(buf)
-            .context("error code")
-            .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-        let reason_phrase = String::from_utf8(
-            read_variable_bytes_from_buffer(buf)
-                .map_err(|_| MOQTMessageError::ProtocolViolation)?,
-        )
-        .context("reason phrase")
-        .map_err(|_| MOQTMessageError::ProtocolViolation)?;
-
-        Ok(RequestError {
+        Some(RequestError {
             request_id,
             error_code,
             reason_phrase,
         })
     }
 
-    fn packetize(&self) -> BytesMut {
+    pub(crate) fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
-        payload.extend(write_variable_integer(self.request_id));
-        payload.extend(write_variable_integer(self.error_code));
-        payload.extend(write_variable_bytes(
-            &self.reason_phrase.as_bytes().to_vec(),
-        ));
-
+        payload.put_varint(self.request_id);
+        payload.put_varint(self.error_code);
+        payload.put_string(&self.reason_phrase);
         add_payload_length(payload)
     }
 }
@@ -59,9 +41,7 @@ impl MOQTMessage for RequestError {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::messages::{
-            control_messages::request_error::RequestError, moqt_message::MOQTMessage,
-        };
+        use crate::modules::moqt::messages::control_messages::request_error::RequestError;
         use bytes::BytesMut;
 
         #[test]
@@ -75,7 +55,7 @@ mod tests {
                 error_code,
                 reason_phrase: reason_phrase.clone(),
             };
-            let buf = announce_error.packetize();
+            let buf = announce_error.encode();
             let expected_bytes_array = [
                 16, // Message Length(i)
                 0,  // Request ID(i)
@@ -99,7 +79,7 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let depacketized_announce_error = RequestError::depacketize(&mut buf).unwrap();
+            let depacketized_announce_error = RequestError::decode(&mut buf).unwrap();
 
             let request_id = 0;
             let error_code: u64 = 1;

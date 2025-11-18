@@ -6,7 +6,7 @@ use crate::{
     DatagramObject, DatagramReceiver, GroupOrder, TransportProtocol,
     modules::{
         moqt::{
-            messages::control_messages::{location::Location, subscribe_ok::SubscribeOk},
+            messages::control_messages::{enums::ContentExists, subscribe_ok::SubscribeOk},
             sessions::session_context::SessionContext,
             streams::stream::stream_receiver::StreamReceiver,
         },
@@ -24,8 +24,7 @@ pub struct Subscription<T: TransportProtocol> {
     pub track_alias: u64,
     pub expires: u64,
     pub group_order: GroupOrder,
-    pub content_exists: bool,
-    pub largest_location: Option<Location>,
+    pub content_exists: ContentExists,
     pub derivery_timeout: Option<u64>,
 }
 
@@ -37,7 +36,6 @@ impl<T: TransportProtocol> Subscription<T> {
             expires: subscribe_ok.expires,
             group_order: subscribe_ok.group_order,
             content_exists: subscribe_ok.content_exists,
-            largest_location: subscribe_ok.largest_location,
             derivery_timeout: None,
         }
     }

@@ -29,8 +29,10 @@ impl<T: TransportProtocol> Publisher<T> {
             .await
             .insert(request_id, sender);
         let publish_namespace = PublishNamespace::new(request_id, vec_namespace, vec![]);
-        let bytes =
-            utils::create_full_message(ControlMessageType::PublishNamespace, publish_namespace);
+        let bytes = utils::create_full_message(
+            ControlMessageType::PublishNamespace,
+            publish_namespace.encode(),
+        );
         self.session.send_stream.send(&bytes).await?;
         tracing::info!("Publish namespace request id: {}", request_id);
         let result = receiver.await;
@@ -76,11 +78,10 @@ impl<T: TransportProtocol> Publisher<T> {
             track_alias: option.track_alias,
             group_order: option.group_order,
             content_exists: option.content_exists,
-            largest_location: option.largest_location,
             forward: option.forward,
             parameters: vec![],
         };
-        let bytes = utils::create_full_message(ControlMessageType::Publish, publish);
+        let bytes = utils::create_full_message(ControlMessageType::Publish, publish.encode());
         self.session.send_stream.send(&bytes).await?;
         tracing::info!("Publish");
         let result = receiver.await;
