@@ -1,9 +1,5 @@
-import {
-  JitterBuffer,
-  type SubgroupObject,
-  type JitterBufferSubgroupObject,
-  type SubgroupWorkerMessage
-} from '../jitterBuffer'
+import { AudioJitterBuffer } from '../audioJitterBuffer'
+import type { SubgroupObject, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 
 const audioBitrateLogger = createBitrateLogger((kbps) => {
@@ -19,8 +15,6 @@ const AUDIO_DECODER_CONFIG = {
 
 let audioDecoder: AudioDecoder | undefined
 let remoteTimestampBase: number | null = null
-let localTimestampBaseUs: number | null = null
-let lastRebasedTimestamp = 0
 
 async function initializeAudioDecoder() {
   function sendAudioDataMessage(audioData: AudioData): void {
@@ -40,8 +34,7 @@ async function initializeAudioDecoder() {
 }
 
 const POP_INTERVAL_MS = 5
-const jitterBuffer = new JitterBuffer(1800, 'audio')
-jitterBuffer.setMinDelay(50)
+const jitterBuffer = new AudioJitterBuffer(1800)
 
 setInterval(() => {
   const jitterBufferEntry = jitterBuffer.pop()
