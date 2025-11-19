@@ -44,7 +44,12 @@ const jitterBuffer = new JitterBuffer(1800, 'audio')
 jitterBuffer.setMinDelay(50)
 
 setInterval(() => {
-  const subgroupStreamObject = jitterBuffer.pop()
+  const jitterBufferEntry = jitterBuffer.pop()
+  if (!jitterBufferEntry) {
+    return
+  }
+  console.log(jitterBufferEntry)
+  const subgroupStreamObject = jitterBufferEntry?.object
   if (subgroupStreamObject) {
     decode(subgroupStreamObject)
   }
@@ -82,14 +87,8 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
   await audioDecoder.decode(encodedAudioChunk)
 }
 
-function reportAudioLatency(sentAt: number | undefined) {
-  if (typeof sentAt !== 'number') {
-    return
-  }
+function reportAudioLatency(sentAt: number) {
   const latency = Date.now() - sentAt
-  if (!Number.isFinite(latency) || latency < 0) {
-    return
-  }
   self.postMessage({ type: 'latency', media: 'audio', ms: latency })
 }
 
@@ -97,12 +96,10 @@ function reportAudioLatency(sentAt: number | undefined) {
  * Convert sender-side timestamps to a local timeline so the decoder can play them.
  */
 function rebaseTimestamp(remoteTimestamp: number): number {
-  if (remoteTimestampBase === null || localTimestampBaseUs === null) {
+  if (remoteTimestampBase === null) {
     remoteTimestampBase = remoteTimestamp
-    localTimestampBaseUs = performance.now() * 1000
   }
 
-  let rebased = localTimestampBaseUs + (remoteTimestamp - remoteTimestampBase)
-  lastRebasedTimestamp = rebased
+  let rebased = remoteTimestamp - remoteTimestampBase
   return rebased
 }
