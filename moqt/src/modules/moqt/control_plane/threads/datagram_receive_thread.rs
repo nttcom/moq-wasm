@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     DatagramObject, TransportProtocol,
     modules::{
-        moqt::control_plane::sessions::session_context::SessionContext,
+        moqt::control_plane::models::session_context::SessionContext,
         transport::transport_connection::TransportConnection,
     },
 };

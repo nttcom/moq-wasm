@@ -6,7 +6,7 @@ use bytes::{Bytes, BytesMut};
 use crate::{
     TransportProtocol,
     modules::{
-        moqt::control_plane::sessions::session_context::SessionContext,
+        moqt::control_plane::models::session_context::SessionContext,
         moqt::data_plane::object::{
             datagram_object::DatagramObject,
             extension_header::ExtensionHeaderType,

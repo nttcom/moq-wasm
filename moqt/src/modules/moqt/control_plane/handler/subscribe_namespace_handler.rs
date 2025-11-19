@@ -10,7 +10,7 @@ use crate::{
                 subscribe_namespace::SubscribeNamespace,
             },
         },
-        control_plane::sessions::session_context::SessionContext,
+        control_plane::models::session_context::SessionContext,
         control_plane::utils,
     },
 };

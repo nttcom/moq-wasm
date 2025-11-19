@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
-use crate::modules::moqt::control_plane::sessions::session::Session;
-use crate::modules::moqt::control_plane::sessions::session_context::SessionContext;
+use crate::modules::moqt::control_plane::models::session::Session;
+use crate::modules::moqt::control_plane::models::session_context::SessionContext;
 use crate::modules::moqt::data_plane::streams::stream::stream_receiver::StreamReceiver;
 use crate::modules::moqt::data_plane::streams::stream::stream_sender::StreamSender;
 use crate::modules::moqt::protocol::TransportProtocol;

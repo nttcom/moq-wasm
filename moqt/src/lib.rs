@@ -1,4 +1,4 @@
-use crate::modules::moqt::control_plane::sessions::session_creator::SessionCreator;
+use crate::modules::moqt::control_plane::models::session_creator::SessionCreator;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 use std::net::SocketAddr;
 
@@ -15,12 +15,12 @@ pub use modules::moqt::control_plane::messages::control_messages::enums::{Conten
 pub use modules::moqt::control_plane::messages::control_messages::location::Location;
 pub use modules::moqt::control_plane::options::PublishOption;
 pub use modules::moqt::control_plane::options::SubscribeOption;
-pub use modules::moqt::control_plane::sessions::publication::Publication;
-pub use modules::moqt::control_plane::sessions::publisher::Publisher;
-pub use modules::moqt::control_plane::sessions::session::Session;
-pub use modules::moqt::control_plane::sessions::subscriber::Subscriber;
-pub use modules::moqt::control_plane::sessions::subscription::Acceptance;
-pub use modules::moqt::control_plane::sessions::subscription::Subscription;
+pub use modules::moqt::control_plane::models::publication::Publication;
+pub use modules::moqt::control_plane::models::publisher::Publisher;
+pub use modules::moqt::control_plane::models::session::Session;
+pub use modules::moqt::control_plane::models::subscriber::Subscriber;
+pub use modules::moqt::control_plane::models::subscription::Acceptance;
+pub use modules::moqt::control_plane::models::subscription::Subscription;
 pub use modules::moqt::data_plane::object::datagram_object::DatagramObject;
 pub use modules::moqt::data_plane::streams::datagram::datagram_receiver::DatagramReceiver;
 pub use modules::moqt::data_plane::streams::datagram::datagram_sender::DatagramHeader;

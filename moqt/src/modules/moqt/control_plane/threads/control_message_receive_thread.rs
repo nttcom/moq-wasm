@@ -20,7 +20,7 @@ use crate::{
                 util::get_message_type,
             },
         },
-        sessions::session_context::SessionContext,
+        models::session_context::SessionContext,
     },
 };
 
