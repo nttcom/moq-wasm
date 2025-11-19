@@ -22,6 +22,7 @@ interface AudioSubscriptionContext {
   worker: Worker
   writer: WritableStreamDefaultWriter<AudioData>
   stream: MediaStream
+  baseTimestamp: number | null
 }
 
 export class MediaSubscriber {
@@ -81,6 +82,13 @@ export class MediaSubscriber {
     })
     const generator = new MediaStreamTrackGenerator({ kind: 'audio' })
     const writer = generator.writable.getWriter()
+    const context: AudioSubscriptionContext = {
+      userId,
+      worker,
+      writer,
+      stream: new MediaStream([generator]),
+      baseTimestamp: null
+    }
     worker.onmessage = async (event: MessageEvent) => {
       const data = event.data as
         | { type: 'audioData'; audioData: AudioData }
@@ -96,13 +104,15 @@ export class MediaSubscriber {
         return
       }
       const audioData = 'type' in data ? data.audioData : data.audioData
+      const retimedAudioData = this.retimeAudioData(audioData, context)
+      console.debug(audioData.timestamp, '->', retimedAudioData.timestamp)
       await writer.ready
-      await writer.write(audioData)
+      await writer.write(retimedAudioData)
+      audioData.close()
     }
 
-    const stream = new MediaStream([generator])
-    this.audioContexts.set(trackAlias, { userId, worker, writer, stream })
-    this.handlers.onRemoteAudioStream?.(userId, stream)
+    this.audioContexts.set(trackAlias, context)
+    this.handlers.onRemoteAudioStream?.(userId, context.stream)
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
       this.forwardToWorker(worker, trackAlias, groupId, message)
@@ -127,5 +137,52 @@ export class MediaSubscriber {
       },
       [payload.buffer]
     )
+  }
+
+  private retimeAudioData(audioData: AudioData, context: AudioSubscriptionContext): AudioData {
+    const originalTimestamp = audioData.timestamp
+    if (context.baseTimestamp === null) {
+      context.baseTimestamp = originalTimestamp
+    }
+    const playbackTimestamp = originalTimestamp - context.baseTimestamp
+    return this.cloneAudioDataWithTimestamp(audioData, playbackTimestamp)
+  }
+
+  private cloneAudioDataWithTimestamp(audioData: AudioData, timestamp: number): AudioData {
+    const options: AudioDataCopyToOptions = {
+      planeIndex: 0,
+      frameCount: audioData.numberOfFrames
+    }
+    const byteLength = audioData.allocationSize(options)
+    const format = audioData.format as AudioSampleFormat
+    const buffer = new ArrayBuffer(byteLength)
+    const view = this.createAudioBufferView(format, buffer)
+    audioData.copyTo(view, options)
+    return new AudioData({
+      format,
+      sampleRate: audioData.sampleRate,
+      numberOfFrames: audioData.numberOfFrames,
+      numberOfChannels: audioData.numberOfChannels,
+      timestamp,
+      data: buffer
+    })
+  }
+
+  private createAudioBufferView(format: AudioSampleFormat, buffer: ArrayBuffer): ArrayBufferView {
+    switch (format) {
+      case 'u8':
+      case 'u8-planar':
+        return new Uint8Array(buffer)
+      case 's16':
+      case 's16-planar':
+        return new Int16Array(buffer)
+      case 's32':
+      case 's32-planar':
+        return new Int32Array(buffer)
+      case 'f32':
+      case 'f32-planar':
+      default:
+        return new Float32Array(buffer)
+    }
   }
 }
