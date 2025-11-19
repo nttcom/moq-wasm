@@ -4,7 +4,7 @@ export type ChunkMetadata = {
   type: string
   timestamp: number
   duration: number | null
-  sentAt?: number
+  sentAt: number
 }
 
 export type DeserializedChunk = {

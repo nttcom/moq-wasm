@@ -1,4 +1,4 @@
-import { deserializeChunk, type ChunkMetadata, type DeserializedChunk } from './chunk'
+import { deserializeChunk, type DeserializedChunk } from './chunk'
 import type { SubgroupStreamObjectMessage } from '../../pkg/moqt_client_sample'
 
 const DEFAULT_MIN_DELAY_MS = 50
@@ -16,15 +16,19 @@ export type SubgroupWorkerMessage = {
   subgroupStreamObject: SubgroupObject
 }
 
-export type JitterBufferSubgroupObject = SubgroupObject & { cachedChunk: DeserializedChunk }
+export type JitterBufferSubgroupObject = SubgroupObject & {
+  cachedChunk: DeserializedChunk
+  remotePTS: number
+  localPTS: number
+}
 
 export type JitterBufferEntry = {
   groupId: bigint
   objectId: bigint
-  timestamp: number
+  bufferInsertTimestamp: number
+  sentAt: number
   object: JitterBufferSubgroupObject
   isEndOfGroup: boolean
-  referenceTime?: number
 }
 
 export type JitterBufferMode = 'video_normal' | 'video_correctly' | 'audio'
@@ -71,6 +75,8 @@ export class JitterBuffer {
     }
     const bufferObject = object as JitterBufferSubgroupObject
     bufferObject.cachedChunk = parsed
+    bufferObject.remotePTS = parsed.metadata.timestamp
+    bufferObject.localPTS = performance.timeOrigin + performance.now()
     // correctly モードでは古いデータを拒否
     if (this.mode === 'video_correctly' && this.shouldRejectOldData(groupId, objectId)) {
       console.warn(
@@ -79,14 +85,13 @@ export class JitterBuffer {
       return
     }
 
-    const timestamp = performance.now()
     const entry: JitterBufferEntry = {
       groupId,
       objectId,
-      timestamp,
+      bufferInsertTimestamp: performance.now(),
+      sentAt: parsed.metadata.sentAt,
       object: bufferObject,
-      isEndOfGroup: object.objectStatus === OBJECT_STATUS_END_OF_GROUP,
-      referenceTime: computeReferenceTime(parsed.metadata)
+      isEndOfGroup: object.objectStatus === OBJECT_STATUS_END_OF_GROUP
     }
 
     const pos = this.findInsertPos(groupId, objectId)
@@ -124,9 +129,9 @@ export class JitterBuffer {
   /**
    * @returns the oldest object in the buffer if it is older than the minimum delay, otherwise null.
    */
-  pop(): JitterBufferSubgroupObject | null {
+  pop(): JitterBufferEntry | null {
     const entry = this.popWithMetadata()
-    return entry ? entry.object : null
+    return entry
   }
 
   /**
@@ -146,7 +151,7 @@ export class JitterBuffer {
 
   private popNormalMode(): JitterBufferEntry | null {
     const buffer = this.buffer[0]
-    const delayMs = performance.now() - buffer.timestamp
+    const delayMs = performance.now() - buffer.bufferInsertTimestamp
 
     if (delayMs < this.minDelayMs) {
       return null
@@ -181,9 +186,8 @@ export class JitterBuffer {
     }
 
     const buffer = this.buffer[index]
-    const delayMs = performance.now() - buffer.timestamp
-
-    // 遅延時間が足りない場合はnullを返す
+    // bufferにinsertした後、minDelayMsを満たしていない場合は後続のデータをスムーズに再生できない可能性があるのでpopしない
+    const delayMs = performance.now() - buffer.bufferInsertTimestamp
     if (delayMs < this.minDelayMs) {
       return null
     }
@@ -248,24 +252,10 @@ export class JitterBuffer {
     const now = Date.now()
     while (this.buffer.length > 0) {
       const head = this.buffer[0]
-      const reference = head.referenceTime
-      if (reference === undefined) {
-        break
-      }
-      if (now - reference <= maxStaleAgeMs) {
+      if (now - head.sentAt <= maxStaleAgeMs) {
         break
       }
       this.buffer.shift()
     }
   }
-}
-
-function computeReferenceTime(metadata: ChunkMetadata): number | undefined {
-  if (typeof metadata.sentAt === 'number') {
-    return metadata.sentAt
-  }
-  if (typeof metadata.timestamp === 'number') {
-    return performance.timeOrigin + metadata.timestamp / 1000
-  }
-  return undefined
 }

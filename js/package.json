@@ -4,7 +4,7 @@
   "description": "moq-wasm client",
   "main": "index.js",
   "scripts": {
-    "wasm": "npm install && wasm-pack build ../moqt-client-sample --target web --out-dir=../js/pkg --features web_sys_unstable_apis",
+    "wasm": "wasm-pack build ../moqt-client-sample --target web --out-dir=../js/pkg --features web_sys_unstable_apis",
     "dev": "npm run wasm && vite",
     "build": "npm run wasm && vite build",
     "prod": "npm run wasm && vite --host",
@@ -23,7 +23,7 @@
     "prettier": "^3.2.5",
     "tailwindcss": "^4.1.14",
     "typescript": "^5.9.3",
-    "vite": "^4.4.10",
+    "vite": "^7.2.2",
     "vite-plugin-wasm-pack": "^0.1.12"
   },
   "dependencies": {

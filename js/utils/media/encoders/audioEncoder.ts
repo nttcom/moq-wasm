@@ -14,6 +14,7 @@ const audioBitrateLogger = createBitrateLogger((kbps) => {
 
 function sendAudioChunkMessage(chunk: EncodedAudioChunk, metadata: EncodedAudioChunkMetadata | undefined) {
   audioBitrateLogger.addBytes(chunk.byteLength)
+  console.debug('sendAudioChunkMessage', chunk, metadata)
   self.postMessage({ type: 'chunk', chunk, metadata })
 }
 
