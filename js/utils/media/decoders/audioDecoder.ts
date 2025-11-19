@@ -18,6 +18,10 @@ const AUDIO_DECODER_CONFIG = {
 }
 
 let audioDecoder: AudioDecoder | undefined
+let remoteTimestampBase: number | null = null
+let localTimestampBaseUs: number | null = null
+let lastRebasedTimestamp = 0
+
 async function initializeAudioDecoder() {
   function sendAudioDataMessage(audioData: AudioData): void {
     self.postMessage({ type: 'audioData', audioData })
@@ -62,9 +66,11 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
   const decoded = subgroupStreamObject.cachedChunk
   reportAudioLatency(decoded.metadata.sentAt)
 
+  const rebasedTimestamp = rebaseTimestamp(decoded.metadata.timestamp)
+
   const encodedAudioChunk = new EncodedAudioChunk({
     type: decoded.metadata.type as EncodedAudioChunkType,
-    timestamp: decoded.metadata.timestamp,
+    timestamp: rebasedTimestamp,
     duration: decoded.metadata.duration ?? undefined,
     data: decoded.data
   })
@@ -85,4 +91,18 @@ function reportAudioLatency(sentAt: number | undefined) {
     return
   }
   self.postMessage({ type: 'latency', media: 'audio', ms: latency })
+}
+
+/**
+ * Convert sender-side timestamps to a local timeline so the decoder can play them.
+ */
+function rebaseTimestamp(remoteTimestamp: number): number {
+  if (remoteTimestampBase === null || localTimestampBaseUs === null) {
+    remoteTimestampBase = remoteTimestamp
+    localTimestampBaseUs = performance.now() * 1000
+  }
+
+  let rebased = localTimestampBaseUs + (remoteTimestamp - remoteTimestampBase)
+  lastRebasedTimestamp = rebased
+  return rebased
 }
