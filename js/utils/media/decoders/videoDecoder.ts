@@ -1,9 +1,5 @@
-import {
-  JitterBuffer,
-  type JitterBufferSubgroupObject,
-  type SubgroupObject,
-  type SubgroupWorkerMessage
-} from '../jitterBuffer'
+import { VideoJitterBuffer } from '../videoJitterBuffer'
+import type { JitterBufferSubgroupObject, SubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { KEYFRAME_INTERVAL } from '../constants'
 import { createBitrateLogger } from '../bitrate'
 
@@ -45,9 +41,9 @@ async function initializeVideoDecoder() {
 }
 
 const POP_INTERVAL_MS = 5
-const jitterBuffer = new JitterBuffer(
+const jitterBuffer = new VideoJitterBuffer(
   1800, // maxBufferSize
-  'video_correctly', // mode
+  'correctly', // mode
   KEYFRAME_INTERVAL_BIGINT // fallback keyframe interval
 )
 
