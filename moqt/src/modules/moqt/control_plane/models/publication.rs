@@ -5,7 +5,7 @@ use crate::{
     modules::{
         moqt::control_plane::{
             messages::control_messages::publish_ok::PublishOk,
-            sessions::session_context::SessionContext,
+            models::session_context::SessionContext,
         },
         moqt::data_plane::streams::stream::stream_sender::StreamSender,
         transport::transport_connection::TransportConnection,

@@ -7,7 +7,7 @@ use crate::{
     modules::{
         moqt::control_plane::{
             messages::control_messages::{enums::ContentExists, subscribe_ok::SubscribeOk},
-            sessions::session_context::SessionContext,
+            models::session_context::SessionContext,
         },
         moqt::data_plane::streams::stream::stream_receiver::StreamReceiver,
         transport::transport_connection::TransportConnection,
