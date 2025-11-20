@@ -1,0 +1,15 @@
+[package]
+name = "moqt-ingest-gateway"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.93"
+clap = { version = "4.5.21", features = ["derive"] }
+ffmpeg-next = { version = "8.0.0", features = ["format", "codec"] }
+tokio = { version = "1.41.0", features = ["full"] }
+rml_rtmp = "0.7.0"
+srt-tokio = "0.4.1"
+futures = "0.3.30"
+moqt-client-rust = { path = "../moqt-client-rust" }
+wtransport = "0.6.0"
