@@ -22,7 +22,7 @@ js/examples/*/dist/*
 *.pem
 .DS_Store
 
-
+moqt-ingest-gateway/recordings/
 
 log/*
 

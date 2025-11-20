@@ -1,0 +1,13 @@
+[package]
+name = "moqt-client-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.93"
+async-trait = "0.1.83"
+bytes = "1.7.1"
+moqt-core = { path = "../moqt-core" }
+tokio = { version = "1.45.0", features = ["net", "rt-multi-thread", "macros"] }
+url = "2.5.4"
+wtransport = "0.6.0"
