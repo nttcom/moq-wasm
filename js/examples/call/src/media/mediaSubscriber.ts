@@ -113,7 +113,7 @@ export class MediaSubscriber {
 
   private forwardToWorker(worker: Worker, trackAlias: bigint, groupId: bigint, message: SubgroupStreamObjectMessage) {
     if (message.objectStatus === 3) {
-      console.log(`[MediaSubscriber] Received EndOfGroup trackAlias=${trackAlias} groupId=${groupId}`)
+      console.debug(`[MediaSubscriber] Received EndOfGroup trackAlias=${trackAlias} groupId=${groupId}`)
     }
     const payload = new Uint8Array(message.objectPayload)
     const payloadLength = message.objectPayloadLength

@@ -41,7 +41,7 @@ setInterval(() => {
   if (!jitterBufferEntry) {
     return
   }
-  console.log(jitterBufferEntry)
+  console.debug(jitterBufferEntry)
   const subgroupStreamObject = jitterBufferEntry?.object
   if (subgroupStreamObject) {
     decode(subgroupStreamObject)
