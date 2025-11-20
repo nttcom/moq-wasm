@@ -86,7 +86,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
 }
 
 self.onmessage = async (event) => {
-  console.log('videoEncoder worker received message', event.data)
+  console.debug('videoEncoder worker received message', event.data)
   if (event.data.type === 'keyframeInterval') {
     keyframeInterval = event.data.keyframeInterval
   } else if (event.data.type === 'videoStream') {

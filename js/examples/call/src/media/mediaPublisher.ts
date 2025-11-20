@@ -266,7 +266,7 @@ export class MediaPublisher {
         3, // 0x3: EndOfGroup
         new Uint8Array(0)
       )
-      console.log(
+      console.debug(
         `[MediaPublisher] Sent EndOfGroup trackAlias=${trackAlias} groupId=${previousState.groupId} subgroupId=0 objectId=${endObjectId}`
       )
     }
