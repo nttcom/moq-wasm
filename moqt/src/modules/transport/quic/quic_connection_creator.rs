@@ -14,7 +14,8 @@ use quinn::rustls::{
 use quinn::{self, TransportConfig, VarInt};
 
 use crate::modules::transport::{
-    quic::quic_connection::QUICConnection, transport_connection_creator::TransportConnectionCreator,
+    quic::{quic_connection::QUICConnection, skip_certd_validation::SkipVerification},
+    transport_connection_creator::TransportConnectionCreator,
 };
 
 pub struct QUICConnectionCreator {
@@ -72,8 +73,14 @@ impl QUICConnectionCreator {
         let mut endpoint = quinn::Endpoint::client(address)?;
 
         let mut client_crypto = rustls::ClientConfig::builder()
-            .with_root_certificates(root_cert)
+            // .with_root_certificates(root_cert)
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(SkipVerification))
             .with_no_client_auth();
+
+        // let mut client_crypto = rustls::ClientConfig::builder()
+        //     .with_root_certificates(root_cert)
+        //     .with_no_client_auth();
 
         let alpn = &[b"moq-00"];
         client_crypto.alpn_protocols = alpn.iter().map(|&x| x.into()).collect();

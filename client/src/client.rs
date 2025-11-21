@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::bail;
-use moqt::{DatagramHeader, Endpoint, QUIC, Session};
+use moqt::{DatagramHeader, Endpoint, QUIC, Session, SubscribeOption};
 
 use crate::stream_runner::StreamTaskRunner;
 
@@ -18,12 +18,18 @@ pub(crate) struct Client {
     track_alias: Arc<AtomicU64>,
     publisher: moqt::Publisher<moqt::QUIC>,
     subscriber: moqt::Subscriber<moqt::QUIC>,
+    runner: StreamTaskRunner,
 }
 
 impl Client {
     pub(crate) async fn new(cert_path: String, label: String) -> anyhow::Result<Self> {
-        let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
-        let url = url::Url::from_str("moqt://localhost:4434")?;
+        // let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
+        let endpoint = Endpoint::<QUIC>::create_client(0)?;
+        // let url = url::Url::from_str("moqt://interop-relay.cloudflare.mediaoverquic.com:443")?;
+        let url = url::Url::from_str("moqt://fb.mvfst.net:9448")?;
+        // let url = url::Url::from_str("moqt://lminiero.it:9000")?;
+        // let url = url::Url::from_str("moqt://moqt.research.skyway.io:4434")?;
+        // let url = url::Url::from_str("moqt://localhost:4434")?;
         let host = url.host_str().unwrap();
         let remote_address = (host, url.port().unwrap_or(4433))
             .to_socket_addrs()?
@@ -48,6 +54,7 @@ impl Client {
             track_alias,
             publisher,
             subscriber,
+            runner: StreamTaskRunner::new(),
         })
     }
 
@@ -95,12 +102,14 @@ impl Client {
                                     return;
                                 }
                             };
-                            Self::subscribe(label.clone(), publish_handler, &runner).await;
+                            // Self::subscribe(label.clone(), publish_handler, &runner).await;
                         }
                         moqt::SessionEvent::Subscribe(subscribe_handler) => {
                             tracing::info!("Received: {} Subscribe", label);
                             let track_alias = track_alias.load(Ordering::SeqCst);
-                            let _ = subscribe_handler.ok(track_alias, 1000000, false).await;
+                            let _ = subscribe_handler
+                                .ok(track_alias, 1000000, moqt::ContentExists::False)
+                                .await;
                             let publication = subscribe_handler.into_publication(track_alias);
                             Self::create_stream(label.clone(), publication, &runner).await;
                         }
@@ -165,22 +174,8 @@ impl Client {
                 group_order: publish_handler.group_order,
                 forward: publish_handler.forward,
                 filter_type: moqt::FilterType::LatestObject,
-                start_location: None,
-                end_group: None,
             };
-            let subscription = publish_handler
-                .subscribe(
-                    publish_handler.track_namespace.to_string(),
-                    publish_handler.track_name.to_string(),
-                    option,
-                )
-                .await;
-            if subscription.is_err() {
-                tracing::error!("{} :subscribe error", label);
-            } else {
-                tracing::info!("{} :subscribe ok", label);
-            }
-            let subscription = subscription.unwrap();
+            let subscription = publish_handler.into_subscription(0);
             let acceptance = match subscription.accept_stream_or_datagram().await {
                 Ok(acceptance) => acceptance,
                 Err(_) => {
@@ -264,6 +259,72 @@ impl Client {
             }
         };
         runner.add_task(Box::pin(task)).await;
+    }
+
+    pub(crate) async fn active_subscribe(
+        &self,
+        label: String,
+        track_namespace: String,
+        track_name: String,
+    ) {
+        let full_name = format!("{}/{}", track_namespace, track_name);
+        let option = SubscribeOption {
+            subscriber_priority: 128,
+            group_order: moqt::GroupOrder::Ascending,
+            forward: true,
+            filter_type: moqt::FilterType::LatestObject,
+        };
+        tracing::info!("{} :subscribe {}", label, full_name);
+        let subscription = match self
+            .subscriber
+            .subscribe(track_namespace, track_name, option)
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Failed to subscribe: {}", e);
+                return;
+            }
+        };
+        tracing::warn!("qqq subscribe ok");
+        let task = async move {
+            let acceptance = match subscription.accept_stream_or_datagram().await {
+                Ok(acceptance) => acceptance,
+                Err(e) => {
+                    tracing::error!("Failed to accept stream or datagram: {}", e);
+                    return;
+                }
+            };
+            tracing::warn!("qqq accept ok");
+            match acceptance {
+                moqt::Acceptance::Stream(stream) => todo!(),
+                moqt::Acceptance::Datagram(mut receiver, object) => {
+                    let text = String::from_utf8(object.object_payload.to_vec()).unwrap();
+                    tracing::info!(
+                        "{} :subscribe datagram track_alias:{}, message: {}",
+                        label,
+                        object.track_alias,
+                        text
+                    );
+                    loop {
+                        let result = receiver.receive().await;
+                        if let Err(e) = result {
+                            tracing::error!("Failed to receive: {}", e);
+                            break;
+                        }
+                        let object = result.unwrap();
+                        let text = String::from_utf8(object.object_payload.to_vec()).unwrap();
+                        tracing::info!(
+                            "{} :subscribe datagram track_alias:{}, message: {}",
+                            label,
+                            object.track_alias,
+                            text
+                        );
+                    }
+                }
+            };
+        };
+        self.runner.add_task(Box::pin(task)).await;
     }
 }
 
