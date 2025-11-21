@@ -1,9 +1,13 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use anyhow::Result;
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
 
-use crate::{ingest::flv::FlvRecorder, moqt::MoqtManager};
+use crate::{
+    ingest::flv::FlvRecorder,
+    moqt::MoqtManager,
+    video::{pack_video_chunk_payload, AvcState},
+};
 
 #[derive(Default)]
 pub struct RtmpCounters {
@@ -15,6 +19,7 @@ pub struct RtmpState {
     pub counters: RtmpCounters,
     pub recorder: Option<FlvRecorder>,
     pub moqt: Option<MoqtManager>,
+    pub video_states: HashMap<(String, String), AvcState>,
 }
 
 impl RtmpState {
@@ -23,6 +28,7 @@ impl RtmpState {
             counters: RtmpCounters::default(),
             recorder: None,
             moqt: Some(moqt),
+            video_states: HashMap::new(),
         }
     }
 }
@@ -48,7 +54,10 @@ pub async fn handle_event(
             stream_key,
             mode,
         } => {
-            println!("[rtmp {label}] publish app={app_name} stream={stream_key} mode={mode:?}");
+            let namespace_path = app_name.clone(); // track_namespace は application 名
+            println!(
+                "[rtmp {label}] publish app={app_name} stream={stream_key} -> ns={namespace_path} mode={mode:?}"
+            );
             queue.extend(session.accept_request(request_id)?);
             if state.recorder.is_none() {
                 match FlvRecorder::spawn(&app_name, &stream_key).await {
@@ -59,8 +68,8 @@ pub async fn handle_event(
                 }
             }
             if let Some(moqt) = state.moqt.as_ref() {
-                let namespace = vec![app_name.clone()];
-                if let Err(err) = moqt.setup_publisher(&namespace, &stream_key).await {
+                let namespace = vec![namespace_path];
+                if let Err(err) = moqt.setup_namespace(&namespace).await {
                     eprintln!("[rtmp {label}] moqt setup failed: {err:?}");
                 }
             }
@@ -85,7 +94,7 @@ pub async fn handle_event(
             timestamp,
         } => {
             state.counters.audio += 1;
-            if state.counters.audio == 1 || state.counters.audio % 200 == 0 {
+            if state.counters.audio == 1 || state.counters.audio % 1000 == 0 {
                 println!(
                     "[rtmp {label}] audio packets={} app={app_name} stream={stream_key}",
                     state.counters.audio
@@ -96,15 +105,7 @@ pub async fn handle_event(
                     eprintln!("[rtmp {label}] write_audio failed: {err:?}");
                 }
             }
-            if let Some(moqt) = state.moqt.as_ref() {
-                let namespace = vec![app_name.clone()];
-                if let Err(err) = moqt
-                    .send_object(&namespace, &stream_key, b"test^audio")
-                    .await
-                {
-                    eprintln!("[rtmp {label}] moqt send audio failed: {err:?}");
-                }
-            }
+            // audio は現状 MoQ 送信しない
         }
         ServerSessionEvent::VideoDataReceived {
             app_name,
@@ -112,10 +113,11 @@ pub async fn handle_event(
             data,
             timestamp,
         } => {
+            let track_name = "video".to_string();
             state.counters.video += 1;
-            if state.counters.video == 1 || state.counters.video % 200 == 0 {
+            if state.counters.video == 1 || state.counters.video % 1000 == 0 {
                 println!(
-                    "[rtmp {label}] video packets={} app={app_name} stream={stream_key}",
+                    "[rtmp {label}] video packets={} app={app_name} track={track_name}",
                     state.counters.video
                 );
             }
@@ -125,12 +127,34 @@ pub async fn handle_event(
                 }
             }
             if let Some(moqt) = state.moqt.as_ref() {
-                let namespace = vec![app_name.clone()];
-                if let Err(err) = moqt
-                    .send_object(&namespace, &stream_key, b"test-video")
-                    .await
+                let namespace_path = app_name.clone(); // application 名をそのまま namespace に
+                let namespace = [namespace_path.clone()];
+                let key = (namespace_path, track_name.clone());
+                let frame = match state
+                    .video_states
+                    .entry(key)
+                    .or_default()
+                    .handle_flv_video(data.as_ref())
                 {
-                    eprintln!("[rtmp {label}] moqt send video failed: {err:?}");
+                    Ok(f) => f,
+                    Err(err) => {
+                        eprintln!("[rtmp {label}] h264 parse failed: {err:?}");
+                        None
+                    }
+                };
+                if let Some(frame) = frame {
+                    // RTMP timestamp は ms 単位なので μs へ拡張
+                    let timestamp_us = timestamp.value as u64 * 1_000;
+                    let payload = pack_video_chunk_payload(
+                        frame.is_key,
+                        timestamp_us,
+                        frame.data.as_slice(),
+                    );
+                    if let Err(err) =
+                        moqt.send_object(&namespace, &track_name, frame.is_key, payload.as_slice()).await
+                    {
+                        eprintln!("[rtmp {label}] moqt send video failed: {err:?}");
+                    }
                 }
             }
         }

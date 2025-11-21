@@ -13,3 +13,6 @@ srt-tokio = "0.4.1"
 futures = "0.3.30"
 moqt-client-rust = { path = "../moqt-client-rust" }
 wtransport = "0.6.0"
+serde_json = "1.0"
+moqt-core = { path = "../moqt-core" }
+serde = { version = "1.0", features = ["derive"] }

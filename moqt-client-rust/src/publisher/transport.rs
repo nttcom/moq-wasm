@@ -25,6 +25,7 @@ use moqt_core::{
     },
     variable_integer::{read_variable_integer, write_variable_integer},
 };
+use std::collections::HashSet;
 use tokio::io::AsyncWriteExt;
 use url::Url;
 use wtransport::{
@@ -65,7 +66,7 @@ impl MoqtPublisher {
             control_send,
             control_recv,
             control_buf: BytesMut::new(),
-            state: PublisherState::new(),
+            state: PublisherState::default(),
         })
     }
 
@@ -187,65 +188,78 @@ impl MoqtPublisher {
         Ok(())
     }
 
-    pub async fn wait_subscribe_and_accept(
+    /// namespace 配下で期待する track すべての Subscribe を受信し、SubscribeOk を返す。
+    /// data uni stream は開かず、(track_name, subscriber_alias) を返す。
+    pub async fn wait_subscribes_and_accept(
         &mut self,
-        track_alias: u64,
-        track_namespace: &[String],
-        track_name: &str,
-    ) -> Result<u64> {
-        if self.state.subscribed_aliases.contains(&track_alias) {
-            return Ok(track_alias);
-        }
-        loop {
+        namespace: &[String],
+        mut expected_tracks: HashSet<String>,
+    ) -> Result<Vec<(String, u64)>> {
+        let mut acquired = Vec::new();
+        while !expected_tracks.is_empty() {
             let (msg_type, mut payload) = self.read_control_message().await?;
             match msg_type {
                 ControlMessageType::Subscribe => {
                     let sub: Subscribe = Subscribe::depacketize(&mut payload)?;
-                    println!(
-                        "MoQ subscribe received alias={} ns={:?} track={}",
-                        sub.track_alias(),
-                        sub.track_namespace(),
-                        sub.track_name()
-                    );
+                    let ns = sub.track_namespace();
+                    let track = sub.track_name();
 
-                    println!(
-                        "Expecting alias={} ns={:?} track={}",
-                        track_alias, track_namespace, track_name
-                    );
-                    if sub.track_alias() != track_alias {
-                        continue;
+                    if ns == namespace && expected_tracks.remove(track) {
+                        let ok = SubscribeOk::new(
+                            sub.subscribe_id(),
+                            sub.track_alias(),
+                            GroupOrder::Ascending,
+                            false,
+                            None,
+                            None,
+                            vec![],
+                        );
+                        let mut buf = BytesMut::new();
+                        ok.packetize(&mut buf);
+                        self.write_control(ControlMessageType::SubscribeOk, &buf)
+                            .await?;
+                        self.state.subscribed_aliases.insert(sub.track_alias());
+
+                        let key = (namespace.join("/"), track.to_string());
+                        let entry = self.state.tracks.entry(key).or_default();
+                        entry.alias = sub.track_alias();
+                        entry.subscriber_alias = Some(sub.track_alias());
+
+                        println!(
+                            "MoQ subscribe ok sent alias={} ns={:?} track={}",
+                            sub.track_alias(),
+                            sub.track_namespace(),
+                            sub.track_name()
+                        );
+                        acquired.push((track.to_string(), sub.track_alias()));
+                    } else {
+                        println!(
+                            "MoQ subscribe ignored ns={:?} track={}",
+                            sub.track_namespace(),
+                            sub.track_name()
+                        );
                     }
-                    if sub.track_namespace() != track_namespace || sub.track_name() != track_name {
-                        continue;
-                    }
-                    let ok = SubscribeOk::new(
-                        sub.subscribe_id(),
-                        0,
-                        GroupOrder::Ascending,
-                        false,
-                        None,
-                        None,
-                        vec![],
-                    );
-                    let mut buf = BytesMut::new();
-                    ok.packetize(&mut buf);
-                    self.write_control(ControlMessageType::SubscribeOk, &buf)
-                        .await?;
-                    self.state.subscribed_aliases.insert(sub.track_alias());
-                    println!(
-                        "MoQ subscribe ok sent alias={} namespace={:?} track={}",
-                        sub.track_alias(),
-                        track_namespace,
-                        track_name
-                    );
-                    return Ok(sub.track_alias());
                 }
                 ControlMessageType::SubscribeError => {
-                    return Err(anyhow!("received SubscribeError before ok"));
+                    return Err(anyhow!("received SubscribeError"));
                 }
-                _ => continue,
+                ControlMessageType::AnnounceOk => {
+                    println!("MoQ AnnounceOk received");
+                }
+                ControlMessageType::AnnounceError => {
+                    let _ = AnnounceError::depacketize(&mut payload)?;
+                    return Err(anyhow!("announce rejected"));
+                }
+                ControlMessageType::ServerSetup => {
+                    let _ = moqt_core::messages::control_messages::server_setup::ServerSetup::depacketize(&mut payload)?;
+                }
+                _ => {
+                    // それ以外は無視
+                }
             }
         }
+
+        Ok(acquired)
     }
 
     pub async fn send_subgroup_header(

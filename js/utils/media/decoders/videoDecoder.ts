@@ -50,6 +50,7 @@ const jitterBuffer = new JitterBuffer(
   'video_correctly', // mode
   KEYFRAME_INTERVAL_BIGINT // fallback keyframe interval
 )
+jitterBuffer.setMinDelay(2000) // playout delay to smooth playback (ms)
 
 type DecodedState = {
   groupId: bigint

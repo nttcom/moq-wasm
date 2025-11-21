@@ -2,6 +2,7 @@ mod ingest;
 mod moqt;
 mod rtmp;
 mod srt;
+mod video;
 
 use anyhow::Result;
 use clap::Parser;
