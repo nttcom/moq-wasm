@@ -4,7 +4,7 @@ export type ChunkMetadata = {
   type: string
   timestamp: number
   duration: number | null
-  sentAt?: number
+  sentAt: number
 }
 
 export type DeserializedChunk = {
@@ -39,15 +39,15 @@ export function serializeChunk(chunk: EncodedChunkLike): Uint8Array {
   return payload
 }
 
-export function deserializeChunk(payload: Uint8Array): DeserializedChunk | null {
+export function deserializeChunk(payload: Uint8Array): DeserializedChunk {
   if (payload.byteLength < META_LENGTH_BYTES) {
-    return null
+    throw new Error('Payload too small to contain metadata')
   }
   const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
   const metaLength = view.getUint32(0)
   const totalMetaLength = META_LENGTH_BYTES + metaLength
   if (payload.byteLength < totalMetaLength) {
-    return null
+    throw new Error('Payload too small to contain metadata')
   }
   const metaBytes = payload.slice(META_LENGTH_BYTES, META_LENGTH_BYTES + metaLength)
   const metadata = JSON.parse(new TextDecoder().decode(metaBytes)) as ChunkMetadata

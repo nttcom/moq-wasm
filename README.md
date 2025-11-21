@@ -8,7 +8,6 @@ Being Deployed to Github Pages.
 
 - https://nttcom.github.io/moq-wasm/
 
-
 ## Implementation
 
 Supported version: draft-ietf-moq-transport-10
@@ -108,6 +107,7 @@ cargo run -p moqt-server-sample -- --log <Log Level>
 ### Run moqt-client-sample
 
 ```shell
+cd js && npm install
 make client
 ```
 

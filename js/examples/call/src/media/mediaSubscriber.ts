@@ -49,18 +49,16 @@ export class MediaSubscriber {
         | { type: 'frame'; frame: VideoFrame }
         | { type: 'bitrate'; kbps: number }
         | { type: 'latency'; media: 'video'; ms: number }
-        | { frame: VideoFrame }
-      if ('type' in data && data.type === 'bitrate') {
+      if (data.type === 'bitrate') {
         this.handlers.onRemoteVideoBitrate?.(userId, data.kbps)
         return
       }
-      if ('type' in data && data.type === 'latency') {
+      if (data.type === 'latency') {
         this.handlers.onRemoteVideoLatency?.(userId, data.ms)
         return
       }
-      const frame = 'type' in data ? data.frame : data.frame
       await writer.ready
-      await writer.write(frame)
+      await writer.write(data.frame)
     }
 
     const stream = new MediaStream([generator])
@@ -81,28 +79,32 @@ export class MediaSubscriber {
     })
     const generator = new MediaStreamTrackGenerator({ kind: 'audio' })
     const writer = generator.writable.getWriter()
+    const context: AudioSubscriptionContext = {
+      userId,
+      worker,
+      writer,
+      stream: new MediaStream([generator])
+    }
     worker.onmessage = async (event: MessageEvent) => {
       const data = event.data as
         | { type: 'audioData'; audioData: AudioData }
         | { type: 'bitrate'; kbps: number }
         | { type: 'latency'; media: 'audio'; ms: number }
-        | { audioData: AudioData }
-      if ('type' in data && data.type === 'bitrate') {
+      if (data.type === 'bitrate') {
         this.handlers.onRemoteAudioBitrate?.(userId, data.kbps)
         return
       }
-      if ('type' in data && data.type === 'latency') {
+      if (data.type === 'latency') {
         this.handlers.onRemoteAudioLatency?.(userId, data.ms)
         return
       }
-      const audioData = 'type' in data ? data.audioData : data.audioData
+      const audioData = data.audioData
       await writer.ready
       await writer.write(audioData)
     }
 
-    const stream = new MediaStream([generator])
-    this.audioContexts.set(trackAlias, { userId, worker, writer, stream })
-    this.handlers.onRemoteAudioStream?.(userId, stream)
+    this.audioContexts.set(trackAlias, context)
+    this.handlers.onRemoteAudioStream?.(userId, context.stream)
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
       this.forwardToWorker(worker, trackAlias, groupId, message)
@@ -111,7 +113,7 @@ export class MediaSubscriber {
 
   private forwardToWorker(worker: Worker, trackAlias: bigint, groupId: bigint, message: SubgroupStreamObjectMessage) {
     if (message.objectStatus === 3) {
-      console.log(`[MediaSubscriber] Received EndOfGroup trackAlias=${trackAlias} groupId=${groupId}`)
+      console.debug(`[MediaSubscriber] Received EndOfGroup trackAlias=${trackAlias} groupId=${groupId}`)
     }
     const payload = new Uint8Array(message.objectPayload)
     const payloadLength = message.objectPayloadLength
