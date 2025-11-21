@@ -1,3 +1,4 @@
+pub(crate) mod endpoint;
 pub(crate) mod publication;
 pub(crate) mod publisher;
 pub(crate) mod session;
