@@ -1,9 +1,5 @@
-import {
-  JitterBuffer,
-  type SubgroupObject,
-  type JitterBufferSubgroupObject,
-  type SubgroupWorkerMessage
-} from '../jitterBuffer'
+import { AudioJitterBuffer } from '../audioJitterBuffer'
+import type { SubgroupObject, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 
 const audioBitrateLogger = createBitrateLogger((kbps) => {
@@ -18,6 +14,8 @@ const AUDIO_DECODER_CONFIG = {
 }
 
 let audioDecoder: AudioDecoder | undefined
+let remoteTimestampBase: number | null = null
+
 async function initializeAudioDecoder() {
   function sendAudioDataMessage(audioData: AudioData): void {
     self.postMessage({ type: 'audioData', audioData })
@@ -36,11 +34,15 @@ async function initializeAudioDecoder() {
 }
 
 const POP_INTERVAL_MS = 5
-const jitterBuffer = new JitterBuffer(1800, 'audio')
-jitterBuffer.setMinDelay(50)
+const jitterBuffer = new AudioJitterBuffer(1800)
 
 setInterval(() => {
-  const subgroupStreamObject = jitterBuffer.pop()
+  const jitterBufferEntry = jitterBuffer.pop()
+  if (!jitterBufferEntry) {
+    return
+  }
+  console.debug(jitterBufferEntry)
+  const subgroupStreamObject = jitterBufferEntry?.object
   if (subgroupStreamObject) {
     decode(subgroupStreamObject)
   }
@@ -62,9 +64,11 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
   const decoded = subgroupStreamObject.cachedChunk
   reportAudioLatency(decoded.metadata.sentAt)
 
+  const rebasedTimestamp = rebaseTimestamp(decoded.metadata.timestamp)
+
   const encodedAudioChunk = new EncodedAudioChunk({
     type: decoded.metadata.type as EncodedAudioChunkType,
-    timestamp: decoded.metadata.timestamp,
+    timestamp: rebasedTimestamp,
     duration: decoded.metadata.duration ?? undefined,
     data: decoded.data
   })
@@ -76,13 +80,19 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
   await audioDecoder.decode(encodedAudioChunk)
 }
 
-function reportAudioLatency(sentAt: number | undefined) {
-  if (typeof sentAt !== 'number') {
-    return
-  }
+function reportAudioLatency(sentAt: number) {
   const latency = Date.now() - sentAt
-  if (!Number.isFinite(latency) || latency < 0) {
-    return
-  }
   self.postMessage({ type: 'latency', media: 'audio', ms: latency })
+}
+
+/**
+ * Convert sender-side timestamps to a local timeline so the decoder can play them.
+ */
+function rebaseTimestamp(remoteTimestamp: number): number {
+  if (remoteTimestampBase === null) {
+    remoteTimestampBase = remoteTimestamp
+  }
+
+  let rebased = remoteTimestamp - remoteTimestampBase
+  return rebased
 }
