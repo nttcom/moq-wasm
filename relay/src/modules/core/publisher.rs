@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::modules::core::publish_resource::PublishedResource;
+use crate::modules::core::published_resource::PublishedResource;
 
 #[async_trait]
 pub(crate) trait Publisher: 'static + Send + Sync {
