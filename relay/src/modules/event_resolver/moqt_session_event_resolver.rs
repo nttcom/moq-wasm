@@ -1,7 +1,5 @@
 use crate::modules::{
-    core::session_event::SessionEvent,
-    enums::{FilterType, Location, MOQTMessageReceived},
-    types::SessionId,
+    core::session_event::SessionEvent, enums::MOQTMessageReceived, types::SessionId,
 };
 
 pub(crate) struct MOQTSessionEventResolver;

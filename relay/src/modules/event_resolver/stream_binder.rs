@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use dashmap::DashMap;
-
 use crate::modules::{
     core::{
         publication::Publication,
