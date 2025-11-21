@@ -24,7 +24,8 @@ pub(crate) struct Client {
 impl Client {
     pub(crate) async fn new(cert_path: String, label: String) -> anyhow::Result<Self> {
         // let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
-        let endpoint = Endpoint::<QUIC>::create_client(0)?;
+        let config = moqt::ClientConfig::default();
+        let endpoint = Endpoint::<QUIC>::create_client(config)?;
         // let url = url::Url::from_str("moqt://interop-relay.cloudflare.mediaoverquic.com:443")?;
         let url = url::Url::from_str("moqt://fb.mvfst.net:9448")?;
         // let url = url::Url::from_str("moqt://lminiero.it:9000")?;
