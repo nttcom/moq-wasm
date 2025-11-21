@@ -6,6 +6,20 @@ use crate::{
     modules::transport::transport_connection_creator::TransportConnectionCreator,
 };
 
+pub struct ClientConfig {
+    pub port: u16,
+    pub verify_certificate: bool,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            port: 0,
+            verify_certificate: true,
+        }
+    }
+}
+
 pub struct ServerConfig {
     pub port: u16,
     pub cert_path: String,
@@ -19,8 +33,8 @@ pub struct Endpoint<T: TransportProtocol> {
 }
 
 impl<T: TransportProtocol> Endpoint<T> {
-    pub fn create_client(port_num: u16) -> anyhow::Result<Self> {
-        let client = T::ConnectionCreator::client(port_num)?;
+    pub fn create_client(config: ClientConfig) -> anyhow::Result<Self> {
+        let client = T::ConnectionCreator::client(config.port, config.verify_certificate)?;
         let session_creator = SessionCreator {
             transport_creator: client,
         };

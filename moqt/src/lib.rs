@@ -11,6 +11,7 @@ pub use modules::moqt::control_plane::messages::control_messages::enums::{
     ContentExists, FilterType,
 };
 pub use modules::moqt::control_plane::messages::control_messages::location::Location;
+pub use modules::moqt::control_plane::models::endpoint::ClientConfig;
 pub use modules::moqt::control_plane::models::endpoint::Endpoint;
 pub use modules::moqt::control_plane::models::endpoint::ServerConfig;
 pub use modules::moqt::control_plane::models::publication::Publication;

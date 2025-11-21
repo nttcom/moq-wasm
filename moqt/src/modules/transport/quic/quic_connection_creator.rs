@@ -68,26 +68,16 @@ impl QUICConnectionCreator {
         Ok(server_config)
     }
 
-    fn create_client(port_num: u16, root_cert: rustls::RootCertStore) -> anyhow::Result<Self> {
+    fn create_client(port_num: u16, mut config: rustls::ClientConfig) -> anyhow::Result<Self> {
         let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
         let mut endpoint = quinn::Endpoint::client(address)?;
 
-        let mut client_crypto = rustls::ClientConfig::builder()
-            // .with_root_certificates(root_cert)
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(SkipVerification))
-            .with_no_client_auth();
-
-        // let mut client_crypto = rustls::ClientConfig::builder()
-        //     .with_root_certificates(root_cert)
-        //     .with_no_client_auth();
-
         let alpn = &[b"moq-00"];
-        client_crypto.alpn_protocols = alpn.iter().map(|&x| x.into()).collect();
-        client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+        config.alpn_protocols = alpn.iter().map(|&x| x.into()).collect();
+        config.key_log = Arc::new(rustls::KeyLogFile::new());
 
         let client_config = quinn::ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)?,
+            quinn::crypto::rustls::QuicClientConfig::try_from(config)?,
         ));
         endpoint.set_default_client_config(client_config);
 
@@ -100,13 +90,22 @@ impl QUICConnectionCreator {
 impl TransportConnectionCreator for QUICConnectionCreator {
     type Connection = QUICConnection;
 
-    fn client(port_num: u16) -> anyhow::Result<Self> {
+    fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
         let mut roots = rustls::RootCertStore::empty();
         for cert in rustls_native_certs::load_native_certs().unwrap() {
             roots.add(cert).unwrap();
         }
-        tracing::warn!("roots: {:?}", roots);
-        Self::create_client(port_num, roots)
+        let client_crypto = if verify_certificate {
+            rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth()
+        } else {
+            rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(SkipVerification))
+                .with_no_client_auth()
+        };
+        Self::create_client(port_num, client_crypto)
     }
 
     fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
@@ -115,8 +114,10 @@ impl TransportConnectionCreator for QUICConnectionCreator {
 
         let mut roots = rustls::RootCertStore::empty();
         roots.add(cert).unwrap();
-        tracing::warn!("roots: {:?}", roots);
-        Self::create_client(port_num, roots)
+        let crypto_config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        Self::create_client(port_num, crypto_config)
     }
 
     fn server(
