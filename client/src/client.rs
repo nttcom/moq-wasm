@@ -217,7 +217,7 @@ impl Client {
 
     async fn create_stream(
         label: String,
-        publication: moqt::Publication<moqt::QUIC>,
+        publication: moqt::PublishedResource<moqt::QUIC>,
         runner: &StreamTaskRunner,
     ) {
         tracing::info!("{} :create stream", label);

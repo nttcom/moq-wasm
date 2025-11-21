@@ -8,8 +8,10 @@ use crate::modules::moqt::{
         control_message_type::ControlMessageType,
         control_messages::{publish::Publish, publish_namespace::PublishNamespace},
     },
+    control_plane::models::{
+        published_resource::PublishedResource, session_context::SessionContext,
+    },
     control_plane::options::PublishOption,
-    control_plane::models::{publication::Publication, session_context::SessionContext},
     control_plane::utils,
     protocol::TransportProtocol,
 };
@@ -62,7 +64,7 @@ impl<T: TransportProtocol> Publisher<T> {
         track_namespace: String,
         track_name: String,
         option: PublishOption,
-    ) -> anyhow::Result<Publication<T>> {
+    ) -> anyhow::Result<PublishedResource<T>> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -95,7 +97,7 @@ impl<T: TransportProtocol> Publisher<T> {
                     bail!("Protocol violation")
                 } else {
                     tracing::info!("Publish ok");
-                    Ok(Publication::<T>::new(
+                    Ok(PublishedResource::<T>::new(
                         self.session.clone(),
                         track_namespace,
                         track_name,

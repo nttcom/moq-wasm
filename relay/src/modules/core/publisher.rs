@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::modules::core::publication::Publication;
+use crate::modules::core::publish_resource::PublishedResource;
 
 #[async_trait]
 pub(crate) trait Publisher: 'static + Send + Sync {
@@ -10,7 +10,7 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         track_namespace: String,
         track_name: String,
         track_alias: u64,
-    ) -> anyhow::Result<Box<dyn Publication>>;
+    ) -> anyhow::Result<Box<dyn PublishedResource>>;
 }
 
 #[async_trait]
@@ -24,7 +24,7 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         track_namespace: String,
         track_name: String,
         track_alias: u64,
-    ) -> anyhow::Result<Box<dyn Publication>> {
+    ) -> anyhow::Result<Box<dyn PublishedResource>> {
         let mut option = moqt::PublishOption::default();
         option.track_alias = track_alias;
         let result = self.publish(track_namespace, track_name, option).await?;

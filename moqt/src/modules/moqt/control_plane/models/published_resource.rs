@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-pub struct Publication<T: TransportProtocol> {
+pub struct PublishedResource<T: TransportProtocol> {
     pub(crate) session_context: Arc<SessionContext<T>>,
     pub track_namespace: String,
     pub track_name: String,
@@ -24,7 +24,7 @@ pub struct Publication<T: TransportProtocol> {
     pub delivery_timeout: Option<u64>,
 }
 
-impl<T: TransportProtocol> Publication<T> {
+impl<T: TransportProtocol> PublishedResource<T> {
     pub(crate) fn new(
         session_context: Arc<SessionContext<T>>,
         track_namespace: String,
