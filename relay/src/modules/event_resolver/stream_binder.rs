@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::modules::{
     core::{
-        publication::Publication,
+        publish_resource::PublishedResource,
         subscription::{Acceptance, Subscription},
     },
     event_resolver::stream_runner::StreamTaskRunner,
@@ -29,7 +29,7 @@ impl StreamBinder {
     pub(crate) async fn bind_by_subscribe(
         &self,
         subscription: Box<dyn Subscription>,
-        publication: Box<dyn Publication>,
+        publication: Box<dyn PublishedResource>,
     ) {
         tracing::info!("bind by subscribe");
         let relay_manager = self.relay_manager.clone();
