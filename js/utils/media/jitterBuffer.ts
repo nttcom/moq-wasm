@@ -44,6 +44,7 @@ export class JitterBuffer {
   private lastPoppedGroupId: bigint | null = null
   private lastPoppedObjectId: bigint | null = null
   private readonly keyframeInterval?: bigint
+  private lastPopWallTime: number | null = null
 
   constructor(
     private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE,
@@ -146,14 +147,21 @@ export class JitterBuffer {
 
   private popNormalMode(): JitterBufferEntry | null {
     const buffer = this.buffer[0]
-    const delayMs = performance.now() - buffer.timestamp
+    const now = performance.now()
+    const delayMs = now - buffer.timestamp
+    const sinceLastPop = this.lastPopWallTime === null ? Number.POSITIVE_INFINITY : now - this.lastPopWallTime
+    const isKeyframe =
+      buffer.objectId === 0n || buffer.object.cachedChunk?.metadata?.type === 'key'
 
-    if (delayMs < this.minDelayMs) {
+    if (!isKeyframe && delayMs < this.minDelayMs) {
+      return null
+    }
+    if (!isKeyframe && sinceLastPop < 33) {
       return null
     }
 
     this.buffer.shift()
-    this.recordPopResult(buffer)
+    this.recordPopResult(buffer, now)
     return buffer
   }
 
@@ -181,19 +189,27 @@ export class JitterBuffer {
     }
 
     const buffer = this.buffer[index]
-    const delayMs = performance.now() - buffer.timestamp
+    const now = performance.now()
+    const delayMs = now - buffer.timestamp
+    const sinceLastPop = this.lastPopWallTime === null ? Number.POSITIVE_INFINITY : now - this.lastPopWallTime
+    const isKeyframe =
+      buffer.objectId === 0n || buffer.object.cachedChunk?.metadata?.type === 'key'
 
-    // 遅延時間が足りない場合はnullを返す
-    if (delayMs < this.minDelayMs) {
+    // 遅延時間・フレーム間隔が足りない場合はnullを返す（鍵は即出し）
+    if (!isKeyframe && delayMs < this.minDelayMs) {
+      return null
+    }
+    if (!isKeyframe && sinceLastPop < 33) {
       return null
     }
 
     this.buffer.splice(index, 1)
-    this.recordPopResult(buffer)
+    this.recordPopResult(buffer, now)
     return buffer
   }
 
-  private recordPopResult(entry: JitterBufferEntry): void {
+  private recordPopResult(entry: JitterBufferEntry, now: number): void {
+    this.lastPopWallTime = now
     this.lastPoppedGroupId = entry.groupId
     this.lastPoppedObjectId = entry.objectId
 

@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use moqt_client_rust::publisher::MoqtPublisher;
+use moqt_core::messages::data_streams::object_status::ObjectStatus;
 use tokio::sync::Mutex;
+use wtransport::stream::SendStream;
 
 #[derive(Clone)]
 pub struct MoqtManager {
@@ -14,20 +16,20 @@ pub struct MoqtManager {
 #[derive(Default)]
 struct ManagerState {
     publisher: Option<MoqtPublisher>,
-    next_alias: u64,
     tracks: HashMap<(String, String), TrackInfo>,
     created_once: bool,
+    announced_namespaces: std::collections::HashSet<String>,
 }
 
 #[derive(Default)]
 struct TrackInfo {
-    alias: u64,
     subscriber_alias: Option<u64>,
     announced: bool,
     header_sent: bool,
     subscribed: bool,
-    stream: Option<wtransport::stream::SendStream>,
+    stream: Option<SendStream>,
     object_id: u64,
+    group_id: u64,
 }
 
 impl MoqtManager {
@@ -38,8 +40,8 @@ impl MoqtManager {
         }
     }
 
-    /// Setup MoQ publisher and return after SubscribeOk is sent.
-    pub async fn setup_publisher(&self, namespace: &[String], track_name: &str) -> Result<()> {
+    /// Announce namespace (once) and prepare tracks (video/audio) by waiting for SubscribeOk.
+    pub async fn setup_namespace(&self, namespace: &[String]) -> Result<()> {
         let url = match &self.url {
             Some(u) => u.clone(),
             None => return Ok(()), // MoQ 出力なし
@@ -48,30 +50,15 @@ impl MoqtManager {
         self.ensure_publisher(&url).await?;
 
         // Publisher をロック外で扱うため一時的に取り出す
-        let (mut publisher, base_alias, announce_needed, subscribed, key) = {
+        let (mut publisher, announce_needed) = {
             let mut guard = self.inner.lock().await;
             let publisher = guard
                 .publisher
                 .take()
                 .ok_or_else(|| anyhow::anyhow!("publisher not initialized"))?;
-            let key = (namespace.join("/"), track_name.to_string());
-            if !guard.tracks.contains_key(&key) {
-                let alias = guard.next_alias;
-                guard.next_alias += 1;
-                guard.tracks.insert(
-                    key.clone(),
-                    TrackInfo {
-                        alias,
-                        subscriber_alias: None,
-                        ..Default::default()
-                    },
-                );
-            }
-            let entry = guard.tracks.get_mut(&key).expect("entry exists");
-            let base_alias = entry.alias;
-            let announce_needed = !entry.announced;
-            let subscribed = entry.subscribed;
-            (publisher, base_alias, announce_needed, subscribed, key)
+            let ns = namespace.join("/");
+            let announce_needed = !guard.announced_namespaces.contains(&ns);
+            (publisher, announce_needed)
         };
 
         if announce_needed {
@@ -81,24 +68,25 @@ impl MoqtManager {
                 .context("announce")?;
         }
 
-        // SUBSCRIBE を待って SubscribeOk を返し、サーバ側 alias を採用
-        let subscriber_alias = if subscribed {
-            base_alias
-        } else {
-            publisher
-                .wait_subscribe_and_accept(base_alias, namespace, track_name)
-                .await
-                .context("wait subscribe and send ok")?
-        };
-
-        // state を更新して publisher を戻す
-        let mut guard = self.inner.lock().await;
-        if let Some(entry) = guard.tracks.get_mut(&key) {
-            if announce_needed {
-                entry.announced = true;
-            }
+        // track (video, audio) を順不同で SubscribeOk 応答し、uni stream を保持
+        let pending: std::collections::HashSet<String> =
+            ["video", "audio"].iter().map(|s| s.to_string()).collect();
+        let acquired = publisher
+            .wait_subscribes_and_accept(namespace, pending)
+            .await
+            .context("wait subscribes and accept")?;
+        for (track, subscriber_alias) in acquired {
+            let mut guard = self.inner.lock().await;
+            let key = (namespace.join("/"), track.clone());
+            let entry = guard.tracks.entry(key.clone()).or_default();
             entry.subscribed = true;
             entry.subscriber_alias = Some(subscriber_alias);
+            // uni stream はここでは開かない
+        }
+
+        let mut guard = self.inner.lock().await;
+        if announce_needed {
+            guard.announced_namespaces.insert(namespace.join("/"));
         }
         guard.publisher = Some(publisher);
         Ok(())
@@ -108,6 +96,7 @@ impl MoqtManager {
         &self,
         namespace: &[String],
         track_name: &str,
+        is_keyframe: bool,
         payload: &[u8],
     ) -> Result<()> {
         let url = match &self.url {
@@ -117,7 +106,7 @@ impl MoqtManager {
 
         self.ensure_publisher(&url).await?;
 
-        let (publisher, subscriber_alias, header_needed, key, object_id) = {
+        let (publisher, subscriber_alias, key, mut object_id, mut prev_stream, mut group_id) = {
             let mut guard = self.inner.lock().await;
             let publisher = guard
                 .publisher
@@ -128,13 +117,20 @@ impl MoqtManager {
                 .tracks
                 .get_mut(&key)
                 .ok_or_else(|| anyhow::anyhow!("track not set up"))?;
+            if !entry.subscribed {
+                return Err(anyhow::anyhow!("subscribe_ok not completed yet"));
+            }
             let subscriber_alias = entry.subscriber_alias.ok_or_else(|| {
                 anyhow::anyhow!("subscriber alias not ready (subscribe_ok pending)")
             })?;
-            let header_needed = !entry.header_sent;
-            entry.object_id = entry.object_id.saturating_add(1);
             let object_id = entry.object_id;
-            (publisher, subscriber_alias, header_needed, key, object_id)
+            let prev_stream = if is_keyframe {
+                entry.stream.take()
+            } else {
+                None
+            };
+            let group_id = entry.group_id;
+            (publisher, subscriber_alias, key, object_id, prev_stream, group_id)
         };
 
         let mut guard = self.inner.lock().await;
@@ -142,30 +138,73 @@ impl MoqtManager {
             .tracks
             .get_mut(&key)
             .ok_or_else(|| anyhow::anyhow!("track not set up"))?;
-        if entry.stream.is_none() {
-            let stream = publisher
-                .open_data_uni()
+        // 直前の GoP を閉じる
+        if let Some(mut s) = prev_stream {
+            // 前のストリームで EndOfGroup を送信
+            publisher
+                .write_subgroup_object(
+                    &mut s,
+                    subscriber_alias,
+                    group_id,
+                    0,
+                    object_id,
+                    Some(ObjectStatus::EndOfGroup),
+                    &[],
+                )
                 .await
-                .context("open data uni stream")?;
-            entry.stream = Some(stream);
+                .context("send end-of-group")?;
+            object_id = object_id.saturating_add(1);
+            if let Err(e) = s.finish().await {
+                eprintln!("[moqt] finish previous uni stream failed: {e:?}");
+            }
+            // 次の GoP: group_id を進め、object_id をリセット
+            group_id = group_id.saturating_add(1);
+            object_id = 0;
         }
-        let stream = entry.stream.as_mut().expect("stream exists");
+
+        if is_keyframe {
+            entry.header_sent = false;
+        }
+
+        if entry.stream.is_none() {
+            entry.stream = Some(
+                publisher
+                    .open_data_uni()
+                    .await
+                    .context("open data uni stream")?,
+            );
+            entry.header_sent = false;
+        }
+        let stream = entry
+            .stream
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("data uni stream not initialized"))?;
 
         // Header 未送信なら同じストリームに送る
-        if header_needed {
+        if !entry.header_sent {
             publisher
-                .write_subgroup_header(stream, subscriber_alias, 0, 0, 0)
+                .write_subgroup_header(stream, subscriber_alias, group_id, 0, 0)
                 .await
                 .context("send subgroup header")?;
+            println!(
+                "[moqt] subgroup header sent namespace={:?} track={} alias={} group_id={}",
+                namespace, track_name, subscriber_alias, group_id
+            );
             entry.header_sent = true;
         }
 
         publisher
-            .write_subgroup_object(stream, subscriber_alias, 0, 0, object_id, None, payload)
+            .write_subgroup_object(stream, subscriber_alias, group_id, 0, object_id, None, payload)
             .await
             .context("send subgroup object")?;
+        println!(
+            "[moqt] subgroup object sent namespace={:?} track={} alias={} group_id={} object_id={}",
+            namespace, track_name, subscriber_alias, group_id, object_id
+        );
 
+        object_id = object_id.saturating_add(1);
         entry.object_id = object_id;
+        entry.group_id = group_id;
         guard.publisher = Some(publisher);
         Ok(())
     }
