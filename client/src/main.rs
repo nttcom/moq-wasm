@@ -14,10 +14,10 @@ fn create_client_thread(
     tokio::task::spawn(async move {
         let client = Client::new(cert_path, "user1".to_string()).await?;
         client.publish_namespace("room1/user1".to_string()).await;
-        client.subscribe_namespace("room2".to_string()).await;
-        client
-            .publish("room1/user1".to_string(), "video".to_string())
-            .await;
+        client.subscribe_namespace("room".to_string()).await;
+        // client
+        //     .publish("room1/user1".to_string(), "video".to_string())
+        //     .await;
         // await until the application is shut down.
         let _ = signal_receiver.recv().await.ok();
         Ok(())
@@ -34,6 +34,14 @@ fn create_client_thread2(
         let client = Client::new(cert_path, "user2".to_string()).await?;
         client.publish_namespace("room2/user2".to_string()).await;
         client.subscribe_namespace("room1".to_string()).await;
+        client
+            .active_subscribe(
+                "user2".to_string(),
+                "room1/user1".to_string(),
+                "video".to_string(),
+            )
+            .await;
+
         // client
         //     .publish("room2/user2".to_string(), "video".to_string())
         //     .await;
