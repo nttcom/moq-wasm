@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::bail;
@@ -52,11 +51,6 @@ impl<T: TransportProtocol> Session<T> {
 
     pub fn create_publisher_subscriber_pair(&self) -> (Publisher<T>, Subscriber<T>) {
         (self.create_publisher(), self.create_subscriber())
-    }
-
-    pub async fn get_subscribed_namespaces(&self) -> HashSet<String> {
-        let subscribed_namespaces = self.inner.subscribed_namespaces.lock().await;
-        subscribed_namespaces.clone()
     }
 
     pub async fn receive_event(&self) -> anyhow::Result<SessionEvent<T>> {

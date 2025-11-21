@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -35,7 +35,6 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
         tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
     pub(crate) datagram_sender_map:
         tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<DatagramObject>>>,
-    pub(crate) subscribed_namespaces: tokio::sync::Mutex<HashSet<String>>,
 }
 
 impl<T: TransportProtocol> SessionContext<T> {
@@ -54,7 +53,6 @@ impl<T: TransportProtocol> SessionContext<T> {
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
             datagram_sender_map: tokio::sync::RwLock::new(HashMap::new()),
-            subscribed_namespaces: tokio::sync::Mutex::new(HashSet::new()),
         })
     }
 
@@ -73,7 +71,6 @@ impl<T: TransportProtocol> SessionContext<T> {
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
             datagram_sender_map: tokio::sync::RwLock::new(HashMap::new()),
-            subscribed_namespaces: tokio::sync::Mutex::new(HashSet::new()),
         })
     }
 
