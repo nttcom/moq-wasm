@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::modules::{
     core::{
-        publish_resource::PublishedResource,
+        published_resource::PublishedResource,
         subscription::{Acceptance, Subscription},
     },
     event_resolver::stream_runner::StreamTaskRunner,

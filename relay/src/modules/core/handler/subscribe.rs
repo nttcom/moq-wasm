@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::modules::{
-    core::publish_resource::PublishedResource,
+    core::published_resource::PublishedResource,
     enums::{ContentExists, FilterType, GroupOrder},
 };
 
