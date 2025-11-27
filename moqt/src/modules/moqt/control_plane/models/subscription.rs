@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::bail;
 
 use crate::{
-    DatagramObject, DatagramReceiver, GroupOrder, TransportProtocol,
+    DatagramReceiver, GroupOrder, ObjectDatagram, TransportProtocol,
     modules::{
         moqt::control_plane::{
             messages::control_messages::{enums::ContentExists, subscribe_ok::SubscribeOk},
@@ -16,7 +16,7 @@ use crate::{
 
 pub enum Acceptance<T: TransportProtocol> {
     Stream(StreamReceiver<T>),
-    Datagram(DatagramReceiver, DatagramObject),
+    Datagram(DatagramReceiver, ObjectDatagram),
 }
 
 pub struct Subscription<T: TransportProtocol> {

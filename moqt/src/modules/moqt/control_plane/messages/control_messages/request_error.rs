@@ -59,7 +59,8 @@ mod tests {
             };
             let buf = announce_error.encode();
             let expected_bytes_array = [
-                16, // Message Length(i)
+                0,  // Message Length(16)
+                16, // Message Length(16)
                 0,  // Request ID(i)
                 1,  // Error Code (i)
                 13, // Reason Phrase (b): length
@@ -72,7 +73,8 @@ mod tests {
         #[test]
         fn depacketize() {
             let bytes_array = [
-                16, // Message Length(i)
+                0,  // Message Length(16)
+                16, // Message Length(16)
                 0,  // Request ID(i)
                 1,  // Error Code (i)
                 13, // Reason Phrase (b): length

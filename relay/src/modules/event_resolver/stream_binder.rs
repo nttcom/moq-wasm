@@ -22,14 +22,10 @@ impl StreamBinder {
         }
     }
 
-    pub(crate) fn forward_true_publish(&self) {}
-
-    pub(crate) fn subscribe_for_forward_true_publication() {}
-
     pub(crate) async fn bind_by_subscribe(
         &self,
         subscription: Box<dyn Subscription>,
-        publication: Box<dyn PublishedResource>,
+        published_resources: Box<dyn PublishedResource>,
     ) {
         tracing::info!("bind by subscribe");
         let relay_manager = self.relay_manager.clone();
@@ -45,7 +41,7 @@ impl StreamBinder {
             let prop = RelayProperties::new();
             if let Acceptance::Datagram(receiver, object) = acceptance {
                 tracing::info!("bind by datagram");
-                let datagram_sender = publication.create_datagram();
+                let datagram_sender = published_resources.create_datagram();
                 let mut relay = Relay {
                     relay_properties: prop,
                 };

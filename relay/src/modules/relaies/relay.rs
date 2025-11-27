@@ -13,7 +13,7 @@ impl Relay {
     pub(crate) fn add_object_receiver(
         &mut self,
         datagram_receiver: Box<dyn DatagramReceiver>,
-        object_datagram: moqt::DatagramObject,
+        object_datagram: moqt::ObjectDatagram,
     ) {
         let track_alias = datagram_receiver.track_alias();
         self.initialize_if_needed(track_alias);
@@ -84,7 +84,7 @@ impl Relay {
             .entry(track_alias)
             .or_insert_with(|| {
                 sender_check_flag = true;
-                let (sender, _) = tokio::sync::broadcast::channel::<moqt::DatagramObject>(1024);
+                let (sender, _) = tokio::sync::broadcast::channel::<moqt::ObjectDatagram>(1024);
                 sender
             });
         if queue_check_flag && sender_check_flag {

@@ -117,7 +117,8 @@ mod tests {
             let buf = subscribe_announces.encode();
 
             let expected_bytes_array = [
-                19, // Message Length(i)
+                0,  // Message Length(16)
+                19, // Message Length(16)
                 0,  // Request ID(i)
                 2,  // Track Namespace Prefix(tuple): Number of elements
                 4,  // Track Namespace Prefix(b): Length
@@ -135,7 +136,8 @@ mod tests {
         #[test]
         fn depacketize() {
             let bytes_array = [
-                19, // Message Length(i)
+                0,  // Message Length(16)
+                19, // Message Length(16)
                 0,  // Request ID(i)
                 2,  // Track Namespace Prefix(tuple): Number of elements
                 4,  // Track Namespace Prefix(b): Length

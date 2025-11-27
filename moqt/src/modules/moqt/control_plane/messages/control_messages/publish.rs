@@ -123,9 +123,7 @@ mod tests {
                     },
                 },
                 forward: true,
-                parameters: vec![VersionSpecificParameter::AuthorizationInfo(
-                    AuthorizationInfo::new("token".to_string()),
-                )],
+                parameters: vec![],
             };
 
             let mut buf = publish_message.encode();
@@ -211,7 +209,7 @@ mod tests {
             let buf = publish_message.encode();
 
             let expected_bytes = vec![
-                17, 1, 1, 3, b'm', b'o', b'q', 5, b'v', b'i', b'd', b'e', b'o', 2, 1, 0, 1, 0,
+                0, 17, 1, 1, 3, b'm', b'o', b'q', 5, b'v', b'i', b'd', b'e', b'o', 2, 1, 0, 1, 0,
             ];
             assert_eq!(buf.as_ref(), expected_bytes.as_slice());
         }

@@ -140,9 +140,9 @@ mod tests {
             let buf = subscribe.encode();
 
             let expected_bytes_array = [
-                35, // Message Length(i)
+                0,  // Message Length(16)
+                34, // Message Length(16)
                 0,  // Subscribe ID (i)
-                0,  // Track Alias (i)
                 2,  // Track Namespace(tuple): Number of elements
                 4,  // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -196,7 +196,8 @@ mod tests {
             let buf = subscribe.encode();
 
             let expected_bytes_array = [
-                37, // Message Length(i)
+                0,  // Message Length(16)
+                36, // Message Length(16)
                 0,  // Subscribe ID (i)
                 2,  // Track Namespace(tuple): Number of elements
                 4,  // Track Namespace(b): Length
@@ -254,7 +255,8 @@ mod tests {
             let buf = subscribe.encode();
 
             let expected_bytes_array = [
-                38, // Message Length(i)
+                0,  // Message Length(16)
+                37, // Message Length(16)
                 0,  // Subscribe ID (i)
                 2,  // Track Namespace(tuple): Number of elements
                 4,  // Track Namespace(b): Length
@@ -282,7 +284,8 @@ mod tests {
         #[test]
         fn depacketize_latest_group() {
             let bytes_array = [
-                35, // Message Length(i)
+                0,  // Message Length(16)
+                34, // Message Length(16)
                 0,  // Subscribe ID (i)
                 2,  // Track Namespace(tuple): Number of elements
                 4,  // Track Namespace(b): Length
@@ -333,7 +336,8 @@ mod tests {
         #[test]
         fn depacketize_absolute_start() {
             let bytes_array = [
-                37, // Message Length(i)
+                0,  // Message Length(16)
+                36, // Message Length(16)
                 0,  // Subscribe ID (i)
                 2,  // Track Namespace(tuple): Number of elements
                 4,  // Track Namespace(b): Length
@@ -391,7 +395,8 @@ mod tests {
         #[test]
         fn depacketize_absolute_range() {
             let bytes_array = [
-                38, // Message Length(i)
+                0,  // Message Length(16)
+                37, // Message Length(16)
                 0,  // Subscribe ID (i)
                 2,  // Track Namespace(tuple): Number of elements
                 4,  // Track Namespace(b): Length

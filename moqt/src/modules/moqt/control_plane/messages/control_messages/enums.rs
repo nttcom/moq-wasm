@@ -12,8 +12,8 @@ use crate::{
 #[derive(Debug, Clone, TryFromPrimitive, IntoPrimitive)]
 #[repr(u8)]
 enum FilterTypeValue {
-    LatestObject = 0x01,
-    LatestGroup = 0x02,
+    LatestGroup = 0x01,
+    LatestObject = 0x02,
     AbsoluteStart = 0x03,
     AbsoluteRange = 0x04,
 }

@@ -119,7 +119,8 @@ mod tests {
                 let buf = announce_message.encode();
 
                 let expected_bytes_array = [
-                    19, // Message Length
+                    0,  // Message Length(16)
+                    19, // Message Length(16)
                     0,  // request id(u64)
                     2,  // Track Namespace(tuple): Number of elements
                     4,  // Track Namespace(b): Length
@@ -144,7 +145,8 @@ mod tests {
                 let buf = announce_message.encode();
 
                 let expected_bytes_array = [
-                    13, // Message Length
+                    0,  // Message Length(16)
+                    13, // Message Length(16)
                     0,  // request id(u64)
                     2,  // Track Namespace(tuple): Number of elements
                     4,  // Track Namespace(b): Length
@@ -167,7 +169,8 @@ mod tests {
             #[test]
             fn with_parameter() {
                 let bytes_array = [
-                    19, // Message Length
+                    0,  // Message Length(16)
+                    19, // Message Length(16)
                     0,  // request id(u64)
                     2,  // Track Namespace(tuple): Number of elements
                     4,  // Track Namespace(b): Length
@@ -198,7 +201,8 @@ mod tests {
             #[test]
             fn without_parameter() {
                 let bytes_array = [
-                    13, // Message Length
+                    0,  // Message Length(16)
+                    13, // Message Length(16)
                     0,  // request id(u64)
                     2,  // Track Namespace(tuple): Number of elements
                     4,  // Track Namespace(b): Length

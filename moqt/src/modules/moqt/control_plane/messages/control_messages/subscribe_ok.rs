@@ -112,7 +112,7 @@ mod tests {
             let buf = subscribe_ok.encode();
 
             let expected_bytes_array = [
-                12, // Message Length(i)
+                0, 12, // Message Length(i)
                 0,  // Request ID (i)
                 1,  // Track alias (i)
                 1,  // Expires (i)
@@ -154,6 +154,7 @@ mod tests {
             let buf = subscribe_ok.encode();
 
             let expected_bytes_array = [
+                0,  // Message Length(16)
                 14, // Message Length(i)
                 0,  // Request ID (i)
                 2,  // Track alias (i)
@@ -173,6 +174,7 @@ mod tests {
         #[test]
         fn depacketize_content_not_exists() {
             let bytes_array = [
+                0,  // Message Length(16)
                 12, // Message Length(i)
                 0,  // Request ID (i)
                 1,  // Track alias (i)
@@ -213,7 +215,8 @@ mod tests {
         #[test]
         fn depacketize_content_exists() {
             let bytes_array = [
-                14, // Message Length(i)
+                0,  // Message Length(16)
+                14, // Message Length(16)
                 0,  // Request ID (i)
                 2,  // Track alias (i)
                 1,  // Expires (i)
