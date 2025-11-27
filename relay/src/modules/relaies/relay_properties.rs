@@ -1,11 +1,11 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use dashmap::DashMap;
-use moqt::DatagramObject;
+use moqt::ObjectDatagram;
 
 pub(crate) struct RelayProperties {
-    pub(crate) sender_map: Arc<DashMap<u64, tokio::sync::broadcast::Sender<DatagramObject>>>,
-    pub(crate) object_queue: Arc<DashMap<u64, VecDeque<DatagramObject>>>,
+    pub(crate) sender_map: Arc<DashMap<u64, tokio::sync::broadcast::Sender<ObjectDatagram>>>,
+    pub(crate) object_queue: Arc<DashMap<u64, VecDeque<ObjectDatagram>>>,
     pub(crate) joinset: tokio::task::JoinSet<()>,
 }
 

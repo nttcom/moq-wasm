@@ -7,7 +7,7 @@ use anyhow::bail;
 use bytes::BytesMut;
 
 use crate::{
-    DatagramObject, SessionEvent, TransportProtocol,
+    ObjectDatagram, SessionEvent, TransportProtocol,
     modules::moqt::control_plane::{
         constants::{self, MOQ_TRANSPORT_VERSION},
         enums::{RequestId, ResponseMessage},
@@ -34,7 +34,7 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) sender_map:
         tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
     pub(crate) datagram_sender_map:
-        tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<DatagramObject>>>,
+        tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<ObjectDatagram>>>,
 }
 
 impl<T: TransportProtocol> SessionContext<T> {

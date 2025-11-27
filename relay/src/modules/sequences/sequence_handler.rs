@@ -219,6 +219,7 @@ impl SequenceHandler {
                 .ok(
                     subscription.track_alias(),
                     subscription.expires(),
+                    // TODO: implements cache then assign accurate value.
                     ContentExists::True {
                         location: Location {
                             group_id: 0,
@@ -251,6 +252,25 @@ impl SequenceHandler {
                 .await
             {
                 tracing::info!("send `SUBSCRIBE_OK` ok");
+                if handler
+                    .ok(
+                        subscription.track_alias(),
+                        subscription.expires(),
+                        ContentExists::False,
+                    )
+                    .await
+                    .is_ok()
+                {
+                    let pub_resource = handler.into_publication(subscription.track_alias());
+                    self.stream_handler
+                        .bind_by_subscribe(subscription, pub_resource)
+                        .await;
+                } else {
+                    tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
+                    // TODO: send_unsubscribe
+                    // TODO: close session
+                    return;
+                }
             } else {
                 tracing::warn!("Failed to send `SUBSCRIBE_OK`. Session close.");
             }

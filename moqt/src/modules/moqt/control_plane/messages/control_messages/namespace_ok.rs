@@ -43,7 +43,8 @@ mod tests {
             let buf = announce_ok.encode();
 
             let expected_bytes_array = [
-                1, // Message Length(i)
+                0, // Message Length(16)
+                1, // Message Length(16)
                 0, // Request ID(i)
             ];
             assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
@@ -53,7 +54,8 @@ mod tests {
         fn depacketize() {
             let request_id = 0;
             let bytes_array = [
-                1, // Message Length(i)
+                0, // Message Length(16)
+                1, // Message Length(16)
                 0, // Request ID(i)
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());

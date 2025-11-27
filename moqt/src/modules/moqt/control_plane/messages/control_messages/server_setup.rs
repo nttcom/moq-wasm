@@ -73,14 +73,14 @@ mod tests {
             let buf = server_setup.encode();
 
             let expected_bytes_array = [
-                0, 13,  // Payload length
+                0, 22,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff000a) in 62bit
-                1,   // Number of Parameters (i)
+                0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000a) in 62bit
+                2,   // Number of Parameters (i)
                 2,   // Parameter Type (i): Type(MaxSubscribeID)
-                2,   // Parameter Length (i)
                 71,  // Parameter Value (..): Length(01 of 2MSB)
                 208, // Parameter Value (..): Value(2000) in 62bit
+                7, 8, b'M', b'O', b'Q', b'-', b'W', b'A', b'S', b'M',
             ];
 
             assert_eq!(buf.as_ref(), expected_bytes_array);
@@ -89,19 +89,19 @@ mod tests {
         #[test]
         fn decode() {
             let bytes_array = [
-                0, 13,  // Payload length
+                0, 22,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
-                0, 0, 0, 255, 0, 0, 10,  // Supported Version(i): Value(0xff00000a) in 62bit
-                1,   // Number of Parameters (i)
+                0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff00000a) in 62bit
+                2,   // Number of Parameters (i)
                 2,   // Parameter Type (i): Type(MaxSubscribeID)
-                2,   // Parameter Length (i)
                 71,  // Parameter Value (..): Length(01 of 2MSB)
                 208, // Parameter Value (..): Value(2000) in 62bit
+                7, 8, b'M', b'O', b'Q', b'-', b'W', b'A', b'S', b'M',
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
             let depacketized_server_setup = ServerSetup::decode(&mut buf).unwrap();
-            assert_eq!(depacketized_server_setup.selected_version, 0xff00000a);
+            assert_eq!(depacketized_server_setup.selected_version, 0xff00000e);
             assert_eq!(
                 depacketized_server_setup.setup_parameters.max_request_id,
                 2000

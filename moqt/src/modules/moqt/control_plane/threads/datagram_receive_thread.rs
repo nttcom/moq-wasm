@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    DatagramObject, TransportProtocol,
+    ObjectDatagram, TransportProtocol,
     modules::{
         moqt::control_plane::models::session_context::SessionContext,
         transport::transport_connection::TransportConnection,
@@ -23,10 +23,10 @@ impl DatagramReceiveThread {
                     if let Ok(mut data) = data {
                         tracing::info!("Received datagram: {:?}", data);
                         // TODO: Error Handling.
-                        let datagram_object = match DatagramObject::depacketize(&mut data) {
-                            Ok(object) => object,
-                            Err(e) => {
-                                tracing::error!("Failed to depacketize datagram object: {}", e);
+                        let datagram_object = match ObjectDatagram::decode(&mut data) {
+                            Some(object) => object,
+                            None => {
+                                tracing::error!("Failed to depacketize datagram object");
                                 break;
                             }
                         };

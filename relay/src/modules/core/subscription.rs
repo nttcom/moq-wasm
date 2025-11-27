@@ -8,7 +8,7 @@ use crate::modules::{
 
 #[derive(Debug)]
 pub(crate) enum Acceptance {
-    Datagram(Box<dyn DatagramReceiver>, moqt::DatagramObject),
+    Datagram(Box<dyn DatagramReceiver>, moqt::ObjectDatagram),
 }
 
 #[async_trait]

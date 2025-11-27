@@ -4,13 +4,13 @@ use crate::modules::extensions::{
     buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VariantType {
     Odd(Bytes),
     Even(u64),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyValuePair {
     pub key: u64,
     pub value: VariantType,
