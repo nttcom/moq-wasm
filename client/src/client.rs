@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::bail;
-use moqt::{DatagramHeader, Endpoint, QUIC, Session, SubscribeOption};
+use moqt::{DatagramField, Endpoint, ObjectDatagram, QUIC, Session, SubscribeOption};
 
 use crate::stream_runner::StreamTaskRunner;
 
@@ -187,13 +187,7 @@ impl Client {
             match acceptance {
                 moqt::Acceptance::Stream(stream) => todo!(),
                 moqt::Acceptance::Datagram(mut receiver, object) => {
-                    let text = String::from_utf8(object.object_payload.to_vec()).unwrap();
-                    tracing::info!(
-                        "{} :subscribe datagram track_alias:{}, message: {}",
-                        label,
-                        object.track_alias,
-                        text
-                    );
+                    tracing::info!("{} :subscribe datagram :{:?}", label, object);
                     loop {
                         let result = receiver.receive().await;
                         if let Err(e) = result {
@@ -201,13 +195,7 @@ impl Client {
                             break;
                         }
                         let object = result.unwrap();
-                        let text = String::from_utf8(object.object_payload.to_vec()).unwrap();
-                        tracing::info!(
-                            "{} :subscribe datagram track_alias:{}, message: {}",
-                            label,
-                            object.track_alias,
-                            text
-                        );
+                        tracing::info!("{} :subscribe datagram, message: {:?}", label, object);
                     }
                 }
             }
@@ -235,18 +223,13 @@ impl Client {
             let mut id = 0;
             tracing::info!("{} :create stream start", label);
             loop {
-                let header = DatagramHeader {
-                    group_id: id,
-                    object_id: Some(id),
-                    publisher_priority: 128,
-                    prior_object_id_gap: None,
-                    prior_group_id_gap: None,
-                    immutable_extensions: vec![],
-                };
                 let format_text = format!("hello from {}! id: {}", label, id);
-                let obj = datagram
-                    .create_object_datagram(header, format_text.as_bytes())
-                    .unwrap();
+                let field = DatagramField::Payload0x00 {
+                    object_id: id,
+                    publisher_priority: 128,
+                    payload: format_text.as_bytes().to_vec(),
+                };
+                let obj = ObjectDatagram::new(publication.track_alias, id, field);
                 match datagram.send(obj).await {
                     Ok(_) => {
                         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
@@ -300,13 +283,7 @@ impl Client {
             match acceptance {
                 moqt::Acceptance::Stream(stream) => todo!(),
                 moqt::Acceptance::Datagram(mut receiver, object) => {
-                    let text = String::from_utf8(object.object_payload.to_vec()).unwrap();
-                    tracing::info!(
-                        "{} :subscribe datagram track_alias:{}, message: {}",
-                        label,
-                        object.track_alias,
-                        text
-                    );
+                    tracing::info!("{} :subscribe datagram: {:?}", label, object,);
                     loop {
                         let result = receiver.receive().await;
                         if let Err(e) = result {
@@ -314,13 +291,7 @@ impl Client {
                             break;
                         }
                         let object = result.unwrap();
-                        let text = String::from_utf8(object.object_payload.to_vec()).unwrap();
-                        tracing::info!(
-                            "{} :subscribe datagram track_alias:{}, message: {}",
-                            label,
-                            object.track_alias,
-                            text
-                        );
+                        tracing::info!("{} :subscribe datagram: {:?}", label, object);
                     }
                 }
             };

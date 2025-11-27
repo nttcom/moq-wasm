@@ -24,7 +24,7 @@
 // | 0x21 | No           | Yes        | Yes       | Status           |
 // +------+--------------+------------+-----------+------------------+
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
@@ -32,7 +32,7 @@ use crate::modules::{
 };
 
 #[repr(u64)]
-enum DatagramTypeValue {
+pub(crate) enum DatagramTypeValue {
     Payload0x00 = 0x00,
     Payload0x01 = 0x01,
     Payload0x02WithEndOfGroup = 0x02,
@@ -45,48 +45,65 @@ enum DatagramTypeValue {
     Status0x21 = 0x21,
 }
 
+impl DatagramTypeValue {
+    pub(crate) fn from_datagram_field(val: &DatagramField) -> Self {
+        match val {
+            DatagramField::Payload0x00 { .. } => Self::Payload0x00,
+            DatagramField::Payload0x01 { .. } => Self::Payload0x01,
+            DatagramField::Payload0x02WithEndOfGroup { .. } => Self::Payload0x02WithEndOfGroup,
+            DatagramField::Payload0x03WithEndOfGroup { .. } => Self::Payload0x03WithEndOfGroup,
+            DatagramField::Payload0x04 { .. } => Self::Payload0x04,
+            DatagramField::Payload0x05 { .. } => Self::Payload0x05,
+            DatagramField::Payload0x06WithEndOfGroup { .. } => Self::Payload0x06WithEndOfGroup,
+            DatagramField::Payload0x07WithEndOfGroup { .. } => Self::Payload0x07WithEndOfGroup,
+            DatagramField::Status0x20 { .. } => Self::Status0x20,
+            DatagramField::Status0x21 { .. } => Self::Status0x21,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub(crate) enum DatagramField {
+pub enum DatagramField {
     Payload0x00 {
         object_id: u64,
         publisher_priority: u8,
-        payload: Bytes,
+        payload: Vec<u8>,
     },
     Payload0x01 {
         object_id: u64,
         publisher_priority: u8,
         extension_headers: Vec<KeyValuePair>,
-        payload: Bytes,
+        payload: Vec<u8>,
     },
     Payload0x02WithEndOfGroup {
         object_id: u64,
         publisher_priority: u8,
-        payload: Bytes,
+        payload: Vec<u8>,
     },
     Payload0x03WithEndOfGroup {
         object_id: u64,
         publisher_priority: u8,
         extension_headers: Vec<KeyValuePair>,
-        payload: Bytes,
+        payload: Vec<u8>,
     },
     Payload0x04 {
         object_id: u64,
         publisher_priority: u8,
-        payload: Bytes,
+        payload: Vec<u8>,
     },
     Payload0x05 {
         publisher_priority: u8,
         extension_headers: Vec<KeyValuePair>,
-        payload: Bytes,
+        payload: Vec<u8>,
     },
     Payload0x06WithEndOfGroup {
         publisher_priority: u8,
-        payload: Bytes,
+        payload: Vec<u8>,
     },
     Payload0x07WithEndOfGroup {
         publisher_priority: u8,
         extension_headers: Vec<KeyValuePair>,
-        payload: Bytes,
+        payload: Vec<u8>,
     },
     Status0x20 {
         object_id: u64,
@@ -401,7 +418,7 @@ mod tests {
             let field = DatagramField::Payload0x00 {
                 object_id: 123,
                 publisher_priority: 10,
-                payload: Bytes::from(vec![1, 2, 3, 4, 5]),
+                payload: vec![1, 2, 3, 4, 5],
             };
 
             // execution
@@ -435,7 +452,7 @@ mod tests {
                     key: 1,
                     value: VariantType::Odd(Bytes::from(vec![10, 20])),
                 }],
-                payload: Bytes::from(vec![6, 7, 8, 9, 10]),
+                payload: vec![6, 7, 8, 9, 10],
             };
 
             // execution
@@ -461,7 +478,7 @@ mod tests {
                         value: VariantType::Odd(Bytes::from(vec![10, 20]))
                     }
                 );
-                assert_eq!(payload, Bytes::from(vec![6, 7, 8, 9, 10]));
+                assert_eq!(payload, vec![6, 7, 8, 9, 10]);
             } else {
                 panic!("Decoded into wrong variant");
             }
@@ -474,7 +491,7 @@ mod tests {
             let field = DatagramField::Payload0x02WithEndOfGroup {
                 object_id: 789,
                 publisher_priority: 30,
-                payload: Bytes::from(vec![11, 12, 13, 14, 15]),
+                payload: vec![11, 12, 13, 14, 15],
             };
 
             // execution
@@ -491,7 +508,7 @@ mod tests {
             {
                 assert_eq!(object_id, 789);
                 assert_eq!(publisher_priority, 30);
-                assert_eq!(payload, Bytes::from(vec![11, 12, 13, 14, 15]));
+                assert_eq!(payload, vec![11, 12, 13, 14, 15]);
             } else {
                 panic!("Decoded into wrong variant");
             }
@@ -508,7 +525,7 @@ mod tests {
                     key: 2,
                     value: VariantType::Even(12345),
                 }],
-                payload: Bytes::from(vec![16, 17, 18, 19, 20]),
+                payload: vec![16, 17, 18, 19, 20],
             };
 
             // execution
@@ -547,7 +564,7 @@ mod tests {
             let field = DatagramField::Payload0x04 {
                 object_id: 112,
                 publisher_priority: 50,
-                payload: Bytes::from(vec![21, 22, 23, 24, 25]),
+                payload: vec![21, 22, 23, 24, 25],
             };
 
             // execution
@@ -580,7 +597,7 @@ mod tests {
                     key: 3,
                     value: VariantType::Odd(Bytes::from(vec![30, 40])),
                 }],
-                payload: Bytes::from(vec![26, 27, 28, 29, 30]),
+                payload: vec![26, 27, 28, 29, 30],
             };
 
             // execution
@@ -604,7 +621,7 @@ mod tests {
                         value: VariantType::Odd(Bytes::from(vec![30, 40]))
                     }
                 );
-                assert_eq!(payload, Bytes::from(vec![26, 27, 28, 29, 30]));
+                assert_eq!(payload, vec![26, 27, 28, 29, 30]);
             } else {
                 panic!("Decoded into wrong variant");
             }
@@ -616,7 +633,7 @@ mod tests {
             // setup
             let field = DatagramField::Payload0x06WithEndOfGroup {
                 publisher_priority: 70,
-                payload: Bytes::from(vec![31, 32, 33, 34, 35]),
+                payload: vec![31, 32, 33, 34, 35],
             };
 
             // execution
@@ -647,7 +664,7 @@ mod tests {
                     key: 4,
                     value: VariantType::Even(54321),
                 }],
-                payload: Bytes::from(vec![36, 37, 38, 39, 40]),
+                payload: vec![36, 37, 38, 39, 40],
             };
 
             // execution

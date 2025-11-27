@@ -22,6 +22,7 @@ pub use modules::moqt::control_plane::models::subscription::Acceptance;
 pub use modules::moqt::control_plane::models::subscription::Subscription;
 pub use modules::moqt::control_plane::options::PublishOption;
 pub use modules::moqt::control_plane::options::SubscribeOption;
+pub use modules::moqt::data_plane::object::datagram_field::DatagramField;
 pub use modules::moqt::data_plane::object::object_datagram::ObjectDatagram;
 pub use modules::moqt::data_plane::streams::datagram::datagram_receiver::DatagramReceiver;
 pub use modules::moqt::data_plane::streams::datagram::datagram_sender::DatagramHeader;

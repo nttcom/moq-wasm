@@ -3,7 +3,7 @@ use bytes::BytesMut;
 use crate::modules::extensions::buf_get_ext::BufGetExt;
 use crate::modules::extensions::buf_put_ext::BufPutExt;
 use crate::modules::extensions::result_ext::ResultExt;
-use crate::modules::moqt::data_plane::object::datagram_field::DatagramField;
+use crate::modules::moqt::data_plane::object::datagram_field::{DatagramField, DatagramTypeValue};
 use crate::modules::moqt::data_plane::object::key_value_pair::KeyValuePair;
 
 type ExtensionHeader = KeyValuePair;
@@ -38,11 +38,20 @@ type ExtensionHeader = KeyValuePair;
 pub struct ObjectDatagram {
     pub(crate) message_type: u64,
     pub track_alias: u64,
-    pub(crate) group_id: u64,
-    pub(crate) field: DatagramField,
+    pub group_id: u64,
+    pub field: DatagramField,
 }
 
 impl ObjectDatagram {
+    pub fn new(track_alias: u64, group_id: u64, field: DatagramField) -> Self {
+        Self {
+            message_type: DatagramTypeValue::from_datagram_field(&field) as u64,
+            track_alias,
+            group_id,
+            field,
+        }
+    }
+
     pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
         let message_type = buf.try_get_varint().log_context("datagram type").ok()?;
         let track_alias = buf.try_get_varint().log_context("track alias").ok()?;
@@ -73,8 +82,6 @@ impl ObjectDatagram {
 mod tests {
     mod success {
 
-        use bytes::Bytes;
-
         use crate::modules::moqt::data_plane::object::{
             datagram_field::DatagramField,
             key_value_pair::{KeyValuePair, VariantType},
@@ -91,7 +98,7 @@ mod tests {
                 field: DatagramField::Payload0x00 {
                     object_id: 3,
                     publisher_priority: 128,
-                    payload: Bytes::from(vec![0, 1, 2, 3]),
+                    payload: vec![0, 1, 2, 3],
                 },
             };
 
@@ -136,7 +143,7 @@ mod tests {
                         key: 0x3c, // PriorGroupIdGap
                         value: VariantType::Even(5),
                     }],
-                    payload: Bytes::from(vec![0, 1, 2, 3]),
+                    payload: vec![0, 1, 2, 3],
                 },
             };
 
@@ -167,7 +174,10 @@ mod tests {
 
             assert_eq!(object_id, depacketized_object_id);
             assert_eq!(publisher_priority, depacketized_publisher_priority);
-            assert_eq!(extension_headers[0].key, depacketized_extension_headers[0].key);
+            assert_eq!(
+                extension_headers[0].key,
+                depacketized_extension_headers[0].key
+            );
             assert!(matches!(
                 depacketized_extension_headers[0].value,
                 VariantType::Even(5)
