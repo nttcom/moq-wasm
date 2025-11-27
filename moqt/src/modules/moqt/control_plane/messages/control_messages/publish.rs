@@ -101,11 +101,7 @@ impl Publish {
 mod tests {
     mod success {
         use crate::modules::moqt::control_plane::messages::control_messages::{
-            enums::ContentExists,
-            group_order::GroupOrder,
-            location::Location,
-            publish::Publish,
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            enums::ContentExists, group_order::GroupOrder, location::Location, publish::Publish,
         };
 
         #[test]
