@@ -201,6 +201,12 @@ impl MoqtPublisher {
             match msg_type {
                 ControlMessageType::Subscribe => {
                     let sub: Subscribe = Subscribe::depacketize(&mut payload)?;
+                    print!(
+                        "MoQ subscribe received alias={} ns={:?} track={}",
+                        sub.track_alias(),
+                        sub.track_namespace(),
+                        sub.track_name()
+                    );
                     let ns = sub.track_namespace();
                     let track = sub.track_name();
 

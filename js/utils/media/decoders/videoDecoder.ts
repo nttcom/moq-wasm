@@ -40,13 +40,12 @@ async function initializeVideoDecoder() {
   return decoder
 }
 
-const POP_INTERVAL_MS = 5
+const POP_INTERVAL_MS = 33
 const jitterBuffer = new VideoJitterBuffer(
   1800, // maxBufferSize
-  'correctly', // mode
+  'normal', // mode
   KEYFRAME_INTERVAL_BIGINT // fallback keyframe interval
 )
-jitterBuffer.setMinDelay(2000) // playout delay to smooth playback (ms)
 
 type DecodedState = {
   groupId: bigint

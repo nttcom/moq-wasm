@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Default)]
 pub struct AvcState {
@@ -17,12 +18,14 @@ pub struct VideoFrame {
 pub fn pack_video_chunk_payload(
     is_key: bool,
     timestamp_us: u64,
+    sent_at_ms: u64,
     data: &[u8],
 ) -> Vec<u8> {
     let meta = serde_json::json!({
         "type": if is_key { "key" } else { "delta" },
         "timestamp": timestamp_us as i64,
         "duration": 0i64, // duration null 相当
+        "sentAt": sent_at_ms as i64,
     });
     let meta_bytes = meta.to_string().into_bytes();
     let meta_len = meta_bytes.len() as u32;

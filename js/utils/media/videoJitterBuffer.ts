@@ -1,11 +1,12 @@
 import { deserializeChunk } from './chunk'
 import type { JitterBufferSubgroupObject, SubgroupObject } from './jitterBufferTypes'
 
-const DEFAULT_MIN_DELAY_MS = 50
+const DEFAULT_MIN_DELAY_MS = 25
 const DEFAULT_JITTER_BUFFER_SIZE = 1800
 const OBJECT_STATUS_END_OF_GROUP = 3
+const MIN_FRAME_INTERVAL_MS = 20
 
-export type VideoJitterBufferMode = 'normal' | 'correctly'
+export type VideoJitterBufferMode = 'normal' | 'correctly' | 'fast'
 
 type VideoJitterBufferEntry = {
   groupId: bigint
@@ -22,6 +23,8 @@ export class VideoJitterBuffer {
   private lastPoppedGroupId: bigint | null = null
   private lastPoppedObjectId: bigint | null = null
   private readonly keyframeInterval?: bigint
+  private lastPopWallTime: number | null = null
+  private pendingEndGroupTail: Map<bigint, bigint> = new Map()
 
   constructor(
     private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE,
@@ -87,6 +90,10 @@ export class VideoJitterBuffer {
       return null
     }
 
+    if (this.mode === 'fast') {
+      return this.popFastMode()
+    }
+
     if (this.mode === 'normal') {
       return this.popNormalMode()
     }
@@ -94,15 +101,26 @@ export class VideoJitterBuffer {
     return this.popCorrectlyMode()
   }
 
+  private popFastMode(): VideoJitterBufferEntry | null {
+    const head = this.buffer.shift()
+    if (!head) {
+      return null
+    }
+    this.recordPopResult(head, Date.now())
+    return head
+  }
+
   private popNormalMode(): VideoJitterBufferEntry | null {
     const head = this.buffer[0]
-    const delayMs = performance.now() - head.bufferInsertTimestamp
+    const nowMs = Date.now()
+    const base = Number.isFinite(head.sentAt) ? head.sentAt : performance.timeOrigin + head.bufferInsertTimestamp
+    const delayMs = nowMs - base
     if (delayMs < this.minDelayMs) {
       return null
     }
 
     this.buffer.shift()
-    this.recordPopResult(head)
+    this.recordPopResult(head, nowMs)
     return head
   }
 
@@ -126,13 +144,16 @@ export class VideoJitterBuffer {
     }
 
     const entry = this.buffer[index]
-    const delayMs = performance.now() - entry.bufferInsertTimestamp
-    if (delayMs < this.minDelayMs) {
+    const nowMs = Date.now()
+    const base = Number.isFinite(entry.sentAt) ? entry.sentAt : performance.timeOrigin + entry.bufferInsertTimestamp
+    const delayMs = nowMs - base
+    const sinceLastPop = this.lastPopWallTime === null ? Number.POSITIVE_INFINITY : nowMs - this.lastPopWallTime
+    if (delayMs < this.minDelayMs || sinceLastPop < MIN_FRAME_INTERVAL_MS) {
       return null
     }
 
     this.buffer.splice(index, 1)
-    this.recordPopResult(entry)
+    this.recordPopResult(entry, nowMs)
     return entry
   }
 
@@ -149,13 +170,13 @@ export class VideoJitterBuffer {
     return false
   }
 
-  private recordPopResult(entry: VideoJitterBufferEntry): void {
+  private recordPopResult(entry: VideoJitterBufferEntry, nowMs: number): void {
+    this.lastPopWallTime = nowMs
     this.lastPoppedGroupId = entry.groupId
     this.lastPoppedObjectId = entry.objectId
 
     if (entry.isEndOfGroup) {
-      this.lastPoppedGroupId = entry.groupId + 1n
-      this.lastPoppedObjectId = -1n
+      this.pendingEndGroupTail.set(entry.groupId, entry.objectId)
     }
   }
 
@@ -164,6 +185,13 @@ export class VideoJitterBuffer {
       return { groupId: 0n, objectId: 0n }
     }
 
+    // EndOfGroup が来ていて、かつそこまでポップ済みなら次グループへ
+    const pendingTail = this.pendingEndGroupTail.get(this.lastPoppedGroupId)
+    if (pendingTail !== undefined && this.lastPoppedObjectId >= pendingTail) {
+      return { groupId: this.lastPoppedGroupId + 1n, objectId: 0n }
+    }
+
+    // keyframeInterval による推測は残す（終端が見つからない場合のフォールバック）
     if (this.keyframeInterval !== undefined && this.lastPoppedObjectId === this.keyframeInterval - 1n) {
       return { groupId: this.lastPoppedGroupId + 1n, objectId: 0n }
     }

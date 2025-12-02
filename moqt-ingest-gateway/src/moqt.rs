@@ -81,7 +81,6 @@ impl MoqtManager {
             let entry = guard.tracks.entry(key.clone()).or_default();
             entry.subscribed = true;
             entry.subscriber_alias = Some(subscriber_alias);
-            // uni stream はここでは開かない
         }
 
         let mut guard = self.inner.lock().await;
@@ -130,7 +129,14 @@ impl MoqtManager {
                 None
             };
             let group_id = entry.group_id;
-            (publisher, subscriber_alias, key, object_id, prev_stream, group_id)
+            (
+                publisher,
+                subscriber_alias,
+                key,
+                object_id,
+                prev_stream,
+                group_id,
+            )
         };
 
         let mut guard = self.inner.lock().await;
@@ -194,7 +200,15 @@ impl MoqtManager {
         }
 
         publisher
-            .write_subgroup_object(stream, subscriber_alias, group_id, 0, object_id, None, payload)
+            .write_subgroup_object(
+                stream,
+                subscriber_alias,
+                group_id,
+                0,
+                object_id,
+                None,
+                payload,
+            )
             .await
             .context("send subgroup object")?;
         println!(

@@ -6,7 +6,7 @@ use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult}
 use crate::{
     ingest::flv::FlvRecorder,
     moqt::MoqtManager,
-    video::{pack_video_chunk_payload, AvcState},
+    video::{AvcState, pack_video_chunk_payload},
 };
 
 #[derive(Default)]
@@ -54,9 +54,12 @@ pub async fn handle_event(
             stream_key,
             mode,
         } => {
-            let namespace_path = app_name.clone(); // track_namespace は application 名
+            let (namespace_path, cleaned_stream_key) =
+                split_namespace_and_key(&app_name, &stream_key);
+            let namespace_vec: Vec<String> =
+                namespace_path.split('/').map(|s| s.to_string()).collect();
             println!(
-                "[rtmp {label}] publish app={app_name} stream={stream_key} -> ns={namespace_path} mode={mode:?}"
+                "[rtmp {label}] publish app={app_name} stream={cleaned_stream_key} -> ns={namespace_path} mode={mode:?}"
             );
             queue.extend(session.accept_request(request_id)?);
             if state.recorder.is_none() {
@@ -68,7 +71,7 @@ pub async fn handle_event(
                 }
             }
             if let Some(moqt) = state.moqt.as_ref() {
-                let namespace = vec![namespace_path];
+                let namespace = namespace_vec;
                 if let Err(err) = moqt.setup_namespace(&namespace).await {
                     eprintln!("[rtmp {label}] moqt setup failed: {err:?}");
                 }
@@ -93,10 +96,11 @@ pub async fn handle_event(
             data,
             timestamp,
         } => {
+            let track_name = "audio".to_string();
             state.counters.audio += 1;
             if state.counters.audio == 1 || state.counters.audio % 1000 == 0 {
                 println!(
-                    "[rtmp {label}] audio packets={} app={app_name} stream={stream_key}",
+                    "[rtmp {label}] audio packets={} app={app_name} track={track_name}",
                     state.counters.audio
                 );
             }
@@ -113,6 +117,9 @@ pub async fn handle_event(
             data,
             timestamp,
         } => {
+            let (namespace_path, _stream_key) = split_namespace_and_key(&app_name, &stream_key);
+            let namespace_vec: Vec<String> =
+                namespace_path.split('/').map(|s| s.to_string()).collect();
             let track_name = "video".to_string();
             state.counters.video += 1;
             if state.counters.video == 1 || state.counters.video % 1000 == 0 {
@@ -127,8 +134,7 @@ pub async fn handle_event(
                 }
             }
             if let Some(moqt) = state.moqt.as_ref() {
-                let namespace_path = app_name.clone(); // application 名をそのまま namespace に
-                let namespace = [namespace_path.clone()];
+                let namespace = namespace_vec.as_slice();
                 let key = (namespace_path, track_name.clone());
                 let frame = match state
                     .video_states
@@ -145,13 +151,19 @@ pub async fn handle_event(
                 if let Some(frame) = frame {
                     // RTMP timestamp は ms 単位なので μs へ拡張
                     let timestamp_us = timestamp.value as u64 * 1_000;
+                    let sent_at_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
                     let payload = pack_video_chunk_payload(
                         frame.is_key,
                         timestamp_us,
+                        sent_at_ms,
                         frame.data.as_slice(),
                     );
-                    if let Err(err) =
-                        moqt.send_object(&namespace, &track_name, frame.is_key, payload.as_slice()).await
+                    if let Err(err) = moqt
+                        .send_object(&namespace, &track_name, frame.is_key, payload.as_slice())
+                        .await
                     {
                         eprintln!("[rtmp {label}] moqt send video failed: {err:?}");
                     }
@@ -171,4 +183,15 @@ pub async fn handle_event(
     }
 
     Ok(())
+}
+
+fn split_namespace_and_key(app_name: &str, stream_key: &str) -> (String, String) {
+    let mut parts: Vec<&str> = stream_key.split('/').collect();
+    if parts.len() >= 2 {
+        let last = parts.pop().unwrap_or_default();
+        let ns_suffix = parts.join("/");
+        (format!("{app_name}/{ns_suffix}"), last.to_string())
+    } else {
+        (app_name.to_string(), stream_key.to_string())
+    }
 }
