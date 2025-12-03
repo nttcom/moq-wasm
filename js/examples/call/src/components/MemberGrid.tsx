@@ -50,8 +50,8 @@ export function MemberGrid({
         const media = remoteMedia.get(member.id)
         const remoteOverlay = renderStatsOverlay(
           'Received',
-          { bitrate: media?.videoBitrateKbps, latency: media?.videoLatencyMs },
-          { bitrate: media?.audioBitrateKbps, latency: media?.audioLatencyMs }
+          { bitrate: media?.videoBitrateKbps, latency: media?.videoLatencyMs, jitter: media?.videoJitterMs },
+          { bitrate: media?.audioBitrateKbps, latency: media?.audioLatencyMs, jitter: media?.audioJitterMs }
         )
         return (
           <MemberCard
@@ -188,6 +188,7 @@ function describeSubscription(track: RemoteMember['subscribedTracks']['chat']): 
 type TrackStats = {
   bitrate?: number | null
   latency?: number | null
+  jitter?: number | null
 }
 
 function renderStatsOverlay(label: string, video?: TrackStats, audio?: TrackStats): ReactNode | undefined {
@@ -214,7 +215,11 @@ function renderStatsOverlay(label: string, video?: TrackStats, audio?: TrackStat
   }
   const videoLatency = formatLatency(video?.latency)
   if (videoLatency) {
-    videoParts.push(videoLatency)
+    videoParts.push(`Lat: ${videoLatency}`)
+  }
+  const videoJitter = formatLatency(video?.jitter)
+  if (videoJitter) {
+    videoParts.push(`Jit: ${videoJitter}`)
   }
   if (videoParts.length) {
     rows.push(`${label} Video: ${videoParts.join(' / ')}`)
@@ -227,7 +232,11 @@ function renderStatsOverlay(label: string, video?: TrackStats, audio?: TrackStat
   }
   const audioLatency = formatLatency(audio?.latency)
   if (audioLatency) {
-    audioParts.push(audioLatency)
+    audioParts.push(`Lat: ${audioLatency}`)
+  }
+  const audioJitter = formatLatency(audio?.jitter)
+  if (audioJitter) {
+    audioParts.push(`Jit: ${audioJitter}`)
   }
   if (audioParts.length) {
     rows.push(`${label} Audio: ${audioParts.join(' / ')}`)

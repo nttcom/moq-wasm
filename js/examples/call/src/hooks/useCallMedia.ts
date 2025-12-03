@@ -78,11 +78,25 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
           updated.set(userId, { ...current, videoLatencyMs: ms })
           return updated
         }),
+      onRemoteVideoJitter: (userId, ms) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId) ?? {}
+          updated.set(userId, { ...current, videoJitterMs: ms })
+          return updated
+        }),
       onRemoteAudioLatency: (userId, ms) =>
         setRemoteMedia((prev) => {
           const updated = new Map(prev)
           const current = updated.get(userId) ?? {}
           updated.set(userId, { ...current, audioLatencyMs: ms })
+          return updated
+        }),
+      onRemoteAudioJitter: (userId, ms) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId) ?? {}
+          updated.set(userId, { ...current, audioJitterMs: ms })
           return updated
         })
     })

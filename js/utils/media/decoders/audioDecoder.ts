@@ -62,7 +62,9 @@ self.onmessage = async (event: MessageEvent<SubgroupWorkerMessage>) => {
 
 async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
   const decoded = subgroupStreamObject.cachedChunk
-  reportAudioLatency(decoded.metadata.sentAt)
+  const timeNow = Date.now()
+  reportLatency(timeNow, decoded.metadata.sentAt, 'audio')
+  reportJitter(timeNow, decoded.metadata.sentAt, 'audio')
 
   const rebasedTimestamp = rebaseTimestamp(decoded.metadata.timestamp)
 
@@ -80,9 +82,45 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
   await audioDecoder.decode(encodedAudioChunk)
 }
 
-function reportAudioLatency(sentAt: number) {
-  const latency = Date.now() - sentAt
-  self.postMessage({ type: 'latency', media: 'audio', ms: latency })
+type JitterCalcState = {
+  lastSentAt: number | undefined
+  lastReceivedAt: number | undefined
+  currentJitter: number
+}
+const jitterCalcState: JitterCalcState = {
+  lastSentAt: undefined,
+  lastReceivedAt: undefined,
+  currentJitter: 0
+}
+
+function reportLatency(timeNow: number | undefined, sentAt: number | undefined, media: 'audio') {
+  if (typeof timeNow !== 'number' || typeof sentAt !== 'number') {
+    return
+  }
+  const latency = timeNow - sentAt
+  if (!Number.isFinite(latency) || latency < 0) {
+    return
+  }
+  self.postMessage({ type: 'latency', media, ms: latency })
+}
+
+function reportJitter(timeNow: number | undefined, sentAt: number | undefined, media: 'audio') {
+  if (typeof timeNow !== 'number' || typeof sentAt !== 'number') {
+    return
+  }
+  const receivedAt = timeNow
+  // Check if we have previous timestamps to calculate jitter
+  if (typeof jitterCalcState.lastSentAt === 'number' && typeof jitterCalcState.lastReceivedAt === 'number') {
+    const transitSend = sentAt - jitterCalcState.lastSentAt
+    const transitRecv = receivedAt - jitterCalcState.lastReceivedAt
+    const d = transitRecv - transitSend
+    // RFC 3550 smoothing algorithm
+    jitterCalcState.currentJitter = jitterCalcState.currentJitter + (Math.abs(d) - jitterCalcState.currentJitter) / 16
+    self.postMessage({ type: 'jitter', media, ms: jitterCalcState.currentJitter })
+  }
+  // Update timestamps for the next calculation
+  jitterCalcState.lastSentAt = sentAt
+  jitterCalcState.lastReceivedAt = receivedAt
 }
 
 /**

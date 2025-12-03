@@ -134,7 +134,9 @@ async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgrou
   recordDecodedFrame(groupId, subgroupStreamObject.objectId)
 
   const decoded = subgroupStreamObject.cachedChunk
-  reportLatency(decoded.metadata.sentAt, 'video')
+  const timeNow = Date.now()
+  reportLatency(timeNow, decoded.metadata.sentAt, 'video')
+  reportJitter(timeNow, decoded.metadata.sentAt, 'video')
 
   const encodedVideoChunk = new EncodedVideoChunk({
     type: decoded.metadata.type as EncodedVideoChunkType,
@@ -154,13 +156,44 @@ async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgrou
   await videoDecoder.decode(encodedVideoChunk)
 }
 
-function reportLatency(sentAt: number | undefined, media: 'video') {
-  if (typeof sentAt !== 'number') {
+type JitterCalcState = {
+  lastSentAt: number | undefined
+  lastReceivedAt: number | undefined
+  currentJitter: number
+}
+const jitterCalcState: JitterCalcState = {
+  lastSentAt: undefined,
+  lastReceivedAt: undefined,
+  currentJitter: 0
+}
+
+function reportLatency(timeNow: number | undefined, sentAt: number | undefined, media: 'video') {
+  if (typeof timeNow !== 'number' || typeof sentAt !== 'number') {
     return
   }
-  const latency = Date.now() - sentAt
+  const latency = timeNow - sentAt
   if (!Number.isFinite(latency) || latency < 0) {
     return
   }
   self.postMessage({ type: 'latency', media, ms: latency })
+}
+
+function reportJitter(timeNow: number | undefined, sentAt: number | undefined, media: 'video') {
+  if (typeof timeNow !== 'number' || typeof sentAt !== 'number') {
+    return
+  }
+  const receivedAt = timeNow
+  // Check if we have previous timestamps to calculate jitter
+  if (typeof jitterCalcState.lastSentAt === 'number' && typeof jitterCalcState.lastReceivedAt === 'number') {
+    const transitSend = sentAt - jitterCalcState.lastSentAt
+    const transitRecv = receivedAt - jitterCalcState.lastReceivedAt
+    const d = transitRecv - transitSend
+    // RFC 3550 smoothing algorithm
+    jitterCalcState.currentJitter = jitterCalcState.currentJitter + (Math.abs(d) - jitterCalcState.currentJitter) / 16
+    self.postMessage({ type: 'jitter', media, ms: jitterCalcState.currentJitter })
+  }
+
+  // Update timestamps for the next calculation
+  jitterCalcState.lastSentAt = sentAt
+  jitterCalcState.lastReceivedAt = receivedAt
 }
