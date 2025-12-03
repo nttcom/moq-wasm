@@ -5,4 +5,6 @@ export interface RemoteMediaStreams {
   audioBitrateKbps?: number
   videoLatencyMs?: number
   audioLatencyMs?: number
+  videoJitterMs?: number
+  audioJitterMs?: number
 }

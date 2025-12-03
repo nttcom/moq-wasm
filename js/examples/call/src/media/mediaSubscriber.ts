@@ -8,6 +8,8 @@ interface MediaSubscriberHandlers {
   onRemoteAudioBitrate?: (userId: string, mbps: number) => void
   onRemoteVideoLatency?: (userId: string, ms: number) => void
   onRemoteAudioLatency?: (userId: string, ms: number) => void
+  onRemoteVideoJitter?: (userId: string, ms: number) => void
+  onRemoteAudioJitter?: (userId: string, ms: number) => void
 }
 
 interface VideoSubscriptionContext {
@@ -49,12 +51,17 @@ export class MediaSubscriber {
         | { type: 'frame'; frame: VideoFrame }
         | { type: 'bitrate'; kbps: number }
         | { type: 'latency'; media: 'video'; ms: number }
+        | { type: 'jitter'; media: 'video'; ms: number }
       if (data.type === 'bitrate') {
         this.handlers.onRemoteVideoBitrate?.(userId, data.kbps)
         return
       }
       if (data.type === 'latency') {
         this.handlers.onRemoteVideoLatency?.(userId, data.ms)
+        return
+      }
+      if (data.type === 'jitter') {
+        this.handlers.onRemoteVideoJitter?.(userId, data.ms)
         return
       }
       await writer.ready
@@ -90,12 +97,17 @@ export class MediaSubscriber {
         | { type: 'audioData'; audioData: AudioData }
         | { type: 'bitrate'; kbps: number }
         | { type: 'latency'; media: 'audio'; ms: number }
+        | { type: 'jitter'; media: 'audio'; ms: number }
       if (data.type === 'bitrate') {
         this.handlers.onRemoteAudioBitrate?.(userId, data.kbps)
         return
       }
       if (data.type === 'latency') {
         this.handlers.onRemoteAudioLatency?.(userId, data.ms)
+        return
+      }
+      if (data.type === 'jitter') {
+        this.handlers.onRemoteAudioJitter?.(userId, data.ms)
         return
       }
       const audioData = data.audioData

@@ -12,7 +12,9 @@ export interface MediaHandlers {
   onRemoteVideoBitrate?: (userId: string, mbps: number) => void
   onRemoteAudioBitrate?: (userId: string, mbps: number) => void
   onRemoteVideoLatency?: (userId: string, ms: number) => void
+  onRemoteVideoJitter?: (userId: string, ms: number) => void
   onRemoteAudioLatency?: (userId: string, ms: number) => void
+  onRemoteAudioJitter?: (userId: string, ms: number) => void
 }
 
 export class CallMediaController {
@@ -37,7 +39,9 @@ export class CallMediaController {
       onRemoteVideoBitrate: (userId, mbps) => this.handlers.onRemoteVideoBitrate?.(userId, mbps),
       onRemoteAudioBitrate: (userId, mbps) => this.handlers.onRemoteAudioBitrate?.(userId, mbps),
       onRemoteVideoLatency: (userId, ms) => this.handlers.onRemoteVideoLatency?.(userId, ms),
-      onRemoteAudioLatency: (userId, ms) => this.handlers.onRemoteAudioLatency?.(userId, ms)
+      onRemoteVideoJitter: (userId, ms) => this.handlers.onRemoteVideoJitter?.(userId, ms),
+      onRemoteAudioLatency: (userId, ms) => this.handlers.onRemoteAudioLatency?.(userId, ms),
+      onRemoteAudioJitter: (userId, ms) => this.handlers.onRemoteAudioJitter?.(userId, ms)
     })
   }
 
