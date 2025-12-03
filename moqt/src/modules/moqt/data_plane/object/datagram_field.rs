@@ -24,6 +24,8 @@
 // | 0x21 | No           | Yes        | Yes       | Status           |
 // +------+--------------+------------+-----------+------------------+
 
+use std::sync::Arc;
+
 use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::{
@@ -67,43 +69,43 @@ pub enum DatagramField {
     Payload0x00 {
         object_id: u64,
         publisher_priority: u8,
-        payload: Vec<u8>,
+        payload: Arc<Vec<u8>>,
     },
     Payload0x01 {
         object_id: u64,
         publisher_priority: u8,
         extension_headers: Vec<KeyValuePair>,
-        payload: Vec<u8>,
+        payload: Arc<Vec<u8>>,
     },
     Payload0x02WithEndOfGroup {
         object_id: u64,
         publisher_priority: u8,
-        payload: Vec<u8>,
+        payload: Arc<Vec<u8>>,
     },
     Payload0x03WithEndOfGroup {
         object_id: u64,
         publisher_priority: u8,
         extension_headers: Vec<KeyValuePair>,
-        payload: Vec<u8>,
+        payload: Arc<Vec<u8>>,
     },
     Payload0x04 {
         object_id: u64,
         publisher_priority: u8,
-        payload: Vec<u8>,
+        payload: Arc<Vec<u8>>,
     },
     Payload0x05 {
         publisher_priority: u8,
         extension_headers: Vec<KeyValuePair>,
-        payload: Vec<u8>,
+        payload: Arc<Vec<u8>>,
     },
     Payload0x06WithEndOfGroup {
         publisher_priority: u8,
-        payload: Vec<u8>,
+        payload: Arc<Vec<u8>>,
     },
     Payload0x07WithEndOfGroup {
         publisher_priority: u8,
         extension_headers: Vec<KeyValuePair>,
-        payload: Vec<u8>,
+        payload: Arc<Vec<u8>>,
     },
     Status0x20 {
         object_id: u64,
@@ -129,7 +131,7 @@ impl DatagramField {
                 Some(Self::Payload0x00 {
                     object_id,
                     publisher_priority,
-                    payload: payload.into(),
+                    payload: Arc::new(payload.to_vec()),
                 })
             }
             val if val == DatagramTypeValue::Payload0x01 as u64 => {
@@ -142,7 +144,7 @@ impl DatagramField {
                     object_id,
                     publisher_priority,
                     extension_headers,
-                    payload: payload.into(),
+                    payload: Arc::new(payload.to_vec()),
                 })
             }
             val if val == DatagramTypeValue::Payload0x02WithEndOfGroup as u64 => {
@@ -154,7 +156,7 @@ impl DatagramField {
                 Some(Self::Payload0x02WithEndOfGroup {
                     object_id,
                     publisher_priority,
-                    payload: payload.into(),
+                    payload: Arc::new(payload.to_vec()),
                 })
             }
             val if val == DatagramTypeValue::Payload0x03WithEndOfGroup as u64 => {
@@ -168,7 +170,7 @@ impl DatagramField {
                     object_id,
                     publisher_priority,
                     extension_headers,
-                    payload: payload.into(),
+                    payload: Arc::new(payload.to_vec()),
                 })
             }
             val if val == DatagramTypeValue::Payload0x04 as u64 => {
@@ -179,7 +181,7 @@ impl DatagramField {
                 Some(Self::Payload0x04 {
                     object_id,
                     publisher_priority,
-                    payload: payload.into(),
+                    payload: Arc::new(payload.to_vec()),
                 })
             }
             val if val == DatagramTypeValue::Payload0x05 as u64 => {
@@ -190,7 +192,7 @@ impl DatagramField {
                 Some(Self::Payload0x05 {
                     publisher_priority,
                     extension_headers,
-                    payload: payload.into(),
+                    payload: Arc::new(payload.to_vec()),
                 })
             }
             val if val == DatagramTypeValue::Payload0x06WithEndOfGroup as u64 => {
@@ -200,7 +202,7 @@ impl DatagramField {
                 let payload = data.split_to(data.len());
                 Some(Self::Payload0x06WithEndOfGroup {
                     publisher_priority,
-                    payload: payload.into(),
+                    payload: Arc::new(payload.to_vec()),
                 })
             }
             val if val == DatagramTypeValue::Payload0x07WithEndOfGroup as u64 => {
@@ -212,7 +214,7 @@ impl DatagramField {
                 Some(Self::Payload0x07WithEndOfGroup {
                     publisher_priority,
                     extension_headers,
-                    payload: payload.into(),
+                    payload: Arc::new(payload.to_vec()),
                 })
             }
             val if val == DatagramTypeValue::Status0x20 as u64 => {
@@ -418,7 +420,7 @@ mod tests {
             let field = DatagramField::Payload0x00 {
                 object_id: 123,
                 publisher_priority: 10,
-                payload: vec![1, 2, 3, 4, 5],
+                payload: Arc::new(vec![1, 2, 3, 4, 5]),
             };
 
             // execution
@@ -435,7 +437,7 @@ mod tests {
             {
                 assert_eq!(object_id, 123);
                 assert_eq!(publisher_priority, 10);
-                assert_eq!(payload, Bytes::from(vec![1, 2, 3, 4, 5]));
+                assert_eq!(*payload, vec![1, 2, 3, 4, 5]);
             } else {
                 panic!("Decoded into wrong variant");
             }
@@ -452,7 +454,7 @@ mod tests {
                     key: 1,
                     value: VariantType::Odd(Bytes::from(vec![10, 20])),
                 }],
-                payload: vec![6, 7, 8, 9, 10],
+                payload: Arc::new(vec![6, 7, 8, 9, 10]),
             };
 
             // execution
@@ -478,7 +480,7 @@ mod tests {
                         value: VariantType::Odd(Bytes::from(vec![10, 20]))
                     }
                 );
-                assert_eq!(payload, vec![6, 7, 8, 9, 10]);
+                assert_eq!(*payload, vec![6, 7, 8, 9, 10]);
             } else {
                 panic!("Decoded into wrong variant");
             }
@@ -491,7 +493,7 @@ mod tests {
             let field = DatagramField::Payload0x02WithEndOfGroup {
                 object_id: 789,
                 publisher_priority: 30,
-                payload: vec![11, 12, 13, 14, 15],
+                payload: Arc::new(vec![11, 12, 13, 14, 15]),
             };
 
             // execution
@@ -508,7 +510,7 @@ mod tests {
             {
                 assert_eq!(object_id, 789);
                 assert_eq!(publisher_priority, 30);
-                assert_eq!(payload, vec![11, 12, 13, 14, 15]);
+                assert_eq!(*payload, vec![11, 12, 13, 14, 15]);
             } else {
                 panic!("Decoded into wrong variant");
             }
@@ -525,7 +527,7 @@ mod tests {
                     key: 2,
                     value: VariantType::Even(12345),
                 }],
-                payload: vec![16, 17, 18, 19, 20],
+                payload: Arc::new(vec![16, 17, 18, 19, 20]),
             };
 
             // execution
@@ -551,7 +553,7 @@ mod tests {
                         value: VariantType::Even(12345)
                     }
                 );
-                assert_eq!(payload, Bytes::from(vec![16, 17, 18, 19, 20]));
+                assert_eq!(*payload, vec![16, 17, 18, 19, 20]);
             } else {
                 panic!("Decoded into wrong variant");
             }
@@ -564,7 +566,7 @@ mod tests {
             let field = DatagramField::Payload0x04 {
                 object_id: 112,
                 publisher_priority: 50,
-                payload: vec![21, 22, 23, 24, 25],
+                payload: Arc::new(vec![21, 22, 23, 24, 25]),
             };
 
             // execution
@@ -581,7 +583,7 @@ mod tests {
             {
                 assert_eq!(object_id, 112);
                 assert_eq!(publisher_priority, 50);
-                assert_eq!(payload, Bytes::from(vec![21, 22, 23, 24, 25]));
+                assert_eq!(*payload, vec![21, 22, 23, 24, 25]);
             } else {
                 panic!("Decoded into wrong variant");
             }
@@ -597,7 +599,7 @@ mod tests {
                     key: 3,
                     value: VariantType::Odd(Bytes::from(vec![30, 40])),
                 }],
-                payload: vec![26, 27, 28, 29, 30],
+                payload: Arc::new(vec![26, 27, 28, 29, 30]),
             };
 
             // execution
@@ -621,7 +623,7 @@ mod tests {
                         value: VariantType::Odd(Bytes::from(vec![30, 40]))
                     }
                 );
-                assert_eq!(payload, vec![26, 27, 28, 29, 30]);
+                assert_eq!(*payload, vec![26, 27, 28, 29, 30]);
             } else {
                 panic!("Decoded into wrong variant");
             }
@@ -633,7 +635,7 @@ mod tests {
             // setup
             let field = DatagramField::Payload0x06WithEndOfGroup {
                 publisher_priority: 70,
-                payload: vec![31, 32, 33, 34, 35],
+                payload: Arc::new(vec![31, 32, 33, 34, 35]),
             };
 
             // execution
@@ -648,7 +650,7 @@ mod tests {
             } = decoded
             {
                 assert_eq!(publisher_priority, 70);
-                assert_eq!(payload, Bytes::from(vec![31, 32, 33, 34, 35]));
+                assert_eq!(*payload, vec![31, 32, 33, 34, 35]);
             } else {
                 panic!("Decoded into wrong variant");
             }
@@ -664,7 +666,7 @@ mod tests {
                     key: 4,
                     value: VariantType::Even(54321),
                 }],
-                payload: vec![36, 37, 38, 39, 40],
+                payload: Arc::new(vec![36, 37, 38, 39, 40]),
             };
 
             // execution
@@ -688,7 +690,7 @@ mod tests {
                         value: VariantType::Even(54321)
                     }
                 );
-                assert_eq!(payload, Bytes::from(vec![36, 37, 38, 39, 40]));
+                assert_eq!(*payload, vec![36, 37, 38, 39, 40]);
             } else {
                 panic!("Decoded into wrong variant");
             }

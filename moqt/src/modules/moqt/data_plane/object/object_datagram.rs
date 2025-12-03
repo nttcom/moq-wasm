@@ -82,6 +82,8 @@ impl ObjectDatagram {
 mod tests {
     mod success {
 
+        use std::sync::Arc;
+
         use crate::modules::moqt::data_plane::object::{
             datagram_field::DatagramField,
             key_value_pair::{KeyValuePair, VariantType},
@@ -98,7 +100,7 @@ mod tests {
                 field: DatagramField::Payload0x00 {
                     object_id: 3,
                     publisher_priority: 128,
-                    payload: vec![0, 1, 2, 3],
+                    payload: Arc::new(vec![0, 1, 2, 3]),
                 },
             };
 
@@ -143,7 +145,7 @@ mod tests {
                         key: 0x3c, // PriorGroupIdGap
                         value: VariantType::Even(5),
                     }],
-                    payload: vec![0, 1, 2, 3],
+                    payload: Arc::new(vec![0, 1, 2, 3]),
                 },
             };
 

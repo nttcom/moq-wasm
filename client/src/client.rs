@@ -170,12 +170,6 @@ impl Client {
         );
         let task = async move {
             tracing::info!("{} :subscribe {}", label, full_name);
-            let option = moqt::SubscribeOption {
-                subscriber_priority: 128,
-                group_order: publish_handler.group_order,
-                forward: publish_handler.forward,
-                filter_type: moqt::FilterType::LatestObject,
-            };
             let subscription = publish_handler.into_subscription(0);
             let acceptance = match subscription.accept_stream_or_datagram().await {
                 Ok(acceptance) => acceptance,
@@ -227,7 +221,7 @@ impl Client {
                 let field = DatagramField::Payload0x00 {
                     object_id: id,
                     publisher_priority: 128,
-                    payload: format_text.as_bytes().to_vec(),
+                    payload: Arc::new(format_text.as_bytes().to_vec()),
                 };
                 let obj = ObjectDatagram::new(publication.track_alias, id, field);
                 match datagram.send(obj).await {
