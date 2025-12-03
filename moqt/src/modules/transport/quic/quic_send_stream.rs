@@ -1,9 +1,11 @@
+use anyhow::bail;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use quinn::{self};
 
 use crate::modules::transport::transport_send_stream::TransportSendStream;
 
+#[derive(Debug)]
 pub struct QUICSendStream {
     pub(crate) stable_id: usize,
     pub(crate) stream_id: u64,
