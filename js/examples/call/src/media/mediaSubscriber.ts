@@ -6,8 +6,10 @@ interface MediaSubscriberHandlers {
   onRemoteAudioStream?: (userId: string, stream: MediaStream) => void
   onRemoteVideoBitrate?: (userId: string, mbps: number) => void
   onRemoteAudioBitrate?: (userId: string, mbps: number) => void
-  onRemoteVideoLatency?: (userId: string, ms: number) => void
-  onRemoteAudioLatency?: (userId: string, ms: number) => void
+  onRemoteVideoReceiveLatency?: (userId: string, ms: number) => void
+  onRemoteVideoRenderingLatency?: (userId: string, ms: number) => void
+  onRemoteAudioReceiveLatency?: (userId: string, ms: number) => void
+  onRemoteAudioRenderingLatency?: (userId: string, ms: number) => void
 }
 
 interface VideoSubscriptionContext {
@@ -48,13 +50,18 @@ export class MediaSubscriber {
       const data = event.data as
         | { type: 'frame'; frame: VideoFrame }
         | { type: 'bitrate'; kbps: number }
-        | { type: 'latency'; media: 'video'; ms: number }
+        | { type: 'receiveLatency'; media: 'video'; ms: number }
+        | { type: 'renderingLatency'; media: 'video'; ms: number }
       if (data.type === 'bitrate') {
         this.handlers.onRemoteVideoBitrate?.(userId, data.kbps)
         return
       }
-      if (data.type === 'latency') {
-        this.handlers.onRemoteVideoLatency?.(userId, data.ms)
+      if (data.type === 'receiveLatency') {
+        this.handlers.onRemoteVideoReceiveLatency?.(userId, data.ms)
+        return
+      }
+      if (data.type === 'renderingLatency') {
+        this.handlers.onRemoteVideoRenderingLatency?.(userId, data.ms)
         return
       }
       await writer.ready
@@ -89,13 +96,18 @@ export class MediaSubscriber {
       const data = event.data as
         | { type: 'audioData'; audioData: AudioData }
         | { type: 'bitrate'; kbps: number }
-        | { type: 'latency'; media: 'audio'; ms: number }
+        | { type: 'receiveLatency'; media: 'audio'; ms: number }
+        | { type: 'renderingLatency'; media: 'audio'; ms: number }
       if (data.type === 'bitrate') {
         this.handlers.onRemoteAudioBitrate?.(userId, data.kbps)
         return
       }
-      if (data.type === 'latency') {
-        this.handlers.onRemoteAudioLatency?.(userId, data.ms)
+      if (data.type === 'receiveLatency') {
+        this.handlers.onRemoteAudioReceiveLatency?.(userId, data.ms)
+        return
+      }
+      if (data.type === 'renderingLatency') {
+        this.handlers.onRemoteAudioRenderingLatency?.(userId, data.ms)
         return
       }
       const audioData = data.audioData
