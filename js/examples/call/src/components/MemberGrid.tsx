@@ -50,8 +50,16 @@ export function MemberGrid({
         const media = remoteMedia.get(member.id)
         const remoteOverlay = renderStatsOverlay(
           'Received',
-          { bitrate: media?.videoBitrateKbps, latency: media?.videoLatencyMs },
-          { bitrate: media?.audioBitrateKbps, latency: media?.audioLatencyMs }
+          {
+            bitrate: media?.videoBitrateKbps,
+            latencyRender: media?.videoLatencyRenderMs,
+            latencyReceive: media?.videoLatencyReceiveMs
+          },
+          {
+            bitrate: media?.audioBitrateKbps,
+            latencyRender: media?.audioLatencyRenderMs,
+            latencyReceive: media?.audioLatencyReceiveMs
+          }
         )
         return (
           <MemberCard
@@ -187,7 +195,8 @@ function describeSubscription(track: RemoteMember['subscribedTracks']['chat']): 
 
 type TrackStats = {
   bitrate?: number | null
-  latency?: number | null
+  latencyRender?: number | null
+  latencyReceive?: number | null
 }
 
 function renderStatsOverlay(label: string, video?: TrackStats, audio?: TrackStats): ReactNode | undefined {
@@ -200,11 +209,11 @@ function renderStatsOverlay(label: string, video?: TrackStats, audio?: TrackStat
     return `${kbps.toFixed(0)} kbps`
   }
 
-  const formatLatency = (ms?: number | null) => {
-    if (typeof ms !== 'number') {
-      return null
-    }
-    return `${ms.toFixed(0)} ms`
+  const formatLatencyPair = (renderMs?: number | null, receiveMs?: number | null) => {
+    const renderText = typeof renderMs === 'number' ? `render ${renderMs.toFixed(0)} ms` : null
+    const receiveText = typeof receiveMs === 'number' ? `recv ${receiveMs.toFixed(0)} ms` : null
+    const parts = [renderText, receiveText].filter(Boolean)
+    return parts.length ? parts.join(' / ') : null
   }
 
   const videoParts: string[] = []
@@ -212,7 +221,7 @@ function renderStatsOverlay(label: string, video?: TrackStats, audio?: TrackStat
   if (videoBitrate) {
     videoParts.push(videoBitrate)
   }
-  const videoLatency = formatLatency(video?.latency)
+  const videoLatency = formatLatencyPair(video?.latencyRender, video?.latencyReceive)
   if (videoLatency) {
     videoParts.push(videoLatency)
   }
@@ -225,7 +234,7 @@ function renderStatsOverlay(label: string, video?: TrackStats, audio?: TrackStat
   if (audioBitrate) {
     audioParts.push(audioBitrate)
   }
-  const audioLatency = formatLatency(audio?.latency)
+  const audioLatency = formatLatencyPair(audio?.latencyRender, audio?.latencyReceive)
   if (audioLatency) {
     audioParts.push(audioLatency)
   }

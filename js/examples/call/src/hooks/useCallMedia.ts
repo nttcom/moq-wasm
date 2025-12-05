@@ -71,18 +71,44 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
           updated.set(userId, { ...current, audioBitrateKbps: kbps })
           return updated
         }),
-      onRemoteVideoLatency: (userId, ms) =>
+      onRemoteVideoReceiveLatency: (userId, ms) =>
         setRemoteMedia((prev) => {
           const updated = new Map(prev)
           const current = updated.get(userId) ?? {}
-          updated.set(userId, { ...current, videoLatencyMs: ms })
+          updated.set(userId, {
+            ...current,
+            videoLatencyReceiveMs: ms
+          })
           return updated
         }),
-      onRemoteAudioLatency: (userId, ms) =>
+      onRemoteVideoRenderingLatency: (userId, ms) =>
         setRemoteMedia((prev) => {
           const updated = new Map(prev)
           const current = updated.get(userId) ?? {}
-          updated.set(userId, { ...current, audioLatencyMs: ms })
+          updated.set(userId, {
+            ...current,
+            videoLatencyRenderMs: ms
+          })
+          return updated
+        }),
+      onRemoteAudioReceiveLatency: (userId, ms) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId) ?? {}
+          updated.set(userId, {
+            ...current,
+            audioLatencyReceiveMs: ms
+          })
+          return updated
+        }),
+      onRemoteAudioRenderingLatency: (userId, ms) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId) ?? {}
+          updated.set(userId, {
+            ...current,
+            audioLatencyRenderMs: ms
+          })
           return updated
         })
     })

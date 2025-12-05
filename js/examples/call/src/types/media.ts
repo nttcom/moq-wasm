@@ -3,6 +3,8 @@ export interface RemoteMediaStreams {
   audioStream?: MediaStream | null
   videoBitrateKbps?: number
   audioBitrateKbps?: number
-  videoLatencyMs?: number
-  audioLatencyMs?: number
+  videoLatencyRenderMs?: number
+  videoLatencyReceiveMs?: number
+  audioLatencyRenderMs?: number
+  audioLatencyReceiveMs?: number
 }

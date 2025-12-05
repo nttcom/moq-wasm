@@ -5,6 +5,10 @@ export type ChunkMetadata = {
   timestamp: number
   duration: number | null
   sentAt: number
+  codec?: string
+  descriptionBase64?: string
+  sampleRate?: number
+  channels?: number
 }
 
 export type DeserializedChunk = {
