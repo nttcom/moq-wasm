@@ -38,6 +38,9 @@ export class MediaTransportState {
     subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
   }
 
+  private readonly audioCodecSent = new Set<string>()
+  private readonly videoCodecSent = new Set<string>()
+
   ensureVideoSubgroup(subgroupId: SubgroupId): void {
     this.ensureSubgroup(this.video, subgroupId)
   }
@@ -92,8 +95,24 @@ export class MediaTransportState {
     this.markHeaderSent(this.audio, trackAlias, subgroupId)
   }
 
+  shouldSendAudioCodec(trackAlias: bigint): boolean {
+    return !this.audioCodecSent.has(aliasKey(trackAlias))
+  }
+
+  markAudioCodecSent(trackAlias: bigint): void {
+    this.audioCodecSent.add(aliasKey(trackAlias))
+  }
+
   listVideoSubgroups(): SubgroupId[] {
     return Array.from(this.video.subgroups.keys())
+  }
+
+  shouldSendVideoCodec(trackAlias: bigint): boolean {
+    return !this.videoCodecSent.has(aliasKey(trackAlias))
+  }
+
+  markVideoCodecSent(trackAlias: bigint): void {
+    this.videoCodecSent.add(aliasKey(trackAlias))
   }
 
   resetAlias(trackAlias: bigint | string): void {
@@ -104,6 +123,8 @@ export class MediaTransportState {
     for (const subgroup of this.audio.subgroups.values()) {
       subgroup.sentAliases.delete(key)
     }
+    this.audioCodecSent.delete(key)
+    this.videoCodecSent.delete(key)
   }
 
   private ensureSubgroup(state: TrackCounters, subgroupId: SubgroupId): void {

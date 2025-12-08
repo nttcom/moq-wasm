@@ -1,22 +1,31 @@
 import { AudioJitterBuffer } from '../audioJitterBuffer'
 import type { SubgroupObject, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
+import type { ChunkMetadata } from '../chunk'
+
+type CachedAudioConfig = {
+  codec: string
+  sampleRate: number
+  channels: number
+  descriptionBase64?: string
+}
 
 const audioBitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', media: 'audio', kbps })
 })
 
-const AUDIO_DECODER_CONFIG = {
+const DEFAULT_AUDIO_DECODER_CONFIG = {
   codec: 'opus',
   sampleRate: 48000, // Opusの推奨サンプルレート
-  numberOfChannels: 1, // モノラル
-  bitrate: 64000 // 64kbpsのビットレート
+  numberOfChannels: 1 // モノラル
 }
 
 let audioDecoder: AudioDecoder | undefined
 let remoteTimestampBase: number | null = null
+let decoderSignature: string | null = null
+let cachedAudioConfig: CachedAudioConfig | null = null
 
-async function initializeAudioDecoder() {
+async function createAudioDecoder(config: AudioDecoderConfig, signature: string) {
   function sendAudioDataMessage(audioData: AudioData): void {
     self.postMessage({ type: 'audioData', audioData })
     audioData.close()
@@ -29,7 +38,10 @@ async function initializeAudioDecoder() {
     }
   }
   const decoder = new AudioDecoder(init)
-  decoder.configure(AUDIO_DECODER_CONFIG)
+  decoder.configure(config)
+  decoderSignature = signature
+  console.log('[audioDecoder] (re)initializing decoder with config:', config)
+  console.log('[audioDecoder] desiredSignature:', signature)
   return decoder
 }
 
@@ -57,12 +69,38 @@ self.onmessage = async (event: MessageEvent<SubgroupWorkerMessage>) => {
   }
   audioBitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
 
-  jitterBuffer.push(event.data.groupId, subgroupStreamObject.objectId, subgroupStreamObject)
+  jitterBuffer.push(event.data.groupId, subgroupStreamObject.objectId, subgroupStreamObject, (latencyMs) =>
+    postReceiveLatency(latencyMs)
+  )
 }
 
 async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
   const decoded = subgroupStreamObject.cachedChunk
   reportAudioLatency(decoded.metadata.sentAt)
+
+  const resolvedConfig = resolveAudioConfig(decoded.metadata)
+  if (!resolvedConfig) {
+    // メタデータからデコーダ設定を導けるまで待つ
+    return
+  }
+  const desiredConfig = buildDecoderConfig(resolvedConfig)
+  const desiredSignature = buildSignature(resolvedConfig)
+
+  if (!audioDecoder || audioDecoder.state === 'closed' || decoderSignature !== desiredSignature) {
+    try {
+      console.log('[audioDecoder] (re)initializing decoder with config:', desiredConfig)
+      console.log('[audioDecoder] desiredSignature:', desiredSignature)
+      if (audioDecoder && audioDecoder.state !== 'closed') {
+        audioDecoder.close()
+      }
+      audioDecoder = await createAudioDecoder(desiredConfig, desiredSignature)
+      remoteTimestampBase = null
+      cachedAudioConfig = resolvedConfig
+    } catch (e) {
+      console.error('[audioDecoder] configure failed', e)
+      return
+    }
+  }
 
   const rebasedTimestamp = rebaseTimestamp(decoded.metadata.timestamp)
 
@@ -73,16 +111,25 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
     data: decoded.data
   })
 
-  if (!audioDecoder || audioDecoder.state === 'closed') {
-    audioDecoder = await initializeAudioDecoder()
-  }
-
   await audioDecoder.decode(encodedAudioChunk)
 }
 
 function reportAudioLatency(sentAt: number) {
-  const latency = Date.now() - sentAt
-  self.postMessage({ type: 'latency', media: 'audio', ms: latency })
+  postRenderingLatency(Date.now() - sentAt)
+}
+
+function postReceiveLatency(latencyMs: number) {
+  if (latencyMs < 0) {
+    return
+  }
+  self.postMessage({ type: 'receiveLatency', media: 'audio', ms: latencyMs })
+}
+
+function postRenderingLatency(latencyMs: number) {
+  if (latencyMs < 0) {
+    return
+  }
+  self.postMessage({ type: 'renderingLatency', media: 'audio', ms: latencyMs })
 }
 
 /**
@@ -95,4 +142,64 @@ function rebaseTimestamp(remoteTimestamp: number): number {
 
   let rebased = remoteTimestamp - remoteTimestampBase
   return rebased
+}
+
+function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
+  const hasNewConfig = metadata.codec || metadata.descriptionBase64 || metadata.sampleRate || metadata.channels
+  if (!hasNewConfig && !cachedAudioConfig) {
+    return null
+  }
+
+  const codec =
+    metadata.codec ??
+    (metadata.descriptionBase64 ? 'mp4a.40.2' : undefined) ??
+    cachedAudioConfig?.codec
+  const sampleRate =
+    metadata.sampleRate ??
+    cachedAudioConfig?.sampleRate ??
+    DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
+  const channels =
+    metadata.channels ??
+    cachedAudioConfig?.channels ??
+    DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
+  const descriptionBase64 = metadata.descriptionBase64 ?? cachedAudioConfig?.descriptionBase64
+
+  if (!codec) {
+    return null
+  }
+
+  return { codec, sampleRate, channels, descriptionBase64 }
+}
+
+function buildDecoderConfig(resolved: CachedAudioConfig): AudioDecoderConfig {
+  if (resolved.codec.startsWith('mp4a')) {
+    const description = resolved.descriptionBase64 ? base64ToUint8Array(resolved.descriptionBase64) : undefined
+    return {
+      codec: resolved.codec,
+      sampleRate: resolved.sampleRate,
+      numberOfChannels: resolved.channels,
+      description
+    }
+  }
+
+  return {
+    codec: DEFAULT_AUDIO_DECODER_CONFIG.codec,
+    sampleRate: resolved.sampleRate,
+    numberOfChannels: resolved.channels
+  }
+}
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binaryString = atob(base64)
+  const len = binaryString.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+  return bytes
+}
+
+function buildSignature(resolved: CachedAudioConfig): string {
+  const desc = resolved.descriptionBase64 ?? ''
+  return `${resolved.codec}:${resolved.sampleRate}:${resolved.channels}:${desc}`
 }

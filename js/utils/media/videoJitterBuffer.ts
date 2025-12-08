@@ -1,12 +1,13 @@
 import { deserializeChunk } from './chunk'
 import type { JitterBufferSubgroupObject, SubgroupObject } from './jitterBufferTypes'
 
-const DEFAULT_MIN_DELAY_MS = 25
-const DEFAULT_JITTER_BUFFER_SIZE = 1800
+const DEFAULT_MIN_DELAY_MS = 250
+const DEFAULT_BUFFERED_AHEAD_FRAMES = 5
+const DEFAULT_JITTER_BUFFER_SIZE = 9000
 const OBJECT_STATUS_END_OF_GROUP = 3
 const MIN_FRAME_INTERVAL_MS = 20
 
-export type VideoJitterBufferMode = 'normal' | 'correctly' | 'fast'
+export type VideoJitterBufferMode = 'normal' | 'correctly' | 'fast' | 'buffered'
 
 type VideoJitterBufferEntry = {
   groupId: bigint
@@ -25,6 +26,7 @@ export class VideoJitterBuffer {
   private readonly keyframeInterval?: bigint
   private lastPopWallTime: number | null = null
   private pendingEndGroupTail: Map<bigint, bigint> = new Map()
+  private bufferedAheadFrames = DEFAULT_BUFFERED_AHEAD_FRAMES
 
   constructor(
     private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE,
@@ -36,13 +38,18 @@ export class VideoJitterBuffer {
   }
 
   setMinDelay(minDelayMs: number): void {
-    if (!Number.isFinite(minDelayMs) || minDelayMs < 0) {
+    if (minDelayMs < 0) {
       return
     }
     this.minDelayMs = minDelayMs
   }
 
-  push(groupId: bigint, objectId: bigint, object: SubgroupObject): void {
+  push(
+    groupId: bigint,
+    objectId: bigint,
+    object: SubgroupObject,
+    onReceiveLatency?: (latencyMs: number) => void
+  ): void {
     if (!object.objectPayloadLength) {
       return
     }
@@ -55,6 +62,9 @@ export class VideoJitterBuffer {
     bufferObject.cachedChunk = parsed
     bufferObject.remotePTS = parsed.metadata.timestamp
     bufferObject.localPTS = performance.timeOrigin + performance.now()
+    if (typeof parsed.metadata.sentAt === 'number') {
+      onReceiveLatency?.(Date.now() - parsed.metadata.sentAt)
+    }
 
     if (this.mode === 'correctly' && this.shouldRejectOldData(groupId, objectId)) {
       console.warn(
@@ -90,6 +100,10 @@ export class VideoJitterBuffer {
       return null
     }
 
+    if (this.mode === 'buffered') {
+      return this.popBufferedMode()
+    }
+
     if (this.mode === 'fast') {
       return this.popFastMode()
     }
@@ -99,6 +113,35 @@ export class VideoJitterBuffer {
     }
 
     return this.popCorrectlyMode()
+  }
+
+  private popBufferedMode(): VideoJitterBufferEntry | null {
+    while (true) {
+      if (this.buffer.length === 0) {
+        return null
+      }
+
+      const headGroup = this.buffer[0].groupId
+      const hasTwoAhead = this.buffer.some((entry) => entry.groupId >= headGroup + 2n)
+      if (hasTwoAhead) {
+        // 現在の GoP 全体を破棄し、次の GoP へ進む
+        while (this.buffer.length > 0 && this.buffer[0].groupId === headGroup) {
+          this.buffer.shift()
+        }
+        continue
+      }
+
+      if (this.buffer.length <= this.bufferedAheadFrames) {
+        return null
+      }
+
+      const head = this.buffer.shift()
+      if (!head) {
+        return null
+      }
+      this.recordPopResult(head, Date.now())
+      return head
+    }
   }
 
   private popFastMode(): VideoJitterBufferEntry | null {
@@ -113,7 +156,7 @@ export class VideoJitterBuffer {
   private popNormalMode(): VideoJitterBufferEntry | null {
     const head = this.buffer[0]
     const nowMs = Date.now()
-    const base = Number.isFinite(head.sentAt) ? head.sentAt : performance.timeOrigin + head.bufferInsertTimestamp
+    const base = head.sentAt
     const delayMs = nowMs - base
     if (delayMs < this.minDelayMs) {
       return null
@@ -145,7 +188,7 @@ export class VideoJitterBuffer {
 
     const entry = this.buffer[index]
     const nowMs = Date.now()
-    const base = Number.isFinite(entry.sentAt) ? entry.sentAt : performance.timeOrigin + entry.bufferInsertTimestamp
+    const base = entry.sentAt
     const delayMs = nowMs - base
     const sinceLastPop = this.lastPopWallTime === null ? Number.POSITIVE_INFINITY : nowMs - this.lastPopWallTime
     if (delayMs < this.minDelayMs || sinceLastPop < MIN_FRAME_INTERVAL_MS) {

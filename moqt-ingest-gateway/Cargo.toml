@@ -16,3 +16,4 @@ wtransport = "0.6.0"
 serde_json = "1.0"
 moqt-core = { path = "../moqt-core" }
 serde = { version = "1.0", features = ["derive"] }
+base64 = "0.22"

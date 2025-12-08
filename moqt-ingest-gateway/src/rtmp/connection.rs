@@ -16,7 +16,7 @@ use super::{
 };
 use crate::moqt::MoqtManager;
 
-pub async fn run_rtmp_listener(addr: String, moqt: MoqtManager) -> Result<()> {
+pub async fn run_rtmp_listener(addr: String, moqt_url: Option<String>) -> Result<()> {
     let listener = TcpListener::bind(&addr)
         .await
         .with_context(|| format!("bind RTMP listener on {addr}"))?;
@@ -25,7 +25,7 @@ pub async fn run_rtmp_listener(addr: String, moqt: MoqtManager) -> Result<()> {
     loop {
         let (socket, peer) = listener.accept().await?;
         let label = peer.to_string();
-        let moqt = moqt.clone();
+        let moqt = MoqtManager::new(moqt_url.clone());
         tokio::spawn(async move {
             if let Err(err) = handle_connection(socket, &label, moqt).await {
                 eprintln!("[rtmp {label}] error: {err:?}");
