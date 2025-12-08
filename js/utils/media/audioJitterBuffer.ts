@@ -77,13 +77,15 @@ export class AudioJitterBuffer {
       ) {
         return null
       }
-      const latestEntry = this.buffer[this.buffer.length - 1]
-      if (!latestEntry) {
-        return null
-      }
-      this.buffer.length = 0
+      const firstConfigIndex = this.buffer.findIndex(
+        (entry) =>
+          !!entry.object.cachedChunk?.metadata?.codec ||
+          !!entry.object.cachedChunk?.metadata?.descriptionBase64
+      )
+      const index = firstConfigIndex >= 0 ? firstConfigIndex : 0
+      const entry = this.buffer.splice(index, 1)[0]
       this.hasPoppedOnce = true
-      return latestEntry
+      return entry ?? null
     }
 
     const head = this.buffer[0]

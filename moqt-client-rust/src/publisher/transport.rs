@@ -33,7 +33,9 @@ use wtransport::{
     ClientConfig, Connection, Endpoint,
 };
 
-use super::state::PublisherState;
+use super::state::{PublisherState, TrackKey};
+
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct MoqtPublisher {
     connection: Connection,
@@ -41,6 +43,7 @@ pub struct MoqtPublisher {
     control_recv: RecvStream,
     control_buf: BytesMut,
     pub(crate) state: PublisherState,
+    data_uni_counter: AtomicU64,
 }
 
 impl MoqtPublisher {
@@ -67,6 +70,7 @@ impl MoqtPublisher {
             control_recv,
             control_buf: BytesMut::new(),
             state: PublisherState::default(),
+            data_uni_counter: AtomicU64::new(0),
         })
     }
 
@@ -78,6 +82,8 @@ impl MoqtPublisher {
             .context("open data uni stream")?
             .await
             .context("wait data uni stream")?;
+        let id = self.data_uni_counter.fetch_add(1, Ordering::Relaxed);
+        println!("[moqt-publisher] data uni stream opened (local_id={id})");
         Ok(stream)
     }
 
@@ -226,7 +232,7 @@ impl MoqtPublisher {
                             .await?;
                         self.state.subscribed_aliases.insert(sub.track_alias());
 
-                        let key = (namespace.join("/"), track.to_string());
+                        let key = TrackKey::new(namespace.join("/"), track);
                         let entry = self.state.tracks.entry(key).or_default();
                         entry.alias = sub.track_alias();
                         entry.subscriber_alias = Some(sub.track_alias());
@@ -380,7 +386,10 @@ impl MoqtPublisher {
             let mut tmp = [0u8; 2048];
             let n = self.control_recv.read(&mut tmp).await?;
             match n {
-                Some(0) => return Err(anyhow!("control stream closed")),
+                Some(0) => {
+                    println!("[moqt-publisher] control stream closed by peer");
+                    return Err(anyhow!("control stream closed"));
+                }
                 Some(n) => self.control_buf.extend_from_slice(&tmp[..n]),
                 None => continue,
             }
@@ -388,9 +397,16 @@ impl MoqtPublisher {
     }
 
     pub async fn close(mut self) -> Result<()> {
+        println!("[moqt-publisher] closing control stream and connection");
         let _ = self.control_send.reset(0u8.into());
         self.connection.close(0u32.into(), b"done");
         Ok(())
+    }
+}
+
+impl Drop for MoqtPublisher {
+    fn drop(&mut self) {
+        println!("[moqt-publisher] dropped without explicit close (streams will be reset)");
     }
 }
 

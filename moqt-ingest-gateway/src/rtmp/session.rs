@@ -4,6 +4,7 @@ use anyhow::Result;
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
 
 use crate::{
+    audio::{AacState, compute_aac_duration_us, pack_audio_chunk_payload},
     ingest::flv::FlvRecorder,
     moqt::MoqtManager,
     video::{AvcState, pack_video_chunk_payload},
@@ -20,6 +21,7 @@ pub struct RtmpState {
     pub recorder: Option<FlvRecorder>,
     pub moqt: Option<MoqtManager>,
     pub video_states: HashMap<(String, String), AvcState>,
+    pub audio_states: HashMap<(String, String), AacState>,
 }
 
 impl RtmpState {
@@ -29,6 +31,7 @@ impl RtmpState {
             recorder: None,
             moqt: Some(moqt),
             video_states: HashMap::new(),
+            audio_states: HashMap::new(),
         }
     }
 }
@@ -96,6 +99,9 @@ pub async fn handle_event(
             data,
             timestamp,
         } => {
+            let (namespace_path, _stream_key) = split_namespace_and_key(&app_name, &stream_key);
+            let namespace_vec: Vec<String> =
+                namespace_path.split('/').map(|s| s.to_string()).collect();
             let track_name = "audio".to_string();
             state.counters.audio += 1;
             if state.counters.audio == 1 || state.counters.audio % 1000 == 0 {
@@ -109,7 +115,37 @@ pub async fn handle_event(
                     eprintln!("[rtmp {label}] write_audio failed: {err:?}");
                 }
             }
-            // audio は現状 MoQ 送信しない
+            if let Some(moqt) = state.moqt.as_ref() {
+                let key = (namespace_path.clone(), track_name.clone());
+                let frame = match state
+                    .audio_states
+                    .entry(key)
+                    .or_default()
+                    .handle_flv_audio(data.as_ref())
+                {
+                    Ok(f) => f,
+                    Err(err) => {
+                        eprintln!("[rtmp {label}] aac parse failed: {err:?}");
+                        None
+                    }
+                };
+                if let Some(frame) = frame {
+                    let timestamp_us = timestamp.value as u64 * 1_000;
+                    let duration_us = Some(compute_aac_duration_us(frame.sample_rate));
+                    let sent_at_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+                    let payload =
+                        pack_audio_chunk_payload(&frame, timestamp_us, duration_us, sent_at_ms);
+                    if let Err(err) = moqt
+                        .send_object(&namespace_vec, &track_name, false, payload.as_slice())
+                        .await
+                    {
+                        eprintln!("[rtmp {label}] moqt send audio failed: {err:?}");
+                    }
+                }
+            }
         }
         ServerSessionEvent::VideoDataReceived {
             app_name,
@@ -160,9 +196,25 @@ pub async fn handle_event(
                         timestamp_us,
                         sent_at_ms,
                         frame.data.as_slice(),
+                        frame.codec.as_deref(),
+                        None,
                     );
+                    if frame.is_key {
+                        if let Some(codec) = frame.codec.as_deref() {
+                            println!(
+                                "[rtmp {label}] detected video codec from SPS: {codec} ns={:?} track={}",
+                                namespace,
+                                track_name
+                            );
+                        } else {
+                            println!(
+                                "[rtmp {label}] video codec from SPS unavailable ns={:?} track={}",
+                                namespace, track_name
+                            );
+                        }
+                    }
                     if let Err(err) = moqt
-                        .send_object(&namespace, &track_name, frame.is_key, payload.as_slice())
+                        .send_object(namespace, &track_name, frame.is_key, payload.as_slice())
                         .await
                     {
                         eprintln!("[rtmp {label}] moqt send video failed: {err:?}");

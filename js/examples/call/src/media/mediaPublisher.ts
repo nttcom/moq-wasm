@@ -253,7 +253,8 @@ export class MediaPublisher {
     subgroupId,
     objectId,
     chunk,
-    client
+    client,
+    extraMetadata
   ) => {
     const previousState = this.videoGroupStates.get(trackAlias)
     if (previousState && previousState.groupId !== groupId) {
@@ -277,7 +278,7 @@ export class MediaPublisher {
       duration: chunk.duration ?? null,
       byteLength: chunk.byteLength,
       copyTo: (dest) => chunk.copyTo(dest)
-    })
+    }, extraMetadata)
 
     await client.sendSubgroupStreamObject(trackAlias, groupId, subgroupId, objectId, undefined, payload)
 

@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Default)]
 pub struct AvcState {
@@ -8,10 +7,10 @@ pub struct AvcState {
     pps: Vec<Vec<u8>>,
 }
 
-#[derive(serde::Serialize)]
 pub struct VideoFrame {
     pub data: Vec<u8>,
     pub is_key: bool,
+    pub codec: Option<String>,
 }
 
 /// js/examples/media に合わせた payload 生成: [meta_len(4byte BE)][meta json][Annex-B data]
@@ -20,12 +19,16 @@ pub fn pack_video_chunk_payload(
     timestamp_us: u64,
     sent_at_ms: u64,
     data: &[u8],
+    codec_info: Option<&str>,
+    description_base64: Option<&str>,
 ) -> Vec<u8> {
     let meta = serde_json::json!({
         "type": if is_key { "key" } else { "delta" },
         "timestamp": timestamp_us as i64,
         "duration": 0i64, // duration null 相当
         "sentAt": sent_at_ms as i64,
+        "codec": codec_info,
+        "descriptionBase64": description_base64,
     });
     let meta_bytes = meta.to_string().into_bytes();
     let meta_len = meta_bytes.len() as u32;
@@ -85,7 +88,12 @@ impl AvcState {
                     out.extend_from_slice(&payload[pos..pos + nal_len]);
                     pos += nal_len;
                 }
-                Ok(Some(VideoFrame { data: out, is_key }))
+                let codec = if is_key { self.codec_string() } else { None };
+                Ok(Some(VideoFrame {
+                    data: out,
+                    is_key,
+                    codec,
+                }))
             }
             _ => Ok(None),
         }
@@ -133,5 +141,17 @@ impl AvcState {
         }
 
         Ok(())
+    }
+
+    fn codec_string(&self) -> Option<String> {
+        // SPS: profile_idc (byte1), constraint_set flags (byte2), level_idc (byte3)
+        let sps = self.sps.first()?;
+        if sps.len() < 4 {
+            return None;
+        }
+        let profile_idc = sps[1];
+        let constraints = sps[2];
+        let level_idc = sps[3];
+        Some(format!("avc1.{profile_idc:02X}{constraints:02X}{level_idc:02X}"))
     }
 }
