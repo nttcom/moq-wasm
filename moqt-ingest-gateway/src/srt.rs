@@ -39,6 +39,7 @@ async fn handle_request(request: ConnectionRequest) {
                     data.len()
                 );
             }
+            // Not implemented: Forward data to MoQT server
         }
 
         println!("[srt {remote}] stream ended stream_id={stream_id} total_packets={count}");
