@@ -30,8 +30,12 @@ jobs:
             libavformat-dev \
             libavdevice-dev \
             libswscale-dev \
-            libswresample-dev
+            libswresample-dev \
+            clang \
+            libclang-dev \
+            llvm-dev
           echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+          echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
       - name: Run Clippy
         run: cargo clippy -- -D warnings
       - name: Check code formatting
@@ -59,7 +63,12 @@ jobs:
             libavformat-dev \
             libavdevice-dev \
             libswscale-dev \
-            libswresample-dev
+            libswresample-dev \
+            clang \
+            libclang-dev \
+            llvm-dev
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+          echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
       - name: Generate code coverage
         run: |
           RUSTFLAGS="--cfg=web_sys_unstable_apis --cfg=tokio_unstable" cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
