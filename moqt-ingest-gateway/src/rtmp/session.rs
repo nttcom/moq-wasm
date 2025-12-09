@@ -200,22 +200,29 @@ pub async fn handle_event(
                         .unwrap_or_default()
                         .as_millis() as u64;
                     let codec_key = (namespace_path.clone(), track_name.clone());
-                    let already_sent = state.video_codec_sent.get(&codec_key).copied().unwrap_or(false);
+                    let already_sent = state
+                        .video_codec_sent
+                        .get(&codec_key)
+                        .copied()
+                        .unwrap_or(false);
                     let include_codec = frame.is_key && !already_sent;
                     let payload = pack_video_chunk_payload(
                         frame.is_key,
                         timestamp_us,
                         sent_at_ms,
                         frame.data.as_slice(),
-                        if include_codec { frame.codec.as_deref() } else { None },
+                        if include_codec {
+                            frame.codec.as_deref()
+                        } else {
+                            None
+                        },
                         None,
                     );
                     if frame.is_key && include_codec {
                         if let Some(codec) = frame.codec.as_deref() {
                             println!(
                                 "[rtmp {label}] detected video codec from SPS: {codec} ns={:?} track={}",
-                                namespace,
-                                track_name
+                                namespace, track_name
                             );
                             state.video_codec_sent.insert(codec_key.clone(), true);
                         } else {
