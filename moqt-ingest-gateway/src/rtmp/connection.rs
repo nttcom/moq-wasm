@@ -12,7 +12,7 @@ use tokio::{
 
 use super::{
     handshake::perform_handshake,
-    session::{handle_event, RtmpState},
+    session::{RtmpState, handle_event},
 };
 use crate::moqt::MoqtManager;
 
@@ -63,14 +63,7 @@ async fn handle_connection(mut socket: TcpStream, label: &str, moqt: MoqtManager
             break;
         }
 
-        handle_session_bytes(
-            &mut session,
-            &mut socket,
-            &buf[..read],
-            label,
-            &mut state,
-        )
-        .await?;
+        handle_session_bytes(&mut session, &mut socket, &buf[..read], label, &mut state).await?;
     }
 
     Ok(())

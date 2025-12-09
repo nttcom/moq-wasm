@@ -152,6 +152,8 @@ impl AvcState {
         let profile_idc = sps[1];
         let constraints = sps[2];
         let level_idc = sps[3];
-        Some(format!("avc1.{profile_idc:02X}{constraints:02X}{level_idc:02X}"))
+        Some(format!(
+            "avc1.{profile_idc:02X}{constraints:02X}{level_idc:02X}"
+        ))
     }
 }
