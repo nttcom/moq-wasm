@@ -25,8 +25,12 @@ jobs:
             ffmpeg \
             pkg-config \
             libavutil-dev \
+            libavfilter-dev \
             libavcodec-dev \
-            libavformat-dev
+            libavformat-dev \
+            libswscale-dev \
+            libswresample-dev
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
       - name: Run Clippy
         run: cargo clippy -- -D warnings
       - name: Check code formatting
@@ -49,8 +53,11 @@ jobs:
             ffmpeg \
             pkg-config \
             libavutil-dev \
+            libavfilter-dev \
             libavcodec-dev \
-            libavformat-dev
+            libavformat-dev \
+            libswscale-dev \
+            libswresample-dev
       - name: Generate code coverage
         run: |
           RUSTFLAGS="--cfg=web_sys_unstable_apis --cfg=tokio_unstable" cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
