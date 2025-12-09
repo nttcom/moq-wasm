@@ -44,6 +44,13 @@ export class VideoJitterBuffer {
     this.minDelayMs = minDelayMs
   }
 
+  setBufferedAheadFrames(frames: number): void {
+    if (!Number.isFinite(frames) || frames <= 0) {
+      return
+    }
+    this.bufferedAheadFrames = Math.max(1, Math.floor(frames))
+  }
+
   push(
     groupId: bigint,
     objectId: bigint,

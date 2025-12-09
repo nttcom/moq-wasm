@@ -40,8 +40,8 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
   const decoder = new AudioDecoder(init)
   decoder.configure(config)
   decoderSignature = signature
-  console.log('[audioDecoder] (re)initializing decoder with config:', config)
-  console.log('[audioDecoder] desiredSignature:', signature)
+  console.info('[audioDecoder] (re)initializing decoder with config:', config)
+  console.info('[audioDecoder] desiredSignature:', signature)
   return decoder
 }
 
@@ -88,8 +88,8 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
 
   if (!audioDecoder || audioDecoder.state === 'closed' || decoderSignature !== desiredSignature) {
     try {
-      console.log('[audioDecoder] (re)initializing decoder with config:', desiredConfig)
-      console.log('[audioDecoder] desiredSignature:', desiredSignature)
+      console.info('[audioDecoder] (re)initializing decoder with config:', desiredConfig)
+      console.info('[audioDecoder] desiredSignature:', desiredSignature)
       if (audioDecoder && audioDecoder.state !== 'closed') {
         audioDecoder.close()
       }
@@ -150,18 +150,9 @@ function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
     return null
   }
 
-  const codec =
-    metadata.codec ??
-    (metadata.descriptionBase64 ? 'mp4a.40.2' : undefined) ??
-    cachedAudioConfig?.codec
-  const sampleRate =
-    metadata.sampleRate ??
-    cachedAudioConfig?.sampleRate ??
-    DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
-  const channels =
-    metadata.channels ??
-    cachedAudioConfig?.channels ??
-    DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
+  const codec = metadata.codec ?? (metadata.descriptionBase64 ? 'mp4a.40.2' : undefined) ?? cachedAudioConfig?.codec
+  const sampleRate = metadata.sampleRate ?? cachedAudioConfig?.sampleRate ?? DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
+  const channels = metadata.channels ?? cachedAudioConfig?.channels ?? DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
   const descriptionBase64 = metadata.descriptionBase64 ?? cachedAudioConfig?.descriptionBase64
 
   if (!codec) {

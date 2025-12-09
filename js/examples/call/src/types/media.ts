@@ -7,4 +7,7 @@ export interface RemoteMediaStreams {
   videoLatencyReceiveMs?: number
   audioLatencyRenderMs?: number
   audioLatencyReceiveMs?: number
+  videoCodec?: string
+  videoWidth?: number
+  videoHeight?: number
 }

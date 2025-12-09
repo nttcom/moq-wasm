@@ -1,4 +1,4 @@
-import { VideoJitterBuffer } from '../videoJitterBuffer'
+import { VideoJitterBuffer, type VideoJitterBufferMode } from '../videoJitterBuffer'
 import type { JitterBufferSubgroupObject, SubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { KEYFRAME_INTERVAL } from '../constants'
 import { createBitrateLogger } from '../bitrate'
@@ -25,7 +25,12 @@ const VIDEO_DECODER_CONFIG = {
 let videoDecoder: VideoDecoder | undefined
 async function initializeVideoDecoder(config: VideoDecoderConfig) {
   function sendVideoFrameMessage(frame: VideoFrame): void {
-    self.postMessage({ type: 'frame', frame })
+    self.postMessage({
+      type: 'frame',
+      frame,
+      width: frame.displayWidth,
+      height: frame.displayHeight
+    })
     frame.close()
   }
 
@@ -38,16 +43,66 @@ async function initializeVideoDecoder(config: VideoDecoderConfig) {
   }
   const decoder = new VideoDecoder(init)
   decoder.configure(config)
-  console.log('[videoDecoder] (re)initializing decoder with config:', config)
+  console.info('[videoDecoder] (re)initializing decoder with config:', config)
   return decoder
 }
 
+type VideoJitterBufferConfig = {
+  mode?: VideoJitterBufferMode
+  minDelayMs?: number
+  maxBufferSize?: number
+  bufferedAheadFrames?: number
+}
+
 const POP_INTERVAL_MS = 33
-const jitterBuffer = new VideoJitterBuffer(
-  9000, // maxBufferSize
-  'buffered', // mode
-  KEYFRAME_INTERVAL_BIGINT // fallback keyframe interval
-)
+type NormalizedJitterConfig = {
+  mode: VideoJitterBufferMode
+  minDelayMs: number
+  maxBufferSize: number
+  bufferedAheadFrames: number
+}
+
+const DEFAULT_JITTER_CONFIG: NormalizedJitterConfig = {
+  maxBufferSize: 9000,
+  mode: 'buffered',
+  minDelayMs: 250,
+  bufferedAheadFrames: 5
+}
+
+let jitterBuffer = createJitterBuffer()
+let currentJitterConfig: NormalizedJitterConfig = { ...DEFAULT_JITTER_CONFIG }
+
+function normalizeJitterConfig(config?: VideoJitterBufferConfig): NormalizedJitterConfig {
+  const mode = config?.mode ?? DEFAULT_JITTER_CONFIG.mode
+  const minDelayMs =
+    typeof config?.minDelayMs === 'number' && Number.isFinite(config.minDelayMs) && config.minDelayMs >= 0
+      ? config.minDelayMs
+      : DEFAULT_JITTER_CONFIG.minDelayMs
+  const maxBufferSize =
+    typeof config?.maxBufferSize === 'number' && Number.isFinite(config.maxBufferSize) && config.maxBufferSize > 0
+      ? Math.floor(config.maxBufferSize)
+      : DEFAULT_JITTER_CONFIG.maxBufferSize
+  const bufferedAheadFrames =
+    typeof config?.bufferedAheadFrames === 'number' &&
+    Number.isFinite(config.bufferedAheadFrames) &&
+    config.bufferedAheadFrames > 0
+      ? Math.floor(config.bufferedAheadFrames)
+      : DEFAULT_JITTER_CONFIG.bufferedAheadFrames
+  return { mode, minDelayMs, maxBufferSize, bufferedAheadFrames }
+}
+
+function createJitterBuffer(config?: VideoJitterBufferConfig): VideoJitterBuffer {
+  const merged = normalizeJitterConfig(config)
+  const buffer = new VideoJitterBuffer(merged.maxBufferSize, merged.mode, KEYFRAME_INTERVAL_BIGINT)
+  buffer.setMinDelay(merged.minDelayMs)
+  buffer.setBufferedAheadFrames(merged.bufferedAheadFrames)
+  return buffer
+}
+
+function updateJitterBuffer(config: VideoJitterBufferConfig): void {
+  currentJitterConfig = normalizeJitterConfig({ ...currentJitterConfig, ...config })
+  jitterBuffer = createJitterBuffer(currentJitterConfig)
+}
 
 type DecodedState = {
   groupId: bigint
@@ -57,6 +112,7 @@ type DecodedState = {
 let lastDecodedState: DecodedState | null = null
 let previousGroupClosed = false
 let cachedVideoConfig: { codec: string; descriptionBase64?: string } | null = null
+let pendingReconfigureConfig: { codec: string; descriptionBase64?: string } | null = null
 
 // objectIdの連続性をチェック（JitterBufferがcorrectlyモードの場合は冗長だが、念のため保持）
 function checkObjectIdContinuity(currentGroupId: bigint, currentObjectId: bigint): void {
@@ -119,7 +175,18 @@ setInterval(() => {
   }
 }, POP_INTERVAL_MS)
 
-self.onmessage = async (event: MessageEvent<SubgroupWorkerMessage>) => {
+type WorkerMessage = SubgroupWorkerMessage | { type: 'config'; config: VideoJitterBufferConfig }
+
+function isConfigMessage(message: WorkerMessage): message is { type: 'config'; config: VideoJitterBufferConfig } {
+  return (message as { type?: string }).type === 'config'
+}
+
+self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
+  if (isConfigMessage(event.data)) {
+    updateJitterBuffer(event.data.config)
+    return
+  }
+
   const subgroupStreamObject: SubgroupObject = {
     objectId: event.data.subgroupStreamObject.objectId,
     objectPayloadLength: event.data.subgroupStreamObject.objectPayloadLength,
@@ -147,6 +214,19 @@ async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgrou
   }
   const desiredConfig = buildVideoDecoderConfig(resolvedConfig)
 
+  const needsReconfigure = shouldReconfigure(resolvedConfig)
+  if (needsReconfigure && decoded.metadata.type !== 'key') {
+    pendingReconfigureConfig = resolvedConfig
+    return
+  }
+  if (pendingReconfigureConfig && decoded.metadata.type === 'key') {
+    if (shouldReconfigure(pendingReconfigureConfig)) {
+      await reinitializeDecoder(buildVideoDecoderConfig(pendingReconfigureConfig), pendingReconfigureConfig)
+    }
+    pendingReconfigureConfig = null
+    // fallthrough to decode this keyframe
+  }
+
   const encodedVideoChunk = new EncodedVideoChunk({
     type: decoded.metadata.type as EncodedVideoChunkType,
     timestamp: decoded.metadata.timestamp,
@@ -157,22 +237,35 @@ async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgrou
   if (!videoDecoder || videoDecoder.state === 'closed') {
     videoDecoder = await initializeVideoDecoder(desiredConfig)
     cachedVideoConfig = resolvedConfig
-    // デコーダー再初期化後の最初のフレームはキーフレームである必要がある
+    postDecoderConfig(resolvedConfig, desiredConfig)
     if (decoded.metadata.type !== 'key') {
       return
     }
   }
 
-  if (shouldReconfigure(resolvedConfig)) {
-    videoDecoder.configure(desiredConfig)
-    console.log('[videoDecoder] reconfigure with config:', desiredConfig)
-    cachedVideoConfig = resolvedConfig
+  if (needsReconfigure) {
+    await reinitializeDecoder(desiredConfig, resolvedConfig)
     if (decoded.metadata.type !== 'key') {
       return
     }
   }
 
   await videoDecoder.decode(encodedVideoChunk)
+}
+
+async function reinitializeDecoder(
+  desiredConfig: VideoDecoderConfig,
+  resolvedConfig: { codec: string; descriptionBase64?: string }
+) {
+  try {
+    videoDecoder?.close()
+  } catch (e) {
+    console.warn('[videoDecoder] failed to close before reconfigure', e)
+  }
+  videoDecoder = await initializeVideoDecoder(desiredConfig)
+  console.log('[videoDecoder] reinitialize with config:', desiredConfig)
+  cachedVideoConfig = resolvedConfig
+  postDecoderConfig(resolvedConfig, desiredConfig)
 }
 
 function reportLatency(sentAt: number | undefined) {
@@ -198,6 +291,15 @@ function postRenderingLatency(latencyMs: number) {
     return
   }
   self.postMessage({ type: 'renderingLatency', media: 'video', ms: latencyMs })
+}
+
+function postDecoderConfig(resolvedConfig: { codec: string; descriptionBase64?: string }, desired: VideoDecoderConfig) {
+  const descriptionLength = desired.description instanceof Uint8Array ? desired.description.byteLength : undefined
+  self.postMessage({
+    type: 'decoderConfig',
+    codec: resolvedConfig.codec,
+    descriptionLength
+  })
 }
 
 function resolveVideoConfig(metadata: ChunkMetadata): { codec: string; descriptionBase64?: string } | null {

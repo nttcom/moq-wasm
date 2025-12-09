@@ -20,6 +20,7 @@ export interface VideoChunkSendOptions {
   client: MOQTClient
   transportState: MediaTransportState
   sender: VideoChunkSender
+  fallbackCodec?: string
 }
 
 export async function sendVideoChunkViaMoqt({
@@ -29,7 +30,8 @@ export async function sendVideoChunkViaMoqt({
   publisherPriority,
   client,
   transportState,
-  sender
+  sender,
+  fallbackCodec
 }: VideoChunkSendOptions): Promise<void> {
   if (!trackAliases.length) {
     return
@@ -40,14 +42,16 @@ export async function sendVideoChunkViaMoqt({
 
   const shouldIncludeCodec = trackAliases.some((alias) => transportState.shouldSendVideoCodec(alias))
   const decoderConfig = metadata?.decoderConfig as any
-  const descriptionBase64 =
-    shouldIncludeCodec && decoderConfig?.description ? bufferToBase64(decoderConfig.description) : undefined
-  const extraMeta = shouldIncludeCodec
-    ? {
-        codec: decoderConfig?.codec ?? 'avc1.640028',
-        descriptionBase64
-      }
-    : undefined
+  const defaultCodec = fallbackCodec ?? 'avc1.640028'
+  const codec = decoderConfig?.codec ?? defaultCodec
+  const configMeta =
+    codec !== undefined
+      ? decoderConfig?.description
+        ? { codec, descriptionBase64: bufferToBase64(decoderConfig.description) }
+        : { codec }
+      : undefined
+
+  const extraMeta = chunk.type === 'key' ? configMeta : shouldIncludeCodec ? configMeta : undefined
 
   if (chunk.type === 'key') {
     transportState.advanceVideoGroup()
@@ -86,7 +90,7 @@ export async function sendVideoChunkViaMoqt({
       client,
       extraMeta
     )
-    if (shouldIncludeCodec) {
+    if (extraMeta) {
       transportState.markVideoCodecSent(alias)
     }
   }
