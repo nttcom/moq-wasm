@@ -33,6 +33,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      - name: Install FFmpeg build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ffmpeg \
+            pkg-config \
+            libavutil-dev \
+            libavcodec-dev \
+            libavformat-dev
       - name: Generate code coverage
         run: |
           RUSTFLAGS="--cfg=web_sys_unstable_apis --cfg=tokio_unstable" cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
