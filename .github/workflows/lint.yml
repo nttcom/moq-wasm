@@ -18,6 +18,15 @@ jobs:
         run: |
           rustup component add clippy
           rustup component add rustfmt
+      - name: Install FFmpeg build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ffmpeg \
+            pkg-config \
+            libavutil-dev \
+            libavcodec-dev \
+            libavformat-dev
       - name: Run Clippy
         run: cargo clippy -- -D warnings
       - name: Check code formatting
