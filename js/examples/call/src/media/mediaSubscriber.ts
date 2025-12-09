@@ -1,5 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { SubgroupStreamObjectMessage } from '../../../../pkg/moqt_client_sample'
+import type { VideoJitterBufferMode } from '../../../../utils/media/videoJitterBuffer'
+import { DEFAULT_VIDEO_JITTER_CONFIG, normalizeVideoJitterConfig, type VideoJitterConfig } from '../types/jitterBuffer'
 
 interface MediaSubscriberHandlers {
   onRemoteVideoStream?: (userId: string, stream: MediaStream) => void
@@ -10,6 +12,7 @@ interface MediaSubscriberHandlers {
   onRemoteVideoRenderingLatency?: (userId: string, ms: number) => void
   onRemoteAudioReceiveLatency?: (userId: string, ms: number) => void
   onRemoteAudioRenderingLatency?: (userId: string, ms: number) => void
+  onRemoteVideoConfig?: (userId: string, config: { codec: string; width?: number; height?: number }) => void
 }
 
 interface VideoSubscriptionContext {
@@ -30,6 +33,9 @@ export class MediaSubscriber {
   private handlers: MediaSubscriberHandlers = {}
   private readonly videoContexts = new Map<bigint, VideoSubscriptionContext>()
   private readonly audioContexts = new Map<bigint, AudioSubscriptionContext>()
+  private readonly videoJitterConfigByUserId = new Map<string, VideoJitterConfig>()
+  private readonly videoCodecByTrackAlias = new Map<bigint, string>()
+  private readonly videoSizeByTrackAlias = new Map<bigint, { width: number; height: number }>()
 
   constructor(private readonly client: MoqtClientWrapper) {}
 
@@ -48,10 +54,11 @@ export class MediaSubscriber {
     const writer = generator.writable.getWriter()
     worker.onmessage = async (event: MessageEvent) => {
       const data = event.data as
-        | { type: 'frame'; frame: VideoFrame }
+        | { type: 'frame'; frame: VideoFrame; width?: number; height?: number }
         | { type: 'bitrate'; kbps: number }
         | { type: 'receiveLatency'; media: 'video'; ms: number }
         | { type: 'renderingLatency'; media: 'video'; ms: number }
+        | { type: 'decoderConfig'; codec: string; width?: number; height?: number }
       if (data.type === 'bitrate') {
         this.handlers.onRemoteVideoBitrate?.(userId, data.kbps)
         return
@@ -64,6 +71,34 @@ export class MediaSubscriber {
         this.handlers.onRemoteVideoRenderingLatency?.(userId, data.ms)
         return
       }
+      if (data.type === 'decoderConfig') {
+        this.videoCodecByTrackAlias.set(trackAlias, data.codec)
+        if (typeof data.width === 'number' || typeof data.height === 'number') {
+          this.handlers.onRemoteVideoConfig?.(userId, {
+            codec: data.codec,
+            width: data.width,
+            height: data.height
+          })
+        }
+        return
+      }
+      if (data.type === 'frame') {
+        const lastCodec = this.videoCodecByTrackAlias.get(trackAlias)
+        const lastSize = this.videoSizeByTrackAlias.get(trackAlias)
+        if (
+          (typeof data.width === 'number' && data.width !== lastSize?.width) ||
+          (typeof data.height === 'number' && data.height !== lastSize?.height)
+        ) {
+          if (typeof data.width === 'number' && typeof data.height === 'number') {
+            this.videoSizeByTrackAlias.set(trackAlias, { width: data.width, height: data.height })
+            this.handlers.onRemoteVideoConfig?.(userId, {
+              codec: lastCodec ?? 'unknown',
+              width: data.width,
+              height: data.height
+            })
+          }
+        }
+      }
       await writer.ready
       await writer.write(data.frame)
     }
@@ -71,6 +106,10 @@ export class MediaSubscriber {
     const stream = new MediaStream([generator])
     this.videoContexts.set(trackAlias, { userId, worker, writer, stream })
     this.handlers.onRemoteVideoStream?.(userId, stream)
+    const config = this.videoJitterConfigByUserId.get(userId)
+    if (config) {
+      worker.postMessage({ type: 'config', config })
+    }
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
       this.forwardToWorker(worker, trackAlias, groupId, message)
@@ -141,5 +180,21 @@ export class MediaSubscriber {
       },
       [payload.buffer]
     )
+  }
+
+  setVideoJitterBufferConfig(userId: string, config: VideoJitterConfig): void {
+    const sanitized = this.sanitizeConfig(config)
+    this.videoJitterConfigByUserId.set(userId, sanitized)
+    for (const context of this.videoContexts.values()) {
+      if (context.userId === userId) {
+        context.worker.postMessage({ type: 'config', config: sanitized })
+      }
+    }
+  }
+
+  private sanitizeConfig(config: VideoJitterConfig): VideoJitterConfig {
+    const normalized = normalizeVideoJitterConfig(config)
+    const mode: VideoJitterBufferMode = normalized.mode ?? DEFAULT_VIDEO_JITTER_CONFIG.mode
+    return { ...normalized, mode }
   }
 }

@@ -5,7 +5,6 @@ import { ChatMessage } from '../types/chat'
 import { ChatSidebar } from './ChatSidebar'
 import { MemberGrid } from './MemberGrid'
 import { RoomHeader } from './RoomHeader'
-import { MediaControlBar } from './MediaControlBar'
 import { useSessionEventHandlers } from '../hooks/useSessionEventHandlers'
 import { useCallMedia } from '../hooks/useCallMedia'
 
@@ -21,6 +20,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const {
     cameraEnabled,
+    screenShareEnabled,
     microphoneEnabled,
     cameraBusy,
     microphoneBusy,
@@ -29,7 +29,30 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     localVideoBitrate,
     remoteMedia,
     toggleCamera,
-    toggleMicrophone
+    toggleScreenShare,
+    toggleMicrophone,
+    videoJitterConfigs,
+    setVideoJitterBufferConfig,
+    videoCodecOptions,
+    videoResolutionOptions,
+    videoBitrateOptions,
+    selectedVideoEncoding,
+    selectVideoEncoding,
+    selectedScreenShareEncoding,
+    selectScreenShareEncoding,
+    videoEncoderError,
+    audioCodecOptions,
+    audioBitrateOptions,
+    audioChannelOptions,
+    selectedAudioEncoding,
+    selectAudioEncoding,
+    audioEncoderError,
+    videoDevices,
+    audioDevices,
+    selectedVideoDeviceId,
+    selectedAudioDeviceId,
+    selectVideoDevice,
+    selectAudioDevice
   } = useCallMedia(session)
 
   const [room, setRoom] = useState<Room>(() => ({
@@ -87,14 +110,14 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
 
   const handleToggleCamera = async () => {
     const enabled = await toggleCamera()
-    session.localMember.publishedTracks.video = enabled
+    session.localMember.publishedTracks.video = enabled || screenShareEnabled
     setRoom((current) => ({
       ...current,
       localMember: {
         ...current.localMember,
         publishedTracks: {
           ...current.localMember.publishedTracks,
-          video: enabled
+          video: enabled || screenShareEnabled
         }
       }
     }))
@@ -120,14 +143,6 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
       <div className="flex min-h-screen flex-col lg:flex-row">
         <main className="flex-1 px-6 py-10 lg:px-10 lg:py-12">
           <RoomHeader roomName={roomName} onLeave={onLeave} />
-          <MediaControlBar
-            cameraEnabled={cameraEnabled}
-            microphoneEnabled={microphoneEnabled}
-            cameraBusy={cameraBusy}
-            microphoneBusy={microphoneBusy}
-            onToggleCamera={handleToggleCamera}
-            onToggleMicrophone={handleToggleMicrophone}
-          />
           <MemberGrid
             localMember={room.localMember}
             remoteMembers={Array.from(room.remoteMembers.values())}
@@ -135,6 +150,53 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
             localVideoBitrate={localVideoBitrate}
             localAudioBitrate={localAudioBitrate}
             remoteMedia={remoteMedia}
+            videoJitterConfigs={videoJitterConfigs}
+            onChangeVideoJitterConfig={setVideoJitterBufferConfig}
+            onToggleCamera={handleToggleCamera}
+            onToggleScreenShare={async () => {
+              const enabled = await toggleScreenShare()
+              session.localMember.publishedTracks.video = enabled || cameraEnabled
+              setRoom((current) => ({
+                ...current,
+                localMember: {
+                  ...current.localMember,
+                  publishedTracks: {
+                    ...current.localMember.publishedTracks,
+                    video: enabled || cameraEnabled
+                  }
+                }
+              }))
+            }}
+            onToggleMicrophone={handleToggleMicrophone}
+            cameraEnabled={cameraEnabled}
+            screenShareEnabled={screenShareEnabled}
+            microphoneEnabled={microphoneEnabled}
+            cameraBusy={cameraBusy}
+            microphoneBusy={microphoneBusy}
+            videoDevices={videoDevices}
+            audioDevices={audioDevices}
+            selectedVideoDeviceId={selectedVideoDeviceId}
+            selectedAudioDeviceId={selectedAudioDeviceId}
+            onSelectVideoDevice={selectVideoDevice}
+            onSelectAudioDevice={selectAudioDevice}
+            videoEncodingOptions={{
+              codecOptions: videoCodecOptions,
+              resolutionOptions: videoResolutionOptions,
+              bitrateOptions: videoBitrateOptions
+            }}
+            selectedVideoEncoding={selectedVideoEncoding}
+            onSelectVideoEncoding={selectVideoEncoding}
+            selectedScreenShareEncoding={selectedScreenShareEncoding}
+            onSelectScreenShareEncoding={selectScreenShareEncoding}
+            videoEncoderError={videoEncoderError}
+            audioEncodingOptions={{
+              codecOptions: audioCodecOptions,
+              bitrateOptions: audioBitrateOptions,
+              channelOptions: audioChannelOptions
+            }}
+            selectedAudioEncoding={selectedAudioEncoding}
+            onSelectAudioEncoding={selectAudioEncoding}
+            audioEncoderError={audioEncoderError}
           />
         </main>
 
