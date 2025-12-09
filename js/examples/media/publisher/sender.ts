@@ -1,32 +1,9 @@
 import { MOQTClient } from '../../../pkg/moqt_client_sample'
 import { createBitrateLogger } from '../../../utils/media/logger'
+import { serializeChunk, type ChunkMetadata } from '../../../utils/media/chunk'
 
 const chunkDataBitrateLogger = createBitrateLogger('chunkData bitrate')
 const videoGroupStates = new Map<bigint, { groupId: bigint; lastObjectId: bigint }>()
-
-function packMetaAndChunk(chunk: {
-  type: string
-  timestamp: number
-  duration: number | null
-  byteLength: number
-  copyTo: (dest: Uint8Array) => void
-}): Uint8Array {
-  const meta = { type: chunk.type, timestamp: chunk.timestamp, duration: chunk.duration ?? 0 }
-  const metaJson = JSON.stringify(meta)
-  const metaBytes = new TextEncoder().encode(metaJson)
-  const metaLen = metaBytes.length
-
-  const chunkArray = new Uint8Array(chunk.byteLength)
-  chunk.copyTo(chunkArray)
-
-  const totalLen = 4 + metaLen + chunkArray.length
-  const payload = new Uint8Array(totalLen)
-  const view = new DataView(payload.buffer)
-  view.setUint32(0, metaLen)
-  payload.set(metaBytes, 4)
-  payload.set(chunkArray, 4 + metaLen)
-  return payload
-}
 
 export async function sendVideoObjectMessage(
   trackAlias: bigint,
@@ -34,7 +11,8 @@ export async function sendVideoObjectMessage(
   subgroupId: bigint,
   objectId: bigint,
   chunk: EncodedVideoChunk,
-  client: MOQTClient
+  client: MOQTClient,
+  extraMetadata?: Partial<ChunkMetadata>
 ) {
   const previousState = videoGroupStates.get(trackAlias)
   if (previousState && previousState.groupId !== groupId) {
@@ -46,7 +24,16 @@ export async function sendVideoObjectMessage(
   }
 
   chunkDataBitrateLogger.addBytes(chunk.byteLength)
-  const payload = packMetaAndChunk(chunk)
+  const payload = serializeChunk(
+    {
+      type: chunk.type,
+      timestamp: chunk.timestamp,
+      duration: chunk.duration ?? null,
+      byteLength: chunk.byteLength,
+      copyTo: (dest: Uint8Array) => chunk.copyTo(dest)
+    },
+    extraMetadata
+  )
   await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, payload)
   videoGroupStates.set(trackAlias, { groupId, lastObjectId: objectId })
 }
@@ -57,9 +44,19 @@ export async function sendAudioObjectMessage(
   subgroupId: bigint,
   objectId: bigint,
   chunk: EncodedAudioChunk,
-  client: MOQTClient
+  client: MOQTClient,
+  extraMetadata?: Partial<ChunkMetadata>
 ) {
-  const payload = packMetaAndChunk(chunk)
+  const payload = serializeChunk(
+    {
+      type: chunk.type,
+      timestamp: chunk.timestamp,
+      duration: chunk.duration ?? null,
+      byteLength: chunk.byteLength,
+      copyTo: (dest: Uint8Array) => chunk.copyTo(dest)
+    },
+    extraMetadata
+  )
 
   await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, payload)
 }

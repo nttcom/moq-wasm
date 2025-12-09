@@ -18,6 +18,24 @@ jobs:
         run: |
           rustup component add clippy
           rustup component add rustfmt
+      - name: Install FFmpeg build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ffmpeg \
+            pkg-config \
+            libavutil-dev \
+            libavfilter-dev \
+            libavcodec-dev \
+            libavformat-dev \
+            libavdevice-dev \
+            libswscale-dev \
+            libswresample-dev \
+            clang \
+            libclang-dev \
+            llvm-dev
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+          echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
       - name: Run Clippy
         run: cargo clippy -- -D warnings
       - name: Check code formatting
@@ -33,6 +51,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      - name: Install FFmpeg build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ffmpeg \
+            pkg-config \
+            libavutil-dev \
+            libavfilter-dev \
+            libavcodec-dev \
+            libavformat-dev \
+            libavdevice-dev \
+            libswscale-dev \
+            libswresample-dev \
+            clang \
+            libclang-dev \
+            llvm-dev
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+          echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
       - name: Generate code coverage
         run: |
           RUSTFLAGS="--cfg=web_sys_unstable_apis --cfg=tokio_unstable" cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml

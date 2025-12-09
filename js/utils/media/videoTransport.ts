@@ -1,5 +1,6 @@
 import type { MOQTClient } from '../../pkg/moqt_client_sample'
 import { MediaTransportState } from './transportState'
+import { serializeChunk, type ChunkMetadata } from './chunk'
 
 export type VideoChunkSender = (
   trackAlias: bigint,
@@ -7,7 +8,8 @@ export type VideoChunkSender = (
   subgroupId: bigint,
   objectId: bigint,
   chunk: EncodedVideoChunk,
-  client: MOQTClient
+  client: MOQTClient,
+  extraMetadata?: Partial<ChunkMetadata>
 ) => Promise<void>
 
 export interface VideoChunkSendOptions {
@@ -18,6 +20,7 @@ export interface VideoChunkSendOptions {
   client: MOQTClient
   transportState: MediaTransportState
   sender: VideoChunkSender
+  fallbackCodec?: string
 }
 
 export async function sendVideoChunkViaMoqt({
@@ -27,7 +30,8 @@ export async function sendVideoChunkViaMoqt({
   publisherPriority,
   client,
   transportState,
-  sender
+  sender,
+  fallbackCodec
 }: VideoChunkSendOptions): Promise<void> {
   if (!trackAliases.length) {
     return
@@ -35,6 +39,19 @@ export async function sendVideoChunkViaMoqt({
 
   const subgroupId = Number((metadata as { svc?: { temporalLayerId?: number } } | undefined)?.svc?.temporalLayerId ?? 0)
   transportState.ensureVideoSubgroup(subgroupId)
+
+  const shouldIncludeCodec = trackAliases.some((alias) => transportState.shouldSendVideoCodec(alias))
+  const decoderConfig = metadata?.decoderConfig as any
+  const defaultCodec = fallbackCodec ?? 'avc1.640028'
+  const codec = decoderConfig?.codec ?? defaultCodec
+  const configMeta =
+    codec !== undefined
+      ? decoderConfig?.description
+        ? { codec, descriptionBase64: bufferToBase64(decoderConfig.description) }
+        : { codec }
+      : undefined
+
+  const extraMeta = chunk.type === 'key' ? configMeta : shouldIncludeCodec ? configMeta : undefined
 
   if (chunk.type === 'key') {
     transportState.advanceVideoGroup()
@@ -70,9 +87,22 @@ export async function sendVideoChunkViaMoqt({
       BigInt(subgroupId),
       transportState.getVideoObjectId(),
       chunk,
-      client
+      client,
+      extraMeta
     )
+    if (extraMeta) {
+      transportState.markVideoCodecSent(alias)
+    }
   }
 
   transportState.incrementVideoObject()
+}
+
+function bufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
 }

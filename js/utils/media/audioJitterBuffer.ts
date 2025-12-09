@@ -1,7 +1,7 @@
 import { deserializeChunk } from './chunk'
 import type { JitterBufferSubgroupObject, SubgroupObject } from './jitterBufferTypes'
 
-const INITIAL_CATCHUP_DELAY_MS = 250
+const INITIAL_CATCHUP_DELAY_MS = 1000
 const DEFAULT_JITTER_BUFFER_SIZE = 1800
 
 type AudioJitterBufferEntry = {
@@ -19,7 +19,12 @@ export class AudioJitterBuffer {
 
   constructor(private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE) {}
 
-  push(groupId: bigint, objectId: bigint, object: SubgroupObject): void {
+  push(
+    groupId: bigint,
+    objectId: bigint,
+    object: SubgroupObject,
+    onReceiveLatency?: (latencyMs: number) => void
+  ): void {
     if (!object.objectPayloadLength) {
       return
     }
@@ -32,6 +37,7 @@ export class AudioJitterBuffer {
     bufferObject.cachedChunk = parsed
     bufferObject.remotePTS = parsed.metadata.timestamp
     bufferObject.localPTS = performance.timeOrigin + performance.now()
+    onReceiveLatency?.(Date.now() - parsed.metadata.sentAt)
 
     const insertTimestamp = performance.now()
     const entry: AudioJitterBufferEntry = {
@@ -71,13 +77,14 @@ export class AudioJitterBuffer {
       ) {
         return null
       }
-      const latestEntry = this.buffer[this.buffer.length - 1]
-      if (!latestEntry) {
-        return null
-      }
-      this.buffer.length = 0
+      const firstConfigIndex = this.buffer.findIndex(
+        (entry) =>
+          !!entry.object.cachedChunk?.metadata?.codec || !!entry.object.cachedChunk?.metadata?.descriptionBase64
+      )
+      const index = firstConfigIndex >= 0 ? firstConfigIndex : 0
+      const entry = this.buffer.splice(index, 1)[0]
       this.hasPoppedOnce = true
-      return latestEntry
+      return entry ?? null
     }
 
     const head = this.buffer[0]

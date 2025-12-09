@@ -14,12 +14,14 @@ const videoDecoderWorker = new Worker(new URL('../../../utils/media/decoders/vid
 type AudioDecoderWorkerMessage =
   | { type: 'audioData'; audioData: AudioData }
   | { type: 'bitrate'; media: 'audio'; kbps: number }
-  | { type: 'latency'; media: 'audio'; ms: number }
+  | { type: 'receiveLatency'; media: 'audio'; ms: number }
+  | { type: 'renderingLatency'; media: 'audio'; ms: number }
 
 type VideoDecoderWorkerMessage =
   | { type: 'frame'; frame: VideoFrame }
   | { type: 'bitrate'; kbps: number }
-  | { type: 'latency'; media: 'video'; ms: number }
+  | { type: 'receiveLatency'; media: 'video'; ms: number }
+  | { type: 'renderingLatency'; media: 'video'; ms: number }
 
 let audioWorkerInitialized = false
 let videoWorkerInitialized = false
