@@ -28,6 +28,7 @@ jobs:
             libavfilter-dev \
             libavcodec-dev \
             libavformat-dev \
+            libavdevice-dev \
             libswscale-dev \
             libswresample-dev
           echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
@@ -56,6 +57,7 @@ jobs:
             libavfilter-dev \
             libavcodec-dev \
             libavformat-dev \
+            libavdevice-dev \
             libswscale-dev \
             libswresample-dev
       - name: Generate code coverage
