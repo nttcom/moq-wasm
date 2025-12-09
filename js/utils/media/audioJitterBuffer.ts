@@ -79,8 +79,7 @@ export class AudioJitterBuffer {
       }
       const firstConfigIndex = this.buffer.findIndex(
         (entry) =>
-          !!entry.object.cachedChunk?.metadata?.codec ||
-          !!entry.object.cachedChunk?.metadata?.descriptionBase64
+          !!entry.object.cachedChunk?.metadata?.codec || !!entry.object.cachedChunk?.metadata?.descriptionBase64
       )
       const index = firstConfigIndex >= 0 ? firstConfigIndex : 0
       const entry = this.buffer.splice(index, 1)[0]
