@@ -62,6 +62,15 @@ async function handleAudioChunkMessage(
   const subgroupId = 0
   transportState.ensureAudioSubgroup(subgroupId)
 
+  const shouldIncludeCodec = transportState.shouldSendAudioCodec(trackAlias)
+  const extraMeta = shouldIncludeCodec
+    ? {
+        codec: 'opus',
+        sampleRate: 48000,
+        channels: 1
+      }
+    : undefined
+
   if (transportState.shouldSendAudioHeader(trackAlias, subgroupId)) {
     await client.sendSubgroupStreamHeaderMessage(
       trackAlias,
@@ -79,8 +88,12 @@ async function handleAudioChunkMessage(
     BigInt(subgroupId),
     transportState.getAudioObjectId(),
     chunk,
-    client
+    client,
+    extraMeta
   )
+  if (shouldIncludeCodec) {
+    transportState.markAudioCodecSent(trackAlias)
+  }
   transportState.incrementAudioObject()
 }
 

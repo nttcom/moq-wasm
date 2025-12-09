@@ -5,4 +5,6 @@ members = [
     'moqt-server',
     'moqt-server-sample',
     'moqt-client-sample',
+    'moqt-ingest-gateway',
+    'moqt-client-rust',
 ]

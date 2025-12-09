@@ -5,6 +5,10 @@ export type ChunkMetadata = {
   timestamp: number
   duration: number | null
   sentAt: number
+  codec?: string
+  descriptionBase64?: string
+  sampleRate?: number
+  channels?: number
 }
 
 export type DeserializedChunk = {
@@ -20,12 +24,13 @@ export type EncodedChunkLike = {
   copyTo: (dest: Uint8Array) => void
 }
 
-export function serializeChunk(chunk: EncodedChunkLike): Uint8Array {
+export function serializeChunk(chunk: EncodedChunkLike, extraMetadata?: Partial<ChunkMetadata>): Uint8Array {
   const metadata: ChunkMetadata = {
     type: chunk.type,
     timestamp: chunk.timestamp,
     duration: chunk.duration ?? null,
-    sentAt: Date.now()
+    sentAt: Date.now(),
+    ...extraMetadata
   }
   const metaBytes = new TextEncoder().encode(JSON.stringify(metadata))
   const payload = new Uint8Array(META_LENGTH_BYTES + metaBytes.length + chunk.byteLength)
