@@ -4,7 +4,7 @@
   "description": "moq-wasm client",
   "main": "index.js",
   "scripts": {
-    "wasm": "wasm-pack build ../moqt-client-sample --target web --out-dir=../js/pkg --features web_sys_unstable_apis",
+    "wasm": "wasm-pack build ../moqt-client-wasm --target web --out-dir=../js/pkg --features web_sys_unstable_apis",
     "dev": "npm run wasm && vite",
     "build": "npm run wasm && vite build",
     "prod": "npm run wasm && vite --host",

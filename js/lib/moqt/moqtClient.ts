@@ -11,7 +11,7 @@ import init, {
   SubscribeErrorMessage,
   SubgroupState,
   SubgroupStreamObjectMessage
-} from '../../pkg/moqt_client_sample'
+} from '../../pkg/moqt_client_wasm'
 import {
   InMemorySubscriptionStateManager,
   SubscriptionStateStore,

@@ -1,4 +1,4 @@
-import { SubgroupStreamObjectMessage } from '../../pkg/moqt_client_sample'
+import { SubgroupStreamObjectMessage } from '../../pkg/moqt_client_wasm'
 
 export type SubgroupObjectHandler = (groupId: bigint, message: SubgroupStreamObjectMessage) => void
 

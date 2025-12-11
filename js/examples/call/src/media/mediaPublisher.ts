@@ -1,5 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { MOQTClient } from '../../../../pkg/moqt_client_sample'
+import type { MOQTClient } from '../../../../pkg/moqt_client_wasm'
 import { MediaTransportState } from '../../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../../utils/media/audioTransport'

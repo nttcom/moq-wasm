@@ -4,7 +4,7 @@ members = [
     'moqt-core',
     'moqt-server',
     'moqt-server-sample',
-    'moqt-client-sample',
+    'moqt-client-wasm',
     'moqt-ingest-gateway',
     'moqt-client-rust',
 ]
