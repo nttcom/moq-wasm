@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { LocalSession } from '../session/localSession'
 import { RemoteMediaStreams } from '../types/media'
-import { DEFAULT_VIDEO_JITTER_CONFIG, normalizeVideoJitterConfig, type VideoJitterConfig } from '../types/jitterBuffer'
+import {
+  DEFAULT_VIDEO_JITTER_CONFIG,
+  normalizeVideoJitterConfig,
+  type VideoJitterConfig,
+  DEFAULT_AUDIO_JITTER_CONFIG,
+  normalizeAudioJitterConfig,
+  type AudioJitterConfig
+} from '../types/jitterBuffer'
 import {
   DEFAULT_VIDEO_ENCODING_SETTINGS,
   VIDEO_BITRATE_OPTIONS,
@@ -33,6 +40,8 @@ interface UseCallMediaResult {
   toggleMicrophone: () => Promise<boolean>
   videoJitterConfigs: Map<string, VideoJitterConfig>
   setVideoJitterBufferConfig: (userId: string, config: Partial<VideoJitterConfig>) => void
+  audioJitterConfigs: Map<string, AudioJitterConfig>
+  setAudioJitterBufferConfig: (userId: string, config: Partial<AudioJitterConfig>) => void
   videoCodecOptions: typeof VIDEO_CODEC_OPTIONS
   videoResolutionOptions: typeof VIDEO_RESOLUTION_OPTIONS
   videoBitrateOptions: typeof VIDEO_BITRATE_OPTIONS
@@ -67,6 +76,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
   const [localAudioBitrate, setLocalAudioBitrate] = useState<number | null>(null)
   const [remoteMedia, setRemoteMedia] = useState<Map<string, RemoteMediaStreams>>(new Map())
   const [videoJitterConfigs, setVideoJitterConfigs] = useState<Map<string, VideoJitterConfig>>(new Map())
+  const [audioJitterConfigs, setAudioJitterConfigs] = useState<Map<string, AudioJitterConfig>>(new Map())
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState<string | null>(null)
@@ -112,6 +122,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setMicrophoneEnabled(false)
       setScreenShareEnabled(false)
       setVideoJitterConfigs(new Map())
+      setAudioJitterConfigs(new Map())
       setVideoEncoderError(null)
       setAudioEncoderError(null)
       return
@@ -225,6 +236,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setCameraEnabled(session.localMember.publishedTracks.video)
       setMicrophoneEnabled(session.localMember.publishedTracks.audio)
       setVideoJitterConfigs(new Map())
+      setAudioJitterConfigs(new Map())
     }
   }, [session])
 
@@ -352,6 +364,24 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     [session]
   )
 
+  const setAudioJitterBufferConfig = useCallback(
+    (userId: string, config: Partial<AudioJitterConfig>) => {
+      if (!session) {
+        return
+      }
+      const controller = session.getMediaController()
+      setAudioJitterConfigs((prev) => {
+        const current = prev.get(userId) ?? DEFAULT_AUDIO_JITTER_CONFIG
+        const next = normalizeAudioJitterConfig({ ...current, ...config })
+        const updated = new Map(prev)
+        updated.set(userId, next)
+        controller.setAudioJitterBufferConfig(userId, next)
+        return updated
+      })
+    },
+    [session]
+  )
+
   const selectVideoDevice = useCallback(
     async (deviceId: string) => {
       setSelectedVideoDeviceId(deviceId)
@@ -472,6 +502,8 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     toggleMicrophone,
     videoJitterConfigs,
     setVideoJitterBufferConfig,
+    audioJitterConfigs,
+    setAudioJitterBufferConfig,
     videoCodecOptions: VIDEO_CODEC_OPTIONS,
     videoResolutionOptions: VIDEO_RESOLUTION_OPTIONS,
     videoBitrateOptions: VIDEO_BITRATE_OPTIONS,

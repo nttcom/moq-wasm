@@ -1,8 +1,9 @@
 import { deserializeChunk } from './chunk'
 import type { JitterBufferSubgroupObject, SubgroupObject } from './jitterBufferTypes'
 
-const INITIAL_CATCHUP_DELAY_MS = 1000
 const DEFAULT_JITTER_BUFFER_SIZE = 1800
+
+export type AudioJitterBufferMode = 'ordered' | 'latest'
 
 type AudioJitterBufferEntry = {
   groupId: bigint
@@ -15,9 +16,18 @@ type AudioJitterBufferEntry = {
 export class AudioJitterBuffer {
   private buffer: AudioJitterBufferEntry[] = []
   private hasPoppedOnce = false
-  private firstInsertTimestamp: number | null = null
+  private mode: AudioJitterBufferMode = 'latest'
 
-  constructor(private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE) {}
+  constructor(
+    private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE,
+    mode: AudioJitterBufferMode = 'latest'
+  ) {
+    this.mode = mode
+  }
+
+  setMode(mode: AudioJitterBufferMode): void {
+    this.mode = mode
+  }
 
   push(
     groupId: bigint,
@@ -51,10 +61,6 @@ export class AudioJitterBuffer {
     const pos = this.findInsertPos(groupId, objectId)
     this.buffer.splice(pos, 0, entry)
 
-    if (this.firstInsertTimestamp === null) {
-      this.firstInsertTimestamp = insertTimestamp
-    }
-
     if (this.buffer.length > this.maxBufferSize) {
       console.warn('[AudioJitterBuffer] Buffer full, dropping oldest entry')
       this.buffer.shift()
@@ -66,23 +72,22 @@ export class AudioJitterBuffer {
   }
 
   popWithMetadata(): AudioJitterBufferEntry | null {
+    console.log('[AudioJitterBuffer] popWithMetadata called, current mode:', this.mode)
     if (this.buffer.length === 0) {
       return null
     }
 
+    if (this.mode === 'latest') {
+      // latestモード: 常に最新のデータを取り出し、それ以前のデータを消去
+      const entry = this.buffer.pop()
+      this.buffer.length = 0 // それ以前のデータを全て消去
+      return entry ?? null
+    }
+
+    // orderedモード: 古いデータから順に取り出す
     if (!this.hasPoppedOnce) {
-      if (
-        this.firstInsertTimestamp === null ||
-        performance.now() - this.firstInsertTimestamp < INITIAL_CATCHUP_DELAY_MS
-      ) {
-        return null
-      }
-      const firstConfigIndex = this.buffer.findIndex(
-        (entry) =>
-          !!entry.object.cachedChunk?.metadata?.codec || !!entry.object.cachedChunk?.metadata?.descriptionBase64
-      )
-      const index = firstConfigIndex >= 0 ? firstConfigIndex : 0
-      const entry = this.buffer.splice(index, 1)[0]
+      // 初回は一番最後に挿入したデータ（最新のデータ）を取り出す
+      const entry = this.buffer.pop()
       this.hasPoppedOnce = true
       return entry ?? null
     }

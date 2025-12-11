@@ -30,7 +30,7 @@ export class VideoJitterBuffer {
 
   constructor(
     private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE,
-    private readonly mode: VideoJitterBufferMode = 'normal',
+    private readonly mode: VideoJitterBufferMode = 'fast',
     keyframeInterval?: number | bigint
   ) {
     this.keyframeInterval =
@@ -103,6 +103,7 @@ export class VideoJitterBuffer {
   }
 
   popWithMetadata(): VideoJitterBufferEntry | null {
+    console.log(`[VideoJitterBuffer] popWithMetadata called, current mode: ${this.mode}`)
     if (this.buffer.length === 0) {
       return null
     }
@@ -152,6 +153,21 @@ export class VideoJitterBuffer {
   }
 
   private popFastMode(): VideoJitterBufferEntry | null {
+    if (this.buffer.length === 0) {
+      return null
+    }
+
+    // 次のGoPが始まっていたら、現在のGoPをスキップして次のGoPに進む
+    const headGroup = this.buffer[0].groupId
+    const hasNextGroup = this.buffer.some((entry) => entry.groupId > headGroup)
+
+    if (hasNextGroup) {
+      // 現在のGoP全体を破棄し、次のGoPへ進む
+      while (this.buffer.length > 0 && this.buffer[0].groupId === headGroup) {
+        this.buffer.shift()
+      }
+    }
+
     const head = this.buffer.shift()
     if (!head) {
       return null

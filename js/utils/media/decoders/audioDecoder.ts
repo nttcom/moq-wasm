@@ -46,7 +46,7 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
 }
 
 const POP_INTERVAL_MS = 5
-const jitterBuffer = new AudioJitterBuffer(1800)
+const jitterBuffer = new AudioJitterBuffer(1800, 'latest')
 
 setInterval(() => {
   const jitterBufferEntry = jitterBuffer.pop()
@@ -60,16 +60,28 @@ setInterval(() => {
   }
 }, POP_INTERVAL_MS)
 
-self.onmessage = async (event: MessageEvent<SubgroupWorkerMessage>) => {
+type AudioWorkerMessage = SubgroupWorkerMessage | { type: 'config'; config: { mode?: string } }
+
+self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
+  if ((event.data as { type?: string }).type === 'config') {
+    const config = (event.data as { type: 'config'; config: { mode?: string } }).config
+    if (config.mode === 'ordered' || config.mode === 'latest') {
+      jitterBuffer.setMode(config.mode)
+      console.info('[audioDecoder] Set jitter buffer mode:', config.mode)
+    }
+    return
+  }
+
+  const message = event.data as SubgroupWorkerMessage
   const subgroupStreamObject: SubgroupObject = {
-    objectId: event.data.subgroupStreamObject.objectId,
-    objectPayloadLength: event.data.subgroupStreamObject.objectPayloadLength,
-    objectPayload: new Uint8Array(event.data.subgroupStreamObject.objectPayload),
-    objectStatus: event.data.subgroupStreamObject.objectStatus
+    objectId: message.subgroupStreamObject.objectId,
+    objectPayloadLength: message.subgroupStreamObject.objectPayloadLength,
+    objectPayload: new Uint8Array(message.subgroupStreamObject.objectPayload),
+    objectStatus: message.subgroupStreamObject.objectStatus
   }
   audioBitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
 
-  jitterBuffer.push(event.data.groupId, subgroupStreamObject.objectId, subgroupStreamObject, (latencyMs) =>
+  jitterBuffer.push(message.groupId, subgroupStreamObject.objectId, subgroupStreamObject, (latencyMs) =>
     postReceiveLatency(latencyMs)
   )
 }
@@ -134,14 +146,18 @@ function postRenderingLatency(latencyMs: number) {
 
 /**
  * Convert sender-side timestamps to a local timeline so the decoder can play them.
+ * NOTE: 検証目的で全てのtimestampを0に設定
  */
 function rebaseTimestamp(remoteTimestamp: number): number {
-  if (remoteTimestampBase === null) {
-    remoteTimestampBase = remoteTimestamp
-  }
+  // 検証目的: 全てのtimestampを0に差し替え
+  return 0
 
-  let rebased = remoteTimestamp - remoteTimestampBase
-  return rebased
+  // 元の実装（コメントアウト）
+  // if (remoteTimestampBase === null) {
+  //   remoteTimestampBase = remoteTimestamp
+  // }
+  // let rebased = remoteTimestamp - remoteTimestampBase
+  // return rebased
 }
 
 function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {

@@ -1,7 +1,15 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { SubgroupStreamObjectMessage } from '../../../../pkg/moqt_client_sample'
 import type { VideoJitterBufferMode } from '../../../../utils/media/videoJitterBuffer'
-import { DEFAULT_VIDEO_JITTER_CONFIG, normalizeVideoJitterConfig, type VideoJitterConfig } from '../types/jitterBuffer'
+import type { AudioJitterBufferMode } from '../../../../utils/media/audioJitterBuffer'
+import {
+  DEFAULT_VIDEO_JITTER_CONFIG,
+  DEFAULT_AUDIO_JITTER_CONFIG,
+  normalizeVideoJitterConfig,
+  normalizeAudioJitterConfig,
+  type VideoJitterConfig,
+  type AudioJitterConfig
+} from '../types/jitterBuffer'
 
 interface MediaSubscriberHandlers {
   onRemoteVideoStream?: (userId: string, stream: MediaStream) => void
@@ -34,6 +42,7 @@ export class MediaSubscriber {
   private readonly videoContexts = new Map<bigint, VideoSubscriptionContext>()
   private readonly audioContexts = new Map<bigint, AudioSubscriptionContext>()
   private readonly videoJitterConfigByUserId = new Map<string, VideoJitterConfig>()
+  private readonly audioJitterConfigByUserId = new Map<string, AudioJitterConfig>()
   private readonly videoCodecByTrackAlias = new Map<bigint, string>()
   private readonly videoSizeByTrackAlias = new Map<bigint, { width: number; height: number }>()
 
@@ -73,13 +82,12 @@ export class MediaSubscriber {
       }
       if (data.type === 'decoderConfig') {
         this.videoCodecByTrackAlias.set(trackAlias, data.codec)
-        if (typeof data.width === 'number' || typeof data.height === 'number') {
-          this.handlers.onRemoteVideoConfig?.(userId, {
-            codec: data.codec,
-            width: data.width,
-            height: data.height
-          })
-        }
+        const lastSize = this.videoSizeByTrackAlias.get(trackAlias)
+        this.handlers.onRemoteVideoConfig?.(userId, {
+          codec: data.codec,
+          width: data.width ?? lastSize?.width,
+          height: data.height ?? lastSize?.height
+        })
         return
       }
       if (data.type === 'frame') {
@@ -156,6 +164,10 @@ export class MediaSubscriber {
 
     this.audioContexts.set(trackAlias, context)
     this.handlers.onRemoteAudioStream?.(userId, context.stream)
+    const config = this.audioJitterConfigByUserId.get(userId)
+    if (config) {
+      worker.postMessage({ type: 'config', config })
+    }
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
       this.forwardToWorker(worker, trackAlias, groupId, message)
@@ -192,9 +204,25 @@ export class MediaSubscriber {
     }
   }
 
+  setAudioJitterBufferConfig(userId: string, config: AudioJitterConfig): void {
+    const sanitized = this.sanitizeAudioConfig(config)
+    this.audioJitterConfigByUserId.set(userId, sanitized)
+    for (const context of this.audioContexts.values()) {
+      if (context.userId === userId) {
+        context.worker.postMessage({ type: 'config', config: sanitized })
+      }
+    }
+  }
+
   private sanitizeConfig(config: VideoJitterConfig): VideoJitterConfig {
     const normalized = normalizeVideoJitterConfig(config)
     const mode: VideoJitterBufferMode = normalized.mode ?? DEFAULT_VIDEO_JITTER_CONFIG.mode
+    return { ...normalized, mode }
+  }
+
+  private sanitizeAudioConfig(config: AudioJitterConfig): AudioJitterConfig {
+    const normalized = normalizeAudioJitterConfig(config)
+    const mode: AudioJitterBufferMode = normalized.mode ?? DEFAULT_AUDIO_JITTER_CONFIG.mode
     return { ...normalized, mode }
   }
 }
