@@ -2,8 +2,8 @@ import { LocalMember, RemoteMember } from '../types/member'
 import { RemoteMediaStreams } from '../types/media'
 import { MediaStreamVideo, MediaStreamAudio } from './MediaStreamElements'
 import { ReactNode, useState } from 'react'
-import type { VideoJitterConfig } from '../types/jitterBuffer'
-import { JitterBufferControls } from './JitterBufferControls'
+import type { VideoJitterConfig, AudioJitterConfig } from '../types/jitterBuffer'
+import { VideoJitterBufferControls, AudioJitterBufferControls } from './JitterBufferControls'
 import { Mic, MicOff, Monitor, Settings2, Video, VideoOff } from 'lucide-react'
 import { DeviceSelector } from './DeviceSelector'
 import type { VideoEncodingSettings } from '../types/videoEncoding'
@@ -18,6 +18,8 @@ interface MemberGridProps {
   remoteMedia: Map<string, RemoteMediaStreams>
   videoJitterConfigs: Map<string, VideoJitterConfig>
   onChangeVideoJitterConfig: (userId: string, config: Partial<VideoJitterConfig>) => void
+  audioJitterConfigs: Map<string, AudioJitterConfig>
+  onChangeAudioJitterConfig: (userId: string, config: Partial<AudioJitterConfig>) => void
   onToggleCamera: () => void
   onToggleScreenShare: () => void
   onToggleMicrophone: () => void
@@ -61,6 +63,8 @@ export function MemberGrid({
   remoteMedia,
   videoJitterConfigs,
   onChangeVideoJitterConfig,
+  audioJitterConfigs,
+  onChangeAudioJitterConfig,
   onToggleCamera,
   onToggleScreenShare,
   onToggleMicrophone,
@@ -269,9 +273,13 @@ export function MemberGrid({
             <h4 className="text-lg font-semibold text-white">
               Jitter Buffer ({findMemberName(remoteMembers, jitterModalTarget)})
             </h4>
-            <JitterBufferControls
+            <VideoJitterBufferControls
               value={videoJitterConfigs.get(jitterModalTarget)}
               onChange={(config) => onChangeVideoJitterConfig(jitterModalTarget, config)}
+            />
+            <AudioJitterBufferControls
+              value={audioJitterConfigs.get(jitterModalTarget)}
+              onChange={(config) => onChangeAudioJitterConfig(jitterModalTarget, config)}
             />
           </div>
         </DeviceModal>

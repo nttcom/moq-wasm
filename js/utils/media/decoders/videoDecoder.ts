@@ -64,7 +64,7 @@ type NormalizedJitterConfig = {
 
 const DEFAULT_JITTER_CONFIG: NormalizedJitterConfig = {
   maxBufferSize: 9000,
-  mode: 'buffered',
+  mode: 'fast',
   minDelayMs: 250,
   bufferedAheadFrames: 5
 }

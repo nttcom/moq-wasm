@@ -33,6 +33,8 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     toggleMicrophone,
     videoJitterConfigs,
     setVideoJitterBufferConfig,
+    audioJitterConfigs,
+    setAudioJitterBufferConfig,
     videoCodecOptions,
     videoResolutionOptions,
     videoBitrateOptions,
@@ -152,6 +154,8 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
             remoteMedia={remoteMedia}
             videoJitterConfigs={videoJitterConfigs}
             onChangeVideoJitterConfig={setVideoJitterBufferConfig}
+            audioJitterConfigs={audioJitterConfigs}
+            onChangeAudioJitterConfig={setAudioJitterBufferConfig}
             onToggleCamera={handleToggleCamera}
             onToggleScreenShare={async () => {
               const enabled = await toggleScreenShare()

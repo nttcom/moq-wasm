@@ -1,6 +1,7 @@
 import { createBitrateLogger } from '../bitrate'
 
 let audioEncoder: AudioEncoder | undefined
+let timestampOffset: number | null = null
 let encoderConfig: AudioEncoderConfig = {
   codec: 'opus',
   sampleRate: 48000,
@@ -15,7 +16,25 @@ const audioBitrateLogger = createBitrateLogger((kbps) => {
 function sendAudioChunkMessage(chunk: EncodedAudioChunk, metadata: EncodedAudioChunkMetadata | undefined) {
   audioBitrateLogger.addBytes(chunk.byteLength)
   console.debug('sendAudioChunkMessage', chunk, metadata)
-  self.postMessage({ type: 'chunk', chunk, metadata })
+
+  // 最初のチャンクでtimestampのoffsetを保存
+  if (timestampOffset === null) {
+    timestampOffset = chunk.timestamp
+    console.info('[audioEncoder] Set timestamp offset:', timestampOffset)
+  }
+
+  // timestampを0起点に調整したチャンクを作成
+  const adjustedTimestamp = chunk.timestamp - timestampOffset
+  const buffer = new ArrayBuffer(chunk.byteLength)
+  chunk.copyTo(buffer)
+  const adjustedChunk = new EncodedAudioChunk({
+    type: chunk.type,
+    timestamp: adjustedTimestamp,
+    duration: chunk.duration ?? undefined,
+    data: buffer
+  })
+
+  self.postMessage({ type: 'chunk', chunk: adjustedChunk, metadata })
 }
 
 async function initializeAudioEncoder() {
@@ -43,6 +62,8 @@ async function initializeAudioEncoder() {
 }
 
 async function startAudioEncode(audioReadableStream: ReadableStream<AudioData>) {
+  // 新しいストリーム開始時にtimestampのoffsetをリセット
+  timestampOffset = null
   if (!audioEncoder) {
     audioEncoder = await initializeAudioEncoder()
   }

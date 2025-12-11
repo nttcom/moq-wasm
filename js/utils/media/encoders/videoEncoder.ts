@@ -3,6 +3,7 @@ import { createBitrateLogger } from '../bitrate'
 let videoEncoder: VideoEncoder | undefined
 let keyframeInterval: number
 let encoderConfig: VideoEncoderConfig | null = null
+let timestampOffset: number | null = null
 
 // H264 プロファイル
 // Baseline: 42 Main: 4D High: 64
@@ -27,7 +28,25 @@ const videoBitrateLogger = createBitrateLogger((kbps) => {
 
 function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoChunkMetadata | undefined) {
   videoBitrateLogger.addBytes(chunk.byteLength)
-  self.postMessage({ type: 'chunk', chunk, metadata })
+
+  // 最初のチャンクでtimestampのoffsetを保存
+  if (timestampOffset === null) {
+    timestampOffset = chunk.timestamp
+    console.info('[videoEncoder] Set timestamp offset:', timestampOffset)
+  }
+
+  // timestampを0起点に調整したチャンクを作成
+  const adjustedTimestamp = chunk.timestamp - timestampOffset
+  const buffer = new ArrayBuffer(chunk.byteLength)
+  chunk.copyTo(buffer)
+  const adjustedChunk = new EncodedVideoChunk({
+    type: chunk.type,
+    timestamp: adjustedTimestamp,
+    duration: chunk.duration ?? undefined,
+    data: buffer
+  })
+
+  self.postMessage({ type: 'chunk', chunk: adjustedChunk, metadata })
 }
 
 async function initializeVideoEncoder() {
@@ -62,6 +81,8 @@ async function initializeVideoEncoder() {
 
 async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>) {
   let frameCounter = 0
+  // 新しいストリーム開始時にtimestampのoffsetをリセット
+  timestampOffset = null
   console.log('initializeVideoEncoder')
   videoEncoder = await initializeVideoEncoder()
   if (!videoEncoder) {
@@ -73,17 +94,25 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     if (videoResult.done) break
     const videoFrame = videoResult.value
 
+    // Check if encoder needs re-initialization
+    if (!videoEncoder || videoEncoder.state === 'closed') {
+      console.log('Re-initialize video encoder')
+      videoEncoder = await initializeVideoEncoder()
+      frameCounter = 0
+      if (!videoEncoder) {
+        console.error('Failed to initialize video encoder, dropping frame')
+        videoFrame.close()
+        continue
+      }
+    }
+
     // Too many frames in flight, encoder is overwhelmed. let's drop this frame.
     if (videoEncoder.encodeQueueSize > 10) {
       console.error('videoEncoder.encodeQueueSize > 10', videoEncoder.encodeQueueSize)
       videoFrame.close()
       continue
     }
-    if (!videoEncoder || videoEncoder.state === 'closed') {
-      console.log('Re-initialize video encoder')
-      videoEncoder = await initializeVideoEncoder()
-      frameCounter = 0
-    }
+
     const keyFrame = frameCounter % keyframeInterval == 0
     videoEncoder.encode(videoFrame, { keyFrame })
     frameCounter++
@@ -96,10 +125,16 @@ self.onmessage = async (event) => {
   if (event.data.type === 'keyframeInterval') {
     keyframeInterval = event.data.keyframeInterval
   } else if (event.data.type === 'encoderConfig') {
-    encoderConfig = buildConfigFromMessage(event.data.config)
+    const newConfig = buildConfigFromMessage(event.data.config)
+    encoderConfig = newConfig
     if (videoEncoder && videoEncoder.state !== 'closed') {
-      videoEncoder.configure(encoderConfig)
-      console.info('[videoEncoder] reconfigured', encoderConfig)
+      try {
+        videoEncoder.configure(newConfig)
+        console.info('[videoEncoder] reconfigured', newConfig)
+      } catch (e) {
+        console.error('[videoEncoder] reconfigure failed', e)
+        self.postMessage({ type: 'configError', reason: 'reconfigure_failed', config: newConfig })
+      }
     }
   } else if (event.data.type === 'videoStream') {
     const videoReadableStream: ReadableStream<VideoFrame> = event.data.videoStream

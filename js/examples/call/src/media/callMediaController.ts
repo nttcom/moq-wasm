@@ -1,7 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { MediaPublisher } from './mediaPublisher'
 import { MediaSubscriber } from './mediaSubscriber'
-import type { VideoJitterConfig } from '../types/jitterBuffer'
+import type { VideoJitterConfig, AudioJitterConfig } from '../types/jitterBuffer'
 import type { VideoEncodingSettings } from '../types/videoEncoding'
 import type { AudioEncodingSettings } from '../types/audioEncoding'
 
@@ -96,6 +96,10 @@ export class CallMediaController {
 
   setVideoJitterBufferConfig(userId: string, config: VideoJitterConfig): void {
     this.subscriber.setVideoJitterBufferConfig(userId, config)
+  }
+
+  setAudioJitterBufferConfig(userId: string, config: AudioJitterConfig): void {
+    this.subscriber.setAudioJitterBufferConfig(userId, config)
   }
 
   async setVideoEncodingSettings(settings: VideoEncodingSettings, deviceId?: string, restartIfActive: boolean = false) {
