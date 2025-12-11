@@ -33,7 +33,7 @@ export type AudioJitterConfig = {
 }
 
 export const DEFAULT_AUDIO_JITTER_CONFIG: AudioJitterConfig = {
-  mode: 'latest'
+  mode: 'ordered'
 }
 
 export function normalizeAudioJitterConfig(config: Partial<AudioJitterConfig>): AudioJitterConfig {

@@ -1330,7 +1330,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "moqt-client-sample"
+name = "moqt-client-wasm"
 version = "0.1.0"
 dependencies = [
  "anyhow",

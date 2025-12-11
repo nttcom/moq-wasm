@@ -1,4 +1,4 @@
-import type { SubgroupStreamObjectMessage } from '../../pkg/moqt_client_sample'
+import type { SubgroupStreamObjectMessage } from '../../pkg/moqt_client_wasm'
 import type { DeserializedChunk } from './chunk'
 
 export type SubgroupObject = Pick<

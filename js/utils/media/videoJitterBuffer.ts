@@ -103,7 +103,6 @@ export class VideoJitterBuffer {
   }
 
   popWithMetadata(): VideoJitterBufferEntry | null {
-    console.log(`[VideoJitterBuffer] popWithMetadata called, current mode: ${this.mode}`)
     if (this.buffer.length === 0) {
       return null
     }

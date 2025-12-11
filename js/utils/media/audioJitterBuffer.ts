@@ -16,11 +16,11 @@ type AudioJitterBufferEntry = {
 export class AudioJitterBuffer {
   private buffer: AudioJitterBufferEntry[] = []
   private hasPoppedOnce = false
-  private mode: AudioJitterBufferMode = 'latest'
+  private mode: AudioJitterBufferMode = 'ordered'
 
   constructor(
     private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE,
-    mode: AudioJitterBufferMode = 'latest'
+    mode: AudioJitterBufferMode = 'ordered'
   ) {
     this.mode = mode
   }
@@ -72,7 +72,6 @@ export class AudioJitterBuffer {
   }
 
   popWithMetadata(): AudioJitterBufferEntry | null {
-    console.log('[AudioJitterBuffer] popWithMetadata called, current mode:', this.mode)
     if (this.buffer.length === 0) {
       return null
     }

@@ -1,5 +1,5 @@
 import { Dispatch, SetStateAction, useEffect } from 'react'
-import { AnnounceMessage, SubscribeErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_sample'
+import { AnnounceMessage, SubscribeErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_wasm'
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'

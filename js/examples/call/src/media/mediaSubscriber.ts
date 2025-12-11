@@ -1,5 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { SubgroupStreamObjectMessage } from '../../../../pkg/moqt_client_sample'
+import { SubgroupStreamObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { VideoJitterBufferMode } from '../../../../utils/media/videoJitterBuffer'
 import type { AudioJitterBufferMode } from '../../../../utils/media/audioJitterBuffer'
 import {

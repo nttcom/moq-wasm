@@ -92,12 +92,12 @@ src/
 ## TODO: WASM統合
 
 現在、MoQT クライアントの実装は `src/hooks/useLocalSession.ts` でスタブ化されています。
-実際の WASM モジュール (`moqt-client-sample`) を統合するには、以下を実施してください：
+実際の WASM モジュール (`moqt-client-wasm`) を統合するには、以下を実施してください：
 
 1. WASM モジュールのビルド
 
    ```bash
-   cd ../../../moqt-client-sample
+   cd ../../../moqt-client-wasm
    wasm-pack build --target web --features web_sys_unstable_apis
    ```
 

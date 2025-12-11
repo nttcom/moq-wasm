@@ -65,7 +65,7 @@ Supported version: draft-ietf-moq-transport-10
 - Sample server application
   - Supported Roles: PubSub
 
-### moqt-client-sample
+### moqt-client-wasm
 
 - Module for browser client and sample browser client application
   - Supported Roles: Publisher, Subscriber, PubSub
@@ -104,7 +104,7 @@ or
 cargo run -p moqt-server-sample -- --log <Log Level>
 ```
 
-### Run moqt-client-sample
+### Run moqt-client-wasm
 
 ```shell
 cd js && npm install

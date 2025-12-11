@@ -1,4 +1,4 @@
-import type { MOQTClient } from '../../pkg/moqt_client_sample'
+import type { MOQTClient } from '../../pkg/moqt_client_wasm'
 import { MediaTransportState } from './transportState'
 import { serializeChunk, type ChunkMetadata } from './chunk'
 

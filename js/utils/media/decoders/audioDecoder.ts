@@ -46,7 +46,7 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
 }
 
 const POP_INTERVAL_MS = 5
-const jitterBuffer = new AudioJitterBuffer(1800, 'latest')
+const jitterBuffer = new AudioJitterBuffer(1800, 'ordered')
 
 setInterval(() => {
   const jitterBufferEntry = jitterBuffer.pop()

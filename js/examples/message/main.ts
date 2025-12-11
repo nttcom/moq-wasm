@@ -1,4 +1,4 @@
-import { MOQTClient } from '../../pkg/moqt_client_sample'
+import { MOQTClient } from '../../pkg/moqt_client_wasm'
 import { MoqtClientWrapper } from '../../lib/moqt/moqtClient'
 
 type HTMLFormControls = HTMLFormElement & {

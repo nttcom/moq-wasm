@@ -1,4 +1,4 @@
-import { MOQTClient } from '../../../pkg/moqt_client_sample'
+import { MOQTClient } from '../../../pkg/moqt_client_wasm'
 import { createBitrateLogger } from '../../../utils/media/logger'
 import { serializeChunk, type ChunkMetadata } from '../../../utils/media/chunk'
 
