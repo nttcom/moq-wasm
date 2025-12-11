@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MOQT Media Publisher Test</title>
+  </head>
+  <body>
+    <h1>Publisher</h1>
+    <div id="app">
+      <ul>
+        <li><a href="./getusermedia.html">getUserMedia()</a></li>
+        <li><a href="./getdisplaymedia.html">getDisplayMedia()</a></li>
+        <li><a href="./videofile.html">Video File</a></li>
+      </ul>
+
+
+      <form name="form" id="form">
+        <div>
+          <h2>Connection</h2>
+          <label for="url">URL:</label>
+          <select name="url" id="url">
+            <option value="https://moqt.research.skyway.io:4433">https://moqt.research.skyway.io:4433</option>
+            <option value="https://127.0.0.1:4433">https://127.0.0.1:4433</option>
+            <option value="https://192.168.40.150:4433">https://192.168.40.150:4433</option>
+            <option value="https://192.168.40.228:4433">https://192.168.40.228:4433</option>
+            <option value="https://moq-wasm-relay.lab-svl.net:4433" selected>https://moq-wasm-relay.lab-svl.net:4433</option>
+          </select>
+          <button type="button" id="connectBtn">Connect</button>
+          <button type="button" id="closeBtn">Close</button>
+        </div>
+        <br />
+        <div>
+          <h2>Forwarding Preference</h2>
+          <label
+            ><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram
+          </label>
+          <label
+            ><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" checked />Subgroup
+          </label>
+          <br />
+          *You must select at first
+
+          <h3>CLIENT_SETUP</h3>
+          Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="2" />
+          <br />
+          <button type="button" id="sendSetupBtn">Send</button>
+
+          <h3>ANNOUNCE</h3>
+          <label
+            >Track Namespace:
+            <input type="text" name="announce-track-namespace" id="announce-track-namespace" value="video_audio" />
+          </label>
+          <script>
+            // Set default value for Track Namespace input
+            ;(function () {
+              function pad(n) {
+                return n < 10 ? '0' + n : n
+              }
+              const now = new Date()
+              const yyyy = now.getFullYear()
+              const mm = pad(now.getMonth() + 1)
+              const dd = pad(now.getDate())
+              const HH = pad(now.getHours())
+              const MM = pad(now.getMinutes())
+              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+              const input = document.getElementById('announce-track-namespace')
+              if (input) input.value = value
+            })()
+          </script>
+          <br />
+          <button type="button" id="sendAnnounceBtn">Send</button>
+          <h3>OBJECT</h3>
+          <div id="headerField" style="display: blocked">
+            <h4>Header</h4>
+          </div>
+          <label>Video Track Alias: <input type="text" name="video-object-track-alias" id="" value="0" /> </label>
+          <label>Audio Track Alias: <input type="text" name="audio-object-track-alias" id="" value="1" /> </label>
+          <br />
+          <label
+            >Video Publisher Priority: <input type="text" name="video-publisher-priority" id="" value="0" />
+          </label>
+          <label
+            >Audio Publisher Priority: <input type="text" name="audio-publisher-priority" id="" value="0" />
+          </label>
+          <br />
+          <div id="objectField" style="display: blocked">
+            <h4>Object</h4>
+          </div>
+          <div id="datagramObjectContents" style="display: none">
+            Group ID:
+            <p id="datagramGroupId">0</p>
+            <br />
+            <button type="button" id="descendDatagramGroupIdBtn">&lt;</button>
+            <button type="button" id="ascendDatagramGroupIdBtn">&gt;</button>
+            <br />
+            <br />
+          </div>
+          <br />
+          <div>
+            <ul>
+              <li>File : [Choose File] [Load File] [Start Stream]</li>
+            </ul>
+          </div>
+          <div>
+            <label for="fileInput">Select a file:</label>
+            <input type="file" id="fileInput" name="fileInput">
+            <button type="button" id="loadFileBtn">Load File</button>
+            <button type="button" id="playBtn">Start Stream</button>
+          </div>
+          <div>
+            <input type="range" id="seekBar" value="0" style="width: 100%;">
+            <p id="timeDisplay">00:00 / 00:00</p>
+          </div>
+          <div id="sendSubgroupObject" style="display: none">
+            <button type="button" id="sendSubgroupObjectBtn">Send</button>
+          </div>
+        </div>
+        <div>
+          <label for="volume">Volume:</label>
+          <input type="range" id="volume" name="volume" min="0" max="2" value="1" step="0.01" style="width:450px;">
+          <video id="video" autoplay inline loop></video>
+          <canvas id="level" width="300" height="50"></canvas>
+        </div>
+        <br />
+
+        <br />
+      </form>
+    </div>
+
+    <script type="module" src="./videofile.ts"></script>
+    <script src="./check_supported_codec.js"></script>
+
+  </body>
+  <style>
+    p {
+      display: inline;
+    }
+    #video {
+      width: 100%;
+      height: auto;
+    }
+  </style>
+</html>

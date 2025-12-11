@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MOQT Media Subscriber Test</title>
+    <style>
+     p {
+       display: inline;
+     }
+     #video {
+       width: 100%;
+       height: auto;
+     }
+    </style>
+  </head>
+  <body>
+    <h1>Subscriber</h1>
+    <div id="app">
+      <form name="form" id="form">
+        <div>
+          <h2>Connection</h2>
+          <label for="url">URL:</label>
+          <select name="url" id="url">
+            <option value="https://moqt.research.skyway.io:4433">https://moqt.research.skyway.io:4433</option>
+            <option value="https://127.0.0.1:4433">https://127.0.0.1:4433</option>
+            <option value="https://192.168.40.150:4433">https://192.168.40.150:4433</option>
+            <option value="https://192.168.40.228:4433">https://192.168.40.228:4433</option>
+            <option value="https://moq-wasm-relay.lab-svl.net:4433" selected>https://moq-wasm-relay.lab-svl.net:4433</option>
+          </select>
+          <button type="button" id="connectBtn">Connect</button>
+          <button type="button" id="closeBtn">Close</button>
+        </div>
+        <br />
+        <div>
+          <h3>CLIENT_SETUP</h3>
+          Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="2" />
+          <br />
+          <button type="button" id="sendSetupBtn">Send</button>
+
+          <h3>SUBSCRIBE</h3>
+          <label>Track Namespace: <input type="text" name="subscribe-track-namespace" id="subscribe-track-namespace" value="video_audio" /> </label>
+          <script>
+            // Set default value for Track Namespace input
+            ;(function () {
+              function pad(n) {
+                return n < 10 ? '0' + n : n
+              }
+              const now = new Date()
+              const yyyy = now.getFullYear()
+              const mm = pad(now.getMonth() + 1)
+              const dd = pad(now.getDate())
+              const HH = pad(now.getHours())
+              const MM = pad(now.getMinutes())
+              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+              const input = document.getElementById('subscribe-track-namespace')
+              if (input) input.value = value
+            })()
+          </script>
+
+          <button type="button" id="sendSubscribeBtn">Send</button>
+          <div>
+            <video id="video" muted inline controls></video>
+            <div id="latency" style="font-family: monospace; font-size: 1.2em; color: red;"></div>
+            <audio id="audio" autoplay></audio>
+            <canvas id="level" width="300" height="50"></canvas>
+          </div>
+      <button id="connect-button">Connect</button>
+    </form>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+  <style>
+    p {
+      display: inline;
+    }
+  </style>
+</html>
