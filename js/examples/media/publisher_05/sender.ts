@@ -1,4 +1,4 @@
-import { postMetrics } from '../subscriber_03/metrics'
+import { postMetrics } from '../subscriber_05/metrics'
 
 function packMetaAndChunk(chunk: {
   type: string
