@@ -579,6 +579,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
           width: captureSettings.width,
           height: captureSettings.height
         })
+        await controller.setVideoEncodingSettings(selectedVideoEncoding, selectedVideoDeviceId ?? undefined, true)
         setCameraEnabled(true)
       } else if (cameraEnabled || screenShareEnabled) {
         if (screenShareEnabled) {
@@ -596,6 +597,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
           noiseSuppression: captureSettings.noiseSuppression,
           autoGainControl: captureSettings.autoGainControl
         })
+        await controller.setAudioEncodingSettings(selectedAudioEncoding, true)
         setMicrophoneEnabled(true)
       } else if (microphoneEnabled) {
         await controller.stopMicrophone()
@@ -617,7 +619,9 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     captureSettings.videoEnabled,
     microphoneEnabled,
     screenShareEnabled,
+    selectedAudioEncoding,
     selectedAudioDeviceId,
+    selectedVideoEncoding,
     selectedVideoDeviceId,
     session
   ])

@@ -398,8 +398,8 @@ function IconButton({
 
 function DeviceModal({ onClose, children }: { onClose: () => void; children: ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-      <div className="w-full max-w-md rounded-2xl bg-slate-900 p-6 text-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+      <div className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl bg-slate-900 p-6 text-white shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <h4 className="text-lg font-semibold">Select Devices</h4>
           <button
