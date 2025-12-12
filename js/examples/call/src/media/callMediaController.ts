@@ -4,6 +4,7 @@ import { MediaSubscriber } from './mediaSubscriber'
 import type { VideoJitterConfig, AudioJitterConfig } from '../types/jitterBuffer'
 import type { VideoEncodingSettings } from '../types/videoEncoding'
 import type { AudioEncodingSettings } from '../types/audioEncoding'
+import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 
 export interface MediaHandlers {
   onLocalVideoStream?: (stream: MediaStream | null) => void
@@ -62,8 +63,8 @@ export class CallMediaController {
     this.handlers = handlers
   }
 
-  async startCamera(deviceId?: string): Promise<void> {
-    await this.publisher.startVideo(deviceId)
+  async startCamera(deviceId?: string, constraints?: CameraCaptureConstraints): Promise<void> {
+    await this.publisher.startVideo(deviceId, constraints)
   }
 
   async stopCamera(): Promise<void> {
@@ -78,8 +79,8 @@ export class CallMediaController {
     await this.publisher.stopVideo()
   }
 
-  async startMicrophone(deviceId?: string): Promise<void> {
-    await this.publisher.startAudio(deviceId)
+  async startMicrophone(deviceId?: string, constraints?: AudioCaptureConstraints): Promise<void> {
+    await this.publisher.startAudio(deviceId, constraints)
   }
 
   async stopMicrophone(): Promise<void> {
@@ -112,5 +113,13 @@ export class CallMediaController {
 
   async setAudioEncodingSettings(settings: AudioEncodingSettings, restartIfActive: boolean = false) {
     await this.publisher.setAudioEncodingSettings(settings, restartIfActive)
+  }
+
+  setVideoCaptureConstraints(constraints: CameraCaptureConstraints): void {
+    this.publisher.setVideoCaptureConstraints(constraints)
+  }
+
+  setAudioCaptureConstraints(constraints: AudioCaptureConstraints): void {
+    this.publisher.setAudioCaptureConstraints(constraints)
   }
 }
