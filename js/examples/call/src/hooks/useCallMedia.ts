@@ -23,6 +23,7 @@ import {
   DEFAULT_AUDIO_ENCODING_SETTINGS,
   type AudioEncodingSettings
 } from '../types/audioEncoding'
+import type { CaptureSettingsState } from '../types/captureConstraints'
 
 interface UseCallMediaResult {
   cameraEnabled: boolean
@@ -62,6 +63,9 @@ interface UseCallMediaResult {
   selectedAudioDeviceId: string | null
   selectVideoDevice: (deviceId: string) => Promise<void>
   selectAudioDevice: (deviceId: string) => Promise<void>
+  captureSettings: CaptureSettingsState
+  updateCaptureSettings: (settings: Partial<CaptureSettingsState>) => void
+  applyCaptureSettings: () => Promise<void>
 }
 
 export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
@@ -95,6 +99,16 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     DEFAULT_AUDIO_ENCODING_SETTINGS
   )
   const [audioEncoderError, setAudioEncoderError] = useState<string | null>(null)
+  const [captureSettings, setCaptureSettings] = useState<CaptureSettingsState>({
+    videoEnabled: true,
+    audioEnabled: true,
+    width: DEFAULT_VIDEO_ENCODING_SETTINGS.width,
+    height: DEFAULT_VIDEO_ENCODING_SETTINGS.height,
+    frameRate: 30,
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true
+  })
 
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -269,6 +283,31 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       .catch((err) => console.error('Failed to apply initial audio encoding config', err))
   }, [selectedAudioEncoding, session])
 
+  useEffect(() => {
+    if (!session) {
+      return
+    }
+    const controller = session.getMediaController()
+    controller.setVideoCaptureConstraints({
+      frameRate: captureSettings.frameRate,
+      width: captureSettings.width,
+      height: captureSettings.height
+    })
+    controller.setAudioCaptureConstraints({
+      echoCancellation: captureSettings.echoCancellation,
+      noiseSuppression: captureSettings.noiseSuppression,
+      autoGainControl: captureSettings.autoGainControl
+    })
+  }, [
+    captureSettings.autoGainControl,
+    captureSettings.echoCancellation,
+    captureSettings.frameRate,
+    captureSettings.height,
+    captureSettings.noiseSuppression,
+    captureSettings.width,
+    session
+  ])
+
   const toggleCamera = useCallback(async () => {
     if (!session || cameraBusy) {
       return cameraEnabled
@@ -282,7 +321,11 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
           await controller.stopScreenShare()
           setScreenShareEnabled(false)
         }
-        await controller.startCamera(selectedVideoDeviceId ?? undefined)
+        await controller.startCamera(selectedVideoDeviceId ?? undefined, {
+          frameRate: captureSettings.frameRate,
+          width: captureSettings.width,
+          height: captureSettings.height
+        })
       } else {
         await controller.stopCamera()
       }
@@ -294,7 +337,16 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     } finally {
       setCameraBusy(false)
     }
-  }, [cameraBusy, cameraEnabled, screenShareEnabled, session, selectedVideoDeviceId])
+  }, [
+    cameraBusy,
+    cameraEnabled,
+    captureSettings.frameRate,
+    captureSettings.height,
+    captureSettings.width,
+    screenShareEnabled,
+    session,
+    selectedVideoDeviceId
+  ])
 
   const toggleScreenShare = useCallback(async () => {
     if (!session || cameraBusy) {
@@ -332,7 +384,11 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     const nextState = !microphoneEnabled
     try {
       if (nextState) {
-        await controller.startMicrophone(selectedAudioDeviceId ?? undefined)
+        await controller.startMicrophone(selectedAudioDeviceId ?? undefined, {
+          echoCancellation: captureSettings.echoCancellation,
+          noiseSuppression: captureSettings.noiseSuppression,
+          autoGainControl: captureSettings.autoGainControl
+        })
       } else {
         await controller.stopMicrophone()
       }
@@ -392,7 +448,11 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setCameraBusy(true)
       try {
         await controller.stopCamera()
-        await controller.startCamera(deviceId)
+        await controller.startCamera(deviceId, {
+          frameRate: captureSettings.frameRate,
+          width: captureSettings.width,
+          height: captureSettings.height
+        })
         setCameraEnabled(true)
       } catch (err) {
         console.error('Failed to switch camera device', err)
@@ -400,7 +460,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
         setCameraBusy(false)
       }
     },
-    [cameraEnabled, session]
+    [cameraEnabled, captureSettings.frameRate, captureSettings.height, captureSettings.width, session]
   )
 
   const selectAudioDevice = useCallback(
@@ -413,7 +473,11 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setMicrophoneBusy(true)
       try {
         await controller.stopMicrophone()
-        await controller.startMicrophone(deviceId)
+        await controller.startMicrophone(deviceId, {
+          echoCancellation: captureSettings.echoCancellation,
+          noiseSuppression: captureSettings.noiseSuppression,
+          autoGainControl: captureSettings.autoGainControl
+        })
         setMicrophoneEnabled(true)
       } catch (err) {
         console.error('Failed to switch audio device', err)
@@ -421,7 +485,13 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
         setMicrophoneBusy(false)
       }
     },
-    [microphoneEnabled, session]
+    [
+      captureSettings.autoGainControl,
+      captureSettings.echoCancellation,
+      captureSettings.noiseSuppression,
+      microphoneEnabled,
+      session
+    ]
   )
 
   const selectVideoEncoding = useCallback(
@@ -486,6 +556,72 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     [microphoneEnabled, selectedAudioEncoding, session]
   )
 
+  const updateCaptureSettings = useCallback((settings: Partial<CaptureSettingsState>) => {
+    setCaptureSettings((prev) => ({ ...prev, ...settings }))
+  }, [])
+
+  const applyCaptureSettings = useCallback(async () => {
+    if (!session) {
+      return
+    }
+    const controller = session.getMediaController()
+    setCameraBusy(true)
+    setMicrophoneBusy(true)
+    try {
+      if (captureSettings.videoEnabled) {
+        if (screenShareEnabled) {
+          await controller.stopScreenShare()
+          setScreenShareEnabled(false)
+        }
+        await controller.stopCamera()
+        await controller.startCamera(selectedVideoDeviceId ?? undefined, {
+          frameRate: captureSettings.frameRate,
+          width: captureSettings.width,
+          height: captureSettings.height
+        })
+        setCameraEnabled(true)
+      } else if (cameraEnabled || screenShareEnabled) {
+        if (screenShareEnabled) {
+          await controller.stopScreenShare()
+          setScreenShareEnabled(false)
+        } else {
+          await controller.stopCamera()
+        }
+        setCameraEnabled(false)
+      }
+
+      if (captureSettings.audioEnabled) {
+        await controller.startMicrophone(selectedAudioDeviceId ?? undefined, {
+          echoCancellation: captureSettings.echoCancellation,
+          noiseSuppression: captureSettings.noiseSuppression,
+          autoGainControl: captureSettings.autoGainControl
+        })
+        setMicrophoneEnabled(true)
+      } else if (microphoneEnabled) {
+        await controller.stopMicrophone()
+        setMicrophoneEnabled(false)
+      }
+    } catch (err) {
+      console.error('Failed to apply getUserMedia settings', err)
+    } finally {
+      setCameraBusy(false)
+      setMicrophoneBusy(false)
+    }
+  }, [
+    cameraEnabled,
+    captureSettings.audioEnabled,
+    captureSettings.autoGainControl,
+    captureSettings.echoCancellation,
+    captureSettings.frameRate,
+    captureSettings.noiseSuppression,
+    captureSettings.videoEnabled,
+    microphoneEnabled,
+    screenShareEnabled,
+    selectedAudioDeviceId,
+    selectedVideoDeviceId,
+    session
+  ])
+
   return {
     cameraEnabled,
     screenShareEnabled,
@@ -523,6 +659,9 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     selectedVideoDeviceId,
     selectedAudioDeviceId,
     selectVideoDevice,
-    selectAudioDevice
+    selectAudioDevice,
+    captureSettings,
+    updateCaptureSettings,
+    applyCaptureSettings
   }
 }

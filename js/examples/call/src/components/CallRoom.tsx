@@ -54,7 +54,10 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     selectedVideoDeviceId,
     selectedAudioDeviceId,
     selectVideoDevice,
-    selectAudioDevice
+    selectAudioDevice,
+    captureSettings,
+    updateCaptureSettings,
+    applyCaptureSettings
   } = useCallMedia(session)
 
   const [room, setRoom] = useState<Room>(() => ({
@@ -201,6 +204,9 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
             selectedAudioEncoding={selectedAudioEncoding}
             onSelectAudioEncoding={selectAudioEncoding}
             audioEncoderError={audioEncoderError}
+            captureSettings={captureSettings}
+            onChangeCaptureSettings={updateCaptureSettings}
+            onApplyCaptureSettings={applyCaptureSettings}
           />
         </main>
 

@@ -7,6 +7,7 @@ import { serializeChunk } from '../../../../utils/media/chunk'
 import { KEYFRAME_INTERVAL } from '../../../../utils/media/constants'
 import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 import { DEFAULT_AUDIO_ENCODING_SETTINGS, type AudioEncodingSettings } from '../types/audioEncoding'
+import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 
 type LocalStreamHandler = (stream: MediaStream | null) => void
 
@@ -46,6 +47,12 @@ export class MediaPublisher {
   private readonly pendingEndOfGroup = new Map<bigint, bigint>()
   private audioEncodingSettings: AudioEncodingSettings = DEFAULT_AUDIO_ENCODING_SETTINGS
   private currentAudioDeviceId: string | null = null
+  private videoCaptureConstraints: CameraCaptureConstraints = { frameRate: 30 }
+  private audioCaptureConstraints: AudioCaptureConstraints = {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true
+  }
 
   constructor(
     private readonly client: MoqtClientWrapper,
@@ -56,15 +63,28 @@ export class MediaPublisher {
     this.handlers = handlers
   }
 
-  async startVideo(deviceId?: string): Promise<void> {
+  setVideoCaptureConstraints(constraints: CameraCaptureConstraints): void {
+    this.videoCaptureConstraints = { ...this.videoCaptureConstraints, ...constraints }
+  }
+
+  setAudioCaptureConstraints(constraints: AudioCaptureConstraints): void {
+    this.audioCaptureConstraints = { ...this.audioCaptureConstraints, ...constraints }
+  }
+
+  async startVideo(deviceId?: string, constraints?: CameraCaptureConstraints): Promise<void> {
     if (this.videoWorker) {
       return
     }
+    const effectiveConstraints: CameraCaptureConstraints = {
+      frameRate: 30,
+      ...this.videoCaptureConstraints,
+      ...constraints
+    }
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width: this.videoEncodingSettings.width,
-        height: this.videoEncodingSettings.height,
-        frameRate: 30,
+        width: effectiveConstraints.width ?? this.videoEncodingSettings.width,
+        height: effectiveConstraints.height ?? this.videoEncodingSettings.height,
+        frameRate: effectiveConstraints.frameRate,
         ...(deviceId ? { deviceId: { exact: deviceId } } : {})
       },
       audio: false
@@ -228,15 +248,20 @@ export class MediaPublisher {
     this.handlers.onLocalVideoStream?.(null)
   }
 
-  async startAudio(deviceId?: string): Promise<void> {
+  async startAudio(deviceId?: string, constraints?: AudioCaptureConstraints): Promise<void> {
     if (this.audioWorker) {
       return
     }
     const desiredChannels = this.audioEncodingSettings.channels
+    const effectiveAudioConstraints: AudioCaptureConstraints = {
+      ...this.audioCaptureConstraints,
+      ...constraints
+    }
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
+        echoCancellation: effectiveAudioConstraints.echoCancellation,
+        noiseSuppression: effectiveAudioConstraints.noiseSuppression,
+        autoGainControl: effectiveAudioConstraints.autoGainControl,
         channelCount: { ideal: desiredChannels },
         ...(deviceId ? { deviceId: { exact: deviceId } } : {})
       },

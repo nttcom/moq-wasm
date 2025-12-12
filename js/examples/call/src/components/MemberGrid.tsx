@@ -8,6 +8,8 @@ import { Mic, MicOff, Monitor, Settings2, Video, VideoOff } from 'lucide-react'
 import { DeviceSelector } from './DeviceSelector'
 import type { VideoEncodingSettings } from '../types/videoEncoding'
 import type { AudioEncodingSettings } from '../types/audioEncoding'
+import type { CaptureSettingsState } from '../types/captureConstraints'
+import { GetUserMediaForm } from './GetUserMediaForm'
 
 interface MemberGridProps {
   localMember: LocalMember
@@ -52,6 +54,9 @@ interface MemberGridProps {
   selectedAudioEncoding: AudioEncodingSettings
   onSelectAudioEncoding: (settings: Partial<AudioEncodingSettings>) => void
   audioEncoderError?: string | null
+  captureSettings: CaptureSettingsState
+  onChangeCaptureSettings: (settings: Partial<CaptureSettingsState>) => void
+  onApplyCaptureSettings: () => void
 }
 
 export function MemberGrid({
@@ -88,7 +93,10 @@ export function MemberGrid({
   audioEncodingOptions,
   selectedAudioEncoding,
   onSelectAudioEncoding,
-  audioEncoderError
+  audioEncoderError,
+  captureSettings,
+  onChangeCaptureSettings,
+  onApplyCaptureSettings
 }: MemberGridProps) {
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false)
   const [jitterModalTarget, setJitterModalTarget] = useState<string | null>(null)
@@ -165,6 +173,14 @@ export function MemberGrid({
               devices={audioDevices}
               selectedDeviceId={selectedAudioDeviceId}
               onChange={onSelectAudioDevice}
+            />
+            <GetUserMediaForm
+              settings={captureSettings}
+              onChange={onChangeCaptureSettings}
+              onApply={onApplyCaptureSettings}
+              cameraBusy={cameraBusy}
+              microphoneBusy={microphoneBusy}
+              resolutionOptions={videoEncodingOptions.resolutionOptions}
             />
             <div className="space-y-2 rounded-md border border-white/10 bg-white/5 p-3">
               <div className="text-sm font-semibold text-white">Video</div>
