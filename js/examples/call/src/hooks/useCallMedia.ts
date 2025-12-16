@@ -146,12 +146,17 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     controller.setHandlers({
       onLocalVideoStream: (stream) => {
         setLocalVideoStream(stream)
-        if (!stream) {
+        if (stream) {
+          setCameraEnabled(true)
+        } else {
           setCameraEnabled(false)
           setScreenShareEnabled(false)
         }
       },
-      onLocalAudioStream: (stream) => setLocalAudioStream(stream),
+      onLocalAudioStream: (stream) => {
+        setLocalAudioStream(stream)
+        setMicrophoneEnabled(!!stream)
+      },
       onRemoteVideoStream: (userId, stream) =>
         setRemoteMedia((prev) => {
           const updated = new Map(prev)
