@@ -22,7 +22,6 @@ pub struct RtmpState {
     pub moqt: Option<MoqtManager>,
     pub video_states: HashMap<(String, String), AvcState>,
     pub audio_states: HashMap<(String, String), AacState>,
-    pub video_codec_sent: HashMap<(String, String), bool>,
 }
 
 impl RtmpState {
@@ -33,7 +32,6 @@ impl RtmpState {
             moqt: Some(moqt),
             video_states: HashMap::new(),
             audio_states: HashMap::new(),
-            video_codec_sent: HashMap::new(),
         }
     }
 }
@@ -89,8 +87,6 @@ pub async fn handle_event(
             println!("[rtmp {label}] publish finished app={app_name} stream={stream_key}");
             let (namespace_path, _cleaned_stream_key) =
                 split_namespace_and_key(&app_name, &stream_key);
-            let key = (namespace_path.clone(), "video".to_string());
-            state.video_codec_sent.remove(&key);
             let audio_key = (namespace_path, "audio".to_string());
             state.audio_states.remove(&audio_key);
         }
@@ -199,13 +195,7 @@ pub async fn handle_event(
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_millis() as u64;
-                    let codec_key = (namespace_path.clone(), track_name.clone());
-                    let already_sent = state
-                        .video_codec_sent
-                        .get(&codec_key)
-                        .copied()
-                        .unwrap_or(false);
-                    let include_codec = frame.is_key && !already_sent;
+                    let include_codec = frame.is_key;
                     let payload = pack_video_chunk_payload(
                         frame.is_key,
                         timestamp_us,
@@ -218,13 +208,12 @@ pub async fn handle_event(
                         },
                         None,
                     );
-                    if frame.is_key && include_codec {
+                    if frame.is_key {
                         if let Some(codec) = frame.codec.as_deref() {
                             println!(
                                 "[rtmp {label}] detected video codec from SPS: {codec} ns={:?} track={}",
                                 namespace, track_name
                             );
-                            state.video_codec_sent.insert(codec_key.clone(), true);
                         } else {
                             println!(
                                 "[rtmp {label}] video codec from SPS unavailable ns={:?} track={}",
