@@ -435,6 +435,20 @@ export class MediaPublisher {
     await this.startVideo(deviceId)
   }
 
+  async restartVideoForNewSubscriber(): Promise<void> {
+    if (!this.videoWorker) {
+      return
+    }
+    await this.forceKeyframeAndRestart(this.currentVideoDeviceId ?? undefined)
+  }
+
+  async restartAudioForNewSubscriber(): Promise<void> {
+    if (!this.audioWorker) {
+      return
+    }
+    await this.setAudioEncodingSettings(this.audioEncodingSettings, true)
+  }
+
   private collectAliasesSafe(trackName: 'video' | 'audio'): bigint[] {
     const rawClient = this.client.getRawClient()
     if (!rawClient) {
