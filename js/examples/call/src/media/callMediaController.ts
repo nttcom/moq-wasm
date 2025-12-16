@@ -5,6 +5,7 @@ import type { VideoJitterConfig, AudioJitterConfig } from '../types/jitterBuffer
 import type { VideoEncodingSettings } from '../types/videoEncoding'
 import type { AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
+import type { SubscribeMessage } from '../../../../pkg/moqt_client_wasm'
 
 export interface MediaHandlers {
   onLocalVideoStream?: (stream: MediaStream | null) => void
@@ -30,10 +31,12 @@ export class CallMediaController {
   private handlers: MediaHandlers = {}
   private readonly publisher: MediaPublisher
   private readonly subscriber: MediaSubscriber
+  private readonly trackNamespace: string[]
 
   constructor(client: MoqtClientWrapper, trackNamespace: string[]) {
     this.publisher = new MediaPublisher(client, trackNamespace)
     this.subscriber = new MediaSubscriber(client)
+    this.trackNamespace = trackNamespace
 
     this.publisher.setHandlers({
       onLocalVideoStream: (stream) => this.handlers.onLocalVideoStream?.(stream),
@@ -56,6 +59,26 @@ export class CallMediaController {
       onRemoteAudioReceiveLatency: (userId, ms) => this.handlers.onRemoteAudioReceiveLatency?.(userId, ms),
       onRemoteAudioRenderingLatency: (userId, ms) => this.handlers.onRemoteAudioRenderingLatency?.(userId, ms),
       onRemoteVideoConfig: (userId, config) => this.handlers.onRemoteVideoConfig?.(userId, config)
+    })
+
+    client.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
+      if (!isSuccess) {
+        await respondError(BigInt(code), 'Subscription validation failed')
+        return
+      }
+      await respondOk(0n, 'secret', 'subgroup')
+      if (!this.isLocalTrack(subscribe)) {
+        return
+      }
+      try {
+        if (subscribe.trackName === 'video') {
+          await this.publisher.restartVideoForNewSubscriber()
+        } else if (subscribe.trackName === 'audio') {
+          await this.publisher.restartAudioForNewSubscriber()
+        }
+      } catch (err) {
+        console.error('Failed to kick media pipeline for new subscriber', err)
+      }
     })
   }
 
@@ -121,5 +144,12 @@ export class CallMediaController {
 
   setAudioCaptureConstraints(constraints: AudioCaptureConstraints): void {
     this.publisher.setAudioCaptureConstraints(constraints)
+  }
+
+  private isLocalTrack(subscribe: SubscribeMessage): boolean {
+    if (subscribe.trackNamespace.length !== this.trackNamespace.length) {
+      return false
+    }
+    return subscribe.trackNamespace.every((value, index) => value === this.trackNamespace[index])
   }
 }
