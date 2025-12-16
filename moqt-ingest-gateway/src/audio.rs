@@ -8,14 +8,12 @@ pub struct AacState {
     audio_specific_config: Option<Vec<u8>>,
     sample_rate: Option<u32>,
     channels: Option<u8>,
-    config_sent: bool,
 }
 
 pub struct AudioFrame {
     pub data: Vec<u8>,
     pub sample_rate: u32,
     pub channels: u8,
-    pub include_config: bool,
     pub audio_specific_config: Vec<u8>,
 }
 
@@ -29,21 +27,17 @@ pub fn pack_audio_chunk_payload(
     duration_us: Option<u64>,
     sent_at_ms: u64,
 ) -> Vec<u8> {
-    let description_b64 = if frame.include_config {
-        Some(general_purpose::STANDARD.encode(&frame.audio_specific_config))
-    } else {
-        None
-    };
+    let description_b64 = general_purpose::STANDARD.encode(&frame.audio_specific_config);
 
     let meta = serde_json::json!({
         "type": "key",
         "timestamp": timestamp_us as i64,
         "duration": duration_us.map(|d| d as i64),
         "sentAt": sent_at_ms as i64,
-        "codec": description_b64.as_ref().map(|_| "mp4a.40.2"),
+        "codec": "mp4a.40.2",
         "descriptionBase64": description_b64,
-        "sampleRate": frame.include_config.then_some(frame.sample_rate as i64),
-        "channels": frame.include_config.then_some(frame.channels as i64),
+        "sampleRate": frame.sample_rate as i64,
+        "channels": frame.channels as i64,
     });
     let meta_bytes = meta.to_string().into_bytes();
     let meta_len = meta_bytes.len() as u32;
@@ -71,7 +65,6 @@ impl AacState {
         match packet_type {
             0 => {
                 self.parse_audio_specific_config(payload)?;
-                self.config_sent = false;
                 Ok(None)
             }
             1 => {
@@ -83,13 +76,10 @@ impl AacState {
                     (Some(sr), Some(ch), Some(asc)) => (sr, ch, asc.clone()),
                     _ => return Ok(None),
                 };
-                let include_config = !self.config_sent;
-                self.config_sent = true;
                 Ok(Some(AudioFrame {
                     data: payload.to_vec(),
                     sample_rate,
                     channels,
-                    include_config,
                     audio_specific_config: asc,
                 }))
             }
