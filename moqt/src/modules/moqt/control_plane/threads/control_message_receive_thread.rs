@@ -33,7 +33,7 @@ pub(crate) struct ControlMessageReceiveThread;
 
 impl ControlMessageReceiveThread {
     pub(crate) fn run<T: TransportProtocol>(
-        receive_stream: StreamReceiver<T>,
+        mut receive_stream: StreamReceiver<T>,
         session_context: Weak<SessionContext<T>>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()

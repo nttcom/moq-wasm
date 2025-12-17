@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     let cert_path = format!(
         "{}{}",
         current_path.to_str().unwrap(),
-        "/sample/keys/cert.pem"
+        "/keys/cert.pem"
     );
     tracing::info!("cert_path: {}", cert_path);
     let mut thread_vec = vec![];

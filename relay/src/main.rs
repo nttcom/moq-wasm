@@ -3,6 +3,7 @@ mod modules;
 use modules::event_handler::EventHandler;
 use modules::session_handler::SessionHandler;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::{fs, path::Path};
 
@@ -14,6 +15,20 @@ use tracing_appender::rolling;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{self, EnvFilter, Layer, Registry, filter::LevelFilter, fmt};
+
+static CERT_FILE_NAME: &str = "cert.pem";
+static KEY_FILE_NAME: &str = "key.pem";
+static CERT_DIR: &str = "keys";
+
+fn get_cert_path() -> PathBuf {
+    let current = std::env::current_dir().unwrap();
+    current.join(CERT_DIR).join(CERT_FILE_NAME)
+}
+fn get_key_path() -> PathBuf {
+    let current = std::env::current_dir().unwrap();
+    current.join(CERT_DIR).join(KEY_FILE_NAME)
+}
+
 pub fn init_logging(log_level: String) {
     // tokio-console用のレイヤーとフィルタ(For Development)
     // let console_filter = EnvFilter::new("tokio::task=trace");
@@ -66,8 +81,11 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
     // init_logging("INFO".to_string());
     let current = std::env::current_dir()?;
     tracing::info!("current path: {}", current.to_str().unwrap());
+    if !Path::new(CERT_DIR).exists() {
+        fs::create_dir_all(CERT_DIR).unwrap();
+    }
 
-    if Path::new("sample/keys/key.pem").exists() && Path::new("sample/keys/cert.pem").exists() {
+    if get_cert_path().exists() && get_key_path().exists() {
         tracing::info!("Certificates already exist");
         Ok(())
     } else {
@@ -78,9 +96,9 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
         let CertifiedKey { cert, signing_key } =
             generate_simple_self_signed(subject_alt_names).unwrap();
         let key_pem = signing_key.serialize_pem();
-        fs::write("sample/keys/key.pem", key_pem)?;
+        fs::write(get_key_path(), key_pem)?;
         let cert_pem = cert.pem();
-        fs::write("sample/keys/cert.pem", cert_pem)?;
+        fs::write(get_cert_path(), cert_pem)?;
 
         Ok(())
     }
@@ -95,17 +113,8 @@ async fn main() -> anyhow::Result<()> {
         .ok();
     create_certs_for_test_if_needed()?;
     // console_subscriber::init();
-    let current_path = std::env::current_dir().expect("failed to get current path");
-    let key_path = format!(
-        "{}{}",
-        current_path.to_str().unwrap(),
-        "/sample/keys/key.pem"
-    );
-    let cert_path = format!(
-        "{}{}",
-        current_path.to_str().unwrap(),
-        "/sample/keys/cert.pem"
-    );
+    let key_path = get_key_path().to_str().unwrap().to_string();
+    let cert_path = get_cert_path().to_str().unwrap().to_string();
     tracing::info!("key_path: {}", key_path);
     tracing::info!("cert_path: {}", cert_path);
     let (signal_sender, signal_receiver) = tokio::sync::oneshot::channel::<()>();
