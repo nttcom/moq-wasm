@@ -41,7 +41,7 @@ impl<T: TransportProtocol> SessionContext<T> {
     pub(crate) async fn client(
         transport_connection: T::Connection,
         mut send_stream: StreamSender<T>,
-        receive_stream: &StreamReceiver<T>,
+        receive_stream: &mut StreamReceiver<T>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     ) -> anyhow::Result<Self> {
         Self::setup_client(&mut send_stream, receive_stream).await?;
@@ -59,7 +59,7 @@ impl<T: TransportProtocol> SessionContext<T> {
     pub(crate) async fn server(
         transport_connection: T::Connection,
         mut send_stream: StreamSender<T>,
-        receive_stream: &StreamReceiver<T>,
+        receive_stream: &mut StreamReceiver<T>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     ) -> anyhow::Result<Self> {
         Self::setup_server(&mut send_stream, receive_stream).await?;
@@ -76,7 +76,7 @@ impl<T: TransportProtocol> SessionContext<T> {
 
     async fn setup_client(
         send_stream: &mut StreamSender<T>,
-        receive_stream: &StreamReceiver<T>,
+        receive_stream: &mut StreamReceiver<T>,
     ) -> anyhow::Result<()> {
         let setup_param = SetupParameter {
             path: None,
@@ -111,7 +111,7 @@ impl<T: TransportProtocol> SessionContext<T> {
 
     async fn setup_server(
         send_stream: &mut StreamSender<T>,
-        receive_stream: &StreamReceiver<T>,
+        receive_stream: &mut StreamReceiver<T>,
     ) -> anyhow::Result<()> {
         tracing::info!("Waiting for server setup.");
         let bytes = receive_stream.receive().await?;

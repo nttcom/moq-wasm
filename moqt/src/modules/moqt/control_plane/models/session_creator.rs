@@ -24,10 +24,10 @@ impl<T: TransportProtocol> SessionCreator<T> {
             .await?;
         let (send_stream, receive_stream) = transport_conn.open_bi().await?;
         let moqt_sender = StreamSender::<T>::new(send_stream);
-        let moqt_receiver = StreamReceiver::<T>::new(receive_stream);
+        let mut moqt_receiver = StreamReceiver {receive_stream};
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let inner =
-            SessionContext::<T>::client(transport_conn, moqt_sender, &moqt_receiver, sender)
+            SessionContext::<T>::client(transport_conn, moqt_sender, &mut moqt_receiver, sender)
                 .await
                 .inspect(|_| tracing::info!("Session has been created."))?;
         Ok(Session::<T>::new(moqt_receiver, inner, receiver))
@@ -38,10 +38,10 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let (send_stream, receive_stream) = transport_conn.accept_bi().await?;
         // 16 means the number of messages can be stored in the channel.
         let moqt_sender = StreamSender::<T>::new(send_stream);
-        let moqt_receiver = StreamReceiver::<T>::new(receive_stream);
+        let mut moqt_receiver = StreamReceiver {receive_stream};
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let inner =
-            SessionContext::<T>::server(transport_conn, moqt_sender, &moqt_receiver, sender)
+            SessionContext::<T>::server(transport_conn, moqt_sender, &mut moqt_receiver, sender)
                 .await
                 .inspect(|_| tracing::info!("Session has been established."))?;
         Ok(Session::<T>::new(moqt_receiver, inner, receiver))
