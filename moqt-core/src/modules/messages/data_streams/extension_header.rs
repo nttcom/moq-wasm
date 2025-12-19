@@ -21,11 +21,12 @@ pub enum ExtensionHeaderValue {
 
 impl ExtensionHeader {
     pub fn new(header_type: u64, value: ExtensionHeaderValue) -> Result<Self> {
-        if header_type % 2 == 0 && matches!(value, ExtensionHeaderValue::OddTypeValue(_)) {
+        if header_type.is_multiple_of(2) && matches!(value, ExtensionHeaderValue::OddTypeValue(_)) {
             bail!("Mismatched value type: expected even, but got odd");
         }
 
-        if header_type % 2 != 0 && matches!(value, ExtensionHeaderValue::EvenTypeValue(_)) {
+        if !header_type.is_multiple_of(2) && matches!(value, ExtensionHeaderValue::EvenTypeValue(_))
+        {
             bail!("Mismatched value type: expected odd, but got even");
         }
 

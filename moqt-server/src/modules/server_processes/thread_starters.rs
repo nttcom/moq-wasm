@@ -5,7 +5,7 @@ use super::{
     data_streams::{
         datagram::{forwarder::DatagramObjectForwarder, receiver::DatagramObjectReceiver},
         subgroup_stream::{
-            forwarder::SubgroupStreamObjectForwarder,
+            forwarder::{SubgroupForwarderError, SubgroupStreamObjectForwarder},
             receiver::SubgroupStreamObjectReceiver,
             uni_stream::{UniRecvStream, UniSendStream},
         },
@@ -215,9 +215,37 @@ async fn spawn_subgroup_stream_object_forwarder_thread(
                     .await
                 {
                     Ok(_) => {}
-                    Err(e) => {
+                    Err(SubgroupForwarderError::CacheMissing) => {
+                        tracing::warn!(
+                            "StreamObjectForwarder: Cache missing: finish forwarder worker and stream"
+                        );
+                    }
+                    Err(SubgroupForwarderError::SendFailed(e)) => {
                         let code = TerminationErrorCode::InternalError;
-                        let reason = format!("StreamObjectForwarder: {:?}", e);
+                        let reason = format!("StreamObjectForwarder send failed: {:?}", e);
+
+                        tracing::error!(reason);
+
+                        let _ = senders
+                            .close_session_tx()
+                            .send((u8::from(code) as u64, reason.to_string()))
+                            .await;
+                    }
+                    Err(SubgroupForwarderError::ForwardingPreferenceMismatch) => {
+                        let code = TerminationErrorCode::InternalError;
+                        let reason =
+                            "StreamObjectForwarder forwarding preference mismatch".to_string();
+
+                        tracing::error!(reason);
+
+                        let _ = senders
+                            .close_session_tx()
+                            .send((u8::from(code) as u64, reason.clone()))
+                            .await;
+                    }
+                    Err(SubgroupForwarderError::Other(err)) => {
+                        let code = TerminationErrorCode::InternalError;
+                        let reason = format!("StreamObjectForwarder: {:?}", err);
 
                         tracing::error!(reason);
 

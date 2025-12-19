@@ -4,19 +4,22 @@ use crate::{
     modules::{
         buffer_manager::BufferCommand,
         moqt_client::MOQTClient,
-        object_cache_storage::{cache::CacheKey, wrapper::ObjectCacheStorageWrapper},
+        object_cache_storage::{
+            cache::CacheKey, storage::ObjectCacheError, wrapper::ObjectCacheStorageWrapper,
+        },
         pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
         server_processes::senders::Senders,
     },
     signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher, TerminateReason},
 };
-use anyhow::{Ok, Result, bail};
+use anyhow::{Error as AnyError, Result};
 use bytes::BytesMut;
 use moqt_core::{
     data_stream_type::DataStreamType,
+    messages::data_streams::DataStreams,
     messages::{
         control_messages::subscribe::FilterType,
-        data_streams::{DataStreams, object_status::ObjectStatus, subgroup_stream},
+        data_streams::{object_status::ObjectStatus, subgroup_stream},
     },
     models::{
         range::{ObjectRange, ObjectStart},
@@ -36,6 +39,22 @@ use tokio::{
 };
 use tracing::{self};
 
+#[derive(Debug)]
+pub(crate) enum SubgroupForwarderError {
+    CacheMissing,
+    ForwardingPreferenceMismatch,
+    SendFailed(AnyError),
+    Other(AnyError),
+}
+
+type ForwarderResult<T> = std::result::Result<T, SubgroupForwarderError>;
+
+impl From<AnyError> for SubgroupForwarderError {
+    fn from(err: AnyError) -> Self {
+        SubgroupForwarderError::Other(err)
+    }
+}
+
 pub(crate) struct SubgroupStreamObjectForwarder {
     stream: UniSendStream,
     senders: Arc<Senders>,
@@ -51,6 +70,17 @@ pub(crate) struct SubgroupStreamObjectForwarder {
 }
 
 impl SubgroupStreamObjectForwarder {
+    fn map_cache_error(err: AnyError) -> SubgroupForwarderError {
+        if let Some(cache_err) = err.downcast_ref::<ObjectCacheError>() {
+            match cache_err {
+                ObjectCacheError::SubgroupStreamNotFound => SubgroupForwarderError::CacheMissing,
+                _ => SubgroupForwarderError::Other(err),
+            }
+        } else {
+            SubgroupForwarderError::Other(err)
+        }
+    }
+
     pub(crate) async fn init(
         stream: UniSendStream,
         downstream_subscribe_id: u64,
@@ -137,7 +167,7 @@ impl SubgroupStreamObjectForwarder {
         Ok(stream_object_forwarder)
     }
 
-    pub(crate) async fn start(&mut self) -> Result<()> {
+    pub(crate) async fn start(&mut self) -> ForwarderResult<()> {
         let mut object_cache_storage =
             ObjectCacheStorageWrapper::new(self.senders.object_cache_tx().clone());
 
@@ -156,7 +186,9 @@ impl SubgroupStreamObjectForwarder {
         Ok(())
     }
 
-    async fn get_upstream_forwarding_preference(&self) -> Result<Option<ForwardingPreference>> {
+    async fn get_upstream_forwarding_preference(
+        &self,
+    ) -> ForwarderResult<Option<ForwardingPreference>> {
         let pubsub_relation_manager =
             PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
 
@@ -166,24 +198,23 @@ impl SubgroupStreamObjectForwarder {
         pubsub_relation_manager
             .get_upstream_forwarding_preference(upstream_session_id, upstream_subscribe_id)
             .await
+            .map_err(SubgroupForwarderError::from)
     }
 
     async fn validate_forwarding_preference(
         &self,
         upstream_forwarding_preference: &Option<ForwardingPreference>,
-    ) -> Result<()> {
+    ) -> ForwarderResult<()> {
         match upstream_forwarding_preference {
             Some(ForwardingPreference::Subgroup) => Ok(()),
-            _ => {
-                bail!("Forwarding preference is not Subgroup Stream");
-            }
+            _ => Err(SubgroupForwarderError::ForwardingPreferenceMismatch),
         }
     }
 
     async fn set_forwarding_preference(
         &self,
         downstream_forwarding_preference: Option<ForwardingPreference>,
-    ) -> Result<()> {
+    ) -> ForwarderResult<()> {
         let forwarding_preference = downstream_forwarding_preference.unwrap();
         let downstream_session_id = self.stream.stable_id();
         let downstream_subscribe_id = self.downstream_subscribe_id;
@@ -205,7 +236,7 @@ impl SubgroupStreamObjectForwarder {
     async fn forward_header(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<()> {
+    ) -> ForwarderResult<()> {
         let upstream_header = self.get_upstream_header(object_cache_storage).await?;
 
         let downstream_header = self.generate_downstream_header(&upstream_header).await;
@@ -219,11 +250,12 @@ impl SubgroupStreamObjectForwarder {
     async fn get_upstream_header(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<subgroup_stream::Header> {
+    ) -> ForwarderResult<subgroup_stream::Header> {
         let (group_id, subgroup_id) = self.subgroup_stream_id;
         let subgroup_stream_header = object_cache_storage
             .get_subgroup_stream_header(&self.cache_key, group_id, subgroup_id)
-            .await?;
+            .await
+            .map_err(Self::map_cache_error)?;
 
         Ok(subgroup_stream_header)
     }
@@ -231,7 +263,7 @@ impl SubgroupStreamObjectForwarder {
     async fn forward_objects(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<()> {
+    ) -> ForwarderResult<()> {
         let (is_end, first_object_cache_id) =
             self.forward_first_object(object_cache_storage).await?;
         tracing::debug!(
@@ -254,7 +286,7 @@ impl SubgroupStreamObjectForwarder {
     async fn forward_first_object(
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<(bool, Option<usize>)> {
+    ) -> ForwarderResult<(bool, Option<usize>)> {
         let object_cache_id = loop {
             if self.is_terminated.load(Ordering::Relaxed) {
                 return Ok((true, None));
@@ -289,7 +321,7 @@ impl SubgroupStreamObjectForwarder {
         &mut self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         mut object_cache_id: usize,
-    ) -> Result<()> {
+    ) -> ForwarderResult<()> {
         loop {
             if self.is_terminated.load(Ordering::Relaxed) {
                 break;
@@ -326,7 +358,7 @@ impl SubgroupStreamObjectForwarder {
     async fn get_first_object(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<Option<(usize, subgroup_stream::Object)>> {
+    ) -> ForwarderResult<Option<(usize, subgroup_stream::Object)>> {
         let downstream_session_id = self.stream.stable_id();
         let downstream_subscribe_id = self.downstream_subscribe_id;
 
@@ -376,7 +408,7 @@ impl SubgroupStreamObjectForwarder {
     async fn get_first_object_for_first_stream(
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
-    ) -> Result<Option<(usize, subgroup_stream::Object)>> {
+    ) -> ForwarderResult<Option<(usize, subgroup_stream::Object)>> {
         let (group_id, subgroup_id) = self.subgroup_stream_id;
 
         match self.filter_type {
@@ -385,6 +417,7 @@ impl SubgroupStreamObjectForwarder {
                 object_cache_storage
                     .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
                     .await
+                    .map_err(Self::map_cache_error)
             }
             FilterType::LatestObject => {
                 // If the subscriber is the first subscriber for this track, the Relay needs to
@@ -392,6 +425,7 @@ impl SubgroupStreamObjectForwarder {
                 object_cache_storage
                     .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
                     .await
+                    .map_err(Self::map_cache_error)
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
                 let start_group_id = self.requested_object_range.start_group_id().unwrap();
@@ -406,10 +440,12 @@ impl SubgroupStreamObjectForwarder {
                             start_object_id,
                         )
                         .await
+                        .map_err(Self::map_cache_error)
                 } else {
                     object_cache_storage
                         .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
                         .await
+                        .map_err(Self::map_cache_error)
                 }
             }
         }
@@ -419,7 +455,7 @@ impl SubgroupStreamObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         actual_object_start: ObjectStart,
-    ) -> Result<Option<(usize, subgroup_stream::Object)>> {
+    ) -> ForwarderResult<Option<(usize, subgroup_stream::Object)>> {
         let (group_id, subgroup_id) = self.subgroup_stream_id;
 
         if group_id == actual_object_start.group_id() {
@@ -431,10 +467,12 @@ impl SubgroupStreamObjectForwarder {
                     actual_object_start.object_id(),
                 )
                 .await
+                .map_err(Self::map_cache_error)
         } else {
             object_cache_storage
                 .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
                 .await
+                .map_err(Self::map_cache_error)
         }
     }
 
@@ -442,7 +480,7 @@ impl SubgroupStreamObjectForwarder {
         &self,
         object_cache_storage: &mut ObjectCacheStorageWrapper,
         object_cache_id: usize,
-    ) -> Result<Option<(usize, subgroup_stream::Object)>> {
+    ) -> ForwarderResult<Option<(usize, subgroup_stream::Object)>> {
         let (group_id, subgroup_id) = self.subgroup_stream_id;
         object_cache_storage
             .get_next_subgroup_stream_object(
@@ -452,6 +490,7 @@ impl SubgroupStreamObjectForwarder {
                 object_cache_id,
             )
             .await
+            .map_err(Self::map_cache_error)
     }
 
     async fn generate_downstream_header(
@@ -467,7 +506,10 @@ impl SubgroupStreamObjectForwarder {
         .unwrap()
     }
 
-    async fn packetize_header(&self, header: &subgroup_stream::Header) -> Result<BytesMut> {
+    async fn packetize_header(
+        &self,
+        header: &subgroup_stream::Header,
+    ) -> ForwarderResult<BytesMut> {
         let downstream_session_id = self.stream.stable_id();
         let downstream_subscribe_id = self.downstream_subscribe_id;
 
@@ -498,17 +540,17 @@ impl SubgroupStreamObjectForwarder {
     async fn packetize_object(
         &mut self,
         stream_object: &subgroup_stream::Object,
-    ) -> Result<BytesMut> {
+    ) -> ForwarderResult<BytesMut> {
         let mut buf = BytesMut::new();
         stream_object.packetize(&mut buf);
 
         Ok(buf)
     }
 
-    async fn send(&mut self, message_buf: BytesMut) -> Result<()> {
+    async fn send(&mut self, message_buf: BytesMut) -> ForwarderResult<()> {
         if let Err(e) = self.stream.write_all(&message_buf).await {
             tracing::warn!("Failed to write to stream: {:?}", e);
-            bail!(e);
+            return Err(SubgroupForwarderError::SendFailed(AnyError::new(e)));
         }
 
         Ok(())
@@ -527,7 +569,7 @@ impl SubgroupStreamObjectForwarder {
         )
     }
 
-    async fn get_stream_ids_for_same_group(&self) -> Result<Vec<u64>> {
+    async fn get_stream_ids_for_same_group(&self) -> ForwarderResult<Vec<u64>> {
         let downstream_session_id = self.stream.stable_id();
         let downstream_subscribe_id = self.downstream_subscribe_id;
         let (group_id, _) = self.subgroup_stream_id;
@@ -560,7 +602,10 @@ impl SubgroupStreamObjectForwarder {
         Ok(stream_ids)
     }
 
-    async fn send_termination_signal_to_forwarders(&self, reason: ObjectStatus) -> Result<()> {
+    async fn send_termination_signal_to_forwarders(
+        &self,
+        reason: ObjectStatus,
+    ) -> ForwarderResult<()> {
         let signal_dispatcher = SignalDispatcher::new(self.senders.signal_dispatch_tx().clone());
         let terminate_reason = TerminateReason::ObjectStatus(reason);
         let signal = Box::new(DataStreamThreadSignal::Terminate(terminate_reason));
