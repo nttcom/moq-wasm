@@ -70,6 +70,17 @@ pub(crate) struct SubgroupStreamObjectForwarder {
 }
 
 impl SubgroupStreamObjectForwarder {
+    fn map_cache_error(err: AnyError) -> SubgroupForwarderError {
+        if let Some(cache_err) = err.downcast_ref::<ObjectCacheError>() {
+            match cache_err {
+                ObjectCacheError::SubgroupStreamNotFound => SubgroupForwarderError::CacheMissing,
+                _ => SubgroupForwarderError::Other(err),
+            }
+        } else {
+            SubgroupForwarderError::Other(err)
+        }
+    }
+
     pub(crate) async fn init(
         stream: UniSendStream,
         downstream_subscribe_id: u64,
@@ -244,18 +255,7 @@ impl SubgroupStreamObjectForwarder {
         let subgroup_stream_header = object_cache_storage
             .get_subgroup_stream_header(&self.cache_key, group_id, subgroup_id)
             .await
-            .map_err(|err| {
-                if let Some(cache_err) = err.downcast_ref::<ObjectCacheError>() {
-                    match cache_err {
-                        ObjectCacheError::SubgroupStreamNotFound => {
-                            SubgroupForwarderError::CacheMissing
-                        }
-                        _ => SubgroupForwarderError::Other(err),
-                    }
-                } else {
-                    SubgroupForwarderError::Other(err)
-                }
-            })?;
+            .map_err(Self::map_cache_error)?;
 
         Ok(subgroup_stream_header)
     }
@@ -417,7 +417,7 @@ impl SubgroupStreamObjectForwarder {
                 object_cache_storage
                     .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
                     .await
-                    .map_err(SubgroupForwarderError::from)
+                    .map_err(Self::map_cache_error)
             }
             FilterType::LatestObject => {
                 // If the subscriber is the first subscriber for this track, the Relay needs to
@@ -425,7 +425,7 @@ impl SubgroupStreamObjectForwarder {
                 object_cache_storage
                     .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
                     .await
-                    .map_err(SubgroupForwarderError::from)
+                    .map_err(Self::map_cache_error)
             }
             FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
                 let start_group_id = self.requested_object_range.start_group_id().unwrap();
@@ -440,12 +440,12 @@ impl SubgroupStreamObjectForwarder {
                             start_object_id,
                         )
                         .await
-                        .map_err(SubgroupForwarderError::from)
+                        .map_err(Self::map_cache_error)
                 } else {
                     object_cache_storage
                         .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
                         .await
-                        .map_err(SubgroupForwarderError::from)
+                        .map_err(Self::map_cache_error)
                 }
             }
         }
@@ -467,12 +467,12 @@ impl SubgroupStreamObjectForwarder {
                     actual_object_start.object_id(),
                 )
                 .await
-                .map_err(SubgroupForwarderError::from)
+                .map_err(Self::map_cache_error)
         } else {
             object_cache_storage
                 .get_first_subgroup_stream_object(&self.cache_key, group_id, subgroup_id)
                 .await
-                .map_err(SubgroupForwarderError::from)
+                .map_err(Self::map_cache_error)
         }
     }
 
@@ -490,7 +490,7 @@ impl SubgroupStreamObjectForwarder {
                 object_cache_id,
             )
             .await
-            .map_err(SubgroupForwarderError::from)
+            .map_err(Self::map_cache_error)
     }
 
     async fn generate_downstream_header(
