@@ -1740,11 +1740,11 @@ impl SubscriptionNode {
     }
 
     fn unregister_publisher_namespace(&mut self, namespace: Vec<String>) -> bool {
-        if let Some(producer) = &mut self.producer {
-            if producer.has_namespace(namespace.clone()) {
-                let _ = producer.delete_namespace(namespace);
-                return true;
-            }
+        if let Some(producer) = &mut self.producer
+            && producer.has_namespace(namespace.clone())
+        {
+            let _ = producer.delete_namespace(namespace);
+            return true;
         }
         false
     }
@@ -1758,15 +1758,14 @@ impl SubscriptionNode {
     }
 
     fn unregister_subscriber_namespace_prefix(&mut self, namespace_prefix: Vec<String>) -> bool {
-        if let Some(consumer) = &mut self.consumer {
-            if consumer
+        if let Some(consumer) = &mut self.consumer
+            && consumer
                 .get_namespace_prefixes()
                 .map(|prefixes| prefixes.contains(&namespace_prefix))
                 .unwrap_or(false)
-            {
-                let _ = consumer.delete_namespace_prefix(namespace_prefix);
-                return true;
-            }
+        {
+            let _ = consumer.delete_namespace_prefix(namespace_prefix);
+            return true;
         }
         false
     }

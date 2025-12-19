@@ -33,7 +33,7 @@ async fn handle_request(request: ConnectionRequest) {
             let (_, data) = packet?;
             count += 1;
 
-            if count == 1 || count % 200 == 0 {
+            if count == 1 || count.is_multiple_of(200) {
                 println!(
                     "[srt {remote}] packets={count} stream_id={stream_id} last_size={}",
                     data.len()
