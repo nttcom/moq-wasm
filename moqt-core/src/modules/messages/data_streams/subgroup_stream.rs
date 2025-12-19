@@ -107,11 +107,12 @@ impl Object {
         }
 
         // Any object with a status code other than zero MUST have an empty payload.
-        if let Some(status) = object_status {
-            if status != ObjectStatus::Normal && object_payload_length != 0 {
-                // TODO: return Termination Error Code
-                bail!("Any object with a status code other than zero MUST have an empty payload.");
-            }
+        if let Some(status) = object_status
+            && status != ObjectStatus::Normal
+            && object_payload_length != 0
+        {
+            // TODO: return Termination Error Code
+            bail!("Any object with a status code other than zero MUST have an empty payload.");
         }
 
         // length of total byte of extension headers

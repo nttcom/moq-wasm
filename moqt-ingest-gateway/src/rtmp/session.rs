@@ -108,16 +108,16 @@ pub async fn handle_event(
                 namespace_path.split('/').map(|s| s.to_string()).collect();
             let track_name = "audio".to_string();
             state.counters.audio += 1;
-            if state.counters.audio == 1 || state.counters.audio % 1000 == 0 {
+            if state.counters.audio == 1 || state.counters.audio.is_multiple_of(1000) {
                 println!(
                     "[rtmp {label}] audio packets={} app={app_name} track={track_name}",
                     state.counters.audio
                 );
             }
-            if let Some(recorder) = state.recorder.as_mut() {
-                if let Err(err) = recorder.write_audio(timestamp.value, data.as_ref()).await {
-                    eprintln!("[rtmp {label}] write_audio failed: {err:?}");
-                }
+            if let Some(recorder) = state.recorder.as_mut()
+                && let Err(err) = recorder.write_audio(timestamp.value, data.as_ref()).await
+            {
+                eprintln!("[rtmp {label}] write_audio failed: {err:?}");
             }
             if let Some(moqt) = state.moqt.as_ref() {
                 let key = (namespace_path.clone(), track_name.clone());
@@ -162,16 +162,16 @@ pub async fn handle_event(
                 namespace_path.split('/').map(|s| s.to_string()).collect();
             let track_name = "video".to_string();
             state.counters.video += 1;
-            if state.counters.video == 1 || state.counters.video % 1000 == 0 {
+            if state.counters.video == 1 || state.counters.video.is_multiple_of(1000) {
                 println!(
                     "[rtmp {label}] video packets={} app={app_name} track={track_name}",
                     state.counters.video
                 );
             }
-            if let Some(recorder) = state.recorder.as_mut() {
-                if let Err(err) = recorder.write_video(timestamp.value, data.as_ref()).await {
-                    eprintln!("[rtmp {label}] write_video failed: {err:?}");
-                }
+            if let Some(recorder) = state.recorder.as_mut()
+                && let Err(err) = recorder.write_video(timestamp.value, data.as_ref()).await
+            {
+                eprintln!("[rtmp {label}] write_video failed: {err:?}");
             }
             if let Some(moqt) = state.moqt.as_ref() {
                 let namespace = namespace_vec.as_slice();
