@@ -16,6 +16,7 @@ use anyhow::{Error as AnyError, Result};
 use bytes::BytesMut;
 use moqt_core::{
     data_stream_type::DataStreamType,
+    messages::data_streams::DataStreams,
     messages::{
         control_messages::subscribe::FilterType,
         data_streams::{object_status::ObjectStatus, subgroup_stream},
@@ -25,7 +26,6 @@ use moqt_core::{
         tracks::ForwardingPreference,
     },
     pubsub_relation_manager_repository::PubSubRelationManagerRepository,
-    messages::data_streams::DataStreams,
     variable_integer::write_variable_integer,
 };
 use std::{
@@ -247,7 +247,7 @@ impl SubgroupStreamObjectForwarder {
             .map_err(|err| {
                 if let Some(cache_err) = err.downcast_ref::<ObjectCacheError>() {
                     match cache_err {
-                        ObjectCacheError::SubgroupStreamCacheNotFound => {
+                        ObjectCacheError::SubgroupStreamNotFound => {
                             SubgroupForwarderError::CacheMissing
                         }
                         _ => SubgroupForwarderError::Other(err),

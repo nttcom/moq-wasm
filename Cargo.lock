@@ -1388,6 +1388,7 @@ dependencies = [
  "console-subscriber",
  "moqt-core",
  "once_cell",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-appender",
