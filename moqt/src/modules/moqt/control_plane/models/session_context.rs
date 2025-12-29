@@ -4,7 +4,6 @@ use std::{
 };
 
 use anyhow::bail;
-use bytes::BytesMut;
 
 use crate::{
     ObjectDatagram, SessionEvent, TransportProtocol,
@@ -95,8 +94,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             .inspect_err(|e| tracing::error!("failed to send. :{}", e.to_string()))?;
         tracing::info!("Sent client setup.");
 
-        let bytes = receive_stream.receive().await?;
-        let mut bytes_mut = BytesMut::from(bytes.as_slice());
+        let mut bytes_mut = receive_stream.receive().await?;
         let message_type = util::get_message_type(&mut bytes_mut)?;
         if message_type == ControlMessageType::ServerSetup {
             tracing::info!("Received server setup.");
@@ -114,8 +112,7 @@ impl<T: TransportProtocol> SessionContext<T> {
         receive_stream: &mut StreamReceiver<T>,
     ) -> anyhow::Result<()> {
         tracing::info!("Waiting for server setup.");
-        let bytes = receive_stream.receive().await?;
-        let mut bytes_mut = BytesMut::from(bytes.as_slice());
+        let mut bytes_mut = receive_stream.receive().await?;
         let message_type = util::get_message_type(&mut bytes_mut)?;
         if message_type == ControlMessageType::ClientSetup {
             tracing::info!("Received client setup.");

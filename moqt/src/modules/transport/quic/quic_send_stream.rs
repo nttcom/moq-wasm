@@ -1,4 +1,3 @@
-use anyhow::bail;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use quinn::{self};

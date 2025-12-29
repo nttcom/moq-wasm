@@ -36,7 +36,7 @@ type ExtensionHeader = KeyValuePair;
 
 #[derive(Debug, Clone)]
 pub struct ObjectDatagram {
-    pub(crate) message_type: u64,
+    pub(crate) _message_type: u64,
     pub track_alias: u64,
     pub group_id: u64,
     pub field: DatagramField,
@@ -45,7 +45,7 @@ pub struct ObjectDatagram {
 impl ObjectDatagram {
     pub fn new(track_alias: u64, group_id: u64, field: DatagramField) -> Self {
         Self {
-            message_type: DatagramTypeValue::from_datagram_field(&field) as u64,
+            _message_type: DatagramTypeValue::from_datagram_field(&field) as u64,
             track_alias,
             group_id,
             field,
@@ -59,7 +59,7 @@ impl ObjectDatagram {
         let field = DatagramField::decode(message_type, buf)?;
 
         Some(Self {
-            message_type,
+            _message_type: message_type,
             track_alias,
             group_id,
             field,
@@ -82,7 +82,7 @@ impl ObjectDatagram {
 mod tests {
     mod success {
 
-        use std::sync::Arc;
+        use bytes::Bytes;
 
         use crate::modules::moqt::data_plane::object::{
             datagram_field::DatagramField,
@@ -94,13 +94,13 @@ mod tests {
         #[test]
         fn packetize_and_depacketize_payload_with_object_id_no_extensions() {
             let object = ObjectDatagram {
-                message_type: 0x00,
+                _message_type: 0x00,
                 track_alias: 1,
                 group_id: 2,
                 field: DatagramField::Payload0x00 {
                     object_id: 3,
                     publisher_priority: 128,
-                    payload: Arc::new(vec![0, 1, 2, 3]),
+                    payload: Bytes::from(vec![0, 1, 2, 3]),
                 },
             };
 
@@ -109,7 +109,7 @@ mod tests {
 
             assert_eq!(object.track_alias, depacketized.track_alias);
             assert_eq!(object.group_id, depacketized.group_id);
-            assert_eq!(object.message_type, depacketized.message_type);
+            assert_eq!(object._message_type, depacketized._message_type);
 
             let (
                 DatagramField::Payload0x00 {
@@ -135,7 +135,7 @@ mod tests {
         #[test]
         fn packetize_and_depacketize_payload_with_object_id_with_extensions() {
             let object = ObjectDatagram {
-                message_type: 0x01,
+                _message_type: 0x01,
                 track_alias: 1,
                 group_id: 2,
                 field: DatagramField::Payload0x01 {
@@ -145,7 +145,7 @@ mod tests {
                         key: 0x3c, // PriorGroupIdGap
                         value: VariantType::Even(5),
                     }],
-                    payload: Arc::new(vec![0, 1, 2, 3]),
+                    payload: Bytes::from(vec![0, 1, 2, 3]),
                 },
             };
 
@@ -154,7 +154,7 @@ mod tests {
 
             assert_eq!(object.track_alias, depacketized.track_alias);
             assert_eq!(object.group_id, depacketized.group_id);
-            assert_eq!(object.message_type, depacketized.message_type);
+            assert_eq!(object._message_type, depacketized._message_type);
 
             let (
                 DatagramField::Payload0x01 {
@@ -190,7 +190,7 @@ mod tests {
         #[test]
         fn packetize_and_depacketize_status_with_object_id_no_extensions() {
             let object = ObjectDatagram {
-                message_type: 0x20,
+                _message_type: 0x20,
                 track_alias: 1,
                 group_id: 2,
                 field: DatagramField::Status0x20 {
@@ -205,7 +205,7 @@ mod tests {
 
             assert_eq!(object.track_alias, depacketized.track_alias);
             assert_eq!(object.group_id, depacketized.group_id);
-            assert_eq!(object.message_type, depacketized.message_type);
+            assert_eq!(object._message_type, depacketized._message_type);
 
             let (
                 DatagramField::Status0x20 {

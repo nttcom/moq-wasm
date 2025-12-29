@@ -12,7 +12,7 @@ pub(crate) struct Relay {
 impl Relay {
     pub(crate) fn add_object_receiver(
         &mut self,
-        datagram_receiver: Box<dyn DatagramReceiver>,
+        mut datagram_receiver: Box<dyn DatagramReceiver>,
         object_datagram: moqt::ObjectDatagram,
     ) {
         let track_alias = datagram_receiver.track_alias();
@@ -25,7 +25,7 @@ impl Relay {
         let queue = self.relay_properties.object_queue.clone();
         self.relay_properties.joinset.spawn(async move {
             tracing::info!("add object receiver");
-            while let Ok(datagram_object) = datagram_receiver.receive().await {
+            while let Ok(datagram_object) = datagram_receiver.receive_object().await {
                 tracing::info!("receive object");
                 let queue = queue.get_mut(&datagram_object.track_alias);
                 if queue.is_none() {

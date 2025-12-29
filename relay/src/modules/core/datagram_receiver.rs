@@ -5,7 +5,7 @@ use async_trait::async_trait;
 #[async_trait]
 pub(crate) trait DatagramReceiver: 'static + Send + Sync + Debug {
     fn track_alias(&self) -> u64;
-    async fn receive(&self) -> anyhow::Result<moqt::ObjectDatagram>;
+    async fn receive_object(&mut self) -> anyhow::Result<moqt::ObjectDatagram>;
 }
 
 #[async_trait]
@@ -14,7 +14,8 @@ impl DatagramReceiver for moqt::DatagramReceiver {
         self.track_alias
     }
 
-    async fn receive(&self) -> anyhow::Result<moqt::ObjectDatagram> {
-        self.receive().await
+    async fn receive_object(&mut self) -> anyhow::Result<moqt::ObjectDatagram> {
+        let datagram = self.receive().await?;
+        Ok(datagram)
     }
 }

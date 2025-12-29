@@ -218,9 +218,10 @@ impl Client {
             tracing::info!("{} :create stream start", label);
             loop {
                 let format_text = format!("hello from {}! id: {}", label, id);
+                let data = DatagramField::to_bytes(format_text);
                 let field = DatagramField::Payload0x00 {
                     object_id: id,
-                    publisher_priority: 128,
+                    payload: data,
                     payload: Arc::new(format_text.as_bytes().to_vec()),
                 };
                 let obj = ObjectDatagram::new(publication.track_alias, id, field);
