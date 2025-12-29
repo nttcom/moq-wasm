@@ -1,4 +1,5 @@
 use anyhow::bail;
+use bytes::BytesMut;
 
 use crate::modules::{
     moqt::protocol::TransportProtocol, transport::transport_receive_stream::TransportReceiveStream,
@@ -12,10 +13,11 @@ pub struct StreamReceiver<T: TransportProtocol> {
 impl<T: TransportProtocol> StreamReceiver<T> {
     const RECEIVE_BYTES_CAPACITY: usize = 1024;
 
-    pub async fn receive(&mut self) -> anyhow::Result<Vec<u8>> {
-        let mut total_message = vec![];
+    pub async fn receive(&mut self) -> anyhow::Result<BytesMut> {
+        let mut total_message = BytesMut::new();
         loop {
-            let mut bytes = vec![0u8; Self::RECEIVE_BYTES_CAPACITY];
+            let mut bytes = BytesMut::with_capacity(Self::RECEIVE_BYTES_CAPACITY);
+            bytes.resize(Self::RECEIVE_BYTES_CAPACITY, 0);
             let message = self.receive_stream.receive(&mut bytes).await;
             if let Err(e) = message {
                 tracing::error!("failed to receive message: {:?}", e);

@@ -17,7 +17,7 @@ pub(crate) fn create_full_message(message_type: ControlMessageType, payload: Byt
     let mut buffer = BytesMut::new();
     // Message Type
     buffer.put_varint(message_type as u64);
-    buffer.put_varint(payload.len() as u64);
+    // buffer.put_varint(payload.len() as u64);
     buffer.unsplit(payload);
     buffer
 }

@@ -43,7 +43,7 @@ impl ControlMessageReceiveThread {
                     if let Some(session) = session_context.upgrade() {
                         tracing::debug!("Session is alive.");
 
-                        let bytes = match receive_stream.receive().await {
+                        let mut bytes = match receive_stream.receive().await {
                             Ok(b) => b,
                             Err(e) => {
                                 tracing::error!("failed to receive message: {:?}", e);
@@ -51,8 +51,7 @@ impl ControlMessageReceiveThread {
                             }
                         };
                         tracing::info!("Message has been received.");
-                        let mut bytes_mut = BytesMut::from(bytes.as_slice());
-                        let message_type = match get_message_type(&mut bytes_mut) {
+                        let message_type = match get_message_type(&mut bytes) {
                             Ok(m) => m,
                             Err(e) => {
                                 tracing::error!("Receiving error: {:?}", e);
@@ -60,7 +59,7 @@ impl ControlMessageReceiveThread {
                             }
                         };
                         let depack_result =
-                            Self::resolve_message(session.clone(), message_type, bytes_mut);
+                            Self::resolve_message(session.clone(), message_type, bytes);
                         match depack_result {
                             DepacketizeResult::SessionEvent(event) => {
                                 if let Err(e) = session.event_sender.send(event) {

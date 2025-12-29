@@ -1,24 +1,16 @@
-use std::io::Cursor;
-
 use anyhow::bail;
 use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::{
-    extensions::result_ext::ResultExt,
-    moqt::control_plane::messages::{
-        control_message_type::ControlMessageType, variable_integer::read_variable_integer,
-    },
+    extensions::{buf_get_ext::BufGetExt, result_ext::ResultExt},
+    moqt::control_plane::messages::control_message_type::ControlMessageType,
 };
 
 pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<ControlMessageType> {
-    let mut read_cur = Cursor::new(&read_buf[..]);
     // Read the message type
-    let message_type = read_variable_integer(&mut read_cur)?;
+    let message_type = read_buf.try_get_varint()?;
     match ControlMessageType::try_from(message_type as u8) {
-        Ok(v) => {
-            read_buf.advance(read_cur.position() as usize);
-            Ok(v)
-        }
+        Ok(v) => Ok(v),
         Err(e) => bail!("Failed to convert message type.: {}", e.number),
     }
 }
@@ -47,6 +39,7 @@ pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
 pub(crate) fn add_payload_length(payload: BytesMut) -> BytesMut {
     let mut buffer = BytesMut::new();
     // Message Type
+    tracing::warn!("Adding payload length: {}", payload.len());
     buffer.put_u16(payload.len() as u16);
     buffer.unsplit(payload);
     buffer
