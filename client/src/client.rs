@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::bail;
-use moqt::{DatagramField, Endpoint, ObjectDatagram, QUIC, Session, SubscribeOption};
+use moqt::{DatagramField, Endpoint, QUIC, Session, SubscribeOption};
 
 use crate::stream_runner::StreamTaskRunner;
 
@@ -23,14 +23,14 @@ pub(crate) struct Client {
 
 impl Client {
     pub(crate) async fn new(cert_path: String, label: String) -> anyhow::Result<Self> {
-        // let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
-        let config = moqt::ClientConfig::default();
-        let endpoint = Endpoint::<QUIC>::create_client(config)?;
+        let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
+        // let config = moqt::ClientConfig::default();
+        // let endpoint = Endpoint::<QUIC>::create_client(config)?;
         // let url = url::Url::from_str("moqt://interop-relay.cloudflare.mediaoverquic.com:443")?;
-        let url = url::Url::from_str("moqt://fb.mvfst.net:9448")?;
+        // let url = url::Url::from_str("moqt://fb.mvfst.net:9448")?;
         // let url = url::Url::from_str("moqt://lminiero.it:9000")?;
         // let url = url::Url::from_str("moqt://moqt.research.skyway.io:4434")?;
-        // let url = url::Url::from_str("moqt://localhost:4434")?;
+        let url = url::Url::from_str("moqt://localhost:4434")?;
         let host = url.host_str().unwrap();
         let remote_address = (host, url.port().unwrap_or(4433))
             .to_socket_addrs()?
@@ -171,27 +171,21 @@ impl Client {
         let task = async move {
             tracing::info!("{} :subscribe {}", label, full_name);
             let subscription = publish_handler.into_subscription(0);
-            let acceptance = match subscription.accept_stream_or_datagram().await {
-                Ok(acceptance) => acceptance,
+            let mut receiver = match subscription.accept_data_receiver().await {
+                Ok(receiver) => receiver,
                 Err(_) => {
                     tracing::error!("Failed to accept stream or datagram");
                     return;
                 }
             };
-            match acceptance {
-                moqt::Acceptance::Stream(stream) => todo!(),
-                moqt::Acceptance::Datagram(mut receiver, object) => {
-                    tracing::info!("{} :subscribe datagram :{:?}", label, object);
-                    loop {
-                        let result = receiver.receive().await;
-                        if let Err(e) = result {
-                            tracing::error!("Failed to receive: {}", e);
-                            break;
-                        }
-                        let object = result.unwrap();
-                        tracing::info!("{} :subscribe datagram, message: {:?}", label, object);
-                    }
+            loop {
+                let result = receiver.receive().await;
+                if let Err(e) = result {
+                    tracing::error!("Failed to receive: {}", e);
+                    break;
                 }
+                let object = result.unwrap();
+                tracing::info!("{} :subscribe datagram: {:?}", label, object);
             }
         };
         runner.add_task(Box::pin(task)).await;
@@ -203,16 +197,7 @@ impl Client {
         runner: &StreamTaskRunner,
     ) {
         tracing::info!("{} :create stream", label);
-        let datagram = publication.create_datagram();
-        // let _ = publication
-        //     .create_stream()
-        //     .await
-        //     .inspect(|_| {
-        //         tracing::info!("{} :create stream ok", label);
-        //     })
-        //     .inspect_err(|_| {
-        //         tracing::error!("{} :create stream error", label);
-        //     });
+        let mut datagram = publication.create_datagram();
         let task = async move {
             let mut id = 0;
             tracing::info!("{} :create stream start", label);
@@ -221,10 +206,10 @@ impl Client {
                 let data = DatagramField::to_bytes(format_text);
                 let field = DatagramField::Payload0x00 {
                     object_id: id,
+                    publisher_priority: 128,
                     payload: data,
-                    payload: Arc::new(format_text.as_bytes().to_vec()),
                 };
-                let obj = ObjectDatagram::new(publication.track_alias, id, field);
+                let obj = moqt::DataObject::to_object_datagram(publication.track_alias, id, field);
                 match datagram.send(obj).await {
                     Ok(_) => {
                         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
@@ -267,29 +252,23 @@ impl Client {
         };
         tracing::warn!("qqq subscribe ok");
         let task = async move {
-            let acceptance = match subscription.accept_stream_or_datagram().await {
-                Ok(acceptance) => acceptance,
+            let mut receiver = match subscription.accept_data_receiver().await {
+                Ok(receiver) => receiver,
                 Err(e) => {
                     tracing::error!("Failed to accept stream or datagram: {}", e);
                     return;
                 }
             };
             tracing::warn!("qqq accept ok");
-            match acceptance {
-                moqt::Acceptance::Stream(stream) => todo!(),
-                moqt::Acceptance::Datagram(mut receiver, object) => {
-                    tracing::info!("{} :subscribe datagram: {:?}", label, object,);
-                    loop {
-                        let result = receiver.receive().await;
-                        if let Err(e) = result {
-                            tracing::error!("Failed to receive: {}", e);
-                            break;
-                        }
-                        let object = result.unwrap();
-                        tracing::info!("{} :subscribe datagram: {:?}", label, object);
-                    }
+            loop {
+                let result = receiver.receive().await;
+                if let Err(e) = result {
+                    tracing::error!("Failed to receive: {}", e);
+                    break;
                 }
-            };
+                let object = result.unwrap();
+                tracing::info!("{} :subscribe datagram: {:?}", label, object);
+            }
         };
         self.runner.add_task(Box::pin(task)).await;
     }

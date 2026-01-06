@@ -6,21 +6,24 @@ use std::{
 use anyhow::bail;
 
 use crate::{
-    ObjectDatagram, SessionEvent, TransportProtocol,
-    modules::moqt::control_plane::{
-        constants::{self, MOQ_TRANSPORT_VERSION},
-        enums::{RequestId, ResponseMessage},
-        messages::{
-            control_message_type::ControlMessageType,
-            control_messages::{
-                client_setup::ClientSetup, server_setup::ServerSetup,
-                setup_parameters::SetupParameter, util,
+    SessionEvent, TransportProtocol,
+    modules::moqt::{
+        control_plane::{
+            constants::{self, MOQ_TRANSPORT_VERSION},
+            enums::{RequestId, ResponseMessage},
+            messages::{
+                control_message_type::ControlMessageType,
+                control_messages::{
+                    client_setup::ClientSetup, server_setup::ServerSetup,
+                    setup_parameters::SetupParameter, util,
+                },
             },
+            threads::enums::StreamWithObject,
+            utils::add_message_type,
         },
-        utils::add_message_type,
-    },
-    modules::moqt::data_plane::streams::stream::{
-        stream_receiver::StreamReceiver, stream_sender::StreamSender,
+        data_plane::streams::stream::{
+            stream_receiver::StreamReceiver, stream_sender::StreamSender,
+        },
     },
 };
 
@@ -32,8 +35,8 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     pub(crate) sender_map:
         tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
-    pub(crate) datagram_sender_map:
-        tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<ObjectDatagram>>>,
+    pub(crate) notification_map:
+        tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<StreamWithObject<T>>>>,
 }
 
 impl<T: TransportProtocol> SessionContext<T> {
@@ -51,7 +54,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             request_id: AtomicU64::new(0),
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
-            datagram_sender_map: tokio::sync::RwLock::new(HashMap::new()),
+            notification_map: tokio::sync::RwLock::new(HashMap::new()),
         })
     }
 
@@ -69,7 +72,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             request_id: AtomicU64::new(1),
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
-            datagram_sender_map: tokio::sync::RwLock::new(HashMap::new()),
+            notification_map: tokio::sync::RwLock::new(HashMap::new()),
         })
     }
 

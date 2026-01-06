@@ -70,6 +70,7 @@ impl FilterType {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum GroupOrder {
     Publisher = 0x0,
     Ascending = 0x1,

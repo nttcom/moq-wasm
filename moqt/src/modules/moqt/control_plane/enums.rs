@@ -6,7 +6,9 @@ use crate::{
             subscribe_handler::SubscribeHandler,
             subscribe_namespace_handler::SubscribeNamespaceHandler,
         },
-        control_plane::messages::control_messages::{publish_ok::PublishOk, subscribe_ok::SubscribeOk},
+        control_plane::messages::control_messages::{
+            publish_ok::PublishOk, subscribe_ok::SubscribeOk,
+        },
     },
 };
 
@@ -46,9 +48,4 @@ pub(crate) enum ResponseMessage {
     PublishError(RequestId, ErrorCode, ErrorPhrase),
     SubscribeOk(SubscribeOk),
     SubscribeError(RequestId, ErrorCode, ErrorPhrase),
-}
-
-pub enum StreamMessage {
-    Header(),
-    ObjectField,
 }

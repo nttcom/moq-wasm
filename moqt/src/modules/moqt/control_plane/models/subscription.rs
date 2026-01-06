@@ -1,23 +1,15 @@
 use std::sync::Arc;
 
-use anyhow::bail;
-
 use crate::{
-    DatagramReceiver, GroupOrder, ObjectDatagram, TransportProtocol,
-    modules::{
-        moqt::control_plane::{
+    GroupOrder, TransportProtocol,
+    modules::moqt::{
+        control_plane::{
             messages::control_messages::{enums::ContentExists, subscribe_ok::SubscribeOk},
             models::session_context::SessionContext,
         },
-        moqt::data_plane::streams::stream::stream_receiver::StreamReceiver,
-        transport::transport_connection::TransportConnection,
+        data_plane::streams::data_receiver::DataReceiver,
     },
 };
-
-pub enum Acceptance<T: TransportProtocol> {
-    Stream(StreamReceiver<T>),
-    Datagram(DatagramReceiver, ObjectDatagram),
-}
 
 pub struct Subscription<T: TransportProtocol> {
     pub(crate) session_context: Arc<SessionContext<T>>,
@@ -40,21 +32,7 @@ impl<T: TransportProtocol> Subscription<T> {
         }
     }
 
-    pub async fn accept_stream_or_datagram(&self) -> anyhow::Result<Acceptance<T>> {
-        let mut datagram_receiver =
-            DatagramReceiver::new(self.session_context.clone(), self.track_alias).await;
-
-        tokio::select! {
-            Ok(stream) = self.session_context.transport_connection.accept_uni() => {
-                Ok(Acceptance::Stream(StreamReceiver {receive_stream: stream}))
-            }
-            datagram = datagram_receiver.receive() => {
-                if let Ok(datagram) = datagram {
-                    Ok(Acceptance::Datagram(datagram_receiver, datagram))
-                } else {
-                    bail!("Failed to receive datagram")
-                }
-            }
-        }
+    pub async fn accept_data_receiver(&self) -> anyhow::Result<DataReceiver<T>> {
+        DataReceiver::new(&self.session_context, self.track_alias).await
     }
 }
