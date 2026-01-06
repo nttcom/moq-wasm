@@ -125,6 +125,19 @@ impl DatagramField {
         data.into()
     }
 
+    pub fn object_id(&self) -> Option<u64> {
+        match self {
+            Self::Payload0x00 { object_id, .. }
+            | Self::Payload0x01 { object_id, .. }
+            | Self::Payload0x02WithEndOfGroup { object_id, .. }
+            | Self::Payload0x03WithEndOfGroup { object_id, .. }
+            | Self::Payload0x04 { object_id, .. }
+            | Self::Status0x20 { object_id, .. }
+            | Self::Status0x21 { object_id, .. } => Some(*object_id),
+            _ => None,
+        }
+    }
+
     pub(crate) fn decode(message_type: u64, data: &mut BytesMut) -> Option<Self> {
         match message_type {
             val if val == DatagramTypeValue::Payload0x00 as u64 => {

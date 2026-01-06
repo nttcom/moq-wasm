@@ -1,37 +1,37 @@
-use std::sync::Arc;
-
 use anyhow::bail;
 
-use crate::modules::moqt::data_plane::object::object_datagram::ObjectDatagram;
-use crate::{TransportProtocol, modules::moqt::control_plane::models::session_context::SessionContext};
+use crate::TransportProtocol;
+use crate::modules::moqt::control_plane::threads::enums::StreamWithObject;
+use crate::modules::moqt::data_plane::object::data_object::DataObject;
+use crate::modules::moqt::data_plane::streams::stream_type::ReceiveStreamType;
 
 #[derive(Debug)]
-pub struct DatagramReceiver {
-    pub track_alias: u64,
-    receiver: tokio::sync::mpsc::UnboundedReceiver<ObjectDatagram>,
+pub struct DatagramReceiver<T: TransportProtocol> {
+    receiver: tokio::sync::mpsc::UnboundedReceiver<StreamWithObject<T>>,
 }
 
-impl DatagramReceiver {
-    pub(crate) async fn new<T: TransportProtocol>(
-        session_context: Arc<SessionContext<T>>,
-        track_alias: u64,
-    ) -> Self {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<ObjectDatagram>();
-        session_context
-            .datagram_sender_map
-            .write()
-            .await
-            .insert(track_alias, sender);
-        Self {
-            track_alias,
-            receiver,
-        }
+#[async_trait::async_trait]
+impl<T: TransportProtocol> ReceiveStreamType<T> for DatagramReceiver<T> {
+    fn is_datagram(&self) -> bool {
+        true
     }
 
-    pub async fn receive(&mut self) -> anyhow::Result<ObjectDatagram> {
-        match self.receiver.recv().await {
-            Some(object) => Ok(object),
+    async fn receive(&mut self) -> anyhow::Result<DataObject> {
+        let result = match self.receiver.recv().await {
+            Some(object) => object,
             None => bail!("Sender has been dropped."),
+        };
+        match result {
+            StreamWithObject::Datagram(datagram) => Ok(DataObject::ObjectDatagram(datagram)),
+            _ => unreachable!("DatagramReceiver can only receive ObjectDatagram"),
         }
+    }
+}
+
+impl<T: TransportProtocol> DatagramReceiver<T> {
+    pub(crate) async fn new(
+        receiver: tokio::sync::mpsc::UnboundedReceiver<StreamWithObject<T>>,
+    ) -> Self {
+        Self { receiver }
     }
 }

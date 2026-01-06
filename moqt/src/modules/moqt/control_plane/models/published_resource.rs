@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
 use crate::{
-    DatagramSender, FilterType, GroupOrder, SubscribeHandler, TransportProtocol,
-    modules::{
-        moqt::control_plane::{
+    FilterType, GroupOrder, SubscribeHandler, TransportProtocol,
+    modules::moqt::{
+        control_plane::{
             messages::control_messages::publish_ok::PublishOk,
             models::session_context::SessionContext,
         },
-        moqt::data_plane::streams::stream::stream_sender::StreamSender,
-        transport::transport_connection::TransportConnection,
+        data_plane::streams::{
+            data_sender::DataSender, datagram::datagram_sender::DatagramSender,
+            stream::stream_data_sender::StreamDataSender,
+        },
     },
 };
 
@@ -63,12 +65,15 @@ impl<T: TransportProtocol> PublishedResource<T> {
         }
     }
 
-    pub async fn create_stream(&self) -> anyhow::Result<StreamSender<T>> {
-        let send_stream = self.session_context.transport_connection.open_uni().await?;
-        Ok(StreamSender::new(send_stream))
+    pub async fn create_stream(&self) -> anyhow::Result<DataSender<StreamDataSender<T>>> {
+        let stream_data_sender = StreamDataSender::new(self.session_context.clone()).await?;
+        Ok(DataSender::new(stream_data_sender))
     }
 
-    pub fn create_datagram(&self) -> DatagramSender<T> {
-        DatagramSender::new(self.track_alias, self.session_context.clone())
+    pub fn create_datagram(&self) -> DataSender<DatagramSender<T>> {
+        DataSender::new(DatagramSender::new(
+            self.track_alias,
+            self.session_context.clone(),
+        ))
     }
 }

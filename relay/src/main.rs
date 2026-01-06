@@ -106,12 +106,20 @@ fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // let file = tracing_appender::rolling::daily("logs", "app.log");
+    // let (nb, _guard) = tracing_appender::non_blocking(file);
+    
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .with_line_number(true)
+        // .with_writer(nb)
         .try_init()
         .ok();
     create_certs_for_test_if_needed()?;
+    // unsafe {
+    //     backtrace_on_stack_overflow::enable();
+    // }
+
     // console_subscriber::init();
     let key_path = get_key_path().to_str().unwrap().to_string();
     let cert_path = get_cert_path().to_str().unwrap().to_string();

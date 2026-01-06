@@ -42,12 +42,14 @@ type ExtensionHeader = KeyValuePair;
 //  | 0x1D | Yes           | N/A         | Yes        | Yes          |
 //  +------+---------------+-------------+------------+--------------+
 
+#[derive(Debug, Clone)]
 pub enum SubgroupId {
     Zero,
     FirstObjectIdDelta,
     Value(u64),
 }
 
+#[derive(Debug, Clone)]
 pub struct SubgroupHeader {
     pub message_type: u64,
     pub track_alias: u64,
@@ -147,6 +149,7 @@ impl SubgroupHeader {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SubgroupObjectField {
     pub object_id_delta: u64,
     pub extension_headers: Vec<ExtensionHeader>,

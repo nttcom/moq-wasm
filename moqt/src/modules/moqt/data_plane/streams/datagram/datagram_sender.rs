@@ -3,25 +3,40 @@ use std::sync::Arc;
 use crate::{
     TransportProtocol,
     modules::{
-        moqt::control_plane::models::session_context::SessionContext,
-        moqt::data_plane::object::object_datagram::ObjectDatagram,
+        moqt::{
+            control_plane::models::session_context::SessionContext,
+            data_plane::{object::data_object::DataObject, streams::stream_type::SendStreamType},
+        },
         transport::transport_connection::TransportConnection,
     },
 };
-
-pub struct DatagramHeader {
-    pub group_id: u64,
-    pub object_id: Option<u64>,
-    pub publisher_priority: u8,
-    pub prior_object_id_gap: Option<u64>,
-    pub prior_group_id_gap: Option<u64>,
-    pub immutable_extensions: Vec<u8>,
-}
 
 pub struct DatagramSender<T: TransportProtocol> {
     pub track_alias: u64,
     pub end_of_group: bool,
     session_context: Arc<SessionContext<T>>,
+}
+
+#[async_trait::async_trait]
+impl<T: TransportProtocol> SendStreamType for DatagramSender<T> {
+    fn is_datagram(&self) -> bool {
+        true
+    }
+
+    async fn send(&mut self, data: DataObject) -> anyhow::Result<()> {
+        match data {
+            DataObject::ObjectDatagram(object) => {
+                let bytes = object.encode();
+                let result = self
+                    .session_context
+                    .transport_connection
+                    .send_datagram(bytes);
+                tokio::task::yield_now().await;
+                result
+            }
+            _ => unreachable!("DatagramSender can only send ObjectDatagram"),
+        }
+    }
 }
 
 impl<T: TransportProtocol> DatagramSender<T> {
@@ -31,15 +46,5 @@ impl<T: TransportProtocol> DatagramSender<T> {
             end_of_group: false,
             session_context,
         }
-    }
-
-    pub async fn send(&self, object: ObjectDatagram) -> anyhow::Result<()> {
-        let bytes = object.encode();
-        let result = self
-            .session_context
-            .transport_connection
-            .send_datagram(bytes);
-        tokio::task::yield_now().await;
-        result
     }
 }
