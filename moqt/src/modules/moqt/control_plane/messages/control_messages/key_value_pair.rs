@@ -64,9 +64,10 @@ impl KeyValuePair {
 mod tests {
     mod success {
 
+        use crate::modules::moqt::control_plane::messages::control_messages::key_value_pair::{
+            KeyValuePair, VariantType,
+        };
         use bytes::Bytes;
-
-        use crate::modules::moqt::data_plane::object::key_value_pair::{KeyValuePair, VariantType};
 
         #[test]
         fn packetize_and_depacketize_even_key() {
