@@ -12,13 +12,13 @@ pub enum ExtensionHeaderType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExtensionHeader {
+pub struct ExtensionHeaders {
     pub prior_group_id_gap: Vec<u64>,
     pub prior_object_id_gap: Vec<u64>,
     pub immutable_extensions: Vec<Bytes>,
 }
 
-impl ExtensionHeader {
+impl ExtensionHeaders {
     pub fn decode(buf: &mut bytes::BytesMut) -> Option<Self> {
         let mut kv_pairs = Vec::new();
         let number_of_parameters = buf
