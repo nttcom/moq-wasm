@@ -81,10 +81,8 @@ mod tests {
         use bytes::Bytes;
 
         use crate::modules::moqt::data_plane::object::{
-            datagram_field::DatagramField,
-            extension_header::ExtensionHeader,
-            object_datagram::ObjectDatagram,
-            object_status::ObjectStatus,
+            datagram_field::DatagramField, extension_headers::ExtensionHeaders,
+            object_datagram::ObjectDatagram, object_status::ObjectStatus,
         };
 
         #[test]
@@ -137,7 +135,7 @@ mod tests {
                 field: DatagramField::Payload0x01 {
                     object_id: 3,
                     publisher_priority: 128,
-                    extension_headers: ExtensionHeader {
+                    extension_headers: ExtensionHeaders {
                         prior_group_id_gap: vec![],
                         prior_object_id_gap: vec![],
                         immutable_extensions: vec![],
@@ -173,10 +171,7 @@ mod tests {
 
             assert_eq!(object_id, depacketized_object_id);
             assert_eq!(publisher_priority, depacketized_publisher_priority);
-            assert_eq!(
-                extension_headers,
-                depacketized_extension_headers
-            );
+            assert_eq!(extension_headers, depacketized_extension_headers);
             assert_eq!(payload, depacketized_payload);
         }
 

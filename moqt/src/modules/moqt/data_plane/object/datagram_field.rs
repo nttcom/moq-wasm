@@ -28,7 +28,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::data_plane::object::{extension_header::ExtensionHeader, object_status::ObjectStatus},
+    moqt::data_plane::object::{extension_headers::ExtensionHeaders, object_status::ObjectStatus},
 };
 
 #[repr(u64)]
@@ -72,7 +72,7 @@ pub enum DatagramField {
     Payload0x01 {
         object_id: u64,
         publisher_priority: u8,
-        extension_headers: ExtensionHeader,
+        extension_headers: ExtensionHeaders,
         payload: Bytes,
     },
     Payload0x02WithEndOfGroup {
@@ -83,7 +83,7 @@ pub enum DatagramField {
     Payload0x03WithEndOfGroup {
         object_id: u64,
         publisher_priority: u8,
-        extension_headers: ExtensionHeader,
+        extension_headers: ExtensionHeaders,
         payload: Bytes,
     },
     Payload0x04 {
@@ -93,7 +93,7 @@ pub enum DatagramField {
     },
     Payload0x05 {
         publisher_priority: u8,
-        extension_headers: ExtensionHeader,
+        extension_headers: ExtensionHeaders,
         payload: Bytes,
     },
     Payload0x06WithEndOfGroup {
@@ -102,7 +102,7 @@ pub enum DatagramField {
     },
     Payload0x07WithEndOfGroup {
         publisher_priority: u8,
-        extension_headers: ExtensionHeader,
+        extension_headers: ExtensionHeaders,
         payload: Bytes,
     },
     Status0x20 {
@@ -113,7 +113,7 @@ pub enum DatagramField {
     Status0x21 {
         object_id: u64,
         publisher_priority: u8,
-        extension_headers: ExtensionHeader,
+        extension_headers: ExtensionHeaders,
         status: ObjectStatus,
     },
 }
@@ -154,7 +154,7 @@ impl DatagramField {
                 let object_id = data.try_get_varint().log_context("object id").ok()?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = ExtensionHeader::decode(data)?;
+                let extension_headers = ExtensionHeaders::decode(data)?;
                 let payload = data.clone().freeze();
                 data.advance(payload.len());
                 Some(Self::Payload0x01 {
@@ -182,7 +182,7 @@ impl DatagramField {
                 let object_id = data.try_get_varint().log_context("object id").ok()?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = ExtensionHeader::decode(data)?;
+                let extension_headers = ExtensionHeaders::decode(data)?;
                 let payload = data.clone().freeze();
                 data.advance(payload.len());
                 Some(Self::Payload0x03WithEndOfGroup {
@@ -207,7 +207,7 @@ impl DatagramField {
             val if val == DatagramTypeValue::Payload0x05 as u64 => {
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = ExtensionHeader::decode(data)?;
+                let extension_headers = ExtensionHeaders::decode(data)?;
                 let payload = data.clone().freeze();
                 data.advance(payload.len());
                 Some(Self::Payload0x05 {
@@ -231,7 +231,7 @@ impl DatagramField {
                 Self::validate_end_of_group(data)?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = ExtensionHeader::decode(data)?;
+                let extension_headers = ExtensionHeaders::decode(data)?;
                 let payload = data.clone().freeze();
                 data.advance(payload.len());
                 Some(Self::Payload0x07WithEndOfGroup {
@@ -255,7 +255,7 @@ impl DatagramField {
                 let object_id = data.try_get_varint().log_context("object id").ok()?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = ExtensionHeader::decode(data)?;
+                let extension_headers = ExtensionHeaders::decode(data)?;
                 let status = data.try_get_u8().log_context("status").ok()?;
                 Some(Self::Status0x21 {
                     object_id,
@@ -440,7 +440,7 @@ mod tests {
         #[test]
         fn payload0x01_encode_decode() {
             // setup
-            let extension_header = ExtensionHeader {
+            let extension_header = ExtensionHeaders {
                 prior_group_id_gap: vec![],
                 prior_object_id_gap: vec![],
                 immutable_extensions: vec![Bytes::from(vec![10, 20])],
@@ -511,7 +511,7 @@ mod tests {
         #[test]
         fn payload0x03_with_end_of_group_encode_decode() {
             // setup
-            let extension_header = ExtensionHeader {
+            let extension_header = ExtensionHeaders {
                 prior_group_id_gap: vec![],
                 prior_object_id_gap: vec![],
                 immutable_extensions: vec![],
@@ -540,7 +540,7 @@ mod tests {
                 assert_eq!(publisher_priority, 40);
                 assert_eq!(
                     extension_headers,
-                    ExtensionHeader {
+                    ExtensionHeaders {
                         prior_group_id_gap: vec![],
                         prior_object_id_gap: vec![],
                         immutable_extensions: vec![]
@@ -586,7 +586,7 @@ mod tests {
         #[test]
         fn payload0x05_encode_decode() {
             // setup
-            let extension_header = ExtensionHeader {
+            let extension_header = ExtensionHeaders {
                 prior_group_id_gap: vec![3],
                 prior_object_id_gap: vec![],
                 immutable_extensions: vec![],
@@ -612,7 +612,7 @@ mod tests {
                 assert_eq!(publisher_priority, 60);
                 assert_eq!(
                     extension_headers,
-                    ExtensionHeader {
+                    ExtensionHeaders {
                         prior_group_id_gap: vec![3],
                         prior_object_id_gap: vec![],
                         immutable_extensions: vec![]
@@ -655,7 +655,7 @@ mod tests {
         #[test]
         fn payload0x07_with_end_of_group_encode_decode() {
             // setup
-            let extension_header = ExtensionHeader {
+            let extension_header = ExtensionHeaders {
                 prior_group_id_gap: vec![],
                 prior_object_id_gap: vec![3],
                 immutable_extensions: vec![],
@@ -681,7 +681,7 @@ mod tests {
                 assert_eq!(publisher_priority, 80);
                 assert_eq!(
                     extension_headers,
-                    ExtensionHeader {
+                    ExtensionHeaders {
                         prior_group_id_gap: vec![],
                         prior_object_id_gap: vec![3],
                         immutable_extensions: vec![]
@@ -727,7 +727,7 @@ mod tests {
         #[test]
         fn status0x21_encode_decode() {
             // setup
-            let extension_header = ExtensionHeader {
+            let extension_header = ExtensionHeaders {
                 prior_group_id_gap: vec![],
                 prior_object_id_gap: vec![],
                 immutable_extensions: vec![],
@@ -756,7 +756,7 @@ mod tests {
                 assert_eq!(publisher_priority, 100);
                 assert_eq!(
                     extension_headers,
-                    ExtensionHeader {
+                    ExtensionHeaders {
                         prior_group_id_gap: vec![],
                         prior_object_id_gap: vec![],
                         immutable_extensions: vec![]
