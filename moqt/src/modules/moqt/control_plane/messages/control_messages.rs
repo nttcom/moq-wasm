@@ -3,6 +3,7 @@ pub mod client_setup;
 pub mod enums;
 pub mod go_away;
 pub mod group_order;
+pub mod key_value_pair;
 pub mod location;
 pub mod namespace_ok;
 pub mod publish;

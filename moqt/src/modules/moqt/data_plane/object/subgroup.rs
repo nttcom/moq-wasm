@@ -1,10 +1,10 @@
 use anyhow::bail;
 use bytes::BytesMut;
 
+use crate::modules::moqt::control_plane::messages::control_messages::key_value_pair::KeyValuePair;
 use crate::modules::moqt::control_plane::messages::variable_integer::{
     read_variable_integer_from_buffer, write_variable_integer,
 };
-use crate::modules::moqt::data_plane::object::key_value_pair::KeyValuePair;
 
 type ExtensionHeader = KeyValuePair;
 
@@ -199,9 +199,11 @@ mod tests {
     mod success {
         use bytes::Bytes;
 
-        use crate::modules::moqt::data_plane::object::{
-            key_value_pair::{KeyValuePair, VariantType},
-            subgroup::{SubgroupHeader, SubgroupId, SubgroupObjectField},
+        use crate::modules::moqt::{
+            control_plane::messages::control_messages::key_value_pair::{
+                KeyValuePair, VariantType,
+            },
+            data_plane::object::subgroup::{SubgroupHeader, SubgroupId, SubgroupObjectField},
         };
 
         // --- SubgroupHeader Tests ---

@@ -1,7 +1,7 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::messages::control_messages::authorization_token::AuthorizationToken,
-    moqt::data_plane::object::key_value_pair::{KeyValuePair, VariantType},
+    moqt::control_plane::messages::control_messages::key_value_pair::{KeyValuePair, VariantType},
 };
 use bytes::{Bytes, BytesMut};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
