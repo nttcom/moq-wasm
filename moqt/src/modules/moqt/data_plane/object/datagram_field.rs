@@ -24,13 +24,11 @@
 // | 0x21 | No           | Yes        | Yes       | Status           |
 // +------+--------------+------------+-----------+------------------+
 
-
-
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::data_plane::object::{key_value_pair::KeyValuePair, object_status::ObjectStatus},
+    moqt::data_plane::object::{extension_header::ExtensionHeader, object_status::ObjectStatus},
 };
 
 #[repr(u64)]
@@ -74,7 +72,7 @@ pub enum DatagramField {
     Payload0x01 {
         object_id: u64,
         publisher_priority: u8,
-        extension_headers: Vec<KeyValuePair>,
+        extension_headers: ExtensionHeader,
         payload: Bytes,
     },
     Payload0x02WithEndOfGroup {
@@ -85,7 +83,7 @@ pub enum DatagramField {
     Payload0x03WithEndOfGroup {
         object_id: u64,
         publisher_priority: u8,
-        extension_headers: Vec<KeyValuePair>,
+        extension_headers: ExtensionHeader,
         payload: Bytes,
     },
     Payload0x04 {
@@ -95,7 +93,7 @@ pub enum DatagramField {
     },
     Payload0x05 {
         publisher_priority: u8,
-        extension_headers: Vec<KeyValuePair>,
+        extension_headers: ExtensionHeader,
         payload: Bytes,
     },
     Payload0x06WithEndOfGroup {
@@ -104,7 +102,7 @@ pub enum DatagramField {
     },
     Payload0x07WithEndOfGroup {
         publisher_priority: u8,
-        extension_headers: Vec<KeyValuePair>,
+        extension_headers: ExtensionHeader,
         payload: Bytes,
     },
     Status0x20 {
@@ -115,7 +113,7 @@ pub enum DatagramField {
     Status0x21 {
         object_id: u64,
         publisher_priority: u8,
-        extension_headers: Vec<KeyValuePair>,
+        extension_headers: ExtensionHeader,
         status: ObjectStatus,
     },
 }
@@ -144,22 +142,26 @@ impl DatagramField {
                 let object_id = data.try_get_varint().log_context("object id").ok()?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
+                let payload = data.clone().freeze();
+                data.advance(payload.len());
                 Some(Self::Payload0x00 {
                     object_id,
                     publisher_priority,
-                    payload: data.clone().freeze(),
+                    payload,
                 })
             }
             val if val == DatagramTypeValue::Payload0x01 as u64 => {
                 let object_id = data.try_get_varint().log_context("object id").ok()?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = Self::read_extension_headers(data)?;
+                let extension_headers = ExtensionHeader::decode(data)?;
+                let payload = data.clone().freeze();
+                data.advance(payload.len());
                 Some(Self::Payload0x01 {
                     object_id,
                     publisher_priority,
                     extension_headers,
-                    payload: data.clone().freeze(),
+                    payload,
                 })
             }
             val if val == DatagramTypeValue::Payload0x02WithEndOfGroup as u64 => {
@@ -167,10 +169,12 @@ impl DatagramField {
                 let object_id = data.try_get_varint().log_context("object id").ok()?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
+                let payload = data.clone().freeze();
+                data.advance(payload.len());
                 Some(Self::Payload0x02WithEndOfGroup {
                     object_id,
                     publisher_priority,
-                    payload: data.clone().freeze(),
+                    payload,
                 })
             }
             val if val == DatagramTypeValue::Payload0x03WithEndOfGroup as u64 => {
@@ -178,52 +182,62 @@ impl DatagramField {
                 let object_id = data.try_get_varint().log_context("object id").ok()?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = Self::read_extension_headers(data)?;
+                let extension_headers = ExtensionHeader::decode(data)?;
+                let payload = data.clone().freeze();
+                data.advance(payload.len());
                 Some(Self::Payload0x03WithEndOfGroup {
                     object_id,
                     publisher_priority,
                     extension_headers,
-                    payload: data.clone().freeze(),
+                    payload,
                 })
             }
             val if val == DatagramTypeValue::Payload0x04 as u64 => {
                 let object_id = data.try_get_varint().log_context("object id").ok()?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
+                let payload = data.clone().freeze();
+                data.advance(payload.len());
                 Some(Self::Payload0x04 {
                     object_id,
                     publisher_priority,
-                    payload: data.clone().freeze(),
+                    payload,
                 })
             }
             val if val == DatagramTypeValue::Payload0x05 as u64 => {
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = Self::read_extension_headers(data)?;
+                let extension_headers = ExtensionHeader::decode(data)?;
+                let payload = data.clone().freeze();
+                data.advance(payload.len());
                 Some(Self::Payload0x05 {
                     publisher_priority,
                     extension_headers,
-                    payload: data.clone().freeze(),
+                    payload,
                 })
             }
             val if val == DatagramTypeValue::Payload0x06WithEndOfGroup as u64 => {
                 Self::validate_end_of_group(data)?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
+                let payload = data.clone().freeze();
+                data.advance(payload.len());
                 Some(Self::Payload0x06WithEndOfGroup {
                     publisher_priority,
-                    payload: data.clone().freeze(),
+                    payload,
                 })
             }
             val if val == DatagramTypeValue::Payload0x07WithEndOfGroup as u64 => {
                 Self::validate_end_of_group(data)?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = Self::read_extension_headers(data)?;
+                let extension_headers = ExtensionHeader::decode(data)?;
+                let payload = data.clone().freeze();
+                data.advance(payload.len());
                 Some(Self::Payload0x07WithEndOfGroup {
                     publisher_priority,
                     extension_headers,
-                    payload: data.clone().freeze(),
+                    payload,
                 })
             }
             val if val == DatagramTypeValue::Status0x20 as u64 => {
@@ -241,7 +255,7 @@ impl DatagramField {
                 let object_id = data.try_get_varint().log_context("object id").ok()?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = Self::read_extension_headers(data)?;
+                let extension_headers = ExtensionHeader::decode(data)?;
                 let status = data.try_get_u8().log_context("status").ok()?;
                 Some(Self::Status0x21 {
                     object_id,
@@ -277,11 +291,7 @@ impl DatagramField {
             } => {
                 buf.put_varint(*object_id);
                 buf.put_u8(*publisher_priority);
-                buf.put_varint(extension_headers.len() as u64);
-                for header in extension_headers {
-                    let extension_header = header.encode();
-                    buf.unsplit(extension_header);
-                }
+                buf.unsplit(extension_headers.encode());
                 buf.extend_from_slice(payload);
                 (DatagramTypeValue::Payload0x01 as u64, buf)
             }
@@ -305,11 +315,7 @@ impl DatagramField {
                 buf.put_u8(1);
                 buf.put_varint(*object_id);
                 buf.put_u8(*publisher_priority);
-                buf.put_varint(extension_headers.len() as u64);
-                for header in extension_headers {
-                    let extension_header = header.encode();
-                    buf.unsplit(extension_header);
-                }
+                buf.unsplit(extension_headers.encode());
                 buf.extend_from_slice(payload);
                 (DatagramTypeValue::Payload0x03WithEndOfGroup as u64, buf)
             }
@@ -329,11 +335,7 @@ impl DatagramField {
                 payload,
             } => {
                 buf.put_u8(*publisher_priority);
-                buf.put_varint(extension_headers.len() as u64);
-                for header in extension_headers {
-                    let extension_header = header.encode();
-                    buf.unsplit(extension_header);
-                }
+                buf.unsplit(extension_headers.encode());
                 buf.extend_from_slice(payload);
                 (DatagramTypeValue::Payload0x05 as u64, buf)
             }
@@ -353,11 +355,7 @@ impl DatagramField {
             } => {
                 buf.put_u8(1);
                 buf.put_u8(*publisher_priority);
-                buf.put_varint(extension_headers.len() as u64);
-                for header in extension_headers {
-                    let extension_header = header.encode();
-                    buf.unsplit(extension_header);
-                }
+                buf.unsplit(extension_headers.encode());
                 buf.extend_from_slice(payload);
                 (DatagramTypeValue::Payload0x07WithEndOfGroup as u64, buf)
             }
@@ -379,11 +377,7 @@ impl DatagramField {
             } => {
                 buf.put_varint(*object_id);
                 buf.put_u8(*publisher_priority);
-                buf.put_varint(extension_headers.len() as u64);
-                for header in extension_headers {
-                    let extension_header = header.encode();
-                    buf.unsplit(extension_header);
-                }
+                buf.unsplit(extension_headers.encode());
                 buf.put_u8(*status as u8);
                 (DatagramTypeValue::Status0x21 as u64, buf)
             }
@@ -401,26 +395,16 @@ impl DatagramField {
             Err(_) => None,
         }
     }
-
-    fn read_extension_headers(data: &mut BytesMut) -> Option<Vec<KeyValuePair>> {
-        let mut extension_headers = Vec::new();
-        let length = data
-            .try_get_varint()
-            .log_context("extension headers length")
-            .ok()?;
-        for _ in 0..length {
-            let ext_header = KeyValuePair::decode(data)?;
-            extension_headers.push(ext_header);
-        }
-        Some(extension_headers)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     mod success {
+
+        use std::vec;
+
         use super::super::*;
-        use crate::modules::moqt::data_plane::object::key_value_pair::{KeyValuePair, VariantType};
+
         use bytes::{Buf, Bytes};
 
         #[test]
@@ -429,7 +413,7 @@ mod tests {
             let field = DatagramField::Payload0x00 {
                 object_id: 123,
                 publisher_priority: 10,
-                payload: Bytes::from(vec![1, 2, 3, 4, 5])
+                payload: Bytes::from(vec![1, 2, 3, 4, 5]),
             };
 
             // execution
@@ -456,13 +440,15 @@ mod tests {
         #[test]
         fn payload0x01_encode_decode() {
             // setup
+            let extension_header = ExtensionHeader {
+                prior_group_id_gap: vec![],
+                prior_object_id_gap: vec![],
+                immutable_extensions: vec![Bytes::from(vec![10, 20])],
+            };
             let field = DatagramField::Payload0x01 {
                 object_id: 456,
                 publisher_priority: 20,
-                extension_headers: vec![KeyValuePair {
-                    key: 1,
-                    value: VariantType::Odd(Bytes::from(vec![10, 20])),
-                }],
+                extension_headers: extension_header,
                 payload: Bytes::from(vec![6, 7, 8, 9, 10]),
             };
 
@@ -481,13 +467,9 @@ mod tests {
             {
                 assert_eq!(object_id, 456);
                 assert_eq!(publisher_priority, 20);
-                assert_eq!(extension_headers.len(), 1);
                 assert_eq!(
-                    extension_headers[0],
-                    KeyValuePair {
-                        key: 1,
-                        value: VariantType::Odd(Bytes::from(vec![10, 20]))
-                    }
+                    extension_headers.immutable_extensions,
+                    vec![Bytes::from(vec![10, 20])]
                 );
                 assert_eq!(*payload, Bytes::from(vec![6, 7, 8, 9, 10]));
             } else {
@@ -529,13 +511,15 @@ mod tests {
         #[test]
         fn payload0x03_with_end_of_group_encode_decode() {
             // setup
+            let extension_header = ExtensionHeader {
+                prior_group_id_gap: vec![],
+                prior_object_id_gap: vec![],
+                immutable_extensions: vec![],
+            };
             let field = DatagramField::Payload0x03WithEndOfGroup {
                 object_id: 101,
                 publisher_priority: 40,
-                extension_headers: vec![KeyValuePair {
-                    key: 2,
-                    value: VariantType::Even(12345),
-                }],
+                extension_headers: extension_header,
                 payload: Bytes::from(vec![16, 17, 18, 19, 20]),
             };
 
@@ -554,12 +538,12 @@ mod tests {
             {
                 assert_eq!(object_id, 101);
                 assert_eq!(publisher_priority, 40);
-                assert_eq!(extension_headers.len(), 1);
                 assert_eq!(
-                    extension_headers[0],
-                    KeyValuePair {
-                        key: 2,
-                        value: VariantType::Even(12345)
+                    extension_headers,
+                    ExtensionHeader {
+                        prior_group_id_gap: vec![],
+                        prior_object_id_gap: vec![],
+                        immutable_extensions: vec![]
                     }
                 );
                 assert_eq!(*payload, Bytes::from(vec![16, 17, 18, 19, 20]));
@@ -602,12 +586,14 @@ mod tests {
         #[test]
         fn payload0x05_encode_decode() {
             // setup
+            let extension_header = ExtensionHeader {
+                prior_group_id_gap: vec![3],
+                prior_object_id_gap: vec![],
+                immutable_extensions: vec![],
+            };
             let field = DatagramField::Payload0x05 {
                 publisher_priority: 60,
-                extension_headers: vec![KeyValuePair {
-                    key: 3,
-                    value: VariantType::Odd(Bytes::from(vec![30, 40])),
-                }],
+                extension_headers: extension_header,
                 payload: Bytes::from(vec![26, 27, 28, 29, 30]),
             };
 
@@ -624,12 +610,12 @@ mod tests {
             } = decoded
             {
                 assert_eq!(publisher_priority, 60);
-                assert_eq!(extension_headers.len(), 1);
                 assert_eq!(
-                    extension_headers[0],
-                    KeyValuePair {
-                        key: 3,
-                        value: VariantType::Odd(Bytes::from(vec![30, 40]))
+                    extension_headers,
+                    ExtensionHeader {
+                        prior_group_id_gap: vec![3],
+                        prior_object_id_gap: vec![],
+                        immutable_extensions: vec![]
                     }
                 );
                 assert_eq!(*payload, vec![26, 27, 28, 29, 30]);
@@ -669,12 +655,14 @@ mod tests {
         #[test]
         fn payload0x07_with_end_of_group_encode_decode() {
             // setup
+            let extension_header = ExtensionHeader {
+                prior_group_id_gap: vec![],
+                prior_object_id_gap: vec![3],
+                immutable_extensions: vec![],
+            };
             let field = DatagramField::Payload0x07WithEndOfGroup {
                 publisher_priority: 80,
-                extension_headers: vec![KeyValuePair {
-                    key: 4,
-                    value: VariantType::Even(54321),
-                }],
+                extension_headers: extension_header,
                 payload: Bytes::from(vec![36, 37, 38, 39, 40]),
             };
 
@@ -691,12 +679,12 @@ mod tests {
             } = decoded
             {
                 assert_eq!(publisher_priority, 80);
-                assert_eq!(extension_headers.len(), 1);
                 assert_eq!(
-                    extension_headers[0],
-                    KeyValuePair {
-                        key: 4,
-                        value: VariantType::Even(54321)
+                    extension_headers,
+                    ExtensionHeader {
+                        prior_group_id_gap: vec![],
+                        prior_object_id_gap: vec![3],
+                        immutable_extensions: vec![]
                     }
                 );
                 assert_eq!(*payload, vec![36, 37, 38, 39, 40]);
@@ -739,13 +727,15 @@ mod tests {
         #[test]
         fn status0x21_encode_decode() {
             // setup
+            let extension_header = ExtensionHeader {
+                prior_group_id_gap: vec![],
+                prior_object_id_gap: vec![],
+                immutable_extensions: vec![],
+            };
             let field = DatagramField::Status0x21 {
                 object_id: 141,
                 publisher_priority: 100,
-                extension_headers: vec![KeyValuePair {
-                    key: 5,
-                    value: VariantType::Odd(Bytes::from(vec![50, 60])),
-                }],
+                extension_headers: extension_header,
                 status: ObjectStatus::EndOfGroup,
             };
 
@@ -764,12 +754,12 @@ mod tests {
             {
                 assert_eq!(object_id, 141);
                 assert_eq!(publisher_priority, 100);
-                assert_eq!(extension_headers.len(), 1);
                 assert_eq!(
-                    extension_headers[0],
-                    KeyValuePair {
-                        key: 5,
-                        value: VariantType::Odd(Bytes::from(vec![50, 60]))
+                    extension_headers,
+                    ExtensionHeader {
+                        prior_group_id_gap: vec![],
+                        prior_object_id_gap: vec![],
+                        immutable_extensions: vec![]
                     }
                 );
                 assert_eq!(status, ObjectStatus::EndOfGroup);
