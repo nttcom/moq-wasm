@@ -4,9 +4,6 @@ use crate::modules::extensions::buf_get_ext::BufGetExt;
 use crate::modules::extensions::buf_put_ext::BufPutExt;
 use crate::modules::extensions::result_ext::ResultExt;
 use crate::modules::moqt::data_plane::object::datagram_field::{DatagramField, DatagramTypeValue};
-use crate::modules::moqt::data_plane::object::key_value_pair::KeyValuePair;
-
-type ExtensionHeader = KeyValuePair;
 
 // +======+==============+============+===========+==================+
 // | Type | End Of Group | Extensions | Object ID | Status / Payload |
@@ -81,12 +78,11 @@ impl ObjectDatagram {
 #[cfg(test)]
 mod tests {
     mod success {
-
         use bytes::Bytes;
 
         use crate::modules::moqt::data_plane::object::{
             datagram_field::DatagramField,
-            key_value_pair::{KeyValuePair, VariantType},
+            extension_header::ExtensionHeader,
             object_datagram::ObjectDatagram,
             object_status::ObjectStatus,
         };
@@ -141,10 +137,11 @@ mod tests {
                 field: DatagramField::Payload0x01 {
                     object_id: 3,
                     publisher_priority: 128,
-                    extension_headers: vec![KeyValuePair {
-                        key: 0x3c, // PriorGroupIdGap
-                        value: VariantType::Even(5),
-                    }],
+                    extension_headers: ExtensionHeader {
+                        prior_group_id_gap: vec![],
+                        prior_object_id_gap: vec![],
+                        immutable_extensions: vec![],
+                    },
                     payload: Bytes::from(vec![0, 1, 2, 3]),
                 },
             };
@@ -177,13 +174,9 @@ mod tests {
             assert_eq!(object_id, depacketized_object_id);
             assert_eq!(publisher_priority, depacketized_publisher_priority);
             assert_eq!(
-                extension_headers[0].key,
-                depacketized_extension_headers[0].key
+                extension_headers,
+                depacketized_extension_headers
             );
-            assert!(matches!(
-                depacketized_extension_headers[0].value,
-                VariantType::Even(5)
-            ));
             assert_eq!(payload, depacketized_payload);
         }
 
