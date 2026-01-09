@@ -250,7 +250,6 @@ impl Client {
                 return;
             }
         };
-        tracing::warn!("qqq subscribe ok");
         let task = async move {
             let mut receiver = match subscription.accept_data_receiver().await {
                 Ok(receiver) => receiver,
@@ -259,7 +258,6 @@ impl Client {
                     return;
                 }
             };
-            tracing::warn!("qqq accept ok");
             loop {
                 let result = receiver.receive().await;
                 if let Err(e) = result {

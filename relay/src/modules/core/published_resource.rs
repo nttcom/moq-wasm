@@ -9,8 +9,8 @@ use crate::modules::{
 pub(crate) trait PublishedResource: 'static + Send + Sync {
     fn group_order(&self) -> GroupOrder;
     fn filter_type(&self) -> FilterType;
-    async fn create_stream(&self) -> anyhow::Result<Box<dyn DataSender>>;
-    fn create_datagram(&self) -> Box<dyn DataSender>;
+    async fn new_stream(&self) -> anyhow::Result<Box<dyn DataSender>>;
+    fn new_datagram(&self) -> Box<dyn DataSender>;
 }
 
 #[async_trait]
@@ -23,12 +23,12 @@ impl<T: moqt::TransportProtocol> PublishedResource for moqt::PublishedResource<T
         FilterType::from(self.filter_type)
     }
 
-    async fn create_stream(&self) -> anyhow::Result<Box<dyn DataSender>> {
+    async fn new_stream(&self) -> anyhow::Result<Box<dyn DataSender>> {
         let sender = self.create_stream().await?;
         Ok(Box::new(sender))
     }
 
-    fn create_datagram(&self) -> Box<dyn DataSender> {
+    fn new_datagram(&self) -> Box<dyn DataSender> {
         let sender = self.create_datagram();
         Box::new(sender)
     }

@@ -10,13 +10,13 @@ pub(crate) struct ObjectSender;
 impl ObjectSender {
     pub(crate) async fn send_latest_group(
         &self,
-        sender: &dyn DataSender,
+        sender: &mut dyn DataSender,
         cache: &Arc<dyn Cache>,
         group_id: u64,
     ) {
         let group = cache.get_group(group_id).await;
         for object in group.read().await.iter() {
-            match sender.send(object.moqt_data_object.clone()).await {
+            match sender.send_object(object.moqt_data_object.clone()).await {
                 Ok(_) => {
                     tracing::debug!("Latest object sent successfully");
                 }
@@ -29,13 +29,13 @@ impl ObjectSender {
 
     pub(crate) async fn send_latest_object(
         &self,
-        sender: &dyn DataSender,
-        receiver: &mut tokio::sync::watch::Receiver<Arc<DataObject>>,
+        sender: &mut dyn DataSender,
+        receiver: &mut tokio::sync::watch::Receiver<Option<Arc<DataObject>>>,
     ) {
         let object = receiver.changed().await;
         if object.is_ok() {
-            let data_object = receiver.borrow().moqt_data_object.clone();
-            match sender.send(data_object).await {
+            let data_object = receiver.borrow().as_ref().unwrap().moqt_data_object.clone();
+            match sender.send_object(data_object).await {
                 Ok(_) => {
                     tracing::debug!("Latest object sent successfully");
                 }
@@ -50,7 +50,7 @@ impl ObjectSender {
 
     pub(crate) async fn send_absolute_start(
         &self,
-        sender: &dyn DataSender,
+        sender: &mut dyn DataSender,
         cache: &Arc<dyn Cache>,
         group_id: u64,
         object_id: u64,
@@ -66,7 +66,7 @@ impl ObjectSender {
                     start_flag = true;
                 }
                 if start_flag {
-                    match sender.send(object.moqt_data_object.clone()).await {
+                    match sender.send_object(object.moqt_data_object.clone()).await {
                         Ok(_) => {
                             tracing::debug!("Latest object sent successfully");
                         }
@@ -82,7 +82,7 @@ impl ObjectSender {
                     start_flag = true;
                 }
                 if start_flag {
-                    match sender.send(object.moqt_data_object.clone()).await {
+                    match sender.send_object(object.moqt_data_object.clone()).await {
                         Ok(_) => {
                             tracing::debug!("Latest object sent successfully");
                         }

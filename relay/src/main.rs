@@ -116,9 +116,9 @@ async fn main() -> anyhow::Result<()> {
         .try_init()
         .ok();
     create_certs_for_test_if_needed()?;
-    // unsafe {
-    //     backtrace_on_stack_overflow::enable();
-    // }
+    unsafe {
+        backtrace_on_stack_overflow::enable();
+    }
 
     // console_subscriber::init();
     let key_path = get_key_path().to_str().unwrap().to_string();
