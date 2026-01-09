@@ -32,8 +32,7 @@ impl<T: TransportProtocol> DataReceiver<T> {
             .notification_map
             .write()
             .await
-            .insert(track_alias, sender)
-            .ok_or_else(|| anyhow::anyhow!("Failed to insert stream"))?;
+            .insert(track_alias, sender);
         let result = receiver
             .recv()
             .await

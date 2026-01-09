@@ -37,7 +37,7 @@ impl Relay {
     pub(crate) fn add_object_sender(
         &mut self,
         track_alias: u64,
-        datagram_sender: Box<dyn DataSender>,
+        mut datagram_sender: Box<dyn DataSender>,
         group_order: GroupOrder,
         filter_type: FilterType,
     ) {
@@ -66,20 +66,20 @@ impl Relay {
                 match filter_type {
                     FilterType::LatestGroup => {
                         object_sender
-                            .send_latest_group(datagram_sender.as_ref(), &cache, start_group_id)
+                            .send_latest_group(datagram_sender.as_mut(), &cache, start_group_id)
                             .await;
                     }
                     FilterType::LatestObject => {
                         if let Some(ref mut recv) = receiver {
                             object_sender
-                                .send_latest_object(datagram_sender.as_ref(), recv)
+                                .send_latest_object(datagram_sender.as_mut(), recv)
                                 .await;
                         }
                     }
                     FilterType::AbsoluteStart { .. } => {
                         object_sender
                             .send_absolute_start(
-                                datagram_sender.as_ref(),
+                                datagram_sender.as_mut(),
                                 &cache,
                                 start_group_id,
                                 start_object_id,
@@ -93,7 +93,7 @@ impl Relay {
                     } => {
                         object_sender
                             .send_absolute_start(
-                                datagram_sender.as_ref(),
+                                datagram_sender.as_mut(),
                                 &cache,
                                 start_group_id,
                                 start_object_id,
