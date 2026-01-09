@@ -1,10 +1,11 @@
 use anyhow::bail;
-use bytes::BytesMut;
+use bytes::{Buf, BufMut, BytesMut};
 
+use crate::modules::extensions::buf_get_ext::BufGetExt;
+use crate::modules::extensions::buf_put_ext::BufPutExt;
+use crate::modules::extensions::result_ext::ResultExt;
 use crate::modules::moqt::control_plane::messages::control_messages::key_value_pair::KeyValuePair;
-use crate::modules::moqt::control_plane::messages::variable_integer::{
-    read_variable_integer_from_buffer, write_variable_integer,
-};
+use crate::modules::moqt::control_plane::messages::variable_integer::write_variable_integer;
 
 type ExtensionHeader = KeyValuePair;
 
@@ -59,16 +60,28 @@ pub struct SubgroupHeader {
 }
 
 impl SubgroupHeader {
-    pub(crate) fn depacketize(mut buf: BytesMut) -> anyhow::Result<Self> {
-        let message_type = read_variable_integer_from_buffer(&mut buf)?;
+    pub(crate) fn decode(mut buf: BytesMut) -> Option<Self> {
+        let message_type = buf
+            .try_get_varint()
+            .log_context("Subgroup Header Message Type")
+            .ok()?;
         if !Self::validate_message_type(message_type) {
-            bail!("Invalid message type: {}", message_type);
+            return None;
         }
-        let track_alias = read_variable_integer_from_buffer(&mut buf)?;
-        let group_id = read_variable_integer_from_buffer(&mut buf)?;
+        let track_alias = buf
+            .try_get_varint()
+            .log_context("Subgroup Header Track Alias")
+            .ok()?;
+        let group_id = buf
+            .try_get_varint()
+            .log_context("Subgroup Header Group ID")
+            .ok()?;
         let subgroup_id = Self::read_subgroup_id(message_type, &mut buf)?;
-        let publisher_priority = u8::try_from(read_variable_integer_from_buffer(&mut buf)?)?;
-        Ok(Self {
+        let publisher_priority = buf
+            .try_get_u8()
+            .log_context("Subgroup Header Publisher Priority")
+            .ok()?;
+        Some(Self {
             message_type,
             track_alias,
             group_id,
@@ -81,25 +94,28 @@ impl SubgroupHeader {
         (0x10..=0x1d).contains(&message_type)
     }
 
-    fn read_subgroup_id(message_type: u64, bytes: &mut BytesMut) -> anyhow::Result<SubgroupId> {
+    fn read_subgroup_id(message_type: u64, bytes: &mut BytesMut) -> Option<SubgroupId> {
         match message_type {
-            0x10 | 0x11 | 0x18 | 0x19 => Ok(SubgroupId::Zero),
-            0x12 | 0x13 | 0x1A | 0x1B => Ok(SubgroupId::FirstObjectIdDelta),
+            0x10 | 0x11 | 0x18 | 0x19 => Some(SubgroupId::Zero),
+            0x12 | 0x13 | 0x1A | 0x1B => Some(SubgroupId::FirstObjectIdDelta),
             0x14 | 0x15 | 0x1C | 0x1D => {
-                let subgroup = read_variable_integer_from_buffer(bytes)?;
-                Ok(SubgroupId::Value(subgroup))
+                let subgroup = bytes.try_get_varint().log_context("Subgroup ID").ok()?;
+                Some(SubgroupId::Value(subgroup))
             }
-            _ => bail!("Invalid message type: {}", message_type),
+            _ => {
+                tracing::error!("Invalid message type: {}", message_type);
+                None
+            }
         }
     }
 
-    pub(crate) fn packetize(&self) -> anyhow::Result<BytesMut> {
+    pub(crate) fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
-        buf.extend(write_variable_integer(self.message_type));
-        buf.extend(write_variable_integer(self.track_alias));
-        buf.extend(write_variable_integer(self.group_id));
+        buf.put_varint(self.message_type);
+        buf.put_varint(self.track_alias);
+        buf.put_varint(self.group_id);
         if self.write_subgroup_id(&mut buf).is_ok() {
-            buf.extend(write_variable_integer(self.publisher_priority as u64));
+            buf.put_u8(self.publisher_priority);
             Ok(buf)
         } else {
             bail!("Invalid message type: {}", self.message_type);
@@ -157,38 +173,42 @@ pub struct SubgroupObjectField {
 }
 
 impl SubgroupObjectField {
-    pub(crate) fn depacketize(mut buf: BytesMut) -> anyhow::Result<Self> {
-        let object_id_delta = read_variable_integer_from_buffer(&mut buf)?;
-        let extension_headers_total_len = read_variable_integer_from_buffer(&mut buf)?;
+    pub(crate) fn decode(mut buf: BytesMut) -> Option<Self> {
+        let object_id_delta = buf
+            .try_get_varint()
+            .log_context("Subgroup Object ID Delta")
+            .ok()?;
+        let extension_headers_total_len = buf
+            .try_get_varint()
+            .log_context("Subgroup Extension Headers Total Length")
+            .ok()?;
         let mut extension_headers_bytes = buf.split_to(extension_headers_total_len as usize);
         let mut extension_headers = Vec::new();
         while !extension_headers_bytes.is_empty() {
-            let header = ExtensionHeader::decode(&mut extension_headers_bytes)
-                .ok_or_else(|| anyhow::anyhow!("Failed to decode extension header"))?;
+            let header = ExtensionHeader::decode(&mut extension_headers_bytes)?;
             extension_headers.push(header);
         }
         // The remaining bytes in `buf` are the object payload
         // The original code had `buf.split_to(buf.len())` which is correct for the payload.
         let object_payload = buf.split_to(buf.len());
-        Ok(Self {
+        Some(Self {
             object_id_delta,
             extension_headers,
             object_payload: object_payload.to_vec(),
         })
     }
 
-    pub(crate) fn packetize(&self) -> BytesMut {
+    pub(crate) fn encode(&self) -> BytesMut {
         let mut buf = BytesMut::new();
-        buf.extend(write_variable_integer(self.object_id_delta));
+        buf.put_varint(self.object_id_delta);
 
         let mut headers_buf = BytesMut::new();
         for header in &self.extension_headers {
             let header_bytes = header.encode();
             headers_buf.extend_from_slice(&header_bytes);
         }
-        buf.extend(write_variable_integer(headers_buf.len() as u64)); // Write total byte length
-        buf.extend(headers_buf); // Write serialized headers
-
+        buf.put_varint(headers_buf.len() as u64);
+        buf.extend_from_slice(&headers_buf);
         buf.extend_from_slice(&self.object_payload);
         buf
     }
@@ -218,8 +238,8 @@ mod tests {
                 publisher_priority: 128,
             };
 
-            let buf = header.packetize().unwrap();
-            let depacketized = SubgroupHeader::depacketize(buf.clone()).unwrap();
+            let buf = header.encode().unwrap();
+            let depacketized = SubgroupHeader::decode(buf.clone()).unwrap();
 
             assert_eq!(header.message_type, depacketized.message_type);
             assert_eq!(header.track_alias, depacketized.track_alias);
@@ -243,8 +263,8 @@ mod tests {
                 publisher_priority: 64,
             };
 
-            let buf = header.packetize().unwrap();
-            let depacketized = SubgroupHeader::depacketize(buf.clone()).unwrap();
+            let buf = header.encode().unwrap();
+            let depacketized = SubgroupHeader::decode(buf.clone()).unwrap();
 
             assert_eq!(header.message_type, depacketized.message_type);
             assert_eq!(header.track_alias, depacketized.track_alias);
@@ -271,8 +291,8 @@ mod tests {
                 publisher_priority: 32,
             };
 
-            let buf = header.packetize().unwrap();
-            let depacketized = SubgroupHeader::depacketize(buf.clone()).unwrap();
+            let buf = header.encode().unwrap();
+            let depacketized = SubgroupHeader::decode(buf.clone()).unwrap();
 
             assert_eq!(header.message_type, depacketized.message_type);
             assert_eq!(header.track_alias, depacketized.track_alias);
@@ -300,8 +320,8 @@ mod tests {
                 object_payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
             };
 
-            let buf = object_field.packetize();
-            let depacketized = SubgroupObjectField::depacketize(buf.clone()).unwrap();
+            let buf = object_field.encode();
+            let depacketized = SubgroupObjectField::decode(buf.clone()).unwrap();
 
             assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
             assert!(depacketized.extension_headers.is_empty());
@@ -329,8 +349,8 @@ mod tests {
                 object_payload: vec![0x11, 0x22, 0x33],
             };
 
-            let buf = object_field.packetize();
-            let depacketized = SubgroupObjectField::depacketize(buf.clone()).unwrap();
+            let buf = object_field.encode();
+            let depacketized = SubgroupObjectField::decode(buf.clone()).unwrap();
 
             assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
             assert_eq!(

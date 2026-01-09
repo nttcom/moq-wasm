@@ -25,7 +25,7 @@ impl<T: TransportProtocol> ReceiveStreamType<T> for StreamDataReceiver<T> {
         tokio::select! {
             data = self.stream_receiver.receive() => {
                 let data = data?;
-                let subgroup = SubgroupObjectField::depacketize(data)?;
+                let subgroup = SubgroupObjectField::decode(data).ok_or_else(|| anyhow::anyhow!("Failed to decode subgroup object"))?;
                 Ok(DataObject::SubgroupObject(subgroup))
             },
             data = self.receiver.recv() => {

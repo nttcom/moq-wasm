@@ -87,10 +87,10 @@ impl DatagramReceiveThread {
                 return false;
             }
         };
-        let result = match SubgroupHeader::depacketize(data) {
-            Ok(header) => header,
-            Err(e) => {
-                tracing::error!("Failed to depacketize stream header: {}", e);
+        let result = match SubgroupHeader::decode(data) {
+            Some(header) => header,
+            None => {
+                tracing::error!("Failed to depacketize stream header");
                 return false;
             }
         };
