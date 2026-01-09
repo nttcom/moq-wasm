@@ -31,7 +31,7 @@ impl<T: TransportProtocol> SendStreamType for StreamDataSender<T> {
                 let new_stream_sender = Self::create_sender(&self.session_context).await?;
                 self.stream_sender = new_stream_sender;
 
-                let bytes = header.encode()?;
+                let bytes = header.encode();
                 self.stream_sender.send(&bytes).await
             }
 

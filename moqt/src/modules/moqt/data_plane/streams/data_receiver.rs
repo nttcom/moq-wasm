@@ -39,7 +39,8 @@ impl<T: TransportProtocol> DataReceiver<T> {
             .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
         match result {
             StreamWithObject::StreamHeader { stream, header } => {
-                let data_receiver = StreamDataReceiver::new(receiver, stream).await?;
+                let data_receiver =
+                    StreamDataReceiver::new(receiver, stream, header.message_type).await?;
                 Ok(Self {
                     receiver: Box::new(data_receiver),
                     first_packet: Some(DataObject::SubgroupHeader(header)),

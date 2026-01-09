@@ -3,7 +3,10 @@ use crate::{
     modules::moqt::{
         control_plane::threads::enums::StreamWithObject,
         data_plane::{
-            object::{data_object::DataObject, subgroup::SubgroupObjectField},
+            object::{
+                data_object::DataObject,
+                subgroup::{SubgroupHeaderType, SubgroupObjectField},
+            },
             streams::{stream::stream_receiver::StreamReceiver, stream_type::ReceiveStreamType},
         },
     },
@@ -13,6 +16,7 @@ use crate::{
 pub struct StreamDataReceiver<T: TransportProtocol> {
     stream_receiver: StreamReceiver<T>,
     receiver: tokio::sync::mpsc::UnboundedReceiver<StreamWithObject<T>>,
+    subgroup_header_type: SubgroupHeaderType,
 }
 
 #[async_trait::async_trait]
@@ -25,7 +29,7 @@ impl<T: TransportProtocol> ReceiveStreamType<T> for StreamDataReceiver<T> {
         tokio::select! {
             data = self.stream_receiver.receive() => {
                 let data = data?;
-                let subgroup = SubgroupObjectField::decode(data).ok_or_else(|| anyhow::anyhow!("Failed to decode subgroup object"))?;
+                let subgroup = SubgroupObjectField::decode(self.subgroup_header_type, data).ok_or_else(|| anyhow::anyhow!("Failed to decode subgroup object"))?;
                 Ok(DataObject::SubgroupObject(subgroup))
             },
             data = self.receiver.recv() => {
@@ -46,10 +50,12 @@ impl<T: TransportProtocol> StreamDataReceiver<T> {
     pub(crate) async fn new(
         receiver: tokio::sync::mpsc::UnboundedReceiver<StreamWithObject<T>>,
         stream: StreamReceiver<T>,
+        subgroup_header_type: SubgroupHeaderType,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             stream_receiver: stream,
             receiver,
+            subgroup_header_type,
         })
     }
 }
