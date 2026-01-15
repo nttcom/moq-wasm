@@ -70,6 +70,10 @@ Supported version: draft-ietf-moq-transport-10
 - Module for browser client and sample browser client application
   - Supported Roles: Publisher, Subscriber, PubSub
 
+### moqt-client-onvif
+
+- Client for IP cameras over RTSP/ONVIF (Raspberry Pi and Mac)
+
 ## How to run
 
 ### Generating public and private keys for the server

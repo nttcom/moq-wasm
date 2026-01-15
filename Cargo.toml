@@ -7,4 +7,5 @@ members = [
     'moqt-client-wasm',
     'moqt-ingest-gateway',
     'moqt-client-rust',
+    'moqt-client-onvif',
 ]
