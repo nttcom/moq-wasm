@@ -3,7 +3,7 @@ use crate::ptz_defs::{
     PAN_TILT_POSITION_SPACE, PAN_TILT_SPEED_SPACE, TT_NS, ZOOM_POSITION_SPACE, ZOOM_SPEED_SPACE,
 };
 use crate::ptz_parse::ServiceEndpoint;
-use crate::ptz_request;
+use crate::soap;
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 
@@ -14,22 +14,16 @@ pub async fn absolute_move(
     profile: &str,
     pan: f32,
     tilt: f32,
-    log_responses: bool,
 ) -> Result<()> {
     let action = format!("{}/AbsoluteMove", ptz.namespace);
     let body = absolute_move_body(&ptz.namespace, profile, pan, tilt);
-    let response = ptz_request::send_with_device_fallback(
-        client,
-        target,
-        &ptz.xaddr,
-        &action,
-        &body,
-        "",
-        log_responses,
-    )
-    .await?;
+    let response = soap::send(client, target, &ptz.xaddr, &action, &body, "").await?;
     if response.status >= 400 {
-        return Err(anyhow!("absolute move failed with HTTP {}", response.status));
+        return Err(anyhow!(
+            "absolute move failed with HTTP {}: {}",
+            response.status,
+            response.body
+        ));
     }
     Ok(())
 }
