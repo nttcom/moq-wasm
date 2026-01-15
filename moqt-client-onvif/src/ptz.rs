@@ -1,4 +1,3 @@
-use crate::cli::Args;
 use crate::config::Target;
 use crate::http_client;
 use crate::ptz_control;
@@ -7,24 +6,10 @@ use crate::ptz_input::{self, Command, Direction};
 use crate::ptz_service;
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
-pub async fn interactive_control(target: &Target, args: &Args) -> Result<()> {
+pub async fn interactive_control(target: &Target) -> Result<()> {
     let client = http_client::build(target).context("ptz client build failed")?;
-    let log_responses = args.ptz_log_responses;
-    let mut services = ptz_service::discover_services(&client, target, log_responses).await?;
-    if let Some(endpoint) = args
-        .ptz_endpoint
-        .as_ref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        services.ptz.xaddr = endpoint.to_string();
-    }
-    let profile = match &args.ptz_profile_token {
-        Some(token) => token.clone(),
-        None => {
-            ptz_service::get_profile_token(&client, target, &services.media, log_responses).await?
-        }
-    };
+    let services = ptz_service::discover_services(&client, target).await?;
+    let profile = ptz_service::get_profile_token(&client, target, &services.media).await?;
     println!("Media endpoint: {}", services.media.xaddr);
     println!("PTZ endpoint: {}", services.ptz.xaddr);
     println!("PTZ control: arrow keys to move, space to center, q/esc/ctrl+c to quit");
@@ -43,7 +28,6 @@ pub async fn interactive_control(target: &Target, args: &Args) -> Result<()> {
                     &profile,
                     position.pan,
                     position.tilt,
-                    log_responses,
                 )
                 .await
                 {
@@ -59,7 +43,6 @@ pub async fn interactive_control(target: &Target, args: &Args) -> Result<()> {
                     &profile,
                     position.pan,
                     position.tilt,
-                    log_responses,
                 )
                 .await
                 {

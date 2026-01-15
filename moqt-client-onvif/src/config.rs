@@ -1,18 +1,15 @@
-use crate::cli::{Args, OnvifAuth};
+use crate::cli::Args;
 use anyhow::{bail, Result};
 use std::time::Duration;
+
+const ONVIF_PORT: u16 = 2020;
+const ONVIF_PATH: &str = "/onvif/device_service";
 
 #[derive(Debug, Clone)]
 pub struct Target {
     host: String,
-    username: Option<String>,
-    password: Option<String>,
-    rtsp_port: u16,
-    rtsp_path: String,
-    onvif_port: u16,
-    onvif_path: String,
-    onvif_auth: OnvifAuth,
-    onvif_insecure: bool,
+    username: String,
+    password: String,
     timeout: Duration,
 }
 
@@ -22,74 +19,31 @@ impl Target {
         if host.is_empty() {
             bail!("ip is required");
         }
+        let username = args.username.trim().to_string();
+        if username.is_empty() {
+            bail!("username is required");
+        }
+        let password = args.password.trim().to_string();
+        if password.is_empty() {
+            bail!("password is required");
+        }
         Ok(Self {
             host,
-            username: args.username.clone(),
-            password: args.password.clone(),
-            rtsp_port: args.rtsp_port,
-            rtsp_path: normalize_path(&args.rtsp_path),
-            onvif_port: args.onvif_port,
-            onvif_path: normalize_path(&args.onvif_path),
-            onvif_auth: args.onvif_auth,
-            onvif_insecure: args.onvif_insecure,
+            username,
+            password,
             timeout: Duration::from_millis(args.timeout_ms),
         })
     }
 
-    pub fn rtsp_endpoint(&self) -> String {
-        let credentials = match (&self.username, &self.password) {
-            (Some(user), Some(pass)) => format!("{}:{}@", user, pass),
-            _ => String::new(),
-        };
-        format!(
-            "rtsp://{}{}:{}{}",
-            credentials, self.host, self.rtsp_port, self.rtsp_path
-        )
-    }
-
-    pub fn rtsp_display(&self) -> String {
-        format!("rtsp://{}:{}{}", self.host, self.rtsp_port, self.rtsp_path)
-    }
-
-    pub fn rtsp_socket_addr(&self) -> String {
-        format!("{}:{}", self.host, self.rtsp_port)
-    }
-
     pub fn onvif_endpoint(&self) -> String {
-        format!(
-            "http://{}:{}{}",
-            self.host, self.onvif_port, self.onvif_path
-        )
+        format!("http://{}:{}{}", self.host, ONVIF_PORT, ONVIF_PATH)
     }
 
-    pub fn onvif_auth(&self) -> OnvifAuth {
-        self.onvif_auth
-    }
-
-    pub fn onvif_insecure(&self) -> bool {
-        self.onvif_insecure
-    }
-
-    pub fn basic_auth(&self) -> Option<(&str, &str)> {
-        match (&self.username, &self.password) {
-            (Some(user), Some(pass)) => Some((user.as_str(), pass.as_str())),
-            _ => None,
-        }
+    pub fn credentials(&self) -> (&str, &str) {
+        (self.username.as_str(), self.password.as_str())
     }
 
     pub fn timeout(&self) -> Duration {
         self.timeout
-    }
-}
-
-fn normalize_path(path: &str) -> String {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return "/".to_string();
-    }
-    if trimmed.starts_with('/') {
-        trimmed.to_string()
-    } else {
-        format!("/{}", trimmed)
     }
 }
