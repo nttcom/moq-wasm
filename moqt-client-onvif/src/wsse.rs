@@ -31,8 +31,7 @@ pub fn build_wsse_header(username: &str, password: &str) -> Result<String> {
 }
 
 fn created_timestamp() -> Result<String> {
-    let format =
-        format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].000Z");
+    let format = format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].000Z");
     OffsetDateTime::now_utc()
         .format(&format)
         .context("failed to format wsse created timestamp")

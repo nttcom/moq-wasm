@@ -8,6 +8,37 @@ pub struct SoapResponse {
     pub body: String,
 }
 
+pub fn log_response(action: &str, endpoint: &str, response: &SoapResponse) {
+    log_response_with_prefix("", action, endpoint, response);
+}
+
+pub fn log_response_with_prefix(
+    prefix: &str,
+    action: &str,
+    endpoint: &str,
+    response: &SoapResponse,
+) {
+    let ok = response.status == 200;
+    let status = if ok { "OK" } else { "NG" };
+    if ok {
+        log::info!(
+            "{prefix}SOAP response ({}): {} -> HTTP {} ({})",
+            action,
+            endpoint,
+            response.status,
+            status
+        );
+    } else {
+        log::warn!(
+            "{prefix}SOAP response ({}): {} -> HTTP {} ({})",
+            action,
+            endpoint,
+            response.status,
+            status
+        );
+    }
+}
+
 pub async fn send(
     client: &Client,
     target: &Target,
@@ -18,7 +49,7 @@ pub async fn send(
 ) -> Result<SoapResponse> {
     let envelope = build_envelope(target, body, namespaces)?;
     let content_type = "text/xml; charset=utf-8";
-    let mut request = client
+    let request = client
         .post(endpoint)
         .header("Content-Type", content_type)
         .body(envelope);

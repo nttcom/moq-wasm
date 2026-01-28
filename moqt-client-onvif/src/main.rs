@@ -1,21 +1,44 @@
 mod cli;
 mod config;
 mod http_client;
+mod onvif_client;
+mod onvif_command;
+mod onvif_nodes;
+mod onvif_profiles;
+mod onvif_services;
+mod ptz_config;
+mod ptz_panel;
+mod ptz_worker;
+mod rtsp_decode;
+mod rtsp_types;
+mod rtsp_worker;
 mod soap;
-mod ptz;
-mod ptz_control;
-mod ptz_defs;
-mod ptz_input;
-mod ptz_parse;
-mod ptz_service;
+mod video_view;
+mod viewer;
 mod wsse;
 
 use anyhow::Result;
 use clap::Parser;
+use std::io::Write;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    init_logger();
     let args = cli::Args::parse();
     let target = config::Target::from_args(&args)?;
-    ptz::interactive_control(&target).await
+    viewer::run(target)
+}
+
+fn init_logger() {
+    let env = env_logger::Env::default().filter_or("RUST_LOG", "info");
+    env_logger::Builder::from_env(env)
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                "{} {:<5} {}",
+                buf.timestamp_millis(),
+                record.level(),
+                record.args()
+            )
+        })
+        .init();
 }
