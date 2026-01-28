@@ -1,7 +1,9 @@
 use crate::{
     config::Target,
     onvif_command::{self, OnvifCommand},
-    onvif_nodes, onvif_profiles, onvif_services, ptz_config, soap,
+    onvif_nodes, onvif_profiles, onvif_services, ptz_config,
+    ptz_state::PtzState,
+    soap,
 };
 use anyhow::{anyhow, Result};
 use reqwest::Client;
@@ -14,8 +16,7 @@ pub struct OnvifClient {
     media_endpoint: String,
     ptz_endpoint: String,
     profile_token: String,
-    ptz_range: ptz_config::PtzRange,
-    ptz_node: Option<onvif_nodes::PtzNodeInfo>,
+    ptz_state: PtzState,
     gui_messages: Vec<String>,
 }
 
@@ -34,8 +35,7 @@ impl OnvifClient {
             ptz_endpoint: device_endpoint.clone(),
             device_endpoint,
             profile_token: String::new(),
-            ptz_range: ptz_config::PtzRange::default(),
-            ptz_node: None,
+            ptz_state: PtzState::new(ptz_config::PtzRange::default(), None),
             gui_messages: Vec::new(),
         }
     }
@@ -74,12 +74,8 @@ impl OnvifClient {
         &self.profile_token
     }
 
-    pub fn ptz_range(&self) -> ptz_config::PtzRange {
-        self.ptz_range.clone()
-    }
-
-    pub fn ptz_node(&self) -> Option<onvif_nodes::PtzNodeInfo> {
-        self.ptz_node.clone()
+    pub fn ptz_state(&self) -> PtzState {
+        self.ptz_state.clone()
     }
 
     pub fn take_gui_messages(&mut self) -> Vec<String> {
@@ -108,7 +104,6 @@ impl OnvifClient {
                 return;
             }
         };
-        self.set_ptz_range(ptz.range);
         let node = match self.fetch_ptz_node_capabilities(&ptz.config_token).await {
             Ok(node) => node,
             Err(err) => {
@@ -116,7 +111,7 @@ impl OnvifClient {
                 None
             }
         };
-        self.set_ptz_node(node);
+        self.ptz_state = PtzState::new(ptz.range, node);
     }
 
     async fn fetch_endpoints(&self) -> onvif_services::ServiceEndpoints {
@@ -169,14 +164,6 @@ impl OnvifClient {
             ));
         }
         Ok(response.body)
-    }
-
-    fn set_ptz_range(&mut self, range: ptz_config::PtzRange) {
-        self.ptz_range = range;
-    }
-
-    fn set_ptz_node(&mut self, node: Option<onvif_nodes::PtzNodeInfo>) {
-        self.ptz_node = node;
     }
 
     fn push_ptz_init_error(&mut self, err: impl fmt::Display) {
