@@ -1,5 +1,15 @@
+mod defaults;
+mod parse;
+
 use super::UiCommand;
 use crate::ptz_config::PtzRange;
+
+pub(super) const STEP_TENTH: f32 = 0.1;
+
+const FIELD_PAN: &str = "Pan";
+const FIELD_TILT: &str = "Tilt";
+const FIELD_ZOOM: &str = "Zoom";
+const FIELD_SPEED: &str = "Speed";
 
 pub(super) struct CommandInputs {
     pub(super) absolute: MoveInputs,
@@ -30,24 +40,53 @@ impl CommandInputs {
             UiCommand::Center => &mut self.center,
         }
     }
+
+    pub(super) fn field_labels(&self) -> Vec<&'static str> {
+        self.absolute.labels()
+    }
 }
 
 #[derive(Clone)]
 pub(super) struct MoveInputs {
-    pub(super) pan: String,
-    pub(super) tilt: String,
-    pub(super) zoom: String,
-    pub(super) speed: String,
+    fields: Vec<NumericField>,
 }
 
 impl MoveInputs {
     fn new(range: &PtzRange) -> Self {
-        let (pan, tilt, zoom, speed) = default_move_values(range);
         Self {
-            pan: format_value(pan),
-            tilt: format_value(tilt),
-            zoom: format_value(zoom),
-            speed: format_value(speed),
+            fields: defaults::default_fields(range),
+        }
+    }
+
+    pub(super) fn field_mut(&mut self, label: &str) -> &mut NumericField {
+        self.fields
+            .iter_mut()
+            .find(|field| field.label == label)
+            .expect("missing PTZ input field")
+    }
+
+    pub(super) fn labels(&self) -> Vec<&'static str> {
+        self.fields.iter().map(|field| field.label).collect()
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct NumericField {
+    pub(super) label: &'static str,
+    pub(super) value: String,
+    pub(super) min: f32,
+    pub(super) max: f32,
+    pub(super) step: f32,
+}
+
+impl NumericField {
+    fn new(label: &'static str, value: f32, min: f32, max: f32, step: f32) -> Self {
+        Self {
+            label,
+            value: parse::format_value(value),
+            min,
+            max,
+            step,
         }
     }
 }
@@ -56,55 +95,13 @@ pub(super) fn parse_move_values(
     label: &str,
     inputs: &mut MoveInputs,
 ) -> Result<(f32, f32, f32, f32), String> {
-    let pan = parse_value(label, "pan", &mut inputs.pan)?;
-    let tilt = parse_value(label, "tilt", &mut inputs.tilt)?;
-    let zoom = parse_value(label, "zoom", &mut inputs.zoom)?;
-    let speed = parse_value(label, "speed", &mut inputs.speed)?;
-    Ok((pan, tilt, zoom, speed))
+    parse::parse_move_values(label, inputs)
 }
 
 pub(super) fn parse_speed_value(label: &str, inputs: &mut MoveInputs) -> Result<f32, String> {
-    parse_value(label, "speed", &mut inputs.speed)
+    parse::parse_speed_value(label, inputs)
 }
 
-pub(super) fn snap_value(input: &mut String) {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return;
-    }
-    if let Ok(value) = trimmed.parse::<f32>() {
-        *input = format_value(round_to_tenth(value));
-    }
-}
-
-fn parse_value(label: &str, field: &str, input: &mut String) -> Result<f32, String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Err(format!("{label}: {field} is required"));
-    }
-    let parsed = trimmed
-        .parse::<f32>()
-        .map_err(|_| format!("{label}: invalid {field} value '{trimmed}'"))?;
-    let snapped = round_to_tenth(parsed);
-    *input = format_value(snapped);
-    Ok(snapped)
-}
-
-fn round_to_tenth(value: f32) -> f32 {
-    (value * 10.0).round() / 10.0
-}
-
-fn default_move_values(range: &PtzRange) -> (f32, f32, f32, f32) {
-    let (pan_range, tilt_range) = range.absolute_pan_tilt_range();
-    let zoom_range = range.absolute_zoom_range();
-    let speed_range = range.speed_range();
-    let pan = pan_range.max;
-    let tilt = tilt_range.clamp(0.0);
-    let zoom = zoom_range.clamp(0.0);
-    let speed = range.speed_default.clamp(speed_range.min, speed_range.max);
-    (pan, tilt, zoom, speed)
-}
-
-fn format_value(value: f32) -> String {
-    format!("{value:.1}")
+pub(super) fn snap_field(field: &mut NumericField) {
+    parse::snap_field(field);
 }
