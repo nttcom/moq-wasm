@@ -43,31 +43,9 @@ impl OnvifClient {
     pub async fn initialize(client: Client, target: Target) -> Result<Self> {
         let mut onvif = Self::new(client, target);
 
-        let endpoints = onvif.fetch_endpoints().await;
-        onvif.set_endpoints(endpoints);
-
-        let onvif_profiles::ProfileTokens {
-            profile_token,
-            config_token,
-        } = onvif.fetch_profile_tokens().await?;
-        onvif.set_profile_token(profile_token);
-
-        let ptz = match onvif.fetch_ptz_range(config_token.as_deref()).await {
-            Ok(ptz) => ptz,
-            Err(err) => {
-                onvif.push_ptz_init_error(err);
-                return Ok(onvif);
-            }
-        };
-        onvif.set_ptz_range(ptz.range);
-        let node = match onvif.fetch_ptz_node_capabilities(&ptz.config_token).await {
-            Ok(node) => node,
-            Err(err) => {
-                onvif.push_ptz_init_error(err);
-                None
-            }
-        };
-        onvif.set_ptz_node(node);
+        onvif.init_endpoints().await;
+        let config_token = onvif.init_profiles().await?;
+        onvif.init_ptz(config_token.as_deref()).await;
         Ok(onvif)
     }
 
@@ -106,6 +84,39 @@ impl OnvifClient {
 
     pub fn take_gui_messages(&mut self) -> Vec<String> {
         std::mem::take(&mut self.gui_messages)
+    }
+
+    async fn init_endpoints(&mut self) {
+        let endpoints = self.fetch_endpoints().await;
+        self.set_endpoints(endpoints);
+    }
+
+    async fn init_profiles(&mut self) -> Result<Option<String>> {
+        let onvif_profiles::ProfileTokens {
+            profile_token,
+            config_token,
+        } = self.fetch_profile_tokens().await?;
+        self.set_profile_token(profile_token);
+        Ok(config_token)
+    }
+
+    async fn init_ptz(&mut self, token_hint: Option<&str>) {
+        let ptz = match self.fetch_ptz_range(token_hint).await {
+            Ok(ptz) => ptz,
+            Err(err) => {
+                self.push_ptz_init_error(err);
+                return;
+            }
+        };
+        self.set_ptz_range(ptz.range);
+        let node = match self.fetch_ptz_node_capabilities(&ptz.config_token).await {
+            Ok(node) => node,
+            Err(err) => {
+                self.push_ptz_init_error(err);
+                None
+            }
+        };
+        self.set_ptz_node(node);
     }
 
     async fn fetch_endpoints(&self) -> onvif_services::ServiceEndpoints {
