@@ -4,6 +4,8 @@ use std::time::Duration;
 
 const ONVIF_PORT: u16 = 2020;
 const ONVIF_PATH: &str = "/onvif/device_service";
+const RTSP_PORT: u16 = 554;
+const RTSP_PATH: &str = "/stream1";
 
 #[derive(Debug, Clone)]
 pub struct Target {
@@ -37,6 +39,13 @@ impl Target {
 
     pub fn onvif_endpoint(&self) -> String {
         format!("http://{}:{}{}", self.host, ONVIF_PORT, ONVIF_PATH)
+    }
+
+    pub fn rtsp_url(&self) -> String {
+        format!(
+            "rtsp://{}:{}@{}:{}{}",
+            self.username, self.password, self.host, RTSP_PORT, RTSP_PATH
+        )
     }
 
     pub fn credentials(&self) -> (&str, &str) {
