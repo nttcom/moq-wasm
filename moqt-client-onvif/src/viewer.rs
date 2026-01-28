@@ -42,11 +42,8 @@ impl eframe::App for PtzApp {
         if let Some(err) = self.controller.try_recv_error() {
             self.ptz_error = Some(err);
         }
-        if let Some(range) = self.controller.try_recv_range() {
-            self.controls.set_range(range);
-        }
-        if let Some(node) = self.controller.try_recv_node() {
-            self.controls.set_node_info(node);
+        if let Some(state) = self.controller.try_recv_state() {
+            self.controls.set_state(state);
         }
         self.video.update(ctx);
         egui::TopBottomPanel::bottom("ptz_controls")

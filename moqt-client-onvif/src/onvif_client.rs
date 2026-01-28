@@ -19,7 +19,7 @@ pub struct OnvifClient {
     gui_messages: Vec<String>,
 }
 
-struct PtzInit {
+struct PtzRangeInfo {
     config_token: String,
     range: ptz_config::PtzRange,
 }
@@ -46,10 +46,13 @@ impl OnvifClient {
         let endpoints = onvif.fetch_endpoints().await;
         onvif.set_endpoints(endpoints);
 
-        let profiles = onvif.fetch_profiles().await?;
-        onvif.set_profile_token(profiles.profile_token);
+        let onvif_profiles::ProfileTokens {
+            profile_token,
+            config_token,
+        } = onvif.fetch_profile_tokens().await?;
+        onvif.set_profile_token(profile_token);
 
-        let ptz = match onvif.fetch_ptz(profiles.config_token.as_deref()).await {
+        let ptz = match onvif.fetch_ptz_range(config_token.as_deref()).await {
             Ok(ptz) => ptz,
             Err(err) => {
                 onvif.push_ptz_init_error(err);
@@ -109,22 +112,22 @@ impl OnvifClient {
         onvif_services::discover_endpoints(self).await
     }
 
-    async fn fetch_profiles(&self) -> Result<onvif_profiles::ProfileTokens> {
+    async fn fetch_profile_tokens(&self) -> Result<onvif_profiles::ProfileTokens> {
         onvif_profiles::fetch(self).await
     }
 
-    async fn fetch_ptz(&self, token_hint: Option<&str>) -> Result<PtzInit> {
-        let (token, body) = self.fetch_config_token(token_hint).await?;
+    async fn fetch_ptz_range(&self, token_hint: Option<&str>) -> Result<PtzRangeInfo> {
+        let (token, body) = self.fetch_ptz_config_token(token_hint).await?;
         let range = ptz_config::extract_range_from_config(&body, &token);
-        let options_body = self.fetch_config_options(&token).await?;
+        let options_body = self.fetch_ptz_config_options(&token).await?;
         let range = ptz_config::update_range_from_options(range, &options_body);
-        Ok(PtzInit {
+        Ok(PtzRangeInfo {
             config_token: token,
             range,
         })
     }
 
-    async fn fetch_config_token(&self, token_hint: Option<&str>) -> Result<(String, String)> {
+    async fn fetch_ptz_config_token(&self, token_hint: Option<&str>) -> Result<(String, String)> {
         log::info!("[GetToken]");
         log::info!("  [GetConfigurations]");
         let cmd = onvif_command::get_configurations();
@@ -138,12 +141,12 @@ impl OnvifClient {
         }
         let body = response.body;
         let tokens = ptz_config::extract_tokens(&body);
-        let token = select_config_token(&tokens, token_hint)
+        let token = select_ptz_config_token(&tokens, token_hint)
             .ok_or_else(|| anyhow!("PTZ configuration token not found in response"))?;
         Ok((token, body))
     }
 
-    async fn fetch_config_options(&self, token: &str) -> Result<String> {
+    async fn fetch_ptz_config_options(&self, token: &str) -> Result<String> {
         log::info!("[GetConfigurationOptions]");
         let cmd = onvif_command::get_configuration_options(token);
         let response = self.send_ptz(&cmd).await?;
@@ -221,7 +224,7 @@ impl OnvifClient {
     }
 }
 
-fn select_config_token(tokens: &[String], hint: Option<&str>) -> Option<String> {
+fn select_ptz_config_token(tokens: &[String], hint: Option<&str>) -> Option<String> {
     if tokens.is_empty() {
         return hint.map(str::to_string);
     }

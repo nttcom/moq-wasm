@@ -205,7 +205,7 @@ pub fn extract_range_from_config(body: &str, token: &str) -> PtzRange {
         return PtzRange::default();
     };
     let node_token = find_text(config, "NodeToken").unwrap_or_else(|| "-".to_string());
-    log::info!("  token={token} node_token={node_token}");
+    log::info!("token={token} node_token={node_token}");
 
     let mut spaces = Vec::new();
     push_kv(
@@ -224,13 +224,13 @@ pub fn extract_range_from_config(body: &str, token: &str) -> PtzRange {
         find_text(config, "DefaultContinuousPanTiltVelocitySpace"),
     );
     if !spaces.is_empty() {
-        log::info!("  spaces: {}", spaces.join(", "));
+        log::info!("spaces: {}", spaces.join(", "));
     }
 
     let mut range = PtzRange::default();
     if let Some((uri, x, y)) = pan_tilt_limits(config) {
         log::info!(
-            "  pan/tilt limits: space={} x=[{:.3}..{:.3}] y=[{:.3}..{:.3}]",
+            "pan/tilt limits: space={} x=[{:.3}..{:.3}] y=[{:.3}..{:.3}]",
             uri.as_deref().unwrap_or("-"),
             x.min,
             x.max,
@@ -241,7 +241,7 @@ pub fn extract_range_from_config(body: &str, token: &str) -> PtzRange {
     }
     if let Some((space, x, y)) = default_pan_tilt_speed(config) {
         log::info!(
-            "  default speed: pan_tilt x={:.3} y={:.3} space={}",
+            "default speed: pan_tilt x={:.3} y={:.3} space={}",
             x,
             y,
             space.as_deref().unwrap_or("-")
@@ -249,7 +249,7 @@ pub fn extract_range_from_config(body: &str, token: &str) -> PtzRange {
         range.speed_default = x.min(y).clamp(0.0, 1.0);
     }
     if let Some(timeout) = find_text(config, "DefaultPTZTimeout") {
-        log::info!("  timeout: {timeout}");
+        log::info!("timeout: {timeout}");
     }
     range
 }
