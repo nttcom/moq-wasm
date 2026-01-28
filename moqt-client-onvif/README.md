@@ -4,7 +4,7 @@ An ONVIF PTZ client with a minimal GUI and RTSP preview.
 
 ## What it does now
 
-- PTZ: Absolute/Relative/Continuous/Stop + Center with pan/tilt/zoom and speed controls.
+- PTZ: Absolute/Relative/Continuous/Stop + Center with per-command pan/tilt/zoom/speed inputs under the command row.
 - RTSP: display the live preview in the GUI.
 - Startup: fetch PTZ configuration/option info and print a short summary (token/spaces/limits) grouped by `[GetToken]`, etc.
 
@@ -19,7 +19,7 @@ cargo run -p moqt-client-onvif -- \
   --password secret
 ```
 
-Use the GUI controls to choose the command, pan/tilt/zoom values, and speed, then send.
+Use the command buttons in the top row, then edit the pan/tilt/zoom/speed fields for each command below.
 
 ## Options
 
@@ -39,6 +39,8 @@ Use the GUI controls to choose the command, pan/tilt/zoom values, and speed, the
 - Startup flow: `GetServices`/`GetCapabilities` → `GetProfiles` → PTZ configuration queries.
 - PTZ ranges/speed defaults are derived from `GetConfigurations` + `GetConfigurationOptions` when available (fallback to -1.0..1.0 and 0.0..1.0).
 - Implementation modules: onvif_command (SOAP ops builder + constants), onvif_client (endpoint holder + sender + init flow), ptz_panel (GUI controls), viewer (GUI app).
+- PTZ GUI commands are laid out in a row with per-command input columns and enumerated via `strum` EnumIter for consistency.
+- PTZ GUI input values snap to 0.1 increments.
 - RTSP endpoint is fixed to `rtsp://{username}:{password}@{ip}:554/stream1`.
 - GUI button presses log the command; SOAP responses log status only (no body).
 - PTZ configuration queries (`GetConfigurations`, `GetConfiguration`, `GetConfigurationOptions`) log status on startup.

@@ -15,5 +15,6 @@ rand = "0.8.5"
 reqwest = { version = "0.12.12", default-features = false, features = ["rustls-tls"] }
 roxmltree = "0.20.0"
 sha1 = "0.10.6"
+strum = { version = "0.26.3", features = ["derive"] }
 time = { version = "0.3.36", features = ["formatting", "macros"] }
 tokio = { version = "1.45.0", features = ["rt-multi-thread"] }
