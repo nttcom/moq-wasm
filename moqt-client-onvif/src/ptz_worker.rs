@@ -79,7 +79,7 @@ fn run_worker(
         Ok(onvif) => onvif,
         Err(err) => return send_init_error(&err_tx, format!("ptz init error: {err}")),
     };
-    let state = PtzState::new(onvif.ptz_range(), onvif.ptz_node());
+    let state = onvif.ptz_state();
     let _ = state_tx.send(state.clone());
     for message in onvif.take_gui_messages() {
         let _ = err_tx.send(message);
