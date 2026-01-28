@@ -39,6 +39,7 @@ Use the command buttons in the top row, then edit the pan/tilt/zoom/speed fields
 - Startup flow: `GetServices`/`GetCapabilities` → `GetProfiles` → PTZ configuration queries.
 - PTZ ranges/speed defaults are derived from `GetConfigurations` + `GetConfigurationOptions` when available (fallback to -1.0..1.0 and 0.0..1.0).
 - Implementation modules: onvif_command (SOAP ops builder + constants), onvif_client (endpoint holder + sender + init flow), ptz_panel (GUI controls), viewer (GUI app).
+- ptz_panel is split into inputs/layout submodules to separate parsing and UI layout.
 - PTZ GUI commands are laid out in a row with per-command input columns and enumerated via `strum` EnumIter for consistency.
 - PTZ GUI input values snap to 0.1 increments.
 - RTSP endpoint is fixed to `rtsp://{username}:{password}@{ip}:554/stream1`.
