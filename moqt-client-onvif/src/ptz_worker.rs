@@ -2,8 +2,8 @@ use crate::config::Target;
 use crate::http_client;
 use crate::onvif_client::OnvifClient;
 use crate::onvif_command;
-use crate::onvif_nodes::PtzNodeInfo;
 use crate::ptz_config::PtzRange;
+use crate::ptz_state::PtzState;
 use crate::soap;
 use anyhow::{anyhow, Result};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -36,21 +36,18 @@ pub enum Command {
 pub struct Controller {
     tx: Sender<Command>,
     err_rx: Receiver<String>,
-    range_rx: Receiver<PtzRange>,
-    node_rx: Receiver<PtzNodeInfo>,
+    state_rx: Receiver<PtzState>,
 }
 impl Controller {
     pub fn new(target: Target) -> Result<Self> {
         let (tx, rx) = mpsc::channel();
         let (err_tx, err_rx) = mpsc::channel();
-        let (range_tx, range_rx) = mpsc::channel();
-        let (node_tx, node_rx) = mpsc::channel();
-        thread::spawn(move || run_worker(target, rx, err_tx, range_tx, node_tx));
+        let (state_tx, state_rx) = mpsc::channel();
+        thread::spawn(move || run_worker(target, rx, err_tx, state_tx));
         Ok(Self {
             tx,
             err_rx,
-            range_rx,
-            node_rx,
+            state_rx,
         })
     }
     pub fn send(&self, command: Command) {
@@ -60,20 +57,15 @@ impl Controller {
         self.err_rx.try_recv().ok()
     }
 
-    pub fn try_recv_range(&self) -> Option<PtzRange> {
-        self.range_rx.try_recv().ok()
-    }
-
-    pub fn try_recv_node(&self) -> Option<PtzNodeInfo> {
-        self.node_rx.try_recv().ok()
+    pub fn try_recv_state(&self) -> Option<PtzState> {
+        self.state_rx.try_recv().ok()
     }
 }
 fn run_worker(
     target: Target,
     rx: Receiver<Command>,
     err_tx: Sender<String>,
-    range_tx: Sender<PtzRange>,
-    node_tx: Sender<PtzNodeInfo>,
+    state_tx: Sender<PtzState>,
 ) {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
@@ -87,14 +79,12 @@ fn run_worker(
         Ok(onvif) => onvif,
         Err(err) => return send_init_error(&err_tx, format!("ptz init error: {err}")),
     };
-    let range = onvif.ptz_range();
-    let _ = range_tx.send(range.clone());
-    if let Some(node) = onvif.ptz_node() {
-        let _ = node_tx.send(node);
-    }
+    let state = PtzState::new(onvif.ptz_range(), onvif.ptz_node());
+    let _ = state_tx.send(state.clone());
     for message in onvif.take_gui_messages() {
         let _ = err_tx.send(message);
     }
+    let range = state.range.clone();
     let mut position = Position::new(&range);
     let speed_range = range.speed_range();
     for command in rx {

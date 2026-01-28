@@ -47,4 +47,5 @@ Use the GUI controls to choose the command, pan/tilt/zoom values, and speed, the
 - PTZ controls are pinned to the bottom so the video never covers them.
 - PTZ ranges/options are parsed during initialization (`ptz_config::extract_range_from_config` + `ptz_config::update_range_from_options`) and shown in the GUI.
 - PTZ node capabilities from `GetNodes`/`GetNode` are stored and shown in the GUI, and unsupported commands are disabled when spaces are known.
+- PTZ range + node data are bundled as a single PTZ state update when passed to the GUI.
 - PTZ/ONVIF constants are currently hardcoded in `moqt-client-onvif/src/onvif_command.rs` (later we can derive them from `GetConfigurations`).

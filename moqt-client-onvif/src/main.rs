@@ -8,6 +8,7 @@ mod onvif_profiles;
 mod onvif_services;
 mod ptz_config;
 mod ptz_panel;
+mod ptz_state;
 mod ptz_worker;
 mod rtsp_decode;
 mod rtsp_types;

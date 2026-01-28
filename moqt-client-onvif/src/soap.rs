@@ -20,22 +20,19 @@ pub fn log_response_with_prefix(
 ) {
     let ok = response.status == 200;
     let status = if ok { "OK" } else { "NG" };
-    if ok {
-        log::info!(
-            "{prefix}SOAP response ({}): {} -> HTTP {} ({})",
-            action,
-            endpoint,
-            response.status,
-            status
-        );
+    let message = format_args!(
+        "SOAP response ({}): {} -> HTTP {} ({})",
+        action, endpoint, response.status, status
+    );
+    let line = if prefix.is_empty() {
+        format!("{message}")
     } else {
-        log::warn!(
-            "{prefix}SOAP response ({}): {} -> HTTP {} ({})",
-            action,
-            endpoint,
-            response.status,
-            status
-        );
+        format!("{prefix}{message}")
+    };
+    if ok {
+        log::info!("{line}");
+    } else {
+        log::warn!("{line}");
     }
 }
 

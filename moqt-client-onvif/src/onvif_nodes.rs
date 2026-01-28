@@ -66,7 +66,7 @@ pub async fn log_nodes(onvif: &OnvifClient) -> Result<Option<PtzNodeInfo>> {
     }
     if let Some(node_info) = parse_node(&node.body) {
         log::info!(
-            "  node: token={} home_supported={:?} max_presets={:?}",
+            "node: token={} home_supported={:?} max_presets={:?}",
             node_info.token,
             node_info.home_supported,
             node_info.max_presets

@@ -1,5 +1,6 @@
 use crate::onvif_nodes::PtzNodeInfo;
 use crate::ptz_config::{AxisRange, PtzRange};
+use crate::ptz_state::PtzState;
 use crate::ptz_worker::Command;
 use eframe::egui;
 pub struct Controls {
@@ -28,7 +29,13 @@ impl Controls {
         }
     }
 
-    pub fn set_range(&mut self, range: PtzRange) {
+    pub fn set_state(&mut self, state: PtzState) {
+        self.set_range(state.range);
+        self.node_info = state.node;
+        self.ensure_supported_command();
+    }
+
+    fn set_range(&mut self, range: PtzRange) {
         self.range = range;
         let (pan_range, tilt_range) = self.range.absolute_pan_tilt_range();
         let zoom_range = self.range.absolute_zoom_range();
@@ -37,12 +44,6 @@ impl Controls {
         self.tilt_delta = self.tilt_delta.clamp(tilt_range.min, tilt_range.max);
         self.zoom_delta = self.zoom_delta.clamp(zoom_range.min, zoom_range.max);
         self.speed = self.speed.clamp(speed_range.min, speed_range.max);
-        self.ensure_supported_command();
-    }
-
-    pub fn set_node_info(&mut self, info: PtzNodeInfo) {
-        self.node_info = Some(info);
-        self.ensure_supported_command();
     }
     pub fn ui(&mut self, ui: &mut egui::Ui) -> Option<Command> {
         ui.heading("PTZ Control");
