@@ -104,7 +104,7 @@ impl OnvifClient {
                 return;
             }
         };
-        let node = match self.fetch_ptz_node_capabilities(&ptz.config_token).await {
+        let node = match self.resolve_ptz_node_capabilities(&ptz.config_token).await {
             Ok(node) => node,
             Err(err) => {
                 self.push_ptz_init_error(err);
@@ -170,7 +170,32 @@ impl OnvifClient {
         self.gui_messages.push(format!("ptz init error: {err}"));
     }
 
-    async fn fetch_ptz_node_capabilities(
+    async fn fetch_ptz_node(&self) -> Result<Option<onvif_nodes::PtzNodeInfo>> {
+        let nodes = onvif_nodes::fetch_nodes(self).await?;
+        onvif_nodes::log_nodes(self.ptz_endpoint(), &nodes);
+        if nodes.response.status >= 400 {
+            return Err(anyhow!(
+                "get nodes failed with HTTP {}",
+                nodes.response.status
+            ));
+        }
+        let token = nodes
+            .tokens
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow!("PTZ node token not found in response"))?;
+        let node = onvif_nodes::fetch_node(self, &token).await?;
+        onvif_nodes::log_node(self.ptz_endpoint(), &node);
+        if node.response.status >= 400 {
+            return Err(anyhow!(
+                "get node failed with HTTP {}",
+                node.response.status
+            ));
+        }
+        Ok(node.info)
+    }
+
+    async fn resolve_ptz_node_capabilities(
         &self,
         token: &str,
     ) -> Result<Option<onvif_nodes::PtzNodeInfo>> {
@@ -180,14 +205,14 @@ impl OnvifClient {
         soap::log_response("GetConfiguration", self.ptz_endpoint(), &response);
         if response.status >= 400 {
             if is_no_entity_fault(&response.body) {
-                return onvif_nodes::log_nodes(self).await;
+                return self.fetch_ptz_node().await;
             }
             return Err(anyhow!(
                 "get configuration failed with HTTP {}",
                 response.status
             ));
         }
-        match onvif_nodes::log_nodes(self).await {
+        match self.fetch_ptz_node().await {
             Ok(node) => Ok(node),
             Err(err) => {
                 log::warn!("PTZ node query failed: {err}");
