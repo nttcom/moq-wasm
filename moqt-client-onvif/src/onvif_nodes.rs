@@ -1,5 +1,5 @@
 use crate::{onvif_client::OnvifClient, onvif_command, soap};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use roxmltree::Document;
 
 #[derive(Clone, Debug)]
@@ -43,41 +43,54 @@ impl PtzNodeInfo {
         lines
     }
 }
-pub async fn log_nodes(onvif: &OnvifClient) -> Result<Option<PtzNodeInfo>> {
-    log::info!("[GetNodes]");
+pub struct NodesFetch {
+    pub response: soap::SoapResponse,
+    pub tokens: Vec<String>,
+}
+
+pub struct NodeFetch {
+    pub response: soap::SoapResponse,
+    pub info: Option<PtzNodeInfo>,
+}
+
+pub async fn fetch_nodes(onvif: &OnvifClient) -> Result<NodesFetch> {
     let cmd = onvif_command::get_nodes();
-    let nodes = onvif.send_ptz(&cmd).await?;
-    soap::log_response("GetNodes", onvif.ptz_endpoint(), &nodes);
-    if nodes.status >= 400 {
-        return Err(anyhow!("get nodes failed with HTTP {}", nodes.status));
+    let response = onvif.send_ptz(&cmd).await?;
+    let tokens = parse_node_tokens(&response.body);
+    Ok(NodesFetch { response, tokens })
+}
+
+pub async fn fetch_node(onvif: &OnvifClient, token: &str) -> Result<NodeFetch> {
+    let cmd = onvif_command::get_node(token);
+    let response = onvif.send_ptz(&cmd).await?;
+    let info = parse_node(&response.body);
+    Ok(NodeFetch { response, info })
+}
+
+pub fn log_nodes(endpoint: &str, nodes: &NodesFetch) {
+    log::info!("[GetNodes]");
+    soap::log_response("GetNodes", endpoint, &nodes.response);
+    if nodes.response.status < 400 && !nodes.tokens.is_empty() {
+        log::info!("  nodes: {}", nodes.tokens.join(", "));
     }
-    let tokens = parse_node_tokens(&nodes.body);
-    let token = tokens
-        .first()
-        .cloned()
-        .ok_or_else(|| anyhow!("PTZ node token not found in response"))?;
-    log::info!("  nodes: {}", tokens.join(", "));
+}
+
+pub fn log_node(endpoint: &str, node: &NodeFetch) {
     log::info!("[GetNode]");
-    let cmd = onvif_command::get_node(&token);
-    let node = onvif.send_ptz(&cmd).await?;
-    soap::log_response("GetNode", onvif.ptz_endpoint(), &node);
-    if node.status >= 400 {
-        return Err(anyhow!("get node failed with HTTP {}", node.status));
+    soap::log_response("GetNode", endpoint, &node.response);
+    let Some(node_info) = node.info.as_ref() else {
+        return;
+    };
+    log::info!(
+        "node: token={} home_supported={:?} max_presets={:?}",
+        node_info.token,
+        node_info.home_supported,
+        node_info.max_presets
+    );
+    let spaces = format_spaces(&node_info.spaces);
+    if !spaces.is_empty() {
+        log::info!("  spaces: {spaces}");
     }
-    if let Some(node_info) = parse_node(&node.body) {
-        log::info!(
-            "node: token={} home_supported={:?} max_presets={:?}",
-            node_info.token,
-            node_info.home_supported,
-            node_info.max_presets
-        );
-        let spaces = format_spaces(&node_info.spaces);
-        if !spaces.is_empty() {
-            log::info!("  spaces: {spaces}");
-        }
-        return Ok(Some(node_info));
-    }
-    Ok(None)
 }
 
 fn parse_node_tokens(body: &str) -> Vec<String> {
