@@ -26,22 +26,41 @@ mod integration_test {
         });
     }
 
+    fn get_cert_path() -> PathBuf {
+        let current = std::env::current_dir().unwrap();
+        current.join("keys").join("cert.pem")
+    }
+
+    fn get_key_path() -> PathBuf {
+        let current = std::env::current_dir().unwrap();
+        current.join("keys").join("key.pem")
+    }
+
+    fn activate_server(
+        port_num: u16,
+        receiver: tokio::sync::oneshot::Receiver<()>,
+    ) -> tokio::task::JoinHandle<()> {
+        let key_path = get_key_path();
+        let cert_path = get_cert_path();
+        log_init();
+        run_relay_server(
+            port_num,
+            receiver,
+            key_path.to_str().unwrap(),
+            cert_path.to_str().unwrap(),
+        )
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn publish_namespace() -> Result<()> {
-        // relayサーバーをバックグラウンドで起動
         let port_num = get_port();
-        log_init();
         let (relay_shutdown_tx, relay_shutdown_rx) = oneshot::channel();
-        let thread = run_relay_server(port_num, relay_shutdown_rx);
+        activate_server(port_num, relay_shutdown_rx);
         tokio::time::sleep(Duration::from_secs(1)).await; // relayの起動を待つ
 
-        // パスはプロジェクトのルートからの相対パス
-        let client_cert_path = PathBuf::from("../keys/cert.pem");
-        let _client_key_path = PathBuf::from("../keys/key.pem");
-
         let client = Client::new(
-            client_cert_path.to_str().unwrap().to_string(),
+            get_cert_path().to_str().unwrap().to_string(),
             port_num,
             "Client A".to_string(),
         )
@@ -60,20 +79,14 @@ mod integration_test {
     #[tokio::test]
     #[traced_test]
     async fn publish_namespace_already_subscribe_namespace() -> Result<()> {
-        // relayバイナリのパス構築ロジックは削除
         let port_num = get_port();
-        log_init();
-        // relayサーバーをバックグラウンドで起動
         let (relay_shutdown_tx, relay_shutdown_rx) = oneshot::channel();
-        let relay_handle = run_relay_server(port_num, relay_shutdown_rx);
+        let relay_handle = activate_server(port_num, relay_shutdown_rx);
         tokio::time::sleep(Duration::from_secs(1)).await; // relayの起動を待つ
-
-        let client_cert_path = PathBuf::from("../keys/cert.pem");
-        let _client_key_path = PathBuf::from("../keys/key.pem");
 
         // Client Aのインスタンス化と名前空間の公開
         let client_a = Client::new(
-            client_cert_path.to_str().unwrap().to_string(),
+            get_cert_path().to_str().unwrap().to_string(),
             port_num,
             "Client A".to_string(),
         )
@@ -87,7 +100,7 @@ mod integration_test {
 
         // Client Bのインスタンス化と名前空間の購読
         let client_b = Client::new(
-            client_cert_path.to_str().unwrap().to_string(),
+            get_cert_path().to_str().unwrap().to_string(),
             port_num,
             "Client B".to_string(),
         )
@@ -102,7 +115,7 @@ mod integration_test {
 
         // relayサーバーをシャットダウン
         let _ = relay_shutdown_tx.send(());
-        let _ = relay_handle.await?; // relayタスクの終了を待つ
+        relay_handle.await?; // relayタスクの終了を待つ
 
         // Client BがPublishNamespace通知を受け取ったことをアサート
         assert!(logs_contain(
