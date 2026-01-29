@@ -1,148 +1,31 @@
-mod modules;
-
-use modules::event_handler::EventHandler;
-use modules::session_handler::SessionHandler;
-use rcgen::{CertifiedKey, generate_simple_self_signed};
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::{fs, path::Path};
-
-use crate::modules::enums::MOQTMessageReceived;
-use crate::modules::repositories::session_repository::SessionRepository;
-
-use console_subscriber::ConsoleLayer;
-use tracing_appender::rolling;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{self, EnvFilter, Layer, Registry, filter::LevelFilter, fmt};
-
-static CERT_FILE_NAME: &str = "cert.pem";
-static KEY_FILE_NAME: &str = "key.pem";
-static CERT_DIR: &str = "keys";
-
-fn get_cert_path() -> PathBuf {
-    let current = std::env::current_dir().unwrap();
-    current.join(CERT_DIR).join(CERT_FILE_NAME)
-}
-fn get_key_path() -> PathBuf {
-    let current = std::env::current_dir().unwrap();
-    current.join(CERT_DIR).join(KEY_FILE_NAME)
-}
-
-pub fn init_logging(log_level: String) {
-    // tokio-console用のレイヤーとフィルタ(For Development)
-    // let console_filter = EnvFilter::new("tokio::task=trace");
-    // let console_layer = ConsoleLayer::builder()
-    //     .retention(std::time::Duration::from_secs(3600)) // Default: 3600
-    //     .spawn()
-    //     .with_filter(console_filter);
-    // tokio-console用のレイヤーとフィルタ(For Debug)
-    let debug_console_filter =
-        EnvFilter::new("tokio::task=trace,tokio::sync=trace,tokio::timer=trace");
-    let debug_console_layer = ConsoleLayer::builder()
-        .server_addr(([127, 0, 0, 1], 6669))
-        .event_buffer_capacity(1024 * 250) // Default: 102400
-        .client_buffer_capacity(1024 * 7) // Default: 1024
-        .retention(std::time::Duration::from_secs(600)) // Default: 3600
-        .spawn()
-        .with_filter(debug_console_filter);
-
-    // 標準出力用のレイヤーとフィルタ
-    let stdout_layer = fmt::layer()
-        .with_writer(std::io::stdout)
-        .with_ansi(true)
-        .with_filter(
-            EnvFilter::builder()
-                .with_default_directive(log_level.parse().unwrap())
-                .from_env_lossy(),
-        );
-
-    // ログファイル用のレイヤーとフィルタ
-    let file_layer = fmt::layer()
-        .with_writer(rolling::hourly("./log", "output"))
-        // Multi Writer with_ansi option doesn't work https://github.com/tokio-rs/tracing/issues/3116
-        // .with_ansi(false)
-        .with_filter(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::DEBUG.into())
-                .from_env_lossy(),
-        );
-
-    Registry::default()
-        // .with(console_layer)
-        .with(debug_console_layer)
-        .with(stdout_layer)
-        .with(file_layer)
-        .init();
-}
-
-fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
-    unsafe { std::env::set_var("RUST_BACKTRACE", "full") };
-    // init_logging("INFO".to_string());
-    let current = std::env::current_dir()?;
-    tracing::info!("current path: {}", current.to_str().unwrap());
-    if !Path::new(CERT_DIR).exists() {
-        fs::create_dir_all(CERT_DIR).unwrap();
-    }
-
-    if get_cert_path().exists() && get_key_path().exists() {
-        tracing::info!("Certificates already exist");
-        Ok(())
-    } else {
-        let subject_alt_names = vec![
-            "localhost".to_string(),
-            "moqt.research.skyway.io".to_string(),
-        ];
-        let CertifiedKey { cert, signing_key } =
-            generate_simple_self_signed(subject_alt_names).unwrap();
-        let key_pem = signing_key.serialize_pem();
-        fs::write(get_key_path(), key_pem)?;
-        let cert_pem = cert.pem();
-        fs::write(get_cert_path(), cert_pem)?;
-
-        Ok(())
-    }
-}
+use relay::run_relay_server;
+use tokio::sync::oneshot; // oneshot::SenderとReceiverのために追加
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // let file = tracing_appender::rolling::daily("logs", "app.log");
-    // let (nb, _guard) = tracing_appender::non_blocking(file);
-    
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_line_number(true)
-        // .with_writer(nb)
-        .try_init()
-        .ok();
-    create_certs_for_test_if_needed()?;
-    unsafe {
-        backtrace_on_stack_overflow::enable();
-    }
+    // ロギングの初期化 (必要であれば)
+    // tracing_subscriber::fmt()
+    //     .with_max_level(tracing::Level::DEBUG)
+    //     .with_line_number(true)
+    //     .try_init()
+    //     .ok();
 
-    // console_subscriber::init();
-    let key_path = get_key_path().to_str().unwrap().to_string();
-    let cert_path = get_cert_path().to_str().unwrap().to_string();
-    tracing::info!("key_path: {}", key_path);
-    tracing::info!("cert_path: {}", cert_path);
-    let (signal_sender, signal_receiver) = tokio::sync::oneshot::channel::<()>();
+    let (tx, rx) = oneshot::channel();
 
-    let thread = tokio::task::Builder::new()
-        .name("Handler")
-        .spawn(async move {
-            tracing::info!("Handler started");
-            let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
-            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MOQTMessageReceived>();
-            let _handler = SessionHandler::run(key_path, cert_path, repo.clone(), sender);
-            let _manager = EventHandler::run(repo, receiver);
-            // await until the application is shut down.
-            let _ = signal_receiver.await.ok();
-        })
-        .unwrap();
+    // run_relay_serverをバックグラウンドで実行
+    let relay_handle = tokio::spawn(async move {
+        run_relay_server(0, rx).await
+    });
+
     tracing::info!("Ctrl+C to shutdown");
-    tokio::signal::ctrl_c().await.unwrap();
-    tracing::info!("shutdown");
-    signal_sender.send(()).unwrap();
-    thread.await.unwrap();
+    tokio::signal::ctrl_c().await?;
+    tracing::info!("shutdown signal sent");
+    let _ = tx.send(()); // シャットダウンシグナルを送信
+
+    // relay_handleの終了を待つ
+    relay_handle.await? // run_relay_serverのResultを待つ
+        .map_err(|e| anyhow::anyhow!("Relay server failed: {}", e))?; // エラーを伝播
+
+    tracing::info!("Relay server gracefully shutdown.");
     Ok(())
 }

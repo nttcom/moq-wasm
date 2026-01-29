@@ -13,18 +13,17 @@ pub struct SessionHandler {
 
 impl SessionHandler {
     pub fn run(
-        key_path: String,
-        cert_path: String,
+        config: moqt::ServerConfig, // ここを変更
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
     ) -> Self {
-        let config = moqt::ServerConfig {
-            port: 4434,
-            cert_path,
-            key_path,
-            keep_alive_interval_sec: 15,
-        };
-        let endpoint = Endpoint::<QUIC>::create_server(config)
+        // let config = moqt::ServerConfig { // このブロックは削除
+        //     port: 4434,
+        //     cert_path,
+        //     key_path,
+        //     keep_alive_interval_sec: 15,
+        // };
+        let endpoint = Endpoint::<QUIC>::create_server(config) // 修正
             .inspect_err(|e| tracing::error!("failed to create server: {}", e))
             .unwrap();
         let join_handle = Self::create_joinhandle(endpoint, repo, session_event_sender);
