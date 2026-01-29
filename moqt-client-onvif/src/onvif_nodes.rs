@@ -1,4 +1,4 @@
-use crate::{onvif_client::OnvifClient, onvif_command, soap};
+use crate::{onvif_client::OnvifClient, onvif_requests, soap_client};
 use anyhow::Result;
 use roxmltree::Document;
 
@@ -44,24 +44,24 @@ impl PtzNodeInfo {
     }
 }
 pub struct NodesFetch {
-    pub response: soap::SoapResponse,
+    pub response: soap_client::SoapResponse,
     pub tokens: Vec<String>,
 }
 
 pub struct NodeFetch {
-    pub response: soap::SoapResponse,
+    pub response: soap_client::SoapResponse,
     pub info: Option<PtzNodeInfo>,
 }
 
 pub async fn fetch_nodes(onvif: &OnvifClient) -> Result<NodesFetch> {
-    let cmd = onvif_command::get_nodes();
+    let cmd = onvif_requests::get_nodes();
     let response = onvif.send_ptz(&cmd).await?;
     let tokens = parse_node_tokens(&response.body);
     Ok(NodesFetch { response, tokens })
 }
 
 pub async fn fetch_node(onvif: &OnvifClient, token: &str) -> Result<NodeFetch> {
-    let cmd = onvif_command::get_node(token);
+    let cmd = onvif_requests::get_node(token);
     let response = onvif.send_ptz(&cmd).await?;
     let info = parse_node(&response.body);
     Ok(NodeFetch { response, info })
@@ -69,7 +69,7 @@ pub async fn fetch_node(onvif: &OnvifClient, token: &str) -> Result<NodeFetch> {
 
 pub fn log_nodes(endpoint: &str, nodes: &NodesFetch) {
     log::info!("[GetNodes]");
-    soap::log_response("GetNodes", endpoint, &nodes.response);
+    soap_client::log_response("GetNodes", endpoint, &nodes.response);
     if nodes.response.status < 400 && !nodes.tokens.is_empty() {
         log::info!("  nodes: {}", nodes.tokens.join(", "));
     }
@@ -77,7 +77,7 @@ pub fn log_nodes(endpoint: &str, nodes: &NodesFetch) {
 
 pub fn log_node(endpoint: &str, node: &NodeFetch) {
     log::info!("[GetNode]");
-    soap::log_response("GetNode", endpoint, &node.response);
+    soap_client::log_response("GetNode", endpoint, &node.response);
     let Some(node_info) = node.info.as_ref() else {
         return;
     };

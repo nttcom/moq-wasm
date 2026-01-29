@@ -1,9 +1,10 @@
 use crate::{
-    config::Target,
-    onvif_command::{self, OnvifCommand},
-    onvif_nodes, onvif_profiles, onvif_services, ptz_config,
+    app_config::Target,
+    onvif_nodes, onvif_profiles,
+    onvif_requests::{self, OnvifRequest},
+    onvif_services, ptz_config,
     ptz_state::PtzState,
-    soap,
+    soap_client,
 };
 use anyhow::{anyhow, Result};
 use reqwest::Client;
@@ -136,9 +137,14 @@ impl OnvifClient {
     async fn fetch_ptz_config_token(&self, token_hint: Option<&str>) -> Result<(String, String)> {
         log::info!("[GetToken]");
         log::info!("  [GetConfigurations]");
-        let cmd = onvif_command::get_configurations();
+        let cmd = onvif_requests::get_configurations();
         let response = self.send_ptz(&cmd).await?;
-        soap::log_response_with_prefix("  ", "GetConfigurations", self.ptz_endpoint(), &response);
+        soap_client::log_response_with_prefix(
+            "  ",
+            "GetConfigurations",
+            self.ptz_endpoint(),
+            &response,
+        );
         if response.status >= 400 {
             return Err(anyhow!(
                 "get configurations failed with HTTP {}",
@@ -154,9 +160,9 @@ impl OnvifClient {
 
     async fn fetch_ptz_config_options(&self, token: &str) -> Result<String> {
         log::info!("[GetConfigurationOptions]");
-        let cmd = onvif_command::get_configuration_options(token);
+        let cmd = onvif_requests::get_configuration_options(token);
         let response = self.send_ptz(&cmd).await?;
-        soap::log_response("GetConfigurationOptions", self.ptz_endpoint(), &response);
+        soap_client::log_response("GetConfigurationOptions", self.ptz_endpoint(), &response);
         if response.status >= 400 {
             return Err(anyhow!(
                 "get configuration options failed with HTTP {}",
@@ -200,9 +206,9 @@ impl OnvifClient {
         token: &str,
     ) -> Result<Option<onvif_nodes::PtzNodeInfo>> {
         log::info!("[GetConfiguration]");
-        let cmd = onvif_command::get_configuration(token);
+        let cmd = onvif_requests::get_configuration(token);
         let response = self.send_ptz(&cmd).await?;
-        soap::log_response("GetConfiguration", self.ptz_endpoint(), &response);
+        soap_client::log_response("GetConfiguration", self.ptz_endpoint(), &response);
         if response.status >= 400 {
             if is_no_entity_fault(&response.body) {
                 return self.fetch_ptz_node().await;
@@ -221,21 +227,25 @@ impl OnvifClient {
         }
     }
 
-    pub async fn send_device(&self, command: &OnvifCommand) -> Result<soap::SoapResponse> {
+    pub async fn send_device(&self, command: &OnvifRequest) -> Result<soap_client::SoapResponse> {
         self.send_to(&self.device_endpoint, command).await
     }
 
-    pub async fn send_media(&self, command: &OnvifCommand) -> Result<soap::SoapResponse> {
+    pub async fn send_media(&self, command: &OnvifRequest) -> Result<soap_client::SoapResponse> {
         self.send_to(&self.media_endpoint, command).await
     }
 
-    pub async fn send_ptz(&self, command: &OnvifCommand) -> Result<soap::SoapResponse> {
+    pub async fn send_ptz(&self, command: &OnvifRequest) -> Result<soap_client::SoapResponse> {
         self.send_to(&self.ptz_endpoint, command).await
     }
 
-    async fn send_to(&self, endpoint: &str, command: &OnvifCommand) -> Result<soap::SoapResponse> {
+    async fn send_to(
+        &self,
+        endpoint: &str,
+        command: &OnvifRequest,
+    ) -> Result<soap_client::SoapResponse> {
         let action = format!("{}/{}", command.namespace, command.operation);
-        soap::send(
+        soap_client::send(
             &self.client,
             &self.target,
             endpoint,

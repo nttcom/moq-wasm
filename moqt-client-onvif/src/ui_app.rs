@@ -1,8 +1,8 @@
-use crate::config::Target;
-use crate::ptz_panel::Controls;
+use crate::app_config::Target;
 use crate::ptz_worker::Controller;
-use crate::rtsp_worker::Stream;
-use crate::video_view::VideoView;
+use crate::rtsp_stream::Stream;
+use crate::ui_ptz::Controls;
+use crate::ui_video::VideoView;
 use anyhow::{anyhow, Result};
 use eframe::egui;
 

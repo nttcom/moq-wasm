@@ -1,11 +1,18 @@
-use crate::config::Target;
-use crate::wsse;
+use crate::app_config::Target;
+use crate::wsse_auth;
 use anyhow::{Context, Result};
 use reqwest::Client;
 
 pub struct SoapResponse {
     pub status: u16,
     pub body: String,
+}
+
+pub fn build(target: &Target) -> Result<Client> {
+    Client::builder()
+        .timeout(target.timeout())
+        .build()
+        .context("http client build failed")
 }
 
 pub fn log_response(action: &str, endpoint: &str, response: &SoapResponse) {
@@ -62,7 +69,7 @@ pub async fn send(
 
 fn build_envelope(target: &Target, body: &str, namespaces: &str) -> Result<String> {
     let (user, pass) = target.credentials();
-    let header = wsse::build_wsse_header(user, pass)?;
+    let header = wsse_auth::build_wsse_header(user, pass)?;
     Ok(format!(
         r#"<s:Envelope
   xmlns:s="http://www.w3.org/2003/05/soap-envelope"{namespaces}>

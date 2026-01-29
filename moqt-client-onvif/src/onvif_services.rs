@@ -1,4 +1,4 @@
-use crate::{onvif_client::OnvifClient, onvif_command};
+use crate::{onvif_client::OnvifClient, onvif_requests};
 use roxmltree::Document;
 pub struct ServiceEndpoints {
     pub media_endpoint: String,
@@ -7,7 +7,7 @@ pub struct ServiceEndpoints {
 pub async fn discover_endpoints(onvif: &OnvifClient) -> ServiceEndpoints {
     let mut media = None;
     let mut ptz = None;
-    let cmd = onvif_command::get_services();
+    let cmd = onvif_requests::get_services();
     if let Ok(services) = onvif.send_device(&cmd).await {
         if services.status < 400 {
             let parsed = parse_services(&services.body);
@@ -16,7 +16,7 @@ pub async fn discover_endpoints(onvif: &OnvifClient) -> ServiceEndpoints {
         }
     }
     if media.is_none() || ptz.is_none() {
-        let cmd = onvif_command::get_capabilities();
+        let cmd = onvif_requests::get_capabilities();
         if let Ok(caps) = onvif.send_device(&cmd).await {
             if caps.status < 400 {
                 let parsed = parse_capabilities(&caps.body);
