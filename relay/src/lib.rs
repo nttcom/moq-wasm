@@ -22,15 +22,13 @@ pub static KEY_FILE_NAME: &str = "key.pem";
 pub static CERT_DIR: &str = "keys";
 
 pub fn get_cert_path() -> PathBuf {
-    let mut current = std::env::current_dir().unwrap();
+    let current = std::env::current_dir().unwrap();
     // Assuming keys directory is in the workspace root
     // current_dir is integration-test/, so pop once to get to moq-wasm/
-    current.pop(); // Go up to workspace root
     current.join(CERT_DIR).join(CERT_FILE_NAME)
 }
 pub fn get_key_path() -> PathBuf {
-    let mut current = std::env::current_dir().unwrap();
-    current.pop(); // Go up to workspace root
+    let current = std::env::current_dir().unwrap();
     current.join(CERT_DIR).join(KEY_FILE_NAME)
 }
 
@@ -105,7 +103,8 @@ pub fn run_relay_server(port: u16, shutdown_signal: Receiver<()>) -> tokio::task
     let cert_path = get_cert_path().to_str().unwrap().to_string();
     tracing::info!("key_path: {}", key_path);
     tracing::info!("cert_path: {}", cert_path);
-    // let (signal_sender, shutdown_signal) = tokio::sync::oneshot::channel::<()>(); // これを削除
+
+    let _ = create_certs_for_test_if_needed();
 
     tokio::task::Builder::new()
         .name("Handler")

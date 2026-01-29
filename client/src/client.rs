@@ -271,7 +271,7 @@ impl Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        tracing::info!("Client has been dropped.");
+        tracing::info!("Client dropped.");
         self.join_handle.abort();
     }
 }

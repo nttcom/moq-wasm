@@ -98,7 +98,7 @@ impl SequenceHandler {
         tracing::info!("SequenceHandler::subscribe namespace: {}", session_id);
         let track_namespace_prefix = handler.track_namespace_prefix();
         tracing::info!(
-            "New namespace prefix '{}' has been subscribed.",
+            "New namespace prefix '{}' is subscribed.",
             track_namespace_prefix
         );
         self.table
@@ -155,7 +155,7 @@ impl SequenceHandler {
         let full_track_namespace = format!("{}:{}", track_namespace, track_name);
 
         tracing::info!(
-            "New track '{}' (alias '{}') has been published.",
+            "New track '{}' (alias '{}') is published.",
             full_track_namespace,
             track_alias
         );
@@ -201,7 +201,7 @@ impl SequenceHandler {
         let track_namespace = handler.track_namespace();
         let track_name = handler.track_name();
         let full_track_namespace = format!("{}:{}", track_namespace, track_name);
-        tracing::debug!("New track '{}' has been subscribed.", full_track_namespace,);
+        tracing::debug!("New track '{}' is subscribed.", full_track_namespace,);
 
         let pub_handler = self
             .table

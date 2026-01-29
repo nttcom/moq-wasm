@@ -61,7 +61,7 @@ impl EventHandler {
 
 impl Drop for EventHandler {
     fn drop(&mut self) {
-        tracing::info!("Manager has been dropped.");
+        tracing::info!("Manager dropped.");
         self.session_event_watcher.abort();
     }
 }

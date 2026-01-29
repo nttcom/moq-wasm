@@ -19,7 +19,7 @@ impl<T: TransportProtocol> ReceiveStreamType<T> for DatagramReceiver<T> {
     async fn receive(&mut self) -> anyhow::Result<DataObject> {
         let result = match self.receiver.recv().await {
             Some(object) => object,
-            None => bail!("Sender has been dropped."),
+            None => bail!("Sender dropped."),
         };
         match result {
             StreamWithObject::Datagram(datagram) => Ok(DataObject::ObjectDatagram(datagram)),

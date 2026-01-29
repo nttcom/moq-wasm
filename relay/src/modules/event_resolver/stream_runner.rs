@@ -44,7 +44,7 @@ impl StreamTaskRunner {
 
 impl Drop for StreamTaskRunner {
     fn drop(&mut self) {
-        tracing::info!("Runner has been dropped.");
+        tracing::info!("Runner dropped.");
         self.join_handle.abort();
     }
 }

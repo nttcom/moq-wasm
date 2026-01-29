@@ -56,14 +56,14 @@ impl<T: TransportProtocol> Session<T> {
     pub async fn receive_event(&self) -> anyhow::Result<SessionEvent<T>> {
         match self.event_receiver.lock().await.recv().await {
             Some(v) => Ok(v),
-            None => bail!("Sender has been dropped."),
+            None => bail!("Sender dropped."),
         }
     }
 }
 
 impl<T: TransportProtocol> Drop for Session<T> {
     fn drop(&mut self) {
-        tracing::info!("Session has been dropped.");
+        tracing::info!("Session dropped.");
         self.message_receive_join_handle.abort();
         self.datagram_receive_thread.abort();
     }

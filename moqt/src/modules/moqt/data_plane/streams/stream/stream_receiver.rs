@@ -24,7 +24,7 @@ impl<T: TransportProtocol> StreamReceiver<T> {
                 bail!("failed to receive message: {:?}", e)
             }
             if let Some(size) = message.unwrap() {
-                tracing::debug!("Size {} message has been received", size);
+                tracing::debug!("Size {} message received", size);
                 total_message.extend_from_slice(&bytes[..size]);
                 if size == Self::RECEIVE_BYTES_CAPACITY {
                     tracing::debug!("Retry...");
