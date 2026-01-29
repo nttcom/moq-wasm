@@ -4,17 +4,17 @@ use tokio::sync::oneshot; // oneshot::SenderとReceiverのために追加
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // ロギングの初期化 (必要であれば)
-    // tracing_subscriber::fmt()
-    //     .with_max_level(tracing::Level::DEBUG)
-    //     .with_line_number(true)
-    //     .try_init()
-    //     .ok();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_line_number(true)
+        .try_init()
+        .ok();
 
     let (tx, rx) = oneshot::channel();
 
     // run_relay_serverをバックグラウンドで実行
     let relay_handle = tokio::spawn(async move {
-        run_relay_server(0, rx).await
+        run_relay_server(4434, rx).await
     });
 
     tracing::info!("Ctrl+C to shutdown");

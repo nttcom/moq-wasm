@@ -62,7 +62,7 @@ impl SessionHandler {
 
 impl Drop for SessionHandler {
     fn drop(&mut self) {
-        tracing::info!("Handle has been dropped.");
+        tracing::info!("Handle dropped.");
         self.join_handle.abort();
     }
 }

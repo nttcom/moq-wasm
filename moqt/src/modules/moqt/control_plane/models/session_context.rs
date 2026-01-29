@@ -140,7 +140,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             .send(&bytes)
             .await
             .inspect_err(|e| tracing::error!("failed to send. :{}", e.to_string()))
-            .inspect(|_| tracing::debug!("ServerSetup has been sent."))
+            .inspect(|_| tracing::debug!("ServerSetup is sent."))
     }
 
     pub(crate) fn get_request_id(&self) -> u64 {
@@ -153,7 +153,7 @@ impl<T: TransportProtocol> SessionContext<T> {
 
 impl<T: TransportProtocol> Drop for SessionContext<T> {
     fn drop(&mut self) {
-        tracing::info!("Session has been dropped.");
+        tracing::info!("Session dropped.");
         // send goaway
     }
 }

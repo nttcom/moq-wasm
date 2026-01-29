@@ -63,7 +63,7 @@ impl SessionRepository {
                             MOQTSessionEventResolver::resolve(session_id, event.unwrap());
                         event_sender.send(session_event).unwrap();
                     } else {
-                        tracing::error!("Session has been dropped.");
+                        tracing::error!("Session dropped.");
                         break;
                     }
                 }

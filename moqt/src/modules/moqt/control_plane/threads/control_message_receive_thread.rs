@@ -55,7 +55,7 @@ impl ControlMessageReceiveThread {
                                 break;
                             }
                         };
-                        tracing::info!("Message has been received.");
+                        tracing::info!("Message received.");
                         let message_type = match get_message_type(&mut bytes) {
                             Ok(m) => m,
                             Err(e) => {
@@ -84,7 +84,7 @@ impl ControlMessageReceiveThread {
                             }
                         }
                     } else {
-                        tracing::error!("Session has been dropped.");
+                        tracing::error!("Session dropped.");
                         break;
                     }
                 }
@@ -106,7 +106,7 @@ impl ControlMessageReceiveThread {
                 tracing::debug!("Event: Subscribe");
                 let result = Subscribe::decode(&mut bytes_mut);
                 if result.is_none() {
-                    tracing::warn!("Error has detected.");
+                    tracing::warn!("Error detected.");
                     DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
                 } else {
                     let result = result.unwrap();

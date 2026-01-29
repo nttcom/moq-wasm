@@ -41,12 +41,12 @@ impl Table for HashMapTable {
             .is_some()
         {
             tracing::error!(
-                "'{}' has been registered for namespace publication.",
+                "'{}' is registered for namespace publication.",
                 track_namespace
             );
             false
         } else {
-            tracing::info!("New namespace '{}' has been subscribed.", track_namespace);
+            tracing::info!("New namespace '{}' is subscribed.", track_namespace);
             self.publisher_namespaces
                 .insert(track_namespace.to_string(), session_id);
             true
@@ -56,13 +56,13 @@ impl Table for HashMapTable {
     fn register_subscribe_namespace(&self, session_id: Uuid, track_namespace_prefix: String) {
         if let Some(dash_set) = self.subscriber_namespaces.get_mut(&track_namespace_prefix) {
             tracing::info!(
-                "The namespace prefix '{}' has been registered for namespace subscription.",
+                "The namespace prefix '{}' is registered for namespace subscription.",
                 track_namespace_prefix
             );
             dash_set.insert(session_id);
         } else {
             tracing::info!(
-                "New namespace prefix '{}' has been subscribed.",
+                "New namespace prefix '{}' is subscribed.",
                 track_namespace_prefix
             );
             let dash_set = DashSet::new();

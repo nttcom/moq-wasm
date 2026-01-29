@@ -29,7 +29,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let inner =
             SessionContext::<T>::client(transport_conn, moqt_sender, &mut moqt_receiver, sender)
                 .await
-                .inspect(|_| tracing::info!("Session has been created."))?;
+                .inspect(|_| tracing::info!("Session is created."))?;
         Ok(Session::<T>::new(moqt_receiver, inner, receiver))
     }
 
@@ -43,7 +43,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let inner =
             SessionContext::<T>::server(transport_conn, moqt_sender, &mut moqt_receiver, sender)
                 .await
-                .inspect(|_| tracing::info!("Session has been established."))?;
+                .inspect(|_| tracing::info!("Session is established."))?;
         Ok(Session::<T>::new(moqt_receiver, inner, receiver))
     }
 }
