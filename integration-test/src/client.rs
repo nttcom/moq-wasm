@@ -9,10 +9,9 @@ use std::{
 
 use anyhow::bail;
 use moqt::{DatagramField, Endpoint, QUIC, Session, SubscribeOption};
-
 use crate::stream_runner::StreamTaskRunner;
 
-pub struct Client { // pub(crate) -> pub
+pub struct Client {
     label: String,
     join_handle: tokio::task::JoinHandle<()>,
     track_alias: Arc<AtomicU64>,
@@ -22,9 +21,10 @@ pub struct Client { // pub(crate) -> pub
 }
 
 impl Client {
-    pub async fn new(cert_path: String, label: String) -> anyhow::Result<Self> { // pub(crate) -> pub
+    pub async fn new(cert_path: String, port: u16, label: String) -> anyhow::Result<Self> { // pub(crate) -> pub
         let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
-        let url = url::Url::from_str("moqt://localhost:4434")?; // ここも変更
+        let url_str = format!("moqt://localhost:{}", port);
+        let url = url::Url::from_str(&url_str)?;
         let host = url.host_str().unwrap();
         let remote_address = (host, url.port().unwrap_or(4433))
             .to_socket_addrs()?

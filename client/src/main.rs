@@ -60,11 +60,7 @@ async fn main() -> anyhow::Result<()> {
         .ok();
 
     let current_path = std::env::current_dir().expect("failed to get current path");
-    let cert_path = format!(
-        "{}{}",
-        current_path.to_str().unwrap(),
-        "/keys/cert.pem"
-    );
+    let cert_path = format!("{}{}", current_path.to_str().unwrap(), "/keys/cert.pem");
     tracing::info!("cert_path: {}", cert_path);
     let mut thread_vec = vec![];
     let (signal_sender, signal_receiver) = tokio::sync::broadcast::channel::<()>(1);
