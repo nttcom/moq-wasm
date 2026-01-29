@@ -1,5 +1,5 @@
-use crate::config::Target;
-use crate::rtsp_types::Frame;
+use crate::app_config::Target;
+use crate::rtsp_frame::Frame;
 use ffmpeg_next as ffmpeg;
 use std::sync::mpsc::Sender;
 pub fn run(target: Target, tx: Sender<Frame>, err_tx: Sender<String>) {

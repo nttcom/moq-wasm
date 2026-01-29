@@ -1,4 +1,4 @@
-use crate::rtsp_worker::Stream;
+use crate::rtsp_stream::Stream;
 use eframe::egui;
 
 pub struct VideoView {

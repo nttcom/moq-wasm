@@ -1,4 +1,4 @@
-use crate::{onvif_client::OnvifClient, onvif_command, soap};
+use crate::{onvif_client::OnvifClient, onvif_requests, soap_client};
 use anyhow::{anyhow, Result};
 use roxmltree::Document;
 
@@ -8,10 +8,10 @@ pub struct ProfileTokens {
 }
 
 pub async fn fetch(onvif: &OnvifClient) -> Result<ProfileTokens> {
-    let cmd = onvif_command::get_profiles();
+    let cmd = onvif_requests::get_profiles();
     let response = onvif.send_media(&cmd).await?;
     if response.status >= 400 {
-        soap::log_response("GetProfiles", onvif.media_endpoint(), &response);
+        soap_client::log_response("GetProfiles", onvif.media_endpoint(), &response);
         return Err(anyhow!("get profiles failed with HTTP {}", response.status));
     }
     let (profile_token, config_token) = extract_profile_tokens(&response.body)?;

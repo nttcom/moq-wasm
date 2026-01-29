@@ -20,7 +20,7 @@ pub const PAN_TILT_SPEED_SPACE: &str =
 pub const ZOOM_SPEED_SPACE: &str =
     "http://www.onvif.org/ver10/tptz/ZoomSpaces/ZoomGenericSpeedSpace";
 
-pub struct OnvifCommand {
+pub struct OnvifRequest {
     pub namespace: &'static str,
     pub operation: &'static str,
     pub body: String,
@@ -55,7 +55,7 @@ pub struct PtzVelocitySpaces<'a> {
     pub zoom: Option<&'a str>,
 }
 
-pub fn get_services() -> OnvifCommand {
+pub fn get_services() -> OnvifRequest {
     build(
         DEVICE_ACTION_NS,
         "GetServices",
@@ -66,7 +66,7 @@ pub fn get_services() -> OnvifCommand {
     )
 }
 
-pub fn get_capabilities() -> OnvifCommand {
+pub fn get_capabilities() -> OnvifRequest {
     build(
         DEVICE_ACTION_NS,
         "GetCapabilities",
@@ -77,7 +77,7 @@ pub fn get_capabilities() -> OnvifCommand {
     )
 }
 
-pub fn get_profiles() -> OnvifCommand {
+pub fn get_profiles() -> OnvifRequest {
     build(
         MEDIA_ACTION_NS,
         "GetProfiles",
@@ -85,7 +85,7 @@ pub fn get_profiles() -> OnvifCommand {
     )
 }
 
-pub fn get_configurations() -> OnvifCommand {
+pub fn get_configurations() -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "GetConfigurations",
@@ -93,7 +93,7 @@ pub fn get_configurations() -> OnvifCommand {
     )
 }
 
-pub fn get_configuration(token: &str) -> OnvifCommand {
+pub fn get_configuration(token: &str) -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "GetConfiguration",
@@ -104,7 +104,7 @@ pub fn get_configuration(token: &str) -> OnvifCommand {
     )
 }
 
-pub fn get_configuration_options(token: &str) -> OnvifCommand {
+pub fn get_configuration_options(token: &str) -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "GetConfigurationOptions",
@@ -115,7 +115,7 @@ pub fn get_configuration_options(token: &str) -> OnvifCommand {
     )
 }
 
-pub fn get_nodes() -> OnvifCommand {
+pub fn get_nodes() -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "GetNodes",
@@ -123,7 +123,7 @@ pub fn get_nodes() -> OnvifCommand {
     )
 }
 
-pub fn get_node(token: &str) -> OnvifCommand {
+pub fn get_node(token: &str) -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "GetNode",
@@ -138,7 +138,7 @@ pub fn absolute_move(
     profile: &str,
     movement: PtzMoveRequest,
     spaces: PtzMoveSpaces<'_>,
-) -> OnvifCommand {
+) -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "AbsoluteMove",
@@ -150,7 +150,7 @@ pub fn relative_move(
     profile: &str,
     movement: PtzMoveRequest,
     spaces: PtzMoveSpaces<'_>,
-) -> OnvifCommand {
+) -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "RelativeMove",
@@ -162,7 +162,7 @@ pub fn continuous_move(
     profile: &str,
     velocity: PtzVelocityRequest,
     spaces: PtzVelocitySpaces<'_>,
-) -> OnvifCommand {
+) -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "ContinuousMove",
@@ -170,12 +170,12 @@ pub fn continuous_move(
     )
 }
 
-pub fn stop(profile: &str, pan_tilt: bool, zoom: bool) -> OnvifCommand {
+pub fn stop(profile: &str, pan_tilt: bool, zoom: bool) -> OnvifRequest {
     build(PTZ_ACTION_NS, "Stop", stop_body(profile, pan_tilt, zoom))
 }
 
-fn build(namespace: &'static str, operation: &'static str, body: String) -> OnvifCommand {
-    OnvifCommand {
+fn build(namespace: &'static str, operation: &'static str, body: String) -> OnvifRequest {
+    OnvifRequest {
         namespace,
         operation,
         body,

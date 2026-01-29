@@ -1,10 +1,9 @@
-use crate::config::Target;
-use crate::http_client;
+use crate::app_config::Target;
 use crate::onvif_client::OnvifClient;
-use crate::onvif_command;
+use crate::onvif_requests;
 use crate::ptz_config::PtzRange;
 use crate::ptz_state::PtzState;
-use crate::soap;
+use crate::soap_client;
 use anyhow::{anyhow, Result};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -71,7 +70,7 @@ fn run_worker(
         Ok(runtime) => runtime,
         Err(err) => return send_init_error(&err_tx, format!("tokio runtime init failed: {err}")),
     };
-    let client = match http_client::build(&target) {
+    let client = match soap_client::build(&target) {
         Ok(client) => client,
         Err(err) => return send_init_error(&err_tx, err.to_string()),
     };
@@ -97,13 +96,13 @@ fn run_worker(
             } => {
                 position.set_absolute(pan, tilt, zoom, &range);
                 let speed = speed_range.clamp(speed);
-                let movement = onvif_command::PtzMoveRequest {
+                let movement = onvif_requests::PtzMoveRequest {
                     pan: position.pan,
                     tilt: position.tilt,
                     zoom: position.zoom,
                     speed,
                 };
-                let cmd = onvif_command::absolute_move(
+                let cmd = onvif_requests::absolute_move(
                     onvif.profile_token(),
                     movement,
                     absolute_spaces(&range),
@@ -119,13 +118,13 @@ fn run_worker(
                 let (pan_delta, tilt_delta, zoom_delta) =
                     position.apply_relative(pan, tilt, zoom, &range);
                 let speed = speed_range.clamp(speed);
-                let movement = onvif_command::PtzMoveRequest {
+                let movement = onvif_requests::PtzMoveRequest {
                     pan: pan_delta,
                     tilt: tilt_delta,
                     zoom: zoom_delta,
                     speed,
                 };
-                let cmd = onvif_command::relative_move(
+                let cmd = onvif_requests::relative_move(
                     onvif.profile_token(),
                     movement,
                     relative_spaces(&range),
@@ -144,8 +143,8 @@ fn run_worker(
                 let pan = pan_range.clamp(pan * speed);
                 let tilt = tilt_range.clamp(tilt * speed);
                 let zoom = zoom_range.clamp(zoom * speed);
-                let velocity = onvif_command::PtzVelocityRequest { pan, tilt, zoom };
-                let cmd = onvif_command::continuous_move(
+                let velocity = onvif_requests::PtzVelocityRequest { pan, tilt, zoom };
+                let cmd = onvif_requests::continuous_move(
                     onvif.profile_token(),
                     velocity,
                     continuous_spaces(&range),
@@ -153,19 +152,19 @@ fn run_worker(
                 send_ptz_command(&runtime, &onvif, cmd)
             }
             Command::Stop => {
-                let cmd = onvif_command::stop(onvif.profile_token(), true, true);
+                let cmd = onvif_requests::stop(onvif.profile_token(), true, true);
                 send_ptz_command(&runtime, &onvif, cmd)
             }
             Command::Center { speed } => {
                 position.center(&range);
                 let speed = speed_range.clamp(speed);
-                let movement = onvif_command::PtzMoveRequest {
+                let movement = onvif_requests::PtzMoveRequest {
                     pan: position.pan,
                     tilt: position.tilt,
                     zoom: position.zoom,
                     speed,
                 };
-                let cmd = onvif_command::absolute_move(
+                let cmd = onvif_requests::absolute_move(
                     onvif.profile_token(),
                     movement,
                     absolute_spaces(&range),
@@ -184,12 +183,12 @@ fn send_init_error(err_tx: &Sender<String>, message: String) {
 fn send_ptz_command(
     runtime: &tokio::runtime::Runtime,
     onvif: &OnvifClient,
-    command: onvif_command::OnvifCommand,
+    command: onvif_requests::OnvifRequest,
 ) -> Result<()> {
     let operation = command.operation;
     let response = runtime.block_on(onvif.send_ptz(&command))?;
     if response.status >= 400 {
-        soap::log_response(operation, onvif.ptz_endpoint(), &response);
+        soap_client::log_response(operation, onvif.ptz_endpoint(), &response);
         return Err(anyhow!("{operation} failed with HTTP {}", response.status));
     }
     Ok(())
@@ -200,8 +199,8 @@ struct Position {
     zoom: f32,
 }
 
-fn absolute_spaces<'a>(range: &'a PtzRange) -> onvif_command::PtzMoveSpaces<'a> {
-    onvif_command::PtzMoveSpaces {
+fn absolute_spaces<'a>(range: &'a PtzRange) -> onvif_requests::PtzMoveSpaces<'a> {
+    onvif_requests::PtzMoveSpaces {
         pan_tilt: range.absolute_pan_tilt_space(),
         zoom: range.absolute_zoom_space(),
         pan_tilt_speed: range.speed_pan_tilt_space(),
@@ -209,8 +208,8 @@ fn absolute_spaces<'a>(range: &'a PtzRange) -> onvif_command::PtzMoveSpaces<'a> 
     }
 }
 
-fn relative_spaces<'a>(range: &'a PtzRange) -> onvif_command::PtzMoveSpaces<'a> {
-    onvif_command::PtzMoveSpaces {
+fn relative_spaces<'a>(range: &'a PtzRange) -> onvif_requests::PtzMoveSpaces<'a> {
+    onvif_requests::PtzMoveSpaces {
         pan_tilt: range.relative_pan_tilt_space(),
         zoom: range.relative_zoom_space(),
         pan_tilt_speed: range.speed_pan_tilt_space(),
@@ -218,8 +217,8 @@ fn relative_spaces<'a>(range: &'a PtzRange) -> onvif_command::PtzMoveSpaces<'a> 
     }
 }
 
-fn continuous_spaces<'a>(range: &'a PtzRange) -> onvif_command::PtzVelocitySpaces<'a> {
-    onvif_command::PtzVelocitySpaces {
+fn continuous_spaces<'a>(range: &'a PtzRange) -> onvif_requests::PtzVelocitySpaces<'a> {
+    onvif_requests::PtzVelocitySpaces {
         pan_tilt: range.continuous_pan_tilt_space(),
         zoom: range.continuous_zoom_space(),
     }

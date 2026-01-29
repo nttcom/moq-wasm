@@ -1,6 +1,6 @@
-use crate::config::Target;
-use crate::rtsp_decode;
-use crate::rtsp_types::Frame;
+use crate::app_config::Target;
+use crate::rtsp_decoder;
+use crate::rtsp_frame::Frame;
 use anyhow::Result;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -14,7 +14,7 @@ impl Stream {
     pub fn new(target: Target) -> Result<Self> {
         let (tx, rx) = mpsc::channel();
         let (err_tx, err_rx) = mpsc::channel();
-        thread::spawn(move || rtsp_decode::run(target, tx, err_tx));
+        thread::spawn(move || rtsp_decoder::run(target, tx, err_tx));
         Ok(Self { rx, err_rx })
     }
 
