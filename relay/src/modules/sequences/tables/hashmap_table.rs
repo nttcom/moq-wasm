@@ -80,7 +80,9 @@ impl Table for HashMapTable {
         let combined = DashSet::new();
         self.subscriber_namespaces
             .iter()
-            .filter(|entry| entry.key().starts_with(track_namespace))
+            // Check if the published namespace (track_namespace) falls under the subscribed prefix (entry.key())
+            // Example: Published "room/member" starts with Subscribed "room" -> Match
+            .filter(|entry| track_namespace.starts_with(entry.key()))
             .for_each(|entry| {
                 entry.value().iter().for_each(|session_id| {
                     combined.insert(*session_id);
