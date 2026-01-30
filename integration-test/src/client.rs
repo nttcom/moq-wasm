@@ -10,6 +10,7 @@ use std::{
 use anyhow::bail;
 use moqt::{DatagramField, Endpoint, QUIC, Session, SubscribeOption};
 use crate::stream_runner::StreamTaskRunner;
+use tokio::sync::mpsc::UnboundedSender;
 
 pub struct Client {
     label: String,
@@ -21,7 +22,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub async fn new(cert_path: String, port: u16, label: String) -> anyhow::Result<Self> { // pub(crate) -> pub
+    pub async fn new(cert_path: String, port: u16, label: String, notification_sender: Option<UnboundedSender<String>>) -> anyhow::Result<Self> { // pub(crate) -> pub
         let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
         let url_str = format!("moqt://localhost:{}", port);
         let url = url::Url::from_str(&url_str)?;
@@ -41,7 +42,7 @@ impl Client {
         };
         let track_alias = Arc::new(AtomicU64::new(0));
         let (publisher, subscriber) = session.create_publisher_subscriber_pair();
-        let join_handle = Self::create_receiver(label.clone(), session, track_alias.clone());
+        let join_handle = Self::create_receiver(label.clone(), session, track_alias.clone(), notification_sender);
 
         Ok(Self {
             label,
@@ -57,6 +58,7 @@ impl Client {
         label: String,
         session: Session<moqt::QUIC>,
         track_alias: Arc<AtomicU64>,
+        notification_sender: Option<UnboundedSender<String>>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .spawn(async move {
@@ -73,8 +75,13 @@ impl Client {
                             tracing::info!(
                                 "Received: {} Publish Namespace: {}",
                                 label,
-                                publish_namespace_handler.track_namespace
+                                &publish_namespace_handler.track_namespace
                             );
+                            if let Some(sender) = &notification_sender {
+                                if sender.send(publish_namespace_handler.track_namespace.clone()).is_err() {
+                                    tracing::error!("Failed to send notification");
+                                }
+                            }
                             let _ = publish_namespace_handler.ok().await;
                         }
                         moqt::SessionEvent::SubscribeNameSpace(subscribe_namespace_handler) => {

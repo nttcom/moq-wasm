@@ -63,6 +63,7 @@ mod integration_test {
             get_cert_path().to_str().unwrap().to_string(),
             port_num,
             "Client A".to_string(),
+            None,
         )
         .await?;
         let result = client.publish_namespace("room/member".to_string()).await;
@@ -89,6 +90,7 @@ mod integration_test {
             get_cert_path().to_str().unwrap().to_string(),
             port_num,
             "Client A".to_string(),
+            None,
         )
         .await?;
         let publish_namespace_a_result =
@@ -99,10 +101,12 @@ mod integration_test {
         );
 
         // Client Bのインスタンス化と名前空間の購読
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let client_b = Client::new(
             get_cert_path().to_str().unwrap().to_string(),
             port_num,
             "Client B".to_string(),
+            Some(tx),
         )
         .await?;
         let subscribe_namespace_b_result = client_b.subscribe_namespace("room".to_string()).await;
@@ -111,16 +115,17 @@ mod integration_test {
             "Client B subscribe_namespace should return Ok"
         );
 
-        tokio::time::sleep(Duration::from_secs(2)).await; // イベントが伝播する時間を確保
+        // Client BがPublishNamespace通知を受け取ったことをアサート
+        let received_namespace = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        assert!(received_namespace.is_ok(), "Did not receive notification in time");
+        assert_eq!(
+            received_namespace.unwrap().unwrap(),
+            "room/member".to_string()
+        );
 
         // relayサーバーをシャットダウン
         let _ = relay_shutdown_tx.send(());
         relay_handle.await?; // relayタスクの終了を待つ
-
-        // Client BがPublishNamespace通知を受け取ったことをアサート
-        assert!(logs_contain(
-            "Received: Client B Publish Namespace: room/member"
-        ));
 
         Ok(())
     }
