@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::modules::{
-    core::{data_object::DataObject, data_receiver::DataReceiver, data_sender::DataSender},
+    core::{data_receiver::DataReceiver, data_sender::DataSender},
     enums::{FilterType, GroupOrder},
     relaies::{
         caches::cache_map::CacheMap, object_sender::ObjectSender, relay_properties::RelayProperties,
@@ -14,16 +14,13 @@ pub(crate) struct Relay {
 
 impl Relay {
     pub(crate) fn add_object_receiver(&mut self, mut data_receiver: Box<dyn DataReceiver>) {
-        let track_alias = data_receiver.track_alias();
+        let track_alias = data_receiver.get_track_alias();
         self.initialize_if_needed(track_alias);
         let queue = self.relay_properties.object_queue.clone();
         self.relay_properties.joinset.spawn(async move {
             tracing::info!("add object receiver");
             while let Ok(data_object) = data_receiver.receive_object().await {
                 tracing::info!("receive object");
-                let data_object = DataObject {
-                    moqt_data_object: data_object,
-                };
                 let queue = queue.get_mut(&track_alias);
                 if queue.is_none() {
                     tracing::error!("Track alias {} not found in object queue", track_alias);

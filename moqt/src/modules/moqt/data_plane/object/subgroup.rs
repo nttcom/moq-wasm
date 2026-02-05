@@ -180,7 +180,7 @@ impl SubgroupObject {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubgroupHeader {
     pub message_type: SubgroupHeaderType,
     pub track_alias: u64,

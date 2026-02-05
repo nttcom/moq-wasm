@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::modules::{
-    core::data_sender::DataSender,
+    core::data_sender::{DataSender, datagram_sender::DatagramSender, stream_sender::StreamSender},
     enums::{FilterType, GroupOrder},
 };
 
@@ -25,11 +25,13 @@ impl<T: moqt::TransportProtocol> PublishedResource for moqt::PublishedResource<T
 
     async fn new_stream(&self) -> anyhow::Result<Box<dyn DataSender>> {
         let sender = self.create_stream().await?;
+        let sender = StreamSender::new(sender);
         Ok(Box::new(sender))
     }
 
     fn new_datagram(&self) -> Box<dyn DataSender> {
         let sender = self.create_datagram();
+        let sender = DatagramSender::new(sender);
         Box::new(sender)
     }
 }

@@ -16,7 +16,7 @@ impl ObjectSender {
     ) {
         let group = cache.get_group(group_id).await;
         for object in group.read().await.iter() {
-            match sender.send_object(object.moqt_data_object.clone()).await {
+            match sender.send_object((**object).clone()).await {
                 Ok(_) => {
                     tracing::debug!("Latest object sent successfully");
                 }
@@ -34,8 +34,8 @@ impl ObjectSender {
     ) {
         let object = receiver.changed().await;
         if object.is_ok() {
-            let data_object = receiver.borrow().as_ref().unwrap().moqt_data_object.clone();
-            match sender.send_object(data_object).await {
+            let data_object = receiver.borrow().as_ref().unwrap().clone();
+            match sender.send_object((*data_object).clone()).await {
                 Ok(_) => {
                     tracing::debug!("Latest object sent successfully");
                 }
@@ -66,7 +66,7 @@ impl ObjectSender {
                     start_flag = true;
                 }
                 if start_flag {
-                    match sender.send_object(object.moqt_data_object.clone()).await {
+                    match sender.send_object((**object).clone()).await {
                         Ok(_) => {
                             tracing::debug!("Latest object sent successfully");
                         }
@@ -82,7 +82,7 @@ impl ObjectSender {
                     start_flag = true;
                 }
                 if start_flag {
-                    match sender.send_object(object.moqt_data_object.clone()).await {
+                    match sender.send_object((**object).clone()).await {
                         Ok(_) => {
                             tracing::debug!("Latest object sent successfully");
                         }

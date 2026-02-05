@@ -8,8 +8,7 @@ use crate::{
             models::session_context::SessionContext,
         },
         data_plane::streams::{
-            data_sender::DataSender, datagram::datagram_sender::DatagramSender,
-            stream::stream_data_sender::StreamDataSender,
+            datagram::datagram_sender::DatagramSender, stream::stream_data_sender::StreamDataSender,
         },
     },
 };
@@ -65,15 +64,13 @@ impl<T: TransportProtocol> PublishedResource<T> {
         }
     }
 
-    pub async fn create_stream(&self) -> anyhow::Result<DataSender<StreamDataSender<T>>> {
-        let stream_data_sender = StreamDataSender::new(self.session_context.clone()).await?;
-        Ok(DataSender::new(stream_data_sender))
+    pub async fn create_stream(&self) -> anyhow::Result<StreamDataSender<T>> {
+        let stream_data_sender =
+            StreamDataSender::new(self.track_alias, self.session_context.clone()).await?;
+        Ok(stream_data_sender)
     }
 
-    pub fn create_datagram(&self) -> DataSender<DatagramSender<T>> {
-        DataSender::new(DatagramSender::new(
-            self.track_alias,
-            self.session_context.clone(),
-        ))
+    pub fn create_datagram(&self) -> DatagramSender<T> {
+        DatagramSender::new(self.track_alias, self.session_context.clone())
     }
 }
