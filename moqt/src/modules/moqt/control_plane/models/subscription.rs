@@ -1,15 +1,18 @@
 use std::sync::Arc;
 
 use crate::{
-    GroupOrder, TransportProtocol,
-    modules::moqt::{
-        control_plane::{
-            messages::control_messages::{enums::ContentExists, subscribe_ok::SubscribeOk},
-            models::session_context::SessionContext,
-        },
-        data_plane::streams::data_receiver::DataReceiver,
+    DatagramReceiver, GroupOrder, StreamDataReceiver, TransportProtocol,
+    modules::moqt::control_plane::{
+        messages::control_messages::{enums::ContentExists, subscribe_ok::SubscribeOk},
+        models::session_context::SessionContext,
+        threads::enums::StreamWithObject,
     },
 };
+
+pub enum DataReceiver<T: TransportProtocol> {
+    Stream(StreamDataReceiver<T>),
+    Datagram(DatagramReceiver<T>),
+}
 
 pub struct Subscription<T: TransportProtocol> {
     pub(crate) session_context: Arc<SessionContext<T>>,
@@ -33,6 +36,25 @@ impl<T: TransportProtocol> Subscription<T> {
     }
 
     pub async fn accept_data_receiver(&self) -> anyhow::Result<DataReceiver<T>> {
-        DataReceiver::new(&self.session_context, self.track_alias).await
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
+        self.session_context
+            .notification_map
+            .write()
+            .await
+            .insert(self.track_alias, sender);
+        let result = receiver
+            .recv()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
+        match result {
+            StreamWithObject::StreamHeader { stream, header } => {
+                let data_receiver = StreamDataReceiver::new(receiver, stream, header).await?;
+                Ok(DataReceiver::Stream(data_receiver))
+            }
+            StreamWithObject::Datagram(object) => {
+                let data_receiver = DatagramReceiver::new(object, receiver).await;
+                Ok(DataReceiver::Datagram(data_receiver))
+            }
+        }
     }
 }

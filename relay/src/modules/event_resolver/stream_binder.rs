@@ -36,7 +36,7 @@ impl StreamBinder {
             };
             tracing::debug!("accept type: {:?}", receiver);
             let prop = RelayProperties::new();
-            let sender = if receiver.is_datagram() {
+            let sender = if receiver.datagram() {
                 published_resources.new_datagram()
             } else {
                 match published_resources.new_stream().await {
@@ -50,7 +50,7 @@ impl StreamBinder {
             let mut relay = Relay {
                 relay_properties: prop,
             };
-            let track_alias = receiver.track_alias();
+            let track_alias = receiver.get_track_alias();
             relay.add_object_receiver(receiver);
             relay.add_object_sender(
                 track_alias,

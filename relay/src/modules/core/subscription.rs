@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 
 use crate::modules::{
-    core::data_receiver::DataReceiver,
+    core::data_receiver::{
+        DataReceiver, datagram_receiver::DatagramReceiver, stream_receiver::StreamReceiver,
+    },
     enums::{ContentExists, GroupOrder},
 };
 
@@ -30,6 +32,15 @@ impl<T: moqt::TransportProtocol> Subscription for moqt::Subscription<T> {
     }
     async fn create_data_receiver(&self) -> anyhow::Result<Box<dyn DataReceiver>> {
         let result = self.accept_data_receiver().await?;
-        Ok(Box::new(result))
+        match result {
+            moqt::DataReceiver::Stream(inner) => {
+                let receiver = StreamReceiver::new(inner);
+                Ok(Box::new(receiver))
+            }
+            moqt::DataReceiver::Datagram(inner) => {
+                let receiver = DatagramReceiver::new(inner);
+                Ok(Box::new(receiver))
+            }
+        }
     }
 }

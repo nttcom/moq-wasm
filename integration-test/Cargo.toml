@@ -18,3 +18,4 @@ moqt = { path = "../moqt" }
 relay = { path = "../relay" } # `package = "relay"` を追加
 tracing-test = "0.2.4"
 rcgen = "0.13.1"
+bytes = "1.6.0"
