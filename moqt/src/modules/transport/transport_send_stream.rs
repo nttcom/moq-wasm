@@ -8,4 +8,5 @@ use mockall::automock;
 #[async_trait]
 pub(crate) trait TransportSendStream: Send + Sync + 'static + Debug {
     async fn send(&mut self, buffer: &BytesMut) -> anyhow::Result<()>;
+    fn close(&mut self) -> anyhow::Result<()>;
 }

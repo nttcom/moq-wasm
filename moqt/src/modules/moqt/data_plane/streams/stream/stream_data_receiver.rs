@@ -45,22 +45,26 @@ impl<T: TransportProtocol> StreamDataReceiver<T> {
         if let Some(subgroup_header) = self.first_subgroup_header.take() {
             return Ok(Subgroup::Header(subgroup_header));
         }
-        tokio::select! {
-            data = self.stream_receiver.receive() => {
-                let data = data?;
-                let subgroup = SubgroupObjectField::decode(self.subgroup_header_type, data).ok_or_else(|| anyhow::anyhow!("Failed to decode subgroup object"))?;
-                Ok(Subgroup::Object(subgroup))
-            },
-            data = self.receiver.recv() => {
-                let data = data.ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
-                match data {
-                    StreamWithObject::StreamHeader{stream, header } => {
-                        self.stream_receiver = stream;
-                        self.subgroup_header_type = header.message_type;
-                        Ok(Subgroup::Header(header))
-                    },
-                    _ => Err(anyhow::anyhow!("Received unexpected stream type")),
+
+        let data = self.stream_receiver.receive().await;
+        if let Ok(data) = data {
+            let subgroup = SubgroupObjectField::decode(self.subgroup_header_type, data)
+                .ok_or_else(|| anyhow::anyhow!("Failed to decode subgroup object"))?;
+            Ok(Subgroup::Object(subgroup))
+        } else {
+            tracing::debug!("No data received, checking for new stream...");
+            let new_stream = self
+                .receiver
+                .recv()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
+            match new_stream {
+                StreamWithObject::StreamHeader { stream, header } => {
+                    self.stream_receiver = stream;
+                    self.subgroup_header_type = header.message_type;
+                    Ok(Subgroup::Header(header))
                 }
+                _ => Err(anyhow::anyhow!("Received unexpected stream type")),
             }
         }
     }
