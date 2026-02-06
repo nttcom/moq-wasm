@@ -85,15 +85,22 @@ impl<T: TransportProtocol> StreamDataSender<T> {
         data: SubgroupObjectField,
     ) -> anyhow::Result<()> {
         if self.subgroup_header.is_none() {
+            tracing::debug!("Sending new subgroup header: {:?}", header);
             let encoded_header = header.encode();
             self.stream_sender.send(&encoded_header).await?;
             self.subgroup_header = Some(header);
         } else if self.subgroup_header.as_ref().unwrap() != &header {
+            tracing::debug!(
+                "Subgroup header changed. Sending new subgroup header: {:?}",
+                header
+            );
+            self.stream_sender.close().await?;
             self.stream_sender = Self::create_sender(&self.session_context).await?;
             let encoded_header = header.encode();
             self.stream_sender.send(&encoded_header).await?;
             self.subgroup_header = Some(header);
         }
+        tracing::debug!("Sending subgroup object");
         let bytes = data.encode();
         self.stream_sender.send(&bytes).await
     }

@@ -18,12 +18,14 @@ impl<T: TransportProtocol> StreamReceiver<T> {
         loop {
             let mut bytes = BytesMut::with_capacity(Self::RECEIVE_BYTES_CAPACITY);
             bytes.resize(Self::RECEIVE_BYTES_CAPACITY, 0);
-            let message = self.receive_stream.receive(&mut bytes).await;
-            if let Err(e) = message {
-                tracing::error!("failed to receive message: {:?}", e);
-                bail!("failed to receive message: {:?}", e)
-            }
-            if let Some(size) = message.unwrap() {
+            let message = match self.receive_stream.receive(&mut bytes).await {
+                Ok(size) => size,
+                Err(e) => {
+                    tracing::error!("failed to receive message: {:?}", e);
+                    bail!("failed to receive message: {:?}", e)
+                },
+            };
+            if let Some(size) = message {
                 tracing::debug!("Size {} message received", size);
                 total_message.extend_from_slice(&bytes[..size]);
                 if size == Self::RECEIVE_BYTES_CAPACITY {
@@ -34,7 +36,7 @@ impl<T: TransportProtocol> StreamReceiver<T> {
                     return Ok(total_message);
                 }
             } else {
-                bail!("BiStream closed.")
+                bail!("Stream closed.")
             }
         }
     }

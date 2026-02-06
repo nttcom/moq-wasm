@@ -245,8 +245,8 @@ impl Client {
                             );
                         }
                     }
-                    Err(_) => {
-                        tracing::error!("failed to send");
+                    Err(e) => {
+                        tracing::error!("failed to send: {}", e);
                         break;
                     }
                 }
