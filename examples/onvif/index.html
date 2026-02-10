@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ONVIF over MoQ</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap');
+
+      :root {
+        --bg: #0c1117;
+        --bg-2: #111a24;
+        --card: rgba(255, 255, 255, 0.08);
+        --card-strong: rgba(255, 255, 255, 0.12);
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ff9f1c;
+        --accent-2: #2ec4b6;
+        --text: #f7f2e8;
+        --muted: #9fa8b3;
+        --shadow: 0 30px 60px rgba(7, 12, 18, 0.45);
+        --radius: 18px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: 'Space Grotesk', sans-serif;
+        background:
+          radial-gradient(1200px 600px at 15% 20%, #1b2a3a, transparent 60%),
+          radial-gradient(1000px 600px at 80% 10%, #2c1c2a, transparent 55%),
+          linear-gradient(160deg, var(--bg), var(--bg-2));
+        color: var(--text);
+        min-height: 100vh;
+      }
+
+      .page {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 32px 24px 56px;
+        position: relative;
+      }
+
+      .hero {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-bottom: 28px;
+      }
+
+      .eyebrow {
+        color: var(--accent-2);
+        text-transform: uppercase;
+        letter-spacing: 0.3em;
+        font-size: 12px;
+      }
+
+      .hero h1 {
+        font-size: clamp(28px, 4vw, 44px);
+        margin: 0;
+      }
+
+      .hero p {
+        margin: 0;
+        color: var(--muted);
+        max-width: 620px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+        margin-bottom: 24px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 20px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(12px);
+      }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .status span {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+        display: inline-block;
+      }
+
+      form {
+        display: grid;
+        gap: 12px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      input,
+      textarea {
+        background: var(--card-strong);
+        border: 1px solid transparent;
+        color: var(--text);
+        padding: 10px 12px;
+        border-radius: 12px;
+        font-size: 14px;
+      }
+
+      input:focus,
+      textarea:focus {
+        outline: none;
+        border-color: var(--accent-2);
+        box-shadow: 0 0 0 3px rgba(46, 196, 182, 0.2);
+      }
+
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      button {
+        background: linear-gradient(135deg, var(--accent), #ffbf69);
+        border: none;
+        color: #1a1208;
+        padding: 10px 16px;
+        border-radius: 999px;
+        font-weight: 700;
+        cursor: pointer;
+        transition:
+          transform 0.2s ease,
+          box-shadow 0.2s ease;
+      }
+
+      button.secondary {
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
+      }
+
+      .video-frame {
+        border-radius: 16px;
+        background: #06090e;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+        aspect-ratio: 16 / 9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .video-actions {
+        margin-top: 12px;
+      }
+
+      .video-note {
+        margin-top: 6px;
+      }
+
+      video {
+        width: 100%;
+        height: 100%;
+        -o-object-fit: cover;
+           object-fit: cover;
+      }
+
+      .commands {
+        display: grid;
+        gap: 16px;
+      }
+
+      .command {
+        background: rgba(8, 12, 18, 0.6);
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 16px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .command-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .command-title {
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .command-inputs {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 10px;
+      }
+
+      .command-inputs label {
+        font-size: 12px;
+      }
+
+      .catalog-list {
+        display: flex;
+        gap: 12px;
+        margin-top: 12px;
+        overflow-x: auto;
+        padding-bottom: 6px;
+      }
+
+      .catalog-item {
+        display: grid;
+        gap: 8px;
+        min-width: 240px;
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(8, 12, 18, 0.55);
+      }
+
+      .catalog-subtitle {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .catalog-item input {
+        accent-color: var(--accent-2);
+      }
+
+      .catalog-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .modal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(5, 8, 12, 0.7);
+        z-index: 20;
+      }
+
+      .modal.open {
+        display: flex;
+      }
+
+      .modal-content {
+        width: min(640px, 100%);
+        max-height: 85vh;
+        overflow: auto;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 24px;
+        box-shadow: var(--shadow);
+        display: grid;
+        gap: 16px;
+      }
+
+      .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+
+      .muted {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 720px) {
+        .page {
+          padding: 24px 16px 48px;
+        }
+
+        .hero {
+          margin-bottom: 20px;
+        }
+
+        .button-row {
+          flex-direction: column;
+        }
+
+        button {
+          width: 100%;
+        }
+      }
+    </style>
+    <script type="module" crossorigin src="/moq-wasm/assets/onvif-G4yxhlcA.js"></script>
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-Dki_a6NK.js">
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div class="eyebrow">MoQ + ONVIF</div>
+        <h1>Remote PTZ + RTSP over Media over QUIC</h1>
+        <p>
+          Publish ONVIF control commands as datagrams and subscribe to RTSP video over MoQ. The browser view shows the
+          decoded stream while controls push PTZ moves through the same namespace.
+        </p>
+      </header>
+
+      <section class="grid">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="command-title">Connection</div>
+              <div class="muted">MoQ session + track layout</div>
+            </div>
+            <div class="status" id="status"><span></span>disconnected</div>
+          </div>
+          <form id="connect-form">
+            <label>
+              MoQ URL
+              <input id="moqt-url" type="text" value="https://localhost:4433" />
+            </label>
+            <div class="button-row">
+              <button class="secondary" type="button" data-url="https://moqt.research.skyway.io:4433">
+                moqt.research.skyway.io
+              </button>
+              <button class="secondary" type="button" data-url="https://127.0.0.1:4433">127.0.0.1</button>
+            </div>
+            <div class="button-row">
+              <button id="connect-btn" type="button">Connect</button>
+              <button id="disconnect-btn" class="secondary" type="button">Disconnect</button>
+              <button id="settings-btn" class="secondary" type="button">Advanced settings</button>
+            </div>
+            <div class="muted">Command track alias: <span id="command-alias">-</span></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="command-title">Live Video</div>
+              <div class="muted">MoQ subgroup stream decoded locally</div>
+            </div>
+          </div>
+          <div class="video-frame">
+            <video id="video" playsinline muted autoplay></video>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <div class="command-title">Catalog</div>
+            <div class="muted">Subscribe to list ONVIF profiles and select a video track.</div>
+          </div>
+        </div>
+        <div class="button-row">
+          <button id="catalog-subscribe-btn" type="button">Subscribe Catalog</button>
+          <button id="video-subscribe-btn" class="secondary" type="button">Subscribe Selected Video</button>
+        </div>
+        <div class="muted">Catalog track alias: <span id="catalog-alias">-</span></div>
+        <div class="muted">Selected video track: <span id="selected-video-track">-</span></div>
+        <div id="catalog-list" class="catalog-list"></div>
+      </section>
+
+      <section class="card commands">
+        <div class="card-header">
+          <div>
+            <div class="command-title">PTZ Commands</div>
+            <div class="muted">Each command sends a JSON datagram to the ONVIF bridge.</div>
+          </div>
+        </div>
+        <div id="command-grid" class="commands"></div>
+      </section>
+    </div>
+
+    <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <div class="command-title">Advanced Settings</div>
+            <div class="muted">Tune namespaces and subscribe IDs.</div>
+          </div>
+          <button id="settings-close-btn" class="secondary" type="button">Close</button>
+        </div>
+        <label>
+          Publish Namespace (announce)
+          <input id="publish-namespace" type="text" value="onvif/viewer" />
+        </label>
+        <label>
+          Subscribe Namespace (video)
+          <input id="subscribe-namespace" type="text" value="onvif/client" />
+        </label>
+        <label>
+          Catalog Track
+          <input id="catalog-track" type="text" value="catalog" />
+        </label>
+        <label>
+          Command Track
+          <input id="command-track" type="text" value="command" />
+        </label>
+        <label>
+          Auth Info
+          <input id="auth-info" type="text" value="secret" />
+        </label>
+        <label>
+          Max Subscribe ID
+          <input id="max-subscribe-id" type="number" value="100" />
+        </label>
+        <label>
+          Video Subscribe ID
+          <input id="video-subscribe-id" type="number" value="0" />
+        </label>
+        <label>
+          Video Track Alias
+          <input id="video-track-alias" type="number" value="0" />
+        </label>
+        <label>
+          Catalog Subscribe ID
+          <input id="catalog-subscribe-id" type="number" value="1" />
+        </label>
+        <label>
+          Catalog Track Alias
+          <input id="catalog-track-alias" type="number" value="1" />
+        </label>
+        <div class="modal-actions">
+          <button id="settings-save-btn" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+
+  </body>
+</html>
