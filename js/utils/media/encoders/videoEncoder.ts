@@ -166,7 +166,7 @@ function buildConfigFromMessage(config: {
 
 function buildDefaultConfig(): VideoEncoderConfig {
   return buildConfigFromMessage({
-    codec: 'avc1.640028',
+    codec: 'avc1.640032',
     width: 1280,
     height: 720,
     bitrate: 1_000_000
