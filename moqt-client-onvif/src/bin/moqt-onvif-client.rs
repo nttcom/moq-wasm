@@ -185,33 +185,46 @@ async fn main() -> Result<()> {
     spawn_rtsp_error_logger(rtsp_err_rx);
 
     catalog_state.selected_track = Some(selected_profile.track_name.clone());
-    run_moqt_bridge(
+    run_moqt_bridge(BridgeContext {
         publisher,
-        video_alias,
-        encoded_rx,
+        track_alias: video_alias,
+        rx: encoded_rx,
         command_sender,
-        args.publisher_priority,
-        args.dump_keyframe,
+        publisher_priority: args.publisher_priority,
+        dump_keyframe: args.dump_keyframe,
         publish_namespace,
         profile_tracks,
         catalog_state,
-    )
+    })
     .await?;
 
     Ok(())
 }
 
-async fn run_moqt_bridge(
+struct BridgeContext {
     publisher: MoqtPublisher,
     track_alias: u64,
-    mut rx: mpsc::Receiver<EncodedPacket>,
+    rx: mpsc::Receiver<EncodedPacket>,
     command_sender: std_mpsc::Sender<ptz_worker::Command>,
     publisher_priority: u8,
     dump_keyframe: Option<PathBuf>,
     publish_namespace: Vec<String>,
     profile_tracks: Vec<ProfileTrack>,
-    mut catalog_state: CatalogUpdateState,
-) -> Result<()> {
+    catalog_state: CatalogUpdateState,
+}
+
+async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
+    let BridgeContext {
+        publisher,
+        track_alias,
+        mut rx,
+        command_sender,
+        publisher_priority,
+        dump_keyframe,
+        publish_namespace,
+        profile_tracks,
+        mut catalog_state,
+    } = ctx;
     let mut state = VideoStreamState::default();
     let mut dump_state = dump_keyframe.map(KeyframeDump::new);
     let mut video_done = false;

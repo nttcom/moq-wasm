@@ -262,16 +262,16 @@ pub fn run_encoded_url(
         } else {
             TimestampSource::FallbackZero
         };
-        let encoded = build_encoded_packet(
+        let encoded = build_encoded_packet(EncodedPacketArgs {
             payload,
-            &packet,
+            packet: &packet,
             is_keyframe,
             time_base,
-            codec_for_packet,
+            codec_label: codec_for_packet,
             description_base64,
-            Some(avc_format),
+            avc_format: Some(avc_format),
             timestamp_source,
-        );
+        });
         if tx.blocking_send(encoded).is_err() {
             return;
         }
@@ -317,37 +317,39 @@ fn extract_extradata(stream: &ffmpeg::Stream<'_>) -> Option<Vec<u8>> {
     }
 }
 
-fn build_encoded_packet(
+struct EncodedPacketArgs<'a> {
     payload: Vec<u8>,
-    packet: &ffmpeg::Packet,
+    packet: &'a ffmpeg::Packet,
     is_keyframe: bool,
     time_base: ffmpeg::Rational,
     codec_label: Option<String>,
     description_base64: Option<String>,
     avc_format: Option<String>,
     timestamp_source: TimestampSource,
-) -> EncodedPacket {
-    let timestamp_us = packet_timestamp_us(packet, time_base);
+}
+
+fn build_encoded_packet(args: EncodedPacketArgs<'_>) -> EncodedPacket {
+    let timestamp_us = packet_timestamp_us(args.packet, args.time_base);
     log_timestamp_choice(
-        packet,
-        time_base,
+        args.packet,
+        args.time_base,
         timestamp_us,
-        timestamp_source,
-        is_keyframe,
+        args.timestamp_source,
+        args.is_keyframe,
     );
-    let duration_us = if packet.duration() > 0 {
-        to_microseconds(packet.duration(), time_base)
+    let duration_us = if args.packet.duration() > 0 {
+        to_microseconds(args.packet.duration(), args.time_base)
     } else {
         None
     };
     EncodedPacket {
-        data: payload,
-        is_keyframe,
+        data: args.payload,
+        is_keyframe: args.is_keyframe,
         timestamp_us,
         duration_us,
-        codec: codec_label,
-        description_base64,
-        avc_format,
+        codec: args.codec_label,
+        description_base64: args.description_base64,
+        avc_format: args.avc_format,
     }
 }
 
