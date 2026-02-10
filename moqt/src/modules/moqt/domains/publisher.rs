@@ -8,11 +8,9 @@ use crate::modules::moqt::{
         control_message_type::ControlMessageType,
         control_messages::{publish::Publish, publish_namespace::PublishNamespace},
     },
-    control_plane::models::{
-        published_resource::PublishedResource, session_context::SessionContext,
-    },
     control_plane::options::PublishOption,
     control_plane::utils,
+    domains::{published_resource::PublishedResource, session_context::SessionContext},
     protocol::TransportProtocol,
 };
 

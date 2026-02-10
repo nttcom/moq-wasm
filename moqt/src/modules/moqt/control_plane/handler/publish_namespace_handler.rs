@@ -10,8 +10,8 @@ use crate::{
                 request_error::RequestError,
             },
         },
-        control_plane::models::session_context::SessionContext,
         control_plane::utils,
+        domains::session_context::SessionContext,
     },
 };
 

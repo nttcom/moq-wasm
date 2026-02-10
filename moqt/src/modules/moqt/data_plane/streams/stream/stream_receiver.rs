@@ -36,6 +36,7 @@ impl<T: TransportProtocol> StreamReceiver<T> {
                     return Ok(total_message);
                 }
             } else {
+                // TODO: make error handling more clear.
                 bail!("Stream closed.")
             }
         }

@@ -10,8 +10,8 @@ use crate::{
                 request_error::RequestError,
             },
         },
-        control_plane::models::session_context::SessionContext,
         control_plane::utils,
+        domains::session_context::SessionContext,
     },
 };
 
@@ -78,7 +78,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
             expires,
             group_order: self.group_order,
             content_exists: self.content_exists,
-            derivery_timeout: self.delivery_timeout,
+            delivery_timeout: self.delivery_timeout,
         }
     }
 }

@@ -5,10 +5,10 @@ use anyhow::bail;
 use crate::Publisher;
 use crate::Subscriber;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
-use crate::modules::moqt::control_plane::models::session_context::SessionContext;
 use crate::modules::moqt::control_plane::threads::control_message_receive_thread::ControlMessageReceiveThread;
 use crate::modules::moqt::control_plane::threads::datagram_receive_thread::DatagramReceiveThread;
 use crate::modules::moqt::data_plane::streams::stream::stream_receiver::StreamReceiver;
+use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::protocol::TransportProtocol;
 
 pub struct Session<T: TransportProtocol> {

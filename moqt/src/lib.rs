@@ -11,15 +11,6 @@ pub use modules::moqt::control_plane::messages::control_messages::enums::{
     ContentExists, FilterType,
 };
 pub use modules::moqt::control_plane::messages::control_messages::location::Location;
-pub use modules::moqt::control_plane::models::endpoint::ClientConfig;
-pub use modules::moqt::control_plane::models::endpoint::Endpoint;
-pub use modules::moqt::control_plane::models::endpoint::ServerConfig;
-pub use modules::moqt::control_plane::models::published_resource::PublishedResource;
-pub use modules::moqt::control_plane::models::publisher::Publisher;
-pub use modules::moqt::control_plane::models::session::Session;
-pub use modules::moqt::control_plane::models::subscriber::Subscriber;
-pub use modules::moqt::control_plane::models::subscription::DataReceiver;
-pub use modules::moqt::control_plane::models::subscription::Subscription;
 pub use modules::moqt::control_plane::options::PublishOption;
 pub use modules::moqt::control_plane::options::SubscribeOption;
 pub use modules::moqt::data_plane::object::datagram_field::DatagramField;
@@ -35,5 +26,14 @@ pub use modules::moqt::data_plane::streams::datagram::datagram_sender::DatagramS
 pub use modules::moqt::data_plane::streams::stream::stream_data_receiver::StreamDataReceiver;
 pub use modules::moqt::data_plane::streams::stream::stream_data_receiver::Subgroup;
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender::StreamDataSender;
+pub use modules::moqt::domains::endpoint::ClientConfig;
+pub use modules::moqt::domains::endpoint::Endpoint;
+pub use modules::moqt::domains::endpoint::ServerConfig;
+pub use modules::moqt::domains::published_resource::PublishedResource;
+pub use modules::moqt::domains::publisher::Publisher;
+pub use modules::moqt::domains::session::Session;
+pub use modules::moqt::domains::subscriber::Subscriber;
+pub use modules::moqt::domains::subscription::DataReceiver;
+pub use modules::moqt::domains::subscription::Subscription;
 pub use modules::moqt::protocol::QUIC;
 pub use modules::moqt::protocol::TransportProtocol;

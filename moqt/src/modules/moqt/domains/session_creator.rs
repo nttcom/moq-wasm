@@ -1,9 +1,9 @@
 use std::net::SocketAddr;
 
-use crate::modules::moqt::control_plane::models::session::Session;
-use crate::modules::moqt::control_plane::models::session_context::SessionContext;
 use crate::modules::moqt::data_plane::streams::stream::stream_receiver::StreamReceiver;
 use crate::modules::moqt::data_plane::streams::stream::stream_sender::StreamSender;
+use crate::modules::moqt::domains::session::Session;
+use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::transport::transport_connection::TransportConnection;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
@@ -24,7 +24,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
             .await?;
         let (send_stream, receive_stream) = transport_conn.open_bi().await?;
         let moqt_sender = StreamSender::<T>::new(send_stream);
-        let mut moqt_receiver = StreamReceiver {receive_stream};
+        let mut moqt_receiver = StreamReceiver { receive_stream };
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let inner =
             SessionContext::<T>::client(transport_conn, moqt_sender, &mut moqt_receiver, sender)
@@ -38,7 +38,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let (send_stream, receive_stream) = transport_conn.accept_bi().await?;
         // 16 means the number of messages can be stored in the channel.
         let moqt_sender = StreamSender::<T>::new(send_stream);
-        let mut moqt_receiver = StreamReceiver {receive_stream};
+        let mut moqt_receiver = StreamReceiver { receive_stream };
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let inner =
             SessionContext::<T>::server(transport_conn, moqt_sender, &mut moqt_receiver, sender)

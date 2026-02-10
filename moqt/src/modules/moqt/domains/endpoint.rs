@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use crate::{
     Session, TransportProtocol,
-    modules::moqt::control_plane::models::session_creator::SessionCreator,
+    modules::moqt::domains::session_creator::SessionCreator,
     modules::transport::transport_connection_creator::TransportConnectionCreator,
 };
 

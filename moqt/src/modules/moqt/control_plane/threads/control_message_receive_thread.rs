@@ -23,9 +23,9 @@ use crate::{
                     util::get_message_type,
                 },
             },
-            models::session_context::SessionContext,
         },
         data_plane::streams::stream::stream_receiver::StreamReceiver,
+        domains::session_context::SessionContext,
     },
 };
 
