@@ -400,8 +400,8 @@ function buildVideoDecoderConfig(resolved: CachedVideoConfig): VideoDecoderConfi
       description,
       avc: {
         format: resolved.avcFormat ?? 'avc'
-      } as any
-    }
+      }
+    } as any
   }
 
   return {

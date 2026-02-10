@@ -171,6 +171,12 @@ impl Controls {
     }
 }
 
+impl Default for Controls {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct CommandGridResult {
     pending: Option<UiCommand>,
     input_error: Option<String>,
