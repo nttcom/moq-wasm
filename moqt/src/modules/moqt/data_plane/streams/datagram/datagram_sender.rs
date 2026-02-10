@@ -4,8 +4,8 @@ use crate::{
     DatagramField, TransportProtocol,
     modules::{
         moqt::{
-            control_plane::models::session_context::SessionContext,
             data_plane::object::object_datagram::ObjectDatagram,
+            domains::session_context::SessionContext,
         },
         transport::transport_connection::TransportConnection,
     },

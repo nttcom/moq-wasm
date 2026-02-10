@@ -10,9 +10,9 @@ use crate::{
             control_message_type::ControlMessageType,
             control_messages::{subscribe::Subscribe, subscribe_namespace::SubscribeNamespace},
         },
-        models::session_context::SessionContext,
         utils,
     },
+    modules::moqt::domains::session_context::SessionContext,
     modules::moqt::protocol::TransportProtocol,
 };
 

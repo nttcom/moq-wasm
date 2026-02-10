@@ -4,7 +4,6 @@ use crate::{
     TransportProtocol,
     modules::{
         moqt::{
-            control_plane::models::session_context::SessionContext,
             data_plane::{
                 object::{
                     extension_headers::ExtensionHeaders,
@@ -12,6 +11,7 @@ use crate::{
                 },
                 streams::stream::stream_sender::StreamSender,
             },
+            domains::session_context::SessionContext,
         },
         transport::transport_connection::TransportConnection,
     },

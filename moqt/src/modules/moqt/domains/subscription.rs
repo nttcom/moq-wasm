@@ -4,9 +4,9 @@ use crate::{
     DatagramReceiver, GroupOrder, StreamDataReceiver, TransportProtocol,
     modules::moqt::control_plane::{
         messages::control_messages::{enums::ContentExists, subscribe_ok::SubscribeOk},
-        models::session_context::SessionContext,
         threads::enums::StreamWithObject,
     },
+    modules::moqt::domains::session_context::SessionContext,
 };
 
 pub enum DataReceiver<T: TransportProtocol> {
@@ -20,7 +20,7 @@ pub struct Subscription<T: TransportProtocol> {
     pub expires: u64,
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,
-    pub derivery_timeout: Option<u64>,
+    pub delivery_timeout: Option<u64>,
 }
 
 impl<T: TransportProtocol> Subscription<T> {
@@ -31,7 +31,7 @@ impl<T: TransportProtocol> Subscription<T> {
             expires: subscribe_ok.expires,
             group_order: subscribe_ok.group_order,
             content_exists: subscribe_ok.content_exists,
-            derivery_timeout: None,
+            delivery_timeout: None,
         }
     }
 

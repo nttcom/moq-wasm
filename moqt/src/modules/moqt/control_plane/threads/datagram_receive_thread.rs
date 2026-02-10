@@ -6,13 +6,12 @@ use crate::{
     TransportProtocol,
     modules::{
         moqt::{
-            control_plane::{
-                models::session_context::SessionContext, threads::enums::StreamWithObject,
-            },
+            control_plane::threads::enums::StreamWithObject,
             data_plane::{
                 object::{object_datagram::ObjectDatagram, subgroup::SubgroupHeader},
                 streams::stream::stream_receiver::StreamReceiver,
             },
+            domains::session_context::SessionContext,
         },
         transport::transport_connection::TransportConnection,
     },
