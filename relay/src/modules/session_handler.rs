@@ -23,7 +23,7 @@ impl SessionHandler {
         //     key_path,
         //     keep_alive_interval_sec: 15,
         // };
-        let endpoint = Endpoint::<QUIC>::create_server(config) // 修正
+        let endpoint = Endpoint::<QUIC>::create_server(&config) // 修正
             .inspect_err(|e| tracing::error!("failed to create server: {}", e))
             .unwrap();
         let join_handle = Self::create_joinhandle(endpoint, repo, session_event_sender);

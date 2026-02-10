@@ -1,8 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::{
-    Session, TransportProtocol,
-    modules::moqt::domains::session_creator::SessionCreator,
+    Session, TransportProtocol, modules::moqt::domains::session_creator::SessionCreator,
     modules::transport::transport_connection_creator::TransportConnectionCreator,
 };
 
@@ -33,7 +32,7 @@ pub struct Endpoint<T: TransportProtocol> {
 }
 
 impl<T: TransportProtocol> Endpoint<T> {
-    pub fn create_client(config: ClientConfig) -> anyhow::Result<Self> {
+    pub fn create_client(config: &ClientConfig) -> anyhow::Result<Self> {
         let client = T::ConnectionCreator::client(config.port, config.verify_certificate)?;
         let session_creator = SessionCreator {
             transport_creator: client,
@@ -52,10 +51,10 @@ impl<T: TransportProtocol> Endpoint<T> {
         Ok(Self { session_creator })
     }
 
-    pub fn create_server(server_config: ServerConfig) -> anyhow::Result<Self> {
+    pub fn create_server(server_config: &ServerConfig) -> anyhow::Result<Self> {
         let server = T::ConnectionCreator::server(
-            server_config.cert_path,
-            server_config.key_path,
+            &server_config.cert_path,
+            &server_config.key_path,
             server_config.port,
             server_config.keep_alive_interval_sec,
         )?;

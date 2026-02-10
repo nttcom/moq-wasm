@@ -24,8 +24,8 @@ pub struct QUICConnectionCreator {
 
 impl QUICConnectionCreator {
     fn config_builder(
-        cert_path: String,
-        key_path: String,
+        cert_path: &str,
+        key_path: &str,
         keep_alive_sec: u64,
     ) -> anyhow::Result<quinn::ServerConfig> {
         let cert = rustls_pemfile::certs(&mut BufReader::new(
@@ -121,8 +121,8 @@ impl TransportConnectionCreator for QUICConnectionCreator {
     }
 
     fn server(
-        cert_path: String,
-        key_path: String,
+        cert_path: &str,
+        key_path: &str,
         port_num: u16,
         keep_alive_sec: u64,
     ) -> anyhow::Result<Self> {
