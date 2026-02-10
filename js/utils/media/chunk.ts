@@ -7,6 +7,7 @@ export type ChunkMetadata = {
   sentAt: number
   codec?: string
   descriptionBase64?: string
+  avcFormat?: 'annexb' | 'avc'
   sampleRate?: number
   channels?: number
 }
