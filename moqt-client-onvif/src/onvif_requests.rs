@@ -85,6 +85,17 @@ pub fn get_profiles() -> OnvifRequest {
     )
 }
 
+pub fn get_stream_uri(profile_token: &str) -> OnvifRequest {
+    build(
+        MEDIA_ACTION_NS,
+        "GetStreamUri",
+        format!(
+            r#"<GetStreamUri xmlns="{0}"><StreamSetup><Stream>RTP-Unicast</Stream><Transport><Protocol>RTSP</Protocol></Transport></StreamSetup><ProfileToken>{1}</ProfileToken></GetStreamUri>"#,
+            MEDIA_ACTION_NS, profile_token
+        ),
+    )
+}
+
 pub fn get_configurations() -> OnvifRequest {
     build(
         PTZ_ACTION_NS,

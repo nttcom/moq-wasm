@@ -50,6 +50,12 @@ impl OnvifClient {
         Ok(onvif)
     }
 
+    pub async fn initialize_media(client: Client, target: Target) -> Result<Self> {
+        let mut onvif = Self::new(client, target);
+        onvif.init_endpoints().await;
+        Ok(onvif)
+    }
+
     pub fn set_endpoints(&mut self, endpoints: onvif_services::ServiceEndpoints) {
         self.media_endpoint = endpoints.media_endpoint;
         self.ptz_endpoint = endpoints.ptz_endpoint;

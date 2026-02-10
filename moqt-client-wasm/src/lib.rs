@@ -1,8 +1,10 @@
 mod utils;
 
+mod media_streaming_format;
 #[cfg(feature = "web_sys_unstable_apis")]
 mod messages;
 
+pub use media_streaming_format::*;
 #[cfg(feature = "web_sys_unstable_apis")]
 pub use messages::*;
 

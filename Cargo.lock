@@ -2744,6 +2744,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
+name = "media-streaming-format"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2835,13 +2842,19 @@ dependencies = [
  "env_logger",
  "ffmpeg-next",
  "log",
+ "media-streaming-format",
+ "moqt-client-rust",
+ "moqt-core",
  "rand 0.8.5",
  "reqwest",
  "roxmltree",
+ "serde",
+ "serde_json",
  "sha1",
  "strum",
  "time",
  "tokio",
+ "wtransport",
 ]
 
 [[package]]
@@ -2866,9 +2879,11 @@ dependencies = [
  "console_error_panic_hook",
  "futures",
  "js-sys",
+ "media-streaming-format",
  "moqt-core",
  "serde",
  "serde-wasm-bindgen",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
