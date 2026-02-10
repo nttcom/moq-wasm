@@ -49,6 +49,10 @@ impl Controller {
             state_rx,
         })
     }
+
+    pub fn command_sender(&self) -> Sender<Command> {
+        self.tx.clone()
+    }
     pub fn send(&self, command: Command) {
         let _ = self.tx.send(command);
     }

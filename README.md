@@ -54,6 +54,10 @@ Supported version: draft-ietf-moq-transport-10
 - Core module for both server and client
 - Includes handlers and data structures
 
+### media-streaming-format
+
+- MSF (Media Streaming Format) catalog structures (draft-ietf-moq-msf-00)
+
 ### moqt-server
 
 - Module for server application
@@ -69,10 +73,12 @@ Supported version: draft-ietf-moq-transport-10
 
 - Module for browser client and sample browser client application
   - Supported Roles: Publisher, Subscriber, PubSub
+- Exposes MSF catalog JSON helpers for browser integration
 
 ### moqt-client-onvif
 
 - Client for IP cameras over RTSP/ONVIF (Raspberry Pi and Mac)
+- Includes `moqt-onvif-client` to bridge RTSP video + ONVIF commands over MoQ
 
 ## How to run
 
@@ -121,3 +127,29 @@ make client
 # For Mac users
 make chrome
 ```
+
+### Run moqt-client-onvif
+
+```shell
+cp .env.example .env
+make onvif
+```
+
+`ONVIF_IP` / `ONVIF_USERNAME` / `ONVIF_PASSWORD` are read from `.env`.
+
+MoQ bridge:
+
+```shell
+make onvif-moq
+```
+
+`MOQT_URL` is read from `.env`.
+
+The bridge publishes under `onvif/client` and subscribes to commands under `onvif/viewer`.
+It uses a single MoQ connection for both publish and subscribe, and emits avcC description metadata on keyframes when SPS/PPS are available (codec string derived from SPS when possible).
+The catalog track returns an MSF Catalog JSON payload (draft-ietf-moq-msf-00) describing available video tracks; it is
+resent after SPS/PPS parsing so codec fields are filled once known (only for the selected profile).
+RTSP capture starts after MoQ setup/announce/subscribe to avoid startup backlog.
+The bridge defaults to `--payload-format avcc` to forward length-prefixed H.264 payloads instead of AnnexB.
+AVCC mode converts AnnexB payloads to length-prefixed when needed.
+RTSP SDP is logged once when the stream is opened, if available.

@@ -1,5 +1,12 @@
 RUSTFLAGS := --cfg tokio_unstable --remap-path-prefix=$(shell pwd)=.
 
+-include .env
+
+ONVIF_IP ?=
+ONVIF_USERNAME ?=
+ONVIF_PASSWORD ?=
+MOQT_URL ?= 
+
 # デフォルトターゲット（何も指定しない場合）
 default: run
 
@@ -57,7 +64,30 @@ ffmpeg-rtmp-local-sub:
 chrome:
 	./scripts/chrome_mac.sh
 
+onvif:
+	@if [ -z "$(ONVIF_IP)" ] || [ -z "$(ONVIF_USERNAME)" ] || [ -z "$(ONVIF_PASSWORD)" ]; then \
+		echo "ONVIF_IP/ONVIF_USERNAME/ONVIF_PASSWORD are required (set in .env or environment)"; \
+		exit 1; \
+	fi
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-client-onvif --bin moqt-client-onvif -- \
+		--ip $(ONVIF_IP) \
+		--username $(ONVIF_USERNAME) \
+		--password $(ONVIF_PASSWORD)
+
+onvif-moq:
+	@if [ -z "$(ONVIF_IP)" ] || [ -z "$(ONVIF_USERNAME)" ] || [ -z "$(ONVIF_PASSWORD)" ]; then \
+		echo "ONVIF_IP/ONVIF_USERNAME/ONVIF_PASSWORD are required (set in .env or environment)"; \
+		exit 1; \
+	fi
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-client-onvif --bin moqt-onvif-client -- \
+		--ip $(ONVIF_IP) \
+		--username $(ONVIF_USERNAME) \
+		--password $(ONVIF_PASSWORD) \
+		--moqt-url $(MOQT_URL) \
+		--dump-keyframe \
+		--payload-format avcc \
+
+
 
 test:
 	cargo test
-

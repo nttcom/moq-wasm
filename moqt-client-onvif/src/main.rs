@@ -1,24 +1,6 @@
-mod app_config;
-mod cli;
-mod onvif_client;
-mod onvif_nodes;
-mod onvif_profiles;
-mod onvif_requests;
-mod onvif_services;
-mod ptz_config;
-mod ptz_state;
-mod ptz_worker;
-mod rtsp_decoder;
-mod rtsp_frame;
-mod rtsp_stream;
-mod soap_client;
-mod ui_app;
-mod ui_ptz;
-mod ui_video;
-mod wsse_auth;
-
 use anyhow::Result;
 use clap::Parser;
+use moqt_client_onvif::{app_config, cli, ui_app};
 use std::io::Write;
 
 fn main() -> Result<()> {

@@ -1,3 +1,4 @@
+use crate::datagram_io::{recv_datagram, DatagramEvent};
 use anyhow::{anyhow, Context, Result};
 use bytes::Buf;
 use bytes::BytesMut;
@@ -12,7 +13,8 @@ use moqt_core::{
             client_setup::ClientSetup,
             group_order::GroupOrder,
             setup_parameters::{MaxSubscribeID, SetupParameter},
-            subscribe::Subscribe,
+            subscribe::{FilterType, Subscribe},
+            subscribe_error::SubscribeError,
             subscribe_ok::SubscribeOk,
             version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
         },
@@ -163,6 +165,60 @@ impl MoqtPublisher {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn subscribe(
+        &mut self,
+        subscribe_id: u64,
+        track_alias: u64,
+        namespace: Vec<String>,
+        track_name: String,
+        subscriber_priority: u8,
+        filter_type: FilterType,
+        start_group: Option<u64>,
+        start_object: Option<u64>,
+        end_group: Option<u64>,
+        auth_info: String,
+    ) -> Result<()> {
+        let params = vec![VersionSpecificParameter::AuthorizationInfo(
+            AuthorizationInfo::new(auth_info),
+        )];
+        let msg = Subscribe::new(
+            subscribe_id,
+            track_alias,
+            namespace,
+            track_name,
+            subscriber_priority,
+            GroupOrder::Ascending,
+            filter_type,
+            start_group,
+            start_object,
+            end_group,
+            params,
+        )?;
+        let mut payload = BytesMut::new();
+        msg.packetize(&mut payload);
+        self.write_control(ControlMessageType::Subscribe, &payload)
+            .await?;
+
+        loop {
+            let (msg_type, mut payload) = self.read_control_message().await?;
+            match msg_type {
+                ControlMessageType::SubscribeOk => {
+                    let ok = SubscribeOk::depacketize(&mut payload)?;
+                    if ok.subscribe_id() == subscribe_id {
+                        println!("MoQ subscribe ok (alias={track_alias})");
+                        return Ok(());
+                    }
+                }
+                ControlMessageType::SubscribeError => {
+                    let err = SubscribeError::depacketize(&mut payload)?;
+                    return Err(anyhow!("subscribe rejected: {:?}", err));
+                }
+                _ => continue,
+            }
+        }
+    }
+
     pub async fn announce(&mut self, namespace: &[String], auth_info: String) -> Result<()> {
         let msg = Announce::new(
             namespace.to_vec(),
@@ -274,6 +330,77 @@ impl MoqtPublisher {
         Ok(acquired)
     }
 
+    /// namespace 配下で期待する track のいずれか 1 つの Subscribe を受信し、SubscribeOk を返す。
+    /// data uni stream は開かず、(track_name, subscriber_alias) を返す。
+    pub async fn wait_subscribe_any_and_accept(
+        &mut self,
+        namespace: &[String],
+        expected_tracks: &HashSet<String>,
+    ) -> Result<(String, u64)> {
+        loop {
+            let (msg_type, mut payload) = self.read_control_message().await?;
+            match msg_type {
+                ControlMessageType::Subscribe => {
+                    let sub: Subscribe = Subscribe::depacketize(&mut payload)?;
+                    print!(
+                        "MoQ subscribe received alias={} ns={:?} track={}",
+                        sub.track_alias(),
+                        sub.track_namespace(),
+                        sub.track_name()
+                    );
+                    let ns = sub.track_namespace();
+                    let track = sub.track_name();
+
+                    if ns == namespace && expected_tracks.contains(track) {
+                        let ok = SubscribeOk::new(
+                            sub.subscribe_id(),
+                            sub.track_alias(),
+                            GroupOrder::Ascending,
+                            false,
+                            None,
+                            None,
+                            vec![],
+                        );
+                        let mut buf = BytesMut::new();
+                        ok.packetize(&mut buf);
+                        self.write_control(ControlMessageType::SubscribeOk, &buf)
+                            .await?;
+                        self.state.subscribed_aliases.insert(sub.track_alias());
+
+                        let key = TrackKey::new(namespace.join("/"), track);
+                        let entry = self.state.tracks.entry(key).or_default();
+                        entry.alias = sub.track_alias();
+                        entry.subscriber_alias = Some(sub.track_alias());
+
+                        println!(
+                            "MoQ subscribe ok sent alias={} ns={:?} track={}",
+                            sub.track_alias(),
+                            sub.track_namespace(),
+                            sub.track_name()
+                        );
+                        return Ok((track.to_string(), sub.track_alias()));
+                    }
+                    println!(
+                        "MoQ subscribe ignored ns={:?} track={}",
+                        sub.track_namespace(),
+                        sub.track_name()
+                    );
+                }
+                ControlMessageType::SubscribeError => {
+                    return Err(anyhow!("received SubscribeError"));
+                }
+                ControlMessageType::AnnounceOk => {
+                    println!("MoQ AnnounceOk received");
+                }
+                ControlMessageType::AnnounceError => {
+                    let _ = AnnounceError::depacketize(&mut payload)?;
+                    return Err(anyhow!("announce rejected"));
+                }
+                _ => continue,
+            }
+        }
+    }
+
     pub async fn send_subgroup_header(
         &mut self,
         track_alias: u64,
@@ -366,6 +493,10 @@ impl MoqtPublisher {
             .send_datagram(packet)
             .context("send datagram")?;
         Ok(())
+    }
+
+    pub async fn recv_datagram(&self) -> Result<DatagramEvent> {
+        recv_datagram(&self.connection).await
     }
 
     async fn write_control(&mut self, msg_type: ControlMessageType, payload: &[u8]) -> Result<()> {
