@@ -6,6 +6,8 @@ pub use header_extension::{
     UnknownHeaderExtension, VideoConfig, VideoFrameMarking, LOC_AUDIO_LEVEL_ID,
     LOC_CAPTURE_TIMESTAMP_ID, LOC_VIDEO_CONFIG_ID, LOC_VIDEO_FRAME_MARKING_ID,
 };
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct LocHeader {

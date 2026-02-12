@@ -12,6 +12,27 @@
           <h2>Connection</h2>
           <label for="url">URL:</label>
           <input type="url" name="url" id="url" value="https://moqt.research.skyway.io:4433" />
+          <div id="urlPresets" style="margin-top: 4px">
+            Preset:
+            <button type="button" data-url="https://moqt.research.skyway.io:4433">
+              https://moqt.research.skyway.io:4433
+            </button>
+            <button type="button" data-url="https://127.0.0.1:4433">https://127.0.0.1:4433</button>
+          </div>
+          <script>
+            ;(function () {
+              const preset = document.getElementById('urlPresets')
+              const input = document.getElementById('url')
+              if (!preset || !input) return
+              preset.addEventListener('click', (event) => {
+                const target = event.target
+                if (!(target instanceof HTMLButtonElement)) return
+                const value = target.getAttribute('data-url')
+                if (!value) return
+                input.value = value
+              })
+            })()
+          </script>
           <button type="button" id="connectBtn">Connect</button>
           <button type="button" id="closeBtn">Close</button>
         </div>

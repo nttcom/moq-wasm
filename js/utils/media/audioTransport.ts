@@ -1,6 +1,6 @@
 import type { MOQTClient } from '../../pkg/moqt_client_wasm'
 import { MediaTransportState } from './transportState'
-import { serializeChunk } from './chunk'
+import { buildLocHeader } from './loc'
 
 export interface AudioChunkSendOptions {
   chunk: EncodedAudioChunk
@@ -8,9 +8,6 @@ export interface AudioChunkSendOptions {
   trackAliases: bigint[]
   client: MOQTClient
   transportState: MediaTransportState
-  fallbackCodec?: string
-  fallbackSampleRate?: number
-  fallbackChannels?: number
 }
 
 export async function sendAudioChunkViaMoqt({
@@ -18,10 +15,7 @@ export async function sendAudioChunkViaMoqt({
   metadata,
   trackAliases,
   client,
-  transportState,
-  fallbackCodec,
-  fallbackSampleRate,
-  fallbackChannels
+  transportState
 }: AudioChunkSendOptions): Promise<void> {
   if (!trackAliases.length) {
     return
@@ -30,15 +24,6 @@ export async function sendAudioChunkViaMoqt({
   const subgroupId = 0
   transportState.ensureAudioSubgroup(subgroupId)
 
-  const { extraMeta, shouldIncludeCodec } = buildAudioMetadata(
-    trackAliases,
-    transportState,
-    metadata,
-    fallbackCodec,
-    fallbackSampleRate,
-    fallbackChannels
-  )
-
   for (const alias of trackAliases) {
     if (transportState.shouldSendAudioHeader(alias, subgroupId)) {
       await client.sendSubgroupStreamHeaderMessage(alias, transportState.getAudioGroupId(), BigInt(subgroupId), 0)
@@ -46,16 +31,11 @@ export async function sendAudioChunkViaMoqt({
     }
   }
 
-  const payload = serializeChunk(
-    {
-      type: chunk.type,
-      timestamp: chunk.timestamp,
-      duration: chunk.duration ?? null,
-      byteLength: chunk.byteLength,
-      copyTo: (dest: Uint8Array) => chunk.copyTo(dest)
-    },
-    extraMeta
-  )
+  const payload = new Uint8Array(chunk.byteLength)
+  chunk.copyTo(payload)
+  const locHeader = buildLocHeader({
+    captureTimestampMicros: Date.now() * 1000
+  })
 
   for (const alias of trackAliases) {
     await client.sendSubgroupStreamObject(
@@ -64,52 +44,10 @@ export async function sendAudioChunkViaMoqt({
       BigInt(subgroupId),
       transportState.getAudioObjectId(),
       undefined,
-      payload
+      payload,
+      locHeader
     )
-    if (shouldIncludeCodec) {
-      transportState.markAudioCodecSent(alias)
-    }
   }
 
   transportState.incrementAudioObject()
-}
-
-/**
- * Build metadata for the first audio object (codec/config) and indicate whether it should be sent.
- */
-function buildAudioMetadata(
-  trackAliases: bigint[],
-  transportState: MediaTransportState,
-  metadata: EncodedAudioChunkMetadata | undefined,
-  fallbackCodec?: string,
-  fallbackSampleRate?: number,
-  fallbackChannels?: number
-) {
-  const shouldIncludeCodec = true
-  const decoderConfig = metadata?.decoderConfig
-  const descriptionBase64 = decoderConfig?.description
-    ? bufferToBase64(decoderConfig.description as ArrayBuffer)
-    : undefined
-  const codec = decoderConfig?.codec ?? fallbackCodec ?? 'opus'
-  const sampleRate = decoderConfig?.sampleRate ?? fallbackSampleRate ?? 48000
-  const channels = decoderConfig?.numberOfChannels ?? fallbackChannels ?? 1
-
-  return {
-    shouldIncludeCodec,
-    extraMeta: {
-      codec,
-      sampleRate,
-      channels,
-      descriptionBase64
-    }
-  }
-}
-
-function bufferToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf)
-  let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
 }

@@ -1,5 +1,6 @@
-import { deserializeChunk } from './chunk'
-import type { JitterBufferSubgroupObject, SubgroupObject } from './jitterBufferTypes'
+import { tryDeserializeChunk, type ChunkMetadata } from './chunk'
+import { bytesToBase64, readLocHeader } from './loc'
+import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc } from './jitterBufferTypes'
 
 const DEFAULT_MIN_DELAY_MS = 250
 const DEFAULT_BUFFERED_AHEAD_FRAMES = 5
@@ -54,14 +55,42 @@ export class VideoJitterBuffer {
   push(
     groupId: bigint,
     objectId: bigint,
-    object: SubgroupObject,
+    object: SubgroupObjectWithLoc,
     onReceiveLatency?: (latencyMs: number) => void
   ): void {
     if (!object.objectPayloadLength) {
       return
     }
-    const parsed = deserializeChunk(object.objectPayload)
+    const parsedFromMetadata = tryDeserializeChunk(object.objectPayload)
+    if (!parsedFromMetadata) {
+      const locHeader = object.locHeader
+      const extensions = locHeader?.extensions ?? []
+      if (!locHeader || extensions.length === 0) {
+        console.debug('[VideoJitterBuffer] Missing metadata and LOC header', {
+          groupId,
+          objectId,
+          payloadLength: object.objectPayloadLength
+        })
+      } else {
+        const hasCaptureTimestamp = extensions.some((ext) => ext.type === 'captureTimestamp')
+        const hasVideoConfig = extensions.some((ext) => ext.type === 'videoConfig')
+        console.debug('[VideoJitterBuffer] Using LOC header fallback', {
+          groupId,
+          objectId,
+          payloadLength: object.objectPayloadLength,
+          locExtensionCount: extensions.length,
+          hasCaptureTimestamp,
+          hasVideoConfig
+        })
+      }
+    }
+    const parsed = parsedFromMetadata ?? buildChunkFromLoc(object, objectId)
     if (!parsed) {
+      console.debug('[VideoJitterBuffer] Failed to build chunk from payload', {
+        groupId,
+        objectId,
+        payloadLength: object.objectPayloadLength
+      })
       return
     }
 
@@ -286,4 +315,21 @@ export class VideoJitterBuffer {
     }
     return this.buffer.findIndex((entry) => entry.objectId === 0n && entry.groupId > this.lastPoppedGroupId!)
   }
+}
+
+function buildChunkFromLoc(
+  object: SubgroupObjectWithLoc,
+  objectId: bigint
+): { metadata: ChunkMetadata; data: Uint8Array } | null {
+  const loc = readLocHeader(object.locHeader)
+  const captureMicros = loc.captureTimestampMicros
+  const sentAt = typeof captureMicros === 'number' ? Math.floor(captureMicros / 1000) : Date.now()
+  const metadata: ChunkMetadata = {
+    type: objectId === 0n ? 'key' : 'delta',
+    timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
+    duration: null,
+    sentAt,
+    descriptionBase64: loc.videoConfig ? bytesToBase64(loc.videoConfig) : undefined
+  }
+  return { metadata, data: object.objectPayload }
 }

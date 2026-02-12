@@ -2,6 +2,8 @@ mod utils;
 
 #[cfg(feature = "web_sys_unstable_apis")]
 mod messages;
+#[cfg(feature = "web_sys_unstable_apis")]
+mod loc;
 
 #[cfg(feature = "web_sys_unstable_apis")]
 pub use messages::*;
@@ -976,6 +978,7 @@ impl MOQTClient {
         object_id: u64,
         object_status: Option<u8>,
         object_payload: Vec<u8>,
+        loc_header: JsValue,
     ) -> Result<(), JsValue> {
         let subscribe_id = match self
             .subscription_node
@@ -991,7 +994,12 @@ impl MOQTClient {
             stream_writers.get(&writer_key).cloned()
         };
         if let Some(writer) = writer {
-            let extension_headers = vec![];
+            let extension_headers = match crate::loc::parse_loc_header(loc_header) {
+                Ok(Some(loc_header)) => crate::loc::loc_header_to_extension_headers(&loc_header)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?,
+                Ok(None) => vec![],
+                Err(e) => return Err(JsValue::from_str(&e.to_string())),
+            };
             let subgroup_stream_object = subgroup_stream::Object::new(
                 object_id,
                 extension_headers,

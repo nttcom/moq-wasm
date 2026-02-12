@@ -271,7 +271,8 @@ export class MoqtClientWrapper {
       state.subgroupId,
       state.objectId,
       undefined,
-      payload
+      payload,
+      undefined
     )
     client.incrementSubgroupObject(trackAlias)
   }

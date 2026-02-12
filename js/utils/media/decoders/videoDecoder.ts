@@ -1,5 +1,5 @@
 import { VideoJitterBuffer, type VideoJitterBufferMode } from '../videoJitterBuffer'
-import type { JitterBufferSubgroupObject, SubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
+import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { KEYFRAME_INTERVAL } from '../constants'
 import { createBitrateLogger } from '../bitrate'
 import type { ChunkMetadata } from '../chunk'
@@ -187,11 +187,27 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
     return
   }
 
-  const subgroupStreamObject: SubgroupObject = {
+  const locHeader = event.data.subgroupStreamObject.locHeader
+  const locExtensions = locHeader?.extensions ?? []
+  const hasCaptureTimestamp = locExtensions.some((ext) => ext.type === 'captureTimestamp')
+  const hasVideoConfig = locExtensions.some((ext) => ext.type === 'videoConfig')
+  const hasVideoFrameMarking = locExtensions.some((ext) => ext.type === 'videoFrameMarking')
+  console.debug('[videoDecoder] recv object', {
+    groupId: event.data.groupId,
+    objectId: event.data.subgroupStreamObject.objectId,
+    payloadLength: event.data.subgroupStreamObject.objectPayloadLength,
+    status: event.data.subgroupStreamObject.objectStatus,
+    locExtensionCount: locExtensions.length,
+    hasCaptureTimestamp,
+    hasVideoConfig,
+    hasVideoFrameMarking
+  })
+  const subgroupStreamObject: SubgroupObjectWithLoc = {
     objectId: event.data.subgroupStreamObject.objectId,
     objectPayloadLength: event.data.subgroupStreamObject.objectPayloadLength,
     objectPayload: new Uint8Array(event.data.subgroupStreamObject.objectPayload),
-    objectStatus: event.data.subgroupStreamObject.objectStatus
+    objectStatus: event.data.subgroupStreamObject.objectStatus,
+    locHeader: event.data.subgroupStreamObject.locHeader
   }
   bitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
 
@@ -305,13 +321,10 @@ function postDecoderConfig(resolvedConfig: { codec: string; descriptionBase64?: 
 function resolveVideoConfig(metadata: ChunkMetadata): { codec: string; descriptionBase64?: string } | null {
   const hasNewConfig = metadata.codec || metadata.descriptionBase64
   if (!hasNewConfig && !cachedVideoConfig) {
-    return null
+    return { codec: VIDEO_DECODER_CONFIG.codec }
   }
-  const codec = metadata.codec ?? cachedVideoConfig?.codec
+  const codec = metadata.codec ?? cachedVideoConfig?.codec ?? VIDEO_DECODER_CONFIG.codec
   const descriptionBase64 = metadata.descriptionBase64 ?? cachedVideoConfig?.descriptionBase64
-  if (!codec) {
-    return null
-  }
   return { codec, descriptionBase64 }
 }
 

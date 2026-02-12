@@ -11,6 +11,28 @@ import {
   type AudioJitterConfig
 } from '../types/jitterBuffer'
 
+type LocHeaderSummary = {
+  present: boolean
+  extensionCount: number
+  hasCaptureTimestamp: boolean
+  hasVideoConfig: boolean
+  hasVideoFrameMarking: boolean
+  hasAudioLevel: boolean
+}
+
+function summarizeLocHeader(locHeader: any): LocHeaderSummary {
+  const extensions = Array.isArray(locHeader?.extensions) ? locHeader.extensions : []
+  const has = (type: string) => extensions.some((ext: any) => ext?.type === type)
+  return {
+    present: Boolean(locHeader),
+    extensionCount: extensions.length,
+    hasCaptureTimestamp: has('captureTimestamp'),
+    hasVideoConfig: has('videoConfig'),
+    hasVideoFrameMarking: has('videoFrameMarking'),
+    hasAudioLevel: has('audioLevel')
+  }
+}
+
 interface MediaSubscriberHandlers {
   onRemoteVideoStream?: (userId: string, stream: MediaStream) => void
   onRemoteAudioStream?: (userId: string, stream: MediaStream) => void
@@ -36,6 +58,8 @@ interface AudioSubscriptionContext {
   writer: WritableStreamDefaultWriter<AudioData>
   stream: MediaStream
 }
+
+type SubgroupStreamObjectMessageWithLoc = SubgroupStreamObjectMessage & { locHeader?: any }
 
 export class MediaSubscriber {
   private handlers: MediaSubscriberHandlers = {}
@@ -68,6 +92,13 @@ export class MediaSubscriber {
         | { type: 'receiveLatency'; media: 'video'; ms: number }
         | { type: 'renderingLatency'; media: 'video'; ms: number }
         | { type: 'decoderConfig'; codec: string; width?: number; height?: number }
+      if (data.type !== 'frame') {
+        console.debug('[CallMediaSubscriber] video worker event', {
+          userId,
+          trackAlias,
+          ...data
+        })
+      }
       if (data.type === 'bitrate') {
         this.handlers.onRemoteVideoBitrate?.(userId, data.kbps)
         return
@@ -145,6 +176,13 @@ export class MediaSubscriber {
         | { type: 'bitrate'; kbps: number }
         | { type: 'receiveLatency'; media: 'audio'; ms: number }
         | { type: 'renderingLatency'; media: 'audio'; ms: number }
+      if (data.type !== 'audioData') {
+        console.debug('[CallMediaSubscriber] audio worker event', {
+          userId,
+          trackAlias,
+          ...data
+        })
+      }
       if (data.type === 'bitrate') {
         this.handlers.onRemoteAudioBitrate?.(userId, data.kbps)
         return
@@ -174,12 +212,35 @@ export class MediaSubscriber {
     )
   }
 
-  private forwardToWorker(worker: Worker, trackAlias: bigint, groupId: bigint, message: SubgroupStreamObjectMessage) {
+  private forwardToWorker(
+    worker: Worker,
+    trackAlias: bigint,
+    groupId: bigint,
+    message: SubgroupStreamObjectMessageWithLoc
+  ) {
     if (message.objectStatus === 3) {
       console.debug(`[MediaSubscriber] Received EndOfGroup trackAlias=${trackAlias} groupId=${groupId}`)
     }
     const payload = new Uint8Array(message.objectPayload)
     const payloadLength = message.objectPayloadLength
+    const locSummary = summarizeLocHeader(message.locHeader)
+    if (locSummary.present && locSummary.extensionCount > 0) {
+      console.debug('[CallMediaSubscriber] LoC object', {
+        trackAlias,
+        groupId,
+        objectId: message.objectId,
+        loc: locSummary
+      })
+    }
+    console.debug('[CallMediaSubscriber] recv object', {
+      trackAlias,
+      groupId,
+      objectId: message.objectId,
+      payloadLength,
+      payloadByteLength: payload.byteLength,
+      status: message.objectStatus,
+      loc: locSummary
+    })
     worker.postMessage(
       {
         groupId,
@@ -187,7 +248,8 @@ export class MediaSubscriber {
           objectId: message.objectId,
           objectPayloadLength: payloadLength,
           objectPayload: payload,
-          objectStatus: message.objectStatus
+          objectStatus: message.objectStatus,
+          locHeader: message.locHeader
         }
       },
       [payload.buffer]

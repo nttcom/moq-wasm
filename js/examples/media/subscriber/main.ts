@@ -26,6 +26,28 @@ type VideoDecoderWorkerMessage =
 let audioWorkerInitialized = false
 let videoWorkerInitialized = false
 
+type LocHeaderSummary = {
+  present: boolean
+  extensionCount: number
+  hasCaptureTimestamp: boolean
+  hasVideoConfig: boolean
+  hasVideoFrameMarking: boolean
+  hasAudioLevel: boolean
+}
+
+function summarizeLocHeader(locHeader: any): LocHeaderSummary {
+  const extensions = Array.isArray(locHeader?.extensions) ? locHeader.extensions : []
+  const has = (type: string) => extensions.some((ext: any) => ext?.type === type)
+  return {
+    present: Boolean(locHeader),
+    extensionCount: extensions.length,
+    hasCaptureTimestamp: has('captureTimestamp'),
+    hasVideoConfig: has('videoConfig'),
+    hasVideoFrameMarking: has('videoFrameMarking'),
+    hasAudioLevel: has('audioLevel')
+  }
+}
+
 function toBigUint64Array(value: string): BigUint64Array {
   const values = value
     .split(',')
@@ -72,6 +94,7 @@ function setupAudioDecoderWorker() {
   audioDecoderWorker.onmessage = async (event: MessageEvent<AudioDecoderWorkerMessage>) => {
     const data = event.data
     if (data.type !== 'audioData') {
+      console.debug('[MediaSubscriber] audio worker event', data)
       return
     }
     await audioWriter.ready
@@ -91,6 +114,7 @@ function setupVideoDecoderWorker() {
   videoDecoderWorker.onmessage = async (event: MessageEvent<VideoDecoderWorkerMessage>) => {
     const data = event.data
     if (data.type !== 'frame') {
+      console.debug('[MediaSubscriber] video worker event', data)
       return
     }
     const videoFrame = data.frame
@@ -108,6 +132,23 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: number)
     setupAudioDecoderWorker()
     moqtClient.setOnSubgroupObjectHandler(alias, (groupId, subgroupStreamObject) => {
       const payload = new Uint8Array(subgroupStreamObject.objectPayload)
+      const locSummary = summarizeLocHeader(subgroupStreamObject.locHeader)
+      if (locSummary.present && locSummary.extensionCount > 0) {
+        console.debug('[MediaSubscriber] LoC object (audio)', {
+          trackAlias: alias.toString(),
+          groupId,
+          objectId: subgroupStreamObject.objectId,
+          loc: locSummary
+        })
+      }
+      console.debug('[MediaSubscriber] recv audio object', {
+        groupId,
+        objectId: subgroupStreamObject.objectId,
+        payloadLength: subgroupStreamObject.objectPayloadLength,
+        payloadByteLength: payload.byteLength,
+        status: subgroupStreamObject.objectStatus,
+        loc: locSummary
+      })
       audioDecoderWorker.postMessage(
         {
           groupId,
@@ -115,7 +156,8 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: number)
             objectId: subgroupStreamObject.objectId,
             objectPayloadLength: subgroupStreamObject.objectPayloadLength,
             objectPayload: payload,
-            objectStatus: subgroupStreamObject.objectStatus
+            objectStatus: subgroupStreamObject.objectStatus,
+            locHeader: subgroupStreamObject.locHeader
           }
         },
         [payload.buffer]
@@ -127,6 +169,23 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: number)
   setupVideoDecoderWorker()
   moqtClient.setOnSubgroupObjectHandler(alias, (groupId, subgroupStreamObject) => {
     const payload = new Uint8Array(subgroupStreamObject.objectPayload)
+    const locSummary = summarizeLocHeader(subgroupStreamObject.locHeader)
+    if (locSummary.present && locSummary.extensionCount > 0) {
+      console.debug('[MediaSubscriber] LoC object (video)', {
+        trackAlias: alias.toString(),
+        groupId,
+        objectId: subgroupStreamObject.objectId,
+        loc: locSummary
+      })
+    }
+    console.debug('[MediaSubscriber] recv video object', {
+      groupId,
+      objectId: subgroupStreamObject.objectId,
+      payloadLength: subgroupStreamObject.objectPayloadLength,
+      payloadByteLength: payload.byteLength,
+      status: subgroupStreamObject.objectStatus,
+      loc: locSummary
+    })
 
     videoDecoderWorker.postMessage(
       {
@@ -135,7 +194,8 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: number)
           objectId: subgroupStreamObject.objectId,
           objectPayloadLength: subgroupStreamObject.objectPayloadLength,
           objectPayload: payload,
-          objectStatus: subgroupStreamObject.objectStatus
+          objectStatus: subgroupStreamObject.objectStatus,
+          locHeader: subgroupStreamObject.locHeader
         }
       },
       [payload.buffer]

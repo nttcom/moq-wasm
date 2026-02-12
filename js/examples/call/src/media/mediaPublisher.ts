@@ -360,8 +360,7 @@ export class MediaPublisher {
         publisherPriority: 0,
         client,
         transportState: this.transportState,
-        sender: this.sendVideoObject,
-        fallbackCodec: this.currentVideoEncodingInUse.codec
+        sender: this.sendVideoObject
       })
     })
   }
@@ -378,10 +377,7 @@ export class MediaPublisher {
         metadata,
         trackAliases: aliases,
         client,
-        transportState: this.transportState,
-        fallbackCodec: this.audioEncodingSettings.codec,
-        fallbackSampleRate: 48_000,
-        fallbackChannels: this.audioEncodingSettings.channels
+        transportState: this.transportState
       })
     })
   }
@@ -512,7 +508,7 @@ export class MediaPublisher {
     objectId,
     chunk,
     client,
-    extraMetadata
+    locHeader
   ) => {
     const previousState = this.videoGroupStates.get(trackAlias)
     if (previousState && previousState.groupId !== groupId) {
@@ -529,10 +525,18 @@ export class MediaPublisher {
         byteLength: chunk.byteLength,
         copyTo: (dest) => chunk.copyTo(dest)
       },
-      extraMetadata
+      undefined
     )
 
-    await client.sendSubgroupStreamObject(trackAlias, groupId, subgroupId, objectId, undefined, payload)
+    await client.sendSubgroupStreamObject(
+      trackAlias,
+      groupId,
+      subgroupId,
+      objectId,
+      undefined,
+      payload,
+      locHeader
+    )
 
     this.videoGroupStates.set(trackAlias, { groupId, lastObjectId: objectId })
   }
@@ -549,7 +553,15 @@ export class MediaPublisher {
   }
 
   private async sendEndOfGroup(client: MOQTClient, trackAlias: bigint, groupId: bigint, endObjectId: bigint) {
-    await client.sendSubgroupStreamObject(trackAlias, groupId, BigInt(0), endObjectId, 3, new Uint8Array(0))
+    await client.sendSubgroupStreamObject(
+      trackAlias,
+      groupId,
+      BigInt(0),
+      endObjectId,
+      3,
+      new Uint8Array(0),
+      undefined
+    )
     console.debug(
       `[MediaPublisher] Sent EndOfGroup trackAlias=${trackAlias} groupId=${groupId} subgroupId=0 objectId=${endObjectId}`
     )

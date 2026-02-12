@@ -13,6 +13,7 @@ use moqt_core::messages::control_messages::{
 use moqt_core::messages::data_streams::{
     object_status::ObjectStatus, subgroup_stream::Object as CoreSubgroupStreamObject,
 };
+use packages::loc::LocHeader;
 pub use subgroup_state::SubgroupState;
 use wasm_bindgen::prelude::*;
 
@@ -316,6 +317,7 @@ pub struct SubgroupStreamObjectMessage {
     object_status: Option<u8>,
     object_payload_length: u32,
     object_payload: Vec<u8>,
+    loc_header: LocHeader,
 }
 
 #[wasm_bindgen]
@@ -339,15 +341,23 @@ impl SubgroupStreamObjectMessage {
     pub fn object_payload_length(&self) -> u32 {
         self.object_payload_length
     }
+
+    #[wasm_bindgen(getter, js_name = locHeader)]
+    pub fn loc_header(&self) -> Result<JsValue, JsValue> {
+        crate::loc::encode_loc_header(&self.loc_header)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
 }
 
 impl From<&CoreSubgroupStreamObject> for SubgroupStreamObjectMessage {
     fn from(value: &CoreSubgroupStreamObject) -> Self {
+        let loc_header = crate::loc::extension_headers_to_loc_header(value.extension_headers());
         SubgroupStreamObjectMessage {
             object_id: value.object_id(),
             object_status: value.object_status().map(ObjectStatus::into),
             object_payload_length: value.object_payload().len() as u32,
             object_payload: value.object_payload().to_vec(),
+            loc_header,
         }
     }
 }

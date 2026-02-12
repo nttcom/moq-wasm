@@ -1,7 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import type { MOQTClient } from '../../../pkg/moqt_client_wasm'
 import { AUTH_INFO } from './const'
-import { sendVideoObjectMessage, sendAudioObjectMessage } from './sender'
+import { sendVideoObjectMessage, sendAudioObjectMessage, buildAudioLocHeader } from './sender'
 import { getFormElement } from './utils'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt } from '../../../utils/media/videoTransport'
@@ -62,15 +62,6 @@ async function handleAudioChunkMessage(
   const subgroupId = 0
   transportState.ensureAudioSubgroup(subgroupId)
 
-  const shouldIncludeCodec = transportState.shouldSendAudioCodec(trackAlias)
-  const extraMeta = shouldIncludeCodec
-    ? {
-        codec: 'opus',
-        sampleRate: 48000,
-        channels: 1
-      }
-    : undefined
-
   if (transportState.shouldSendAudioHeader(trackAlias, subgroupId)) {
     await client.sendSubgroupStreamHeaderMessage(
       trackAlias,
@@ -89,11 +80,8 @@ async function handleAudioChunkMessage(
     transportState.getAudioObjectId(),
     chunk,
     client,
-    extraMeta
+    buildAudioLocHeader()
   )
-  if (shouldIncludeCodec) {
-    transportState.markAudioCodecSent(trackAlias)
-  }
   transportState.incrementAudioObject()
 }
 
@@ -141,6 +129,11 @@ function sendSubgroupObjectButtonClickHandler(): void {
         return
       }
       const { chunk, metadata } = data
+      console.debug('[MediaPublisher] video chunk', {
+        byteLength: chunk.byteLength,
+        type: chunk.type,
+        timestamp: chunk.timestamp
+      })
       const form = getFormElement()
       const trackAlias = BigInt(form['video-object-track-alias'].value)
       const publisherPriority = Number(form['video-publisher-priority'].value)

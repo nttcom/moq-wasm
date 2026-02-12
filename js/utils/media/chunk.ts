@@ -59,3 +59,11 @@ export function deserializeChunk(payload: Uint8Array): DeserializedChunk {
   const data = payload.slice(META_LENGTH_BYTES + metaLength)
   return { metadata, data }
 }
+
+export function tryDeserializeChunk(payload: Uint8Array): DeserializedChunk | null {
+  try {
+    return deserializeChunk(payload)
+  } catch (_error) {
+    return null
+  }
+}

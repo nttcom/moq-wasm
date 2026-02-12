@@ -300,7 +300,15 @@ function setupActionButtons(client: MOQTClient, form: HTMLFormControls, received
       subgroupHeaderSent.add(key)
     }
 
-    await client.sendSubgroupStreamObject(trackAlias, groupId, subgroupId, objectId++, undefined, objectPayloadArray)
+    await client.sendSubgroupStreamObject(
+      trackAlias,
+      groupId,
+      subgroupId,
+      objectId++,
+      undefined,
+      objectPayloadArray,
+      undefined
+    )
     objectIdElement && (objectIdElement.textContent = objectId.toString())
   })
 
@@ -320,7 +328,15 @@ function setupActionButtons(client: MOQTClient, form: HTMLFormControls, received
       subgroupHeaderSent.add(key)
     }
 
-    await client.sendSubgroupStreamObject(trackAlias, groupId, subgroupId, objectId++, objectStatus, objectPayloadArray)
+    await client.sendSubgroupStreamObject(
+      trackAlias,
+      groupId,
+      subgroupId,
+      objectId++,
+      objectStatus,
+      objectPayloadArray,
+      undefined
+    )
     objectIdElement && (objectIdElement.textContent = objectId.toString())
   })
 

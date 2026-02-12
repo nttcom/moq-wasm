@@ -215,8 +215,49 @@ mod tests {
             let object_id = 3;
             let publisher_priority = 4;
             let header_type = 4;
-            let value = 1;
-            let header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(value));
+            let value = vec![1];
+            let header_value = ExtensionHeaderValue::EvenTypeValue(ValueWithLength::new(value));
+
+            let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
+            let object_payload = vec![0, 1, 2];
+
+            let datagram_object = datagram::Object::new(
+                track_alias,
+                group_id,
+                object_id,
+                publisher_priority,
+                extension_headers,
+                object_payload,
+            )
+            .unwrap();
+
+            let mut buf = BytesMut::new();
+            datagram_object.packetize(&mut buf);
+
+            let expected_bytes_array = [
+                1, // Track Alias (i)
+                2, // Group ID (i)
+                3, // Object ID (i)
+                4, // Subscriber Priority (8)
+                3, // Extension Headers Length (i)
+                4, // Header Type (i)
+                1, // Header Value Length (i)
+                1, // Header Value (i)
+                0, 1, 2, // Object Payload (..)
+            ];
+
+            assert_eq!(buf.as_ref(), expected_bytes_array);
+        }
+
+        #[test]
+        fn packetize_datagram_stream_object_with_odd_type_extension_header() {
+            let track_alias = 1;
+            let group_id = 2;
+            let object_id = 3;
+            let publisher_priority = 4;
+            let header_type = 1;
+            let value = 3;
+            let header_value = ExtensionHeaderValue::OddTypeValue(Value::new(value));
 
             let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
             let object_payload = vec![0, 1, 2];
@@ -240,49 +281,8 @@ mod tests {
                 3, // Object ID (i)
                 4, // Subscriber Priority (8)
                 2, // Extension Headers Length (i)
-                4, // Header Type (i)
-                1, // Header Value (i)
-                0, 1, 2, // Object Payload (..)
-            ];
-
-            assert_eq!(buf.as_ref(), expected_bytes_array);
-        }
-
-        #[test]
-        fn packetize_datagram_stream_object_with_odd_type_extension_header() {
-            let track_alias = 1;
-            let group_id = 2;
-            let object_id = 3;
-            let publisher_priority = 4;
-            let header_type = 1;
-            let value = vec![1, 2, 3];
-            let header_value = ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(value));
-
-            let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
-            let object_payload = vec![0, 1, 2];
-
-            let datagram_object = datagram::Object::new(
-                track_alias,
-                group_id,
-                object_id,
-                publisher_priority,
-                extension_headers,
-                object_payload,
-            )
-            .unwrap();
-
-            let mut buf = BytesMut::new();
-            datagram_object.packetize(&mut buf);
-
-            let expected_bytes_array = [
-                1, // Track Alias (i)
-                2, // Group ID (i)
-                3, // Object ID (i)
-                4, // Subscriber Priority (8)
-                5, // Extension Headers Length (i)
                 1, // Header Type (i)
-                3, // Header Value Length (i)
-                1, 2, 3, // Header Value (..)
+                3, // Header Value (i)
                 0, 1, 2, // Object Payload (..)
             ];
 
@@ -296,12 +296,12 @@ mod tests {
             let object_id = 3;
             let publisher_priority = 4;
             let even_header_type = 12;
-            let even_value = 1;
-            let even_header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(even_value));
+            let even_value = vec![1];
+            let even_header_value =
+                ExtensionHeaderValue::EvenTypeValue(ValueWithLength::new(even_value));
             let odd_header_type = 9;
-            let odd_value = vec![1, 2, 3];
-            let odd_header_value =
-                ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(odd_value));
+            let odd_value = 3;
+            let odd_header_value = ExtensionHeaderValue::OddTypeValue(Value::new(odd_value));
 
             let extension_headers = vec![
                 ExtensionHeader::new(odd_header_type, odd_header_value).unwrap(),
@@ -327,13 +327,13 @@ mod tests {
                 2, // Group ID (i)
                 3, // Object ID (i)
                 4, // Subscriber Priority (8)
-                7, // Extension Headers Length (i)
+                5, // Extension Headers Length (i)
                 //{
                 9, // Header Type (i)
-                3, // Header Value Length (i)
-                1, 2, 3, // Header Value (..)
+                3, // Header Value (i)
                 // }{
                 12, // Header Type (i)
+                1,  // Header Value Length (i)
                 1,  // Header Value (i)
                 // }
                 0, 1, 2, // Object Payload (..)
@@ -349,8 +349,9 @@ mod tests {
                 2, // Group ID (i)
                 3, // Object ID (i)
                 4, // Subscriber Priority (8)
-                2, // Extension Headers Length (i)
+                3, // Extension Headers Length (i)
                 4, // Header Type (i)
+                1, // Header Value Length (i)
                 1, // Header Value (i)
                 0, 1, 2, // Object Payload (..)
             ];
@@ -365,8 +366,8 @@ mod tests {
             let object_id = 3;
             let publisher_priority = 4;
             let header_type = 4;
-            let value = 1;
-            let header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(value));
+            let value = vec![1];
+            let header_value = ExtensionHeaderValue::EvenTypeValue(ValueWithLength::new(value));
 
             let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
             let object_payload = vec![0, 1, 2];
@@ -391,10 +392,9 @@ mod tests {
                 2, // Group ID (i)
                 3, // Object ID (i)
                 4, // Subscriber Priority (8)
-                5, // Extension Headers Length (i)
+                2, // Extension Headers Length (i)
                 1, // Header Type (i)
-                3, // Header Value Length (i)
-                1, 2, 3, // Header Value (..)
+                3, // Header Value (i)
                 0, 1, 2, // Object Payload (..)
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
@@ -408,8 +408,8 @@ mod tests {
             let object_id = 3;
             let publisher_priority = 4;
             let header_type = 1;
-            let value = vec![1, 2, 3];
-            let header_value = ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(value));
+            let value = 3;
+            let header_value = ExtensionHeaderValue::OddTypeValue(Value::new(value));
 
             let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
             let object_payload = vec![0, 1, 2];
@@ -434,13 +434,13 @@ mod tests {
                 2, // Group ID (i)
                 3, // Object ID (i)
                 4, // Subscriber Priority (8)
-                7, // Extension Headers Length (i)
+                5, // Extension Headers Length (i)
                 //{
                 9, // Header Type (i)
-                3, // Header Value Length (i)
-                1, 2, 3, // Header Value (..)
+                3, // Header Value (i)
                 // }{
                 12, // Header Type (i)
+                1,  // Header Value Length (i)
                 1,  // Header Value (i)
                 // }
                 0, 1, 2, // Object Payload (..)
@@ -456,12 +456,12 @@ mod tests {
             let object_id = 3;
             let publisher_priority = 4;
             let even_header_type = 12;
-            let even_value = 1;
-            let even_header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(even_value));
+            let even_value = vec![1];
+            let even_header_value =
+                ExtensionHeaderValue::EvenTypeValue(ValueWithLength::new(even_value));
             let odd_header_type = 9;
-            let odd_value = vec![1, 2, 3];
-            let odd_header_value =
-                ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(odd_value));
+            let odd_value = 3;
+            let odd_header_value = ExtensionHeaderValue::OddTypeValue(Value::new(odd_value));
 
             let extension_headers = vec![
                 ExtensionHeader::new(odd_header_type, odd_header_value).unwrap(),
