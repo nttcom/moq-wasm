@@ -528,15 +528,7 @@ export class MediaPublisher {
       undefined
     )
 
-    await client.sendSubgroupStreamObject(
-      trackAlias,
-      groupId,
-      subgroupId,
-      objectId,
-      undefined,
-      payload,
-      locHeader
-    )
+    await client.sendSubgroupStreamObject(trackAlias, groupId, subgroupId, objectId, undefined, payload, locHeader)
 
     this.videoGroupStates.set(trackAlias, { groupId, lastObjectId: objectId })
   }
@@ -553,15 +545,7 @@ export class MediaPublisher {
   }
 
   private async sendEndOfGroup(client: MOQTClient, trackAlias: bigint, groupId: bigint, endObjectId: bigint) {
-    await client.sendSubgroupStreamObject(
-      trackAlias,
-      groupId,
-      BigInt(0),
-      endObjectId,
-      3,
-      new Uint8Array(0),
-      undefined
-    )
+    await client.sendSubgroupStreamObject(trackAlias, groupId, BigInt(0), endObjectId, 3, new Uint8Array(0), undefined)
     console.debug(
       `[MediaPublisher] Sent EndOfGroup trackAlias=${trackAlias} groupId=${groupId} subgroupId=0 objectId=${endObjectId}`
     )

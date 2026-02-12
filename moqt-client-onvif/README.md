@@ -9,7 +9,7 @@ An ONVIF PTZ client with a minimal GUI and RTSP preview.
 - RTSP: display the live preview in the GUI.
 - RTSP: log SDP details once at startup when available.
 - Startup: fetch PTZ configuration/option info and print a short summary (token/spaces/limits) grouped by `[GetToken]`, etc.
-- MoQ: publish RTSP video as subgroup streams and subscribe to ONVIF command datagrams over a single WebTransport connection (AnnexB conversion applied; keyframes include avcC description metadata derived from SPS/PPS when available; codec string is derived from SPS with the CLI value used as a fallback; RTSP capture starts after MoQ setup/announce/subscribe).
+- MoQ: publish RTSP video as subgroup streams and subscribe to ONVIF command datagrams over a single WebTransport connection (AnnexB conversion applied; keyframes include LoC videoConfig derived from SPS/PPS when available; codec string is derived from SPS with the CLI value used as a fallback; RTSP capture starts after MoQ setup/announce/subscribe).
 
 ## Usage
 
@@ -47,6 +47,7 @@ cargo run -p moqt-client-onvif --bin moqt-onvif-client -- \
   --username admin \
   --password secret \
   --moqt-url https://localhost:4433 \
+  --insecure-skip-tls-verify \
   --publish-namespace onvif/client \
   --subscribe-namespace onvif/viewer \
   --video-track video \
@@ -71,6 +72,7 @@ only that profile.
 - `--video-track`: track prefix for video profiles (default `video`, publishes `video/profile_1`, ...)
 - `--catalog-track`: track name for the profile catalog (default `catalog`)
 - `--payload-format`: send payload as `annexb` or `avcc` (default). AVCC mode converts AnnexB payloads to length-prefixed.
+- `--insecure-skip-tls-verify`: skip certificate validation for local debugging only (INSECURE)
 - `--dump-keyframe[=PATH]`: dump the first keyframe payload for ffprobe (default path `/tmp/moqt-onvif-keyframe.h264`)
 
 ## Implementation

@@ -137,9 +137,7 @@ export class AudioJitterBuffer {
   }
 }
 
-function buildChunkFromLoc(
-  object: SubgroupObjectWithLoc
-): { metadata: ChunkMetadata; data: Uint8Array } | null {
+function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } | null {
   const loc = readLocHeader(object.locHeader)
   const captureMicros = loc.captureTimestampMicros
   const sentAt = typeof captureMicros === 'number' ? Math.floor(captureMicros / 1000) : Date.now()

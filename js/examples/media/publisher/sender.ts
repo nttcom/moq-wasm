@@ -77,7 +77,9 @@ export async function sendAudioObjectMessage(
 }
 
 export function buildVideoLocHeader(metadata?: EncodedVideoChunkMetadata): LocHeader {
-  const configBytes = arrayBufferToUint8Array((metadata as { decoderConfig?: any } | undefined)?.decoderConfig?.description)
+  const configBytes = arrayBufferToUint8Array(
+    (metadata as { decoderConfig?: any } | undefined)?.decoderConfig?.description
+  )
   return buildLocHeader({
     captureTimestampMicros: Date.now() * 1000,
     videoConfig: configBytes
