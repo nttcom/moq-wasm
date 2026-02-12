@@ -5,6 +5,10 @@ use crate::modules::transport::{
         quic_connection::QUICConnection, quic_connection_creator::QUICConnectionCreator,
         quic_receive_stream::QUICReceiveStream, quic_send_stream::QUICSendStream,
     },
+    webtransport::{
+        wt_connection::WtConnection, wt_connection_creator::WtConnectionCreator,
+        wt_receive_stream::WtReceiveStream, wt_send_stream::WtSendStream,
+    },
     transport_connection::TransportConnection,
     transport_connection_creator::TransportConnectionCreator,
     transport_receive_stream::TransportReceiveStream,
@@ -30,4 +34,15 @@ impl TransportProtocol for QUIC {
     type Connection = QUICConnection;
     type SendStream = QUICSendStream;
     type ReceiveStream = QUICReceiveStream;
+}
+
+#[allow(warnings)]
+#[derive(Debug)]
+pub struct WEBTRANSPORT;
+
+impl TransportProtocol for WEBTRANSPORT {
+    type ConnectionCreator = WtConnectionCreator;
+    type Connection = WtConnection;
+    type SendStream = WtSendStream;
+    type ReceiveStream = WtReceiveStream;
 }
