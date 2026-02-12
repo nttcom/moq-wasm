@@ -5,7 +5,15 @@ use super::wt_receive_stream::WtReceiveStream;
 use super::wt_send_stream::WtSendStream;
 
 #[derive(Debug)]
-pub struct WtConnection;
+pub struct WtConnection {
+    connection: wtransport::Connection,
+}
+
+impl WtConnection {
+    pub(crate) fn new(connection: wtransport::Connection) -> Self {
+        Self { connection }
+    }
+}
 
 #[async_trait]
 impl TransportConnection for WtConnection {
