@@ -971,6 +971,7 @@ impl MOQTClient {
             .map(|_| ())
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = sendSubgroupStreamObject)]
     pub async fn send_subgroup_stream_object(
         &self,
