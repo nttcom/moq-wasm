@@ -2,10 +2,12 @@ mod integration_test {
 
     use anyhow::Result;
     use integration_test::Client;
+    use integration_test::WtClient;
     use std::path::PathBuf;
     use std::time::Duration;
 
     use relay::run_relay_server; // relayクレートのrun_relay_server関数をインポート
+    use relay::run_wt_relay_server;
     use tokio::sync::oneshot; // oneshot::SenderとReceiverのために追加
     use tracing_test::traced_test;
 
@@ -44,6 +46,21 @@ mod integration_test {
         let cert_path = get_cert_path();
         log_init();
         run_relay_server(
+            port_num,
+            receiver,
+            key_path.to_str().unwrap(),
+            cert_path.to_str().unwrap(),
+        )
+    }
+
+    fn activate_wt_server(
+        port_num: u16,
+        receiver: tokio::sync::oneshot::Receiver<()>,
+    ) -> tokio::task::JoinHandle<()> {
+        let key_path = get_key_path();
+        let cert_path = get_cert_path();
+        log_init();
+        run_wt_relay_server(
             port_num,
             receiver,
             key_path.to_str().unwrap(),
@@ -126,6 +143,32 @@ mod integration_test {
         // relayサーバーをシャットダウン
         let _ = relay_shutdown_tx.send(());
         relay_handle.await?; // relayタスクの終了を待つ
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn wt_publish_namespace() -> Result<()> {
+        let port_num = get_port();
+        let (relay_shutdown_tx, relay_shutdown_rx) = oneshot::channel();
+        activate_wt_server(port_num, relay_shutdown_rx);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let client = WtClient::new(
+            get_cert_path().to_str().unwrap().to_string(),
+            port_num,
+            "Client A".to_string(),
+            None,
+        )
+        .await?;
+        let result = client.publish_namespace("room/member".to_string()).await;
+        assert!(result.is_ok(), "wt publish_namespace should return Ok");
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // relayサーバーをシャットダウン
+        let _ = relay_shutdown_tx.send(());
 
         Ok(())
     }
