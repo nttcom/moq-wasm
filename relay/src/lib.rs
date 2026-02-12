@@ -51,7 +51,7 @@ pub fn init_logging(log_level: String) {
 
 use tokio::sync::oneshot::Receiver; // Receiver for shutdown signal
 
-pub fn run_relay_server(
+pub fn run_relay_server<T: moqt::TransportProtocol>(
     port: u16,
     shutdown_signal: Receiver<()>,
     key_path: &str,
@@ -77,7 +77,7 @@ pub fn run_relay_server(
                 keep_alive_interval_sec: 15,
             };
 
-            let _handler = SessionHandler::run(server_config, repo.clone(), sender); // SessionHandler::runのシグネチャも変更する
+            let _handler = SessionHandler::run::<T>(server_config, repo.clone(), sender);
             let _manager = EventHandler::run(repo, receiver);
             let _ = shutdown_signal.await.ok(); // 関数の引数として受け取ったshutdown_signalを使用
         })
