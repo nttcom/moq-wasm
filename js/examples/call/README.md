@@ -9,9 +9,11 @@ MoQT (Media over QUIC Transport) を使用したビデオ通話アプリケー�
 ### 主な機能
 
 - **Room & User 管理**: Room Name と User Name を入力してルームに参加
+- **Relay 選択**: 127.0.0.1 かドメインの MoQT relay を選択
 - **参加者グリッド表示**: ルーム内の他の参加者を一覧表示
 - **選択的購読**: 参加者を選択して映像・音声を購読
 - **メディア配信**: カメラ、マイク、画面共有を選択して配信
+- **エンコード設定**: H.264 High@5.0 (avc1.640032) を含むコーデックを選択可能
 
 ## MoQT プロトコルフロー
 
@@ -27,7 +29,7 @@ MoQT (Media over QUIC Transport) を使用したビデオ通話アプリケー�
    - `SETUP` メッセージでサーバーと接続を確立
 
 2. **ルーム参加**
-   - `SUBSCRIBE_ANNOUNCES` で `/{RoomName}/` のANNOUNCEを購読
+   - `SUBSCRIBE_ANNOUNCES` で `/{RoomName}/` のANNOUNCEを購読（UIのANNOUNCEハンドラ登録後に送信）
    - 既存参加者と新規参加者のANNOUNCEを受信
 
 3. **メディア配信**

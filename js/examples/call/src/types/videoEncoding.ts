@@ -26,6 +26,7 @@ export type VideoEncodingSettings = {
 
 export const VIDEO_CODEC_OPTIONS: VideoCodecOption[] = [
   { id: 'h264-high40', label: 'H.264 High@4.0 (avc1.640028)', codec: 'avc1.640028' },
+  { id: 'h264-high50', label: 'H.264 High@5.0 (avc1.640032)', codec: 'avc1.640032' },
   { id: 'h264-main40', label: 'H.264 Main@4.0 (avc1.4D4028)', codec: 'avc1.4D4028' },
   { id: 'h264-baseline31', label: 'H.264 Baseline@3.1 (avc1.42001F)', codec: 'avc1.42001F' },
   { id: 'av1-main-8bit-l3', label: 'AV1 Main 8bit (av01.0.08M.08)', codec: 'av01.0.08M.08' },

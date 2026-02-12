@@ -3,9 +3,9 @@ use moqt_core::messages::data_streams::extension_header::{
     ExtensionHeader, ExtensionHeaderValue, Value, ValueWithLength,
 };
 use packages::loc::{
-    AudioLevel, CaptureTimestamp, LocHeader, LocHeaderExtension, LocHeaderValue,
-    UnknownHeaderExtension, VideoConfig, VideoFrameMarking, LOC_AUDIO_LEVEL_ID,
-    LOC_CAPTURE_TIMESTAMP_ID, LOC_VIDEO_CONFIG_ID, LOC_VIDEO_FRAME_MARKING_ID,
+    AudioLevel, CaptureTimestamp, LOC_AUDIO_LEVEL_ID, LOC_CAPTURE_TIMESTAMP_ID,
+    LOC_VIDEO_CONFIG_ID, LOC_VIDEO_FRAME_MARKING_ID, LocHeader, LocHeaderExtension, LocHeaderValue,
+    UnknownHeaderExtension, VideoConfig, VideoFrameMarking,
 };
 
 pub fn loc_header_to_extension_headers(header: &LocHeader) -> Result<Vec<ExtensionHeader>> {
@@ -114,9 +114,14 @@ fn to_unknown(id: u64, value: &ExtensionHeaderValue) -> UnknownHeaderExtension {
         ExtensionHeaderValue::EvenTypeValue(value) => {
             LocHeaderValue::EvenBytes(value.header_value().to_vec())
         }
-        ExtensionHeaderValue::OddTypeValue(value) => LocHeaderValue::OddVarint(value.header_value()),
+        ExtensionHeaderValue::OddTypeValue(value) => {
+            LocHeaderValue::OddVarint(value.header_value())
+        }
     };
-    UnknownHeaderExtension { id, value: loc_value }
+    UnknownHeaderExtension {
+        id,
+        value: loc_value,
+    }
 }
 
 pub fn parse_loc_header(value: wasm_bindgen::JsValue) -> Result<Option<LocHeader>> {

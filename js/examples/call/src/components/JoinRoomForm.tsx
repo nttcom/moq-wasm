@@ -4,17 +4,31 @@ import { Input } from './ui/input'
 import { Label } from './ui/label'
 
 interface JoinRoomFormProps {
-  onJoin: (roomName: string, userName: string) => void
+  onJoin: (roomName: string, userName: string, relayUrl: string) => void
 }
+
+const RELAY_OPTIONS = [
+  {
+    label: 'moqt.research.skyway.io:4433',
+    value: 'https://moqt.research.skyway.io:4433',
+    helper: 'Domain relay'
+  },
+  {
+    label: '127.0.0.1:4433',
+    value: 'https://127.0.0.1:4433',
+    helper: 'Local relay'
+  }
+] as const
 
 export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
   const [roomName, setRoomName] = useState('')
   const [userName, setUserName] = useState('')
+  const [relayUrl, setRelayUrl] = useState<string>(RELAY_OPTIONS[0].value)
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
     if (roomName.trim() && userName.trim()) {
-      onJoin(roomName.trim(), userName.trim())
+      onJoin(roomName.trim(), userName.trim(), relayUrl)
     }
   }
 
@@ -53,6 +67,30 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
               required
               className="h-16 text-xl placeholder:text-xl"
             />
+          </div>
+          <div className="space-y-4">
+            <Label className="text-2xl">Relay</Label>
+            <div className="grid gap-4">
+              {RELAY_OPTIONS.map((option) => (
+                <label
+                  key={option.value}
+                  className="flex items-center gap-4 rounded-xl border border-input bg-background px-5 py-4 text-lg"
+                >
+                  <input
+                    type="radio"
+                    name="relayUrl"
+                    value={option.value}
+                    checked={relayUrl === option.value}
+                    onChange={() => setRelayUrl(option.value)}
+                    className="h-5 w-5 accent-blue-600"
+                  />
+                  <div>
+                    <div className="font-semibold">{option.label}</div>
+                    <div className="text-sm text-muted-foreground">{option.helper}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
           </div>
           <Button
             type="submit"

@@ -54,6 +54,10 @@ Supported version: draft-ietf-moq-transport-10
 - Core module for both server and client
 - Includes handlers and data structures
 
+### media-streaming-format
+
+- MSF (Media Streaming Format) catalog structures (draft-ietf-moq-msf-00)
+
 ### moqt-server
 
 - Module for server application
@@ -69,6 +73,12 @@ Supported version: draft-ietf-moq-transport-10
 
 - Module for browser client and sample browser client application
   - Supported Roles: Publisher, Subscriber, PubSub
+- Exposes MSF catalog JSON helpers for browser integration
+
+### moqt-client-onvif
+
+- Client for IP cameras over RTSP/ONVIF (Raspberry Pi and Mac)
+- Includes `moqt-onvif-client` to bridge RTSP video + ONVIF commands over MoQ
 
 ## How to run
 
@@ -117,3 +127,20 @@ make client
 # For Mac users
 make chrome
 ```
+
+### Run moqt-client-onvif
+
+```shell
+cp .env.example .env
+make onvif
+```
+
+`ONVIF_IP` / `ONVIF_USERNAME` / `ONVIF_PASSWORD` are read from `.env`.
+
+MoQ bridge:
+
+```shell
+make onvif-moq
+```
+
+`MOQT_URL` is read from `.env`.

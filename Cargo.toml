@@ -3,9 +3,11 @@ resolver = "2"
 members = [
     'packages',
     'moqt-core',
+    'media-streaming-format',
     'moqt-server',
     'moqt-server-sample',
     'moqt-client-wasm',
     'moqt-ingest-gateway',
     'moqt-client-rust',
+    'moqt-client-onvif',
 ]

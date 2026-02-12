@@ -88,7 +88,6 @@ export class LocalSession {
       await this.client.connect(this.relayUrl)
       this.transitionToState(LocalSessionState.Ready)
       await this.client.announce(this.trackNamespace, this.defaultAuthInfo)
-      await this.client.subscribeAnnounces(this.trackNamespacePrefix, this.defaultAuthInfo)
     } catch (error) {
       this.transitionToState(LocalSessionState.Idle)
       throw error

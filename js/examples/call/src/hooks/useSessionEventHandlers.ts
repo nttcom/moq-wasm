@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction, useEffect } from 'react'
+import { Dispatch, SetStateAction, useEffect, useRef } from 'react'
 import { AnnounceMessage, SubscribeErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_wasm'
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { Room } from '../types/room'
@@ -19,9 +19,25 @@ interface EventHandlerParams {
 }
 
 export function useSessionEventHandlers({ session, roomName, userName, setRoom, setChatMessages }: EventHandlerParams) {
+  const subscribedAnnouncesRef = useRef<LocalSession | null>(null)
+
   useEffect(() => {
     const handleAnnounce = createAnnounceHandler({ session, roomName, userName, setRoom })
     session.setOnAnnounceHandler(handleAnnounce)
+
+    const ensureSubscribeAnnounces = async () => {
+      if (subscribedAnnouncesRef.current === session) {
+        return
+      }
+      try {
+        await session.subscribeAnnounces(session.trackNamespacePrefix)
+        subscribedAnnouncesRef.current = session
+      } catch (error) {
+        console.error('Failed to subscribe announces:', error)
+      }
+    }
+
+    void ensureSubscribeAnnounces()
     return () => {
       session.setOnAnnounceHandler(() => {})
     }
