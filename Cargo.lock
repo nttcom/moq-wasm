@@ -1356,6 +1356,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "ttl_cache",
+ "wtransport",
 ]
 
 [[package]]
