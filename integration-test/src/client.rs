@@ -8,22 +8,22 @@ use std::{
 };
 
 use anyhow::bail;
-use moqt::{DatagramField, Endpoint, QUIC, Session, SubscribeOption};
+use moqt::{DatagramField, Endpoint, TransportProtocol, Session, SubscribeOption};
 use crate::stream_runner::StreamTaskRunner;
 use tokio::sync::mpsc::UnboundedSender;
 
-pub struct Client {
+pub struct Client<T: TransportProtocol> {
     label: String,
     join_handle: tokio::task::JoinHandle<()>,
     track_alias: Arc<AtomicU64>,
-    publisher: moqt::Publisher<moqt::QUIC>,
-    subscriber: moqt::Subscriber<moqt::QUIC>,
+    publisher: moqt::Publisher<T>,
+    subscriber: moqt::Subscriber<T>,
     runner: StreamTaskRunner,
 }
 
-impl Client {
-    pub async fn new(cert_path: String, port: u16, label: String, notification_sender: Option<UnboundedSender<String>>) -> anyhow::Result<Self> { // pub(crate) -> pub
-        let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
+impl<T: TransportProtocol> Client<T> {
+    pub async fn new(cert_path: String, port: u16, label: String, notification_sender: Option<UnboundedSender<String>>) -> anyhow::Result<Self> {
+        let endpoint = Endpoint::<T>::create_client_with_custom_cert(0, &cert_path)?;
         let url_str = format!("moqt://localhost:{}", port);
         let url = url::Url::from_str(&url_str)?;
         let host = url.host_str().unwrap();
@@ -56,7 +56,7 @@ impl Client {
 
     pub fn create_receiver( // pub(crate) -> pub
         label: String,
-        session: Session<moqt::QUIC>,
+        session: Session<T>,
         track_alias: Arc<AtomicU64>,
         notification_sender: Option<UnboundedSender<String>>,
     ) -> tokio::task::JoinHandle<()> {
@@ -165,7 +165,7 @@ impl Client {
 
     async fn subscribe(
         label: String,
-        publish_handler: moqt::PublishHandler<moqt::QUIC>,
+        publish_handler: moqt::PublishHandler<T>,
         runner: &StreamTaskRunner,
     ) {
         let full_name = format!(
@@ -197,7 +197,7 @@ impl Client {
 
     async fn create_stream(
         label: String,
-        publication: moqt::PublishedResource<moqt::QUIC>,
+        publication: moqt::PublishedResource<T>,
         runner: &StreamTaskRunner,
     ) {
         tracing::info!("{} :create stream", label);
@@ -276,7 +276,7 @@ impl Client {
     }
 }
 
-impl Drop for Client {
+impl<T: TransportProtocol> Drop for Client<T> {
     fn drop(&mut self) {
         tracing::info!("Client has been dropped.");
         self.join_handle.abort();
