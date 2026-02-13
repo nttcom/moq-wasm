@@ -4,63 +4,180 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MOQT Media Subscriber Test</title>
-    <script type="module" crossorigin src="/moq-wasm/assets/subscriber-BlLR6E18.js"></script>
-    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-Dki_a6NK.js">
+    <script type="module" crossorigin src="/moq-wasm/assets/subscriber-Dr0SCRZA.js"></script>
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-Clv5CNT1.js">
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/catalog-BYlufEzj.js">
+    <link rel="stylesheet" crossorigin href="/moq-wasm/assets/media-DC7xVNEh.css">
   </head>
   <body>
-    <h1>Subscriber</h1>
-    <div id="app">
-      <form name="form" id="form">
+    <div class="page">
+      <header class="hero">
         <div>
-          <h2>Connection</h2>
-          <label for="url">URL:</label>
-          <input type="url" name="url" id="url" value="https://moqt.research.skyway.io:4433" />
-          <button type="button" id="connectBtn">Connect</button>
-          <button type="button" id="closeBtn">Close</button>
+          <span class="pill">Subscriber</span>
+          <h1>MoQT Media Subscriber</h1>
+          <p>Low-level controls for subscribing to MoQT media objects and rendering streams.</p>
         </div>
-        <br />
-        <div>
-          <h3>CLIENT_SETUP</h3>
-          Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="2" />
-          <br />
-          <button type="button" id="sendSetupBtn">Send</button>
+      </header>
+      <div id="app">
+        <form name="form" id="form" class="control-grid subscriber-grid">
+          <section class="card stack full">
+            <h2>Console</h2>
+            <p class="hint">info / warn / error を表示します。</p>
+            <div id="logPanel"></div>
+          </section>
+          <section class="card stack">
+            <h2>Connection</h2>
+            <label for="url">URL:</label>
+            <input type="url" name="url" id="url" value="https://moqt.research.skyway.io:4433" />
+            <div id="urlPresets" class="preset-bar">
+              Preset:
+              <button type="button" data-url="https://moqt.research.skyway.io:4433">
+                https://moqt.research.skyway.io:4433
+              </button>
+              <button type="button" data-url="https://127.0.0.1:4433">https://127.0.0.1:4433</button>
+            </div>
+            <script>
+              ;(function () {
+                const preset = document.getElementById('urlPresets')
+                const input = document.getElementById('url')
+                if (!preset || !input) return
+                preset.addEventListener('click', (event) => {
+                  const target = event.target
+                  if (!(target instanceof HTMLButtonElement)) return
+                  const value = target.getAttribute('data-url')
+                  if (!value) return
+                  input.value = value
+                })
+              })()
+            </script>
+            <div class="button-row">
+              <button type="button" id="connectBtn">Connect</button>
+              <button type="button" id="closeBtn">Close</button>
+            </div>
+          </section>
 
-          <h3>SUBSCRIBE</h3>
-          <label
-            >Track Namespace:
-            <input type="text" name="subscribe-track-namespace" id="subscribe-track-namespace" value="video_audio" />
-          </label>
-          <script>
-            // Set default value for Track Namespace input
-            ;(function () {
-              function pad(n) {
-                return n < 10 ? '0' + n : n
-              }
-              const now = new Date()
-              const yyyy = now.getFullYear()
-              const mm = pad(now.getMonth() + 1)
-              const dd = pad(now.getDate())
-              const HH = pad(now.getHours())
-              const MM = pad(now.getMinutes())
-              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
-              const input = document.getElementById('subscribe-track-namespace')
-              if (input) input.value = value
-            })()
-          </script>
+          <section class="card stack">
+            <h3>CLIENT_SETUP</h3>
+            <label>Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
+            <div class="button-row action-row">
+              <button type="button" id="sendSetupBtn" class="compact-button">Send</button>
+            </div>
+          </section>
 
-          <button type="button" id="sendSubscribeBtn">Send</button>
-          <div>
-            <video id="video" muted inline controls></video>
-            <audio id="audio"></audio>
-          </div>
-        </div>
-      </form>
+          <section class="card stack full">
+            <h3>SUBSCRIBE</h3>
+            <label
+              >Track Namespace:
+              <input type="text" name="subscribe-track-namespace" id="subscribe-track-namespace" value="video_audio" />
+            </label>
+            <script>
+              // Set default value for Track Namespace input
+              ;(function () {
+                function pad(n) {
+                  return n < 10 ? '0' + n : n
+                }
+                const now = new Date()
+                const yyyy = now.getFullYear()
+                const mm = pad(now.getMonth() + 1)
+                const dd = pad(now.getDate())
+                const HH = pad(now.getHours())
+                const MM = pad(now.getMinutes())
+                const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+                const input = document.getElementById('subscribe-track-namespace')
+                if (input) input.value = value
+              })()
+            </script>
+            <div class="subscribe-split">
+              <section class="subscribe-panel stack">
+                <h4>Catalog Subscribe</h4>
+                <div class="field-row inline-fields">
+                  <label>Catalog Track: <input type="text" name="catalog-track-name" value="catalog" /></label>
+                  <label>Catalog Subscribe ID: <input type="text" name="catalog-subscribe-id" value="0" /></label>
+                  <label>Catalog Track Alias: <input type="text" name="catalog-track-alias" value="0" /></label>
+                </div>
+                <p class="hint" id="catalog-track-status"></p>
+                <div class="button-row action-row">
+                  <button type="button" id="sendCatalogSubscribeBtn" class="compact-button">Subscribe Catalog</button>
+                </div>
+              </section>
+
+              <section class="subscribe-panel stack">
+                <h4>Track Subscribe</h4>
+                <label
+                  >Video Track (from Catalog):
+                  <select name="selected-video-track" id="selected-video-track"></select>
+                </label>
+                <label
+                  >Audio Track (from Catalog):
+                  <select name="selected-audio-track" id="selected-audio-track"></select>
+                </label>
+                <div class="field-row">
+                  <label>Video Subscribe ID: <input type="text" name="video-subscribe-id" value="1" /></label>
+                  <label>Video Track Alias: <input type="text" name="video-track-alias" value="1" /></label>
+                  <label>Audio Subscribe ID: <input type="text" name="audio-subscribe-id" value="2" /></label>
+                  <label>Audio Track Alias: <input type="text" name="audio-track-alias" value="2" /></label>
+                </div>
+                <div class="button-row action-row">
+                  <button type="button" id="sendSubscribeBtn">Subscribe Selected Tracks</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="card stack full">
+            <h2>Playback</h2>
+            <div class="media-grid">
+              <video id="video" muted inline controls></video>
+              <audio id="audio"></audio>
+            </div>
+          </section>
+        </form>
+      </div>
     </div>
 
+    <script>
+      ;(function () {
+        const panel = document.getElementById('logPanel')
+        if (!panel) return
+        const levels = ['log', 'info', 'warn', 'error']
+        const original = {}
+        const maxEntries = 200
+
+        function append(level, args) {
+          const entry = document.createElement('div')
+          const classLevel = level === 'log' ? 'info' : level
+          entry.className = `log-entry log-${classLevel}`
+          const label = document.createElement('strong')
+          label.textContent = classLevel.toUpperCase()
+          entry.appendChild(label)
+          const text = document.createElement('span')
+          text.textContent = ' ' + args.map(formatArg).join(' ')
+          entry.appendChild(text)
+          panel.appendChild(entry)
+          while (panel.childNodes.length > maxEntries) {
+            panel.removeChild(panel.firstChild)
+          }
+          panel.scrollTop = panel.scrollHeight
+        }
+
+        function formatArg(arg) {
+          if (typeof arg === 'string') return arg
+          if (arg instanceof Error) return arg.message
+          try {
+            return JSON.stringify(arg)
+          } catch (_e) {
+            return String(arg)
+          }
+        }
+
+        for (const level of levels) {
+          original[level] = console[level].bind(console)
+          console[level] = (...args) => {
+            original[level](...args)
+            append(level, args)
+          }
+        }
+      })()
+    </script>
   </body>
-  <style>
-    p {
-      display: inline;
-    }
-  </style>
 </html>
