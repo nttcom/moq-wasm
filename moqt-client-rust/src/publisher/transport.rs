@@ -32,10 +32,11 @@ use tokio::io::AsyncWriteExt;
 use url::Url;
 use wtransport::{
     stream::{RecvStream, SendStream},
-    ClientConfig, Connection, Endpoint,
+    Connection, Endpoint,
 };
 
 use super::state::{PublisherState, TrackKey};
+use crate::client_config::build_client_config;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -50,9 +51,14 @@ pub struct MoqtPublisher {
 
 impl MoqtPublisher {
     pub async fn connect(url: &str) -> Result<Self> {
-        let url = Url::parse(url).context("parse moqt url")?;
+        Self::connect_with_options(url, false).await
+    }
 
-        let endpoint = Endpoint::client(ClientConfig::default())?;
+    pub async fn connect_with_options(url: &str, insecure_skip_tls_verify: bool) -> Result<Self> {
+        let url = Url::parse(url).context("parse moqt url")?;
+        let client_config = build_client_config(insecure_skip_tls_verify).await?;
+
+        let endpoint = Endpoint::client(client_config)?;
         let connection = endpoint
             .connect(url.as_str())
             .await
@@ -121,6 +127,7 @@ impl MoqtPublisher {
         _group_id: u64,
         _subgroup_id: u64,
         object_id: u64,
+        extension_headers: Vec<ExtensionHeader>,
         object_status: Option<ObjectStatus>,
         payload: &[u8],
     ) -> Result<()> {
@@ -131,8 +138,12 @@ impl MoqtPublisher {
             ));
         }
 
-        let object =
-            subgroup_stream::Object::new(object_id, vec![], object_status, payload.to_vec())?;
+        let object = subgroup_stream::Object::new(
+            object_id,
+            extension_headers,
+            object_status,
+            payload.to_vec(),
+        )?;
         let mut buf = BytesMut::new();
         object.packetize(&mut buf);
 

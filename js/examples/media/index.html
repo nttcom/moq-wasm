@@ -4,12 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Media Examples</title>
+    <link rel="stylesheet" href="./media.css" />
   </head>
   <body>
-    <h1>Media Examples</h1>
-    <div>
-      <a href="./publisher/index.html">Publisher</a>
-      <a href="./subscriber/index.html">Subscriber</a>
+    <div class="page">
+      <header class="hero">
+        <div>
+          <span class="pill">Media</span>
+          <h1>MoQT Media Examples</h1>
+          <p>Open the publisher or subscriber interface with low-level controls.</p>
+        </div>
+      </header>
+      <main class="control-grid">
+        <a class="card link-card" href="./publisher/index.html">
+          <h2>Publisher</h2>
+          <p>Send encoded video and audio chunks over MoQT with manual controls.</p>
+        </a>
+        <a class="card link-card" href="./subscriber/index.html">
+          <h2>Subscriber</h2>
+          <p>Subscribe to tracks and render incoming streams with diagnostics.</p>
+        </a>
+      </main>
     </div>
   </body>
 </html>

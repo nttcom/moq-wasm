@@ -1,5 +1,5 @@
 import { AudioJitterBuffer } from '../audioJitterBuffer'
-import type { SubgroupObject, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
+import type { SubgroupObjectWithLoc, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import type { ChunkMetadata } from '../chunk'
 
@@ -34,14 +34,12 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
   const init: AudioDecoderInit = {
     output: sendAudioDataMessage,
     error: (e: any) => {
-      console.log(e.message)
+      console.warn('[audioDecoder] decoder error', e)
     }
   }
   const decoder = new AudioDecoder(init)
   decoder.configure(config)
   decoderSignature = signature
-  console.info('[audioDecoder] (re)initializing decoder with config:', config)
-  console.info('[audioDecoder] desiredSignature:', signature)
   return decoder
 }
 
@@ -53,7 +51,6 @@ setInterval(() => {
   if (!jitterBufferEntry) {
     return
   }
-  console.debug(jitterBufferEntry)
   const subgroupStreamObject = jitterBufferEntry?.object
   if (subgroupStreamObject) {
     decode(subgroupStreamObject)
@@ -67,17 +64,17 @@ self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
     const config = (event.data as { type: 'config'; config: { mode?: string } }).config
     if (config.mode === 'ordered' || config.mode === 'latest') {
       jitterBuffer.setMode(config.mode)
-      console.info('[audioDecoder] Set jitter buffer mode:', config.mode)
     }
     return
   }
 
   const message = event.data as SubgroupWorkerMessage
-  const subgroupStreamObject: SubgroupObject = {
+  const subgroupStreamObject: SubgroupObjectWithLoc = {
     objectId: message.subgroupStreamObject.objectId,
     objectPayloadLength: message.subgroupStreamObject.objectPayloadLength,
     objectPayload: new Uint8Array(message.subgroupStreamObject.objectPayload),
-    objectStatus: message.subgroupStreamObject.objectStatus
+    objectStatus: message.subgroupStreamObject.objectStatus,
+    locHeader: message.subgroupStreamObject.locHeader
   }
   audioBitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
 
@@ -100,8 +97,6 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
 
   if (!audioDecoder || audioDecoder.state === 'closed' || decoderSignature !== desiredSignature) {
     try {
-      console.info('[audioDecoder] (re)initializing decoder with config:', desiredConfig)
-      console.info('[audioDecoder] desiredSignature:', desiredSignature)
       if (audioDecoder && audioDecoder.state !== 'closed') {
         audioDecoder.close()
       }
@@ -163,17 +158,21 @@ function rebaseTimestamp(remoteTimestamp: number): number {
 function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
   const hasNewConfig = metadata.codec || metadata.descriptionBase64 || metadata.sampleRate || metadata.channels
   if (!hasNewConfig && !cachedAudioConfig) {
-    return null
+    return {
+      codec: DEFAULT_AUDIO_DECODER_CONFIG.codec,
+      sampleRate: DEFAULT_AUDIO_DECODER_CONFIG.sampleRate,
+      channels: DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
+    }
   }
 
-  const codec = metadata.codec ?? (metadata.descriptionBase64 ? 'mp4a.40.2' : undefined) ?? cachedAudioConfig?.codec
+  const codec =
+    metadata.codec ??
+    (metadata.descriptionBase64 ? 'mp4a.40.2' : undefined) ??
+    cachedAudioConfig?.codec ??
+    DEFAULT_AUDIO_DECODER_CONFIG.codec
   const sampleRate = metadata.sampleRate ?? cachedAudioConfig?.sampleRate ?? DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
   const channels = metadata.channels ?? cachedAudioConfig?.channels ?? DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
   const descriptionBase64 = metadata.descriptionBase64 ?? cachedAudioConfig?.descriptionBase64
-
-  if (!codec) {
-    return null
-  }
 
   return { codec, sampleRate, channels, descriptionBase64 }
 }

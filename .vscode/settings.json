@@ -16,7 +16,10 @@
   "rust-analyzer.checkOnSave": true,
   "rust-analyzer.check.command": "clippy",
   "rust-analyzer.cargo.extraEnv": {
-    "RUSTFLAGS": "--cfg web_sys_unstable_apis --cfg tokio_unstable"
+    "RUSTFLAGS": "--cfg web_sys_unstable_apis --cfg tokio_unstable",
+    "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "PKG_CONFIG": "/opt/homebrew/bin/pkg-config",
+    "PKG_CONFIG_PATH": "/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/ffmpeg/lib/pkgconfig"
   },
   "rust-analyzer.cargo.features": ["web_sys_unstable_apis"]
 }

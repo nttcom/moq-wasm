@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    'packages',
     'moqt-core',
     'media-streaming-format',
     'moqt-server',

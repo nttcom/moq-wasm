@@ -6,13 +6,23 @@ interface ChatSidebarProps {
   chatMessage: string
   onMessageChange: (value: string) => void
   onSend: (event?: FormEvent) => void
+  onToggle: () => void
 }
 
-export function ChatSidebar({ messages, chatMessage, onMessageChange, onSend }: ChatSidebarProps) {
+export function ChatSidebar({ messages, chatMessage, onMessageChange, onSend, onToggle }: ChatSidebarProps) {
   return (
     <aside className="w-full border-t border-white/10 bg-gray-900/80 backdrop-blur px-4 py-6 lg:w-[28rem] lg:border-l lg:border-t-0 lg:px-6 lg:py-8">
       <div className="flex h-full flex-col">
-        <h2 className="text-2xl font-semibold text-blue-200">Chat</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-2xl font-semibold text-blue-200">Chat</h2>
+          <button
+            type="button"
+            onClick={onToggle}
+            className="rounded-md bg-white/10 px-3 py-1 text-xs font-semibold text-blue-100 transition hover:bg-white/20"
+          >
+            Close
+          </button>
+        </div>
         <div className="mt-4 flex h-full flex-col gap-4">
           <div className="flex-1 overflow-y-auto space-y-3 pr-1">
             {messages.length === 0 ? (

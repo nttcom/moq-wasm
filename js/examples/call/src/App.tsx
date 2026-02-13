@@ -8,9 +8,9 @@ function App() {
   const [joinError, setJoinError] = useState<Error | null>(null)
   const { session, connect, disconnect, isInitializing } = useLocalSession()
 
-  const handleJoin = async (roomName: string, userName: string) => {
+  const handleJoin = async (roomName: string, userName: string, relayUrl: string) => {
     try {
-      await connect(roomName, userName)
+      await connect(roomName, userName, relayUrl)
       setJoinError(null)
     } catch (error) {
       console.error('Failed to join room:', error)

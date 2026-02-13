@@ -1,3 +1,4 @@
+use crate::client_config::build_client_config;
 use crate::datagram_io::{recv_datagram, DatagramEvent};
 use anyhow::{anyhow, Context, Result};
 use bytes::{Buf, BytesMut};
@@ -22,7 +23,7 @@ use tokio::io::AsyncWriteExt;
 use url::Url;
 use wtransport::{
     stream::{RecvStream, SendStream},
-    ClientConfig, Connection, Endpoint,
+    Connection, Endpoint,
 };
 
 pub struct MoqtSubscriber {
@@ -34,9 +35,14 @@ pub struct MoqtSubscriber {
 
 impl MoqtSubscriber {
     pub async fn connect(url: &str) -> Result<Self> {
-        let url = Url::parse(url).context("parse moqt url")?;
+        Self::connect_with_options(url, false).await
+    }
 
-        let endpoint = Endpoint::client(ClientConfig::default())?;
+    pub async fn connect_with_options(url: &str, insecure_skip_tls_verify: bool) -> Result<Self> {
+        let url = Url::parse(url).context("parse moqt url")?;
+        let client_config = build_client_config(insecure_skip_tls_verify).await?;
+
+        let endpoint = Endpoint::client(client_config)?;
         let connection = endpoint
             .connect(url.as_str())
             .await

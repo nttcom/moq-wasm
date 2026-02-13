@@ -86,6 +86,7 @@ onvif-moq:
 		--moqt-url $(MOQT_URL) \
 		--dump-keyframe \
 		--payload-format avcc \
+		--insecure-skip-tls-verify
 
 
 

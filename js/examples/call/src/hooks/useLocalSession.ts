@@ -15,11 +15,11 @@ export function useLocalSession() {
     error: null
   })
 
-  const connect = useCallback(async (roomName: string, userName: string) => {
+  const connect = useCallback(async (roomName: string, userName: string, relayUrl: string) => {
     setState({ session: sessionRef.current, isInitializing: true, error: null })
 
     try {
-      const newSession = new LocalSession({ roomName, userName })
+      const newSession = new LocalSession({ roomName, userName, relayUrl })
       sessionRef.current = newSession
       await newSession.initialize()
       setState({ session: newSession, isInitializing: false, error: null })

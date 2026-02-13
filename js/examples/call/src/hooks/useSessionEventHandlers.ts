@@ -1,14 +1,9 @@
-import { Dispatch, SetStateAction, useEffect } from 'react'
+import { Dispatch, SetStateAction, useEffect, useRef } from 'react'
 import { AnnounceMessage, SubscribeErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_wasm'
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
-import {
-  addOrUpdateRemoteMember,
-  alreadySubscribing,
-  resetSubscriptionsOnError,
-  updateSubscriptionState
-} from '../utils/state/roomState'
+import { addOrUpdateRemoteMember, updateSubscriptionState } from '../utils/state/roomState'
 
 interface EventHandlerParams {
   session: LocalSession
@@ -19,9 +14,25 @@ interface EventHandlerParams {
 }
 
 export function useSessionEventHandlers({ session, roomName, userName, setRoom, setChatMessages }: EventHandlerParams) {
+  const subscribedAnnouncesRef = useRef<LocalSession | null>(null)
+
   useEffect(() => {
     const handleAnnounce = createAnnounceHandler({ session, roomName, userName, setRoom })
     session.setOnAnnounceHandler(handleAnnounce)
+
+    const ensureSubscribeAnnounces = async () => {
+      if (subscribedAnnouncesRef.current === session) {
+        return
+      }
+      try {
+        await session.subscribeAnnounces(session.trackNamespacePrefix)
+        subscribedAnnouncesRef.current = session
+      } catch (error) {
+        console.error('Failed to subscribe announces:', error)
+      }
+    }
+
+    void ensureSubscribeAnnounces()
     return () => {
       session.setOnAnnounceHandler(() => {})
     }
@@ -67,64 +78,10 @@ function createAnnounceHandler({ session, roomName, userName, setRoom }: Announc
     }
 
     setRoom((currentRoom) => {
-      const existingMember = currentRoom.remoteMembers.get(announcedUser)
-      if (alreadySubscribing(existingMember)) {
-        return currentRoom
-      }
-
       const update = addOrUpdateRemoteMember(currentRoom, announcedUser, trackNamespace)
-
-      subscribeTracks({
-        session,
-        announcedUser,
-        trackNamespace,
-        chatSubscribeId: update.chatSubscribeId,
-        audioSubscribeId: update.audioSubscribeId,
-        videoSubscribeId: update.videoSubscribeId,
-        setRoom
-      })
-
       return update.room
     })
   }
-}
-
-interface SubscribeTracksOptions {
-  session: LocalSession
-  announcedUser: string
-  trackNamespace: string[]
-  chatSubscribeId: bigint
-  audioSubscribeId: bigint
-  videoSubscribeId: bigint
-  setRoom: Dispatch<SetStateAction<Room>>
-}
-
-function subscribeTracks({
-  session,
-  announcedUser,
-  trackNamespace,
-  chatSubscribeId,
-  audioSubscribeId,
-  videoSubscribeId,
-  setRoom
-}: SubscribeTracksOptions) {
-  const trackConfigs = [
-    { name: 'chat', subscribeId: chatSubscribeId },
-    { name: 'audio', subscribeId: audioSubscribeId },
-    { name: 'video', subscribeId: videoSubscribeId }
-  ]
-
-  ;(async () => {
-    try {
-      for (const { name, subscribeId } of trackConfigs) {
-        const trackAlias = subscribeId
-        await session.subscribe(subscribeId, trackAlias, trackNamespace, name)
-      }
-    } catch (error) {
-      console.error(`Failed to subscribe to ${announcedUser}'s tracks:`, error)
-      setRoom((currentRoom) => resetSubscriptionsOnError(currentRoom, announcedUser))
-    }
-  })()
 }
 
 function createSubscribeResponseHandler(session: LocalSession, setRoom: Dispatch<SetStateAction<Room>>) {

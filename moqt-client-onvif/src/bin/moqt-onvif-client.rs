@@ -1,4 +1,5 @@
 use anyhow::{anyhow, bail, Context, Result};
+use base64::{engine::general_purpose, Engine as _};
 use clap::Parser;
 use media_streaming_format::{
     Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole,
@@ -7,9 +8,12 @@ use moqt_client_onvif::{
     app_config, cli, onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker, rtsp_decoder,
     rtsp_frame::EncodedPacket, soap_client,
 };
-use moqt_client_rust::{datagram_io::DatagramEvent, publisher::MoqtPublisher};
+use moqt_client_rust::{
+    datagram_io::DatagramEvent, loc::loc_header_to_extension_headers, publisher::MoqtPublisher,
+};
 use moqt_core::messages::control_messages::subscribe::FilterType;
-use serde::{Deserialize, Serialize};
+use packages::loc::{CaptureTimestamp, LocHeader, LocHeaderExtension, VideoConfig};
+use serde::Deserialize;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
@@ -30,6 +34,10 @@ struct MoqtArgs {
     /// MoQ WebTransport URL (e.g. https://localhost:4433)
     #[arg(long)]
     moqt_url: String,
+
+    /// Skip TLS certificate verification (INSECURE, local development only)
+    #[arg(long, default_value_t = false)]
+    insecure_skip_tls_verify: bool,
 
     /// Track namespace for publishing video (slash-separated)
     #[arg(long, default_value = "onvif/client")]
@@ -118,9 +126,10 @@ async fn main() -> Result<()> {
     let catalog_track = args.catalog_track.clone();
     let expected_tracks = build_expected_tracks(&catalog_track, &profile_tracks);
 
-    let mut publisher = MoqtPublisher::connect(&args.moqt_url)
-        .await
-        .context("connect moqt publisher")?;
+    let mut publisher =
+        MoqtPublisher::connect_with_options(&args.moqt_url, args.insecure_skip_tls_verify)
+            .await
+            .context("connect moqt publisher")?;
     publisher
         .setup(vec![MOQ_DRAFT_10], args.max_subscribe_id)
         .await
@@ -294,7 +303,10 @@ async fn send_video_packet(
         return Ok(());
     }
 
-    let payload = serialize_packet(&packet).context("serialize video chunk")?;
+    let loc_header = build_loc_header(&packet);
+    let extension_headers =
+        loc_header_to_extension_headers(&loc_header).context("build loc header extensions")?;
+    let payload = packet.data;
     let Some(stream) = state.stream.as_mut() else {
         return Ok(());
     };
@@ -312,6 +324,7 @@ async fn send_video_packet(
             state.group_id,
             SUBGROUP_ID,
             state.object_id,
+            extension_headers,
             None,
             &payload,
         )
@@ -360,6 +373,7 @@ async fn send_catalog(
             group_id,
             SUBGROUP_ID,
             0,
+            Vec::new(),
             None,
             &data,
         )
@@ -518,39 +532,24 @@ impl CommandPayload {
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ChunkMetadata<'a> {
-    #[serde(rename = "type")]
-    kind: &'a str,
-    timestamp: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    duration: Option<u64>,
-    sent_at: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    codec: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description_base64: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    avc_format: Option<&'a str>,
-}
-
-fn serialize_packet(packet: &EncodedPacket) -> Result<Vec<u8>> {
-    let metadata = ChunkMetadata {
-        kind: if packet.is_keyframe { "key" } else { "delta" },
-        timestamp: packet.timestamp_us,
-        duration: packet.duration_us,
-        sent_at: now_millis(),
-        codec: packet.codec.as_deref(),
-        description_base64: packet.description_base64.as_deref(),
-        avc_format: packet.avc_format.as_deref(),
-    };
-    let meta_bytes = serde_json::to_vec(&metadata).context("serialize metadata json")?;
-    let mut payload = Vec::with_capacity(4 + meta_bytes.len() + packet.data.len());
-    payload.extend_from_slice(&(meta_bytes.len() as u32).to_be_bytes());
-    payload.extend_from_slice(&meta_bytes);
-    payload.extend_from_slice(&packet.data);
-    Ok(payload)
+fn build_loc_header(packet: &EncodedPacket) -> LocHeader {
+    let mut extensions = Vec::with_capacity(2);
+    extensions.push(LocHeaderExtension::CaptureTimestamp(CaptureTimestamp {
+        micros_since_unix_epoch: now_micros(),
+    }));
+    if packet.is_keyframe {
+        if let Some(description) = packet.description_base64.as_deref() {
+            match general_purpose::STANDARD.decode(description) {
+                Ok(bytes) => {
+                    extensions.push(LocHeaderExtension::VideoConfig(VideoConfig { data: bytes }));
+                }
+                Err(err) => {
+                    log::warn!("failed to decode avcC base64: {err}");
+                }
+            }
+        }
+    }
+    LocHeader { extensions }
 }
 
 #[derive(Default)]
@@ -862,6 +861,13 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     duration.as_millis() as u64
+}
+
+fn now_micros() -> u64 {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    duration.as_micros() as u64
 }
 
 fn init_logger() {

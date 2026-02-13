@@ -163,6 +163,7 @@ impl MoqtManager {
                             group_id_local,
                             0,
                             object_id_local,
+                            Vec::new(),
                             Some(ObjectStatus::EndOfGroup),
                             &[],
                         )
@@ -210,6 +211,7 @@ impl MoqtManager {
                     group_id_local,
                     0,
                     object_id_local,
+                    Vec::new(),
                     None,
                     payload,
                 )

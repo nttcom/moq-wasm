@@ -1,4 +1,5 @@
 import type { SubgroupStreamObjectMessage } from '../../pkg/moqt_client_wasm'
+import type { LocHeader } from './loc'
 import type { DeserializedChunk } from './chunk'
 
 export type SubgroupObject = Pick<
@@ -6,12 +7,16 @@ export type SubgroupObject = Pick<
   'objectId' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus'
 >
 
-export type SubgroupWorkerMessage = {
-  groupId: bigint
-  subgroupStreamObject: SubgroupObject
+export type SubgroupObjectWithLoc = SubgroupObject & {
+  locHeader?: LocHeader
 }
 
-export type JitterBufferSubgroupObject = SubgroupObject & {
+export type SubgroupWorkerMessage = {
+  groupId: bigint
+  subgroupStreamObject: SubgroupObjectWithLoc
+}
+
+export type JitterBufferSubgroupObject = SubgroupObjectWithLoc & {
   cachedChunk: DeserializedChunk
   remotePTS: number
   localPTS: number

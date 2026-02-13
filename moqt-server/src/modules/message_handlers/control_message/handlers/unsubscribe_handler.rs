@@ -1,5 +1,7 @@
 use crate::modules::{
-    control_message_dispatcher::ControlMessageDispatcher, moqt_client::MOQTClient,
+    control_message_dispatcher::ControlMessageDispatcher,
+    moqt_client::MOQTClient,
+    signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher, TerminateReason},
 };
 use anyhow::Result;
 use moqt_core::{
@@ -24,6 +26,14 @@ pub(crate) async fn unsubscribe_handler(
     let (upstream_session_id, upstream_subscribe_id) = pubsub_relation_manager_repository
         .get_related_publisher(downstream_session_id, downstream_subscribe_id)
         .await?;
+
+    terminate_downstream_subgroup_forwarders(
+        pubsub_relation_manager_repository,
+        client,
+        downstream_session_id,
+        downstream_subscribe_id,
+    )
+    .await;
 
     // 1. Delete Subscription from PubSubRelationManager
     pubsub_relation_manager_repository
@@ -67,6 +77,106 @@ pub(crate) async fn unsubscribe_handler(
 
     tracing::trace!("unsubscribe_handler complete.");
     Ok(())
+}
+
+async fn terminate_downstream_subgroup_forwarders(
+    pubsub_relation_manager_repository: &mut dyn PubSubRelationManagerRepository,
+    client: &MOQTClient,
+    downstream_session_id: usize,
+    downstream_subscribe_id: u64,
+) {
+    let group_ids = match pubsub_relation_manager_repository
+        .get_downstream_group_ids_for_subscription(downstream_session_id, downstream_subscribe_id)
+        .await
+    {
+        Ok(group_ids) => group_ids,
+        Err(err) => {
+            tracing::warn!(
+                "skip forwarder termination: failed to get downstream groups (session_id: {}, subscribe_id: {}): {:?}",
+                downstream_session_id,
+                downstream_subscribe_id,
+                err
+            );
+            return;
+        }
+    };
+
+    if group_ids.is_empty() {
+        return;
+    }
+
+    let signal_dispatcher = SignalDispatcher::new(client.senders().signal_dispatch_tx().clone());
+    let signal = Box::new(DataStreamThreadSignal::Terminate(
+        TerminateReason::SessionClosed,
+    ));
+
+    for group_id in group_ids {
+        let subgroup_ids = match pubsub_relation_manager_repository
+            .get_downstream_subgroup_ids_for_group(
+                downstream_session_id,
+                downstream_subscribe_id,
+                group_id,
+            )
+            .await
+        {
+            Ok(subgroup_ids) => subgroup_ids,
+            Err(err) => {
+                tracing::warn!(
+                    "skip forwarder termination: failed to get downstream subgroups (session_id: {}, subscribe_id: {}, group_id: {}): {:?}",
+                    downstream_session_id,
+                    downstream_subscribe_id,
+                    group_id,
+                    err
+                );
+                continue;
+            }
+        };
+
+        for subgroup_id in subgroup_ids {
+            let stream_id = match pubsub_relation_manager_repository
+                .get_downstream_stream_id_for_subgroup(
+                    downstream_session_id,
+                    downstream_subscribe_id,
+                    group_id,
+                    subgroup_id,
+                )
+                .await
+            {
+                Ok(Some(stream_id)) => stream_id,
+                Ok(None) => {
+                    continue;
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "skip forwarder termination: failed to get stream_id (session_id: {}, subscribe_id: {}, group_id: {}, subgroup_id: {}): {:?}",
+                        downstream_session_id,
+                        downstream_subscribe_id,
+                        group_id,
+                        subgroup_id,
+                        err
+                    );
+                    continue;
+                }
+            };
+
+            if let Err(err) = signal_dispatcher
+                .transfer_signal_to_data_stream_thread(
+                    downstream_session_id,
+                    stream_id,
+                    signal.clone(),
+                )
+                .await
+            {
+                tracing::warn!(
+                    "skip forwarder termination: failed to send terminate signal (session_id: {}, subscribe_id: {}, stream_id: {}): {:?}",
+                    downstream_session_id,
+                    downstream_subscribe_id,
+                    stream_id,
+                    err
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
