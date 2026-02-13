@@ -4,14 +4,17 @@ export const MEDIA_AUDIO_TRACK_NAME = 'audio'
 export type MediaVideoProfile = {
   trackName: string
   label: string
+  codec: string
   width: number
   height: number
 }
 
+export const MEDIA_DEFAULT_VIDEO_CODEC = 'avc1.640032'
+
 export const MEDIA_VIDEO_PROFILES: MediaVideoProfile[] = [
-  { trackName: 'video_1080p', label: '1080p', width: 1920, height: 1080 },
-  { trackName: 'video_720p', label: '720p', width: 1280, height: 720 },
-  { trackName: 'video_480p', label: '480p', width: 854, height: 480 }
+  { trackName: 'video_1080p', label: '1080p', codec: MEDIA_DEFAULT_VIDEO_CODEC, width: 1920, height: 1080 },
+  { trackName: 'video_720p', label: '720p', codec: MEDIA_DEFAULT_VIDEO_CODEC, width: 1280, height: 720 },
+  { trackName: 'video_480p', label: '480p', codec: MEDIA_DEFAULT_VIDEO_CODEC, width: 854, height: 480 }
 ]
 
 export type MediaAudioProfile = {
@@ -95,6 +98,7 @@ export function buildMediaCatalogJson(trackNamespace: string[]): string {
     role: 'video',
     isLive: true,
     label: profile.label,
+    codec: profile.codec,
     width: profile.width,
     height: profile.height
   }))

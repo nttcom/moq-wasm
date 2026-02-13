@@ -3,7 +3,12 @@ import { parse_msf_catalog_json } from '../../../pkg/moqt_client_wasm'
 import { AUTH_INFO } from './const'
 import { getFormElement } from './utils'
 import { summarizeLocHeader } from '../../../utils/media/locSummary'
-import { extractCatalogAudioTracks, extractCatalogVideoTracks, type MediaCatalogTrack } from '../catalog'
+import {
+  MEDIA_DEFAULT_VIDEO_CODEC,
+  extractCatalogAudioTracks,
+  extractCatalogVideoTracks,
+  type MediaCatalogTrack
+} from '../catalog'
 
 const moqtClient = new MoqtClientWrapper()
 
@@ -91,8 +96,8 @@ function setSelectedCatalogTrack(kind: 'video' | 'audio', trackName: string | nu
     return
   }
   const track = catalogVideoTracks.find((entry) => entry.name === trackName)
-  if (trackName && track?.codec) {
-    videoDecoderWorker.postMessage({ type: 'catalog', codec: track.codec })
+  if (trackName) {
+    videoDecoderWorker.postMessage({ type: 'catalog', codec: track?.codec ?? MEDIA_DEFAULT_VIDEO_CODEC })
   }
 }
 
