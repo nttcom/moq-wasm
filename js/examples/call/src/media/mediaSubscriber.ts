@@ -2,7 +2,6 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { SubgroupStreamObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { VideoJitterBufferMode } from '../../../../utils/media/videoJitterBuffer'
 import type { AudioJitterBufferMode } from '../../../../utils/media/audioJitterBuffer'
-import { summarizeLocHeader } from '../../../../utils/media/locSummary'
 import {
   DEFAULT_VIDEO_JITTER_CONFIG,
   DEFAULT_AUDIO_JITTER_CONFIG,
@@ -52,7 +51,6 @@ export class MediaSubscriber {
   private handlers: MediaSubscriberHandlers = {}
   private readonly videoContexts = new Map<bigint, VideoSubscriptionContext>()
   private readonly audioContexts = new Map<bigint, AudioSubscriptionContext>()
-  private readonly seenFirstVideoObjectByTrackAlias = new Set<bigint>()
   private readonly videoJitterConfigByUserId = new Map<string, VideoJitterConfig>()
   private readonly audioJitterConfigByUserId = new Map<string, AudioJitterConfig>()
   private readonly videoCodecByTrackAlias = new Map<bigint, string>()
@@ -144,7 +142,7 @@ export class MediaSubscriber {
     }
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
-      this.forwardToWorker(worker, trackAlias, groupId, message)
+      this.forwardToWorker(worker, groupId, message)
     )
   }
 
@@ -194,7 +192,7 @@ export class MediaSubscriber {
     }
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
-      this.forwardToWorker(worker, trackAlias, groupId, message)
+      this.forwardToWorker(worker, groupId, message)
     )
   }
 
@@ -209,7 +207,6 @@ export class MediaSubscriber {
     void context.writer.close().catch(() => {})
     context.worker.terminate()
     this.videoContexts.delete(trackAlias)
-    this.seenFirstVideoObjectByTrackAlias.delete(trackAlias)
     this.videoCodecByTrackAlias.delete(trackAlias)
     this.videoSizeByTrackAlias.delete(trackAlias)
   }
@@ -227,29 +224,9 @@ export class MediaSubscriber {
     this.audioContexts.delete(trackAlias)
   }
 
-  private forwardToWorker(
-    worker: Worker,
-    trackAlias: bigint,
-    groupId: bigint,
-    message: SubgroupStreamObjectMessageWithLoc
-  ) {
-    if (message.objectStatus === 3) {
-      console.debug(`[MediaSubscriber] Received EndOfGroup trackAlias=${trackAlias} groupId=${groupId}`)
-    }
+  private forwardToWorker(worker: Worker, groupId: bigint, message: SubgroupStreamObjectMessageWithLoc) {
     const payload = new Uint8Array(message.objectPayload)
     const payloadLength = message.objectPayloadLength
-    if (this.videoContexts.has(trackAlias) && !this.seenFirstVideoObjectByTrackAlias.has(trackAlias)) {
-      this.seenFirstVideoObjectByTrackAlias.add(trackAlias)
-      const locSummary = summarizeLocHeader(message.locHeader)
-      console.info('[CallMediaSubscriber] first video object', {
-        trackAlias,
-        groupId,
-        objectId: message.objectId,
-        payloadLength,
-        status: message.objectStatus,
-        locExtensionCount: locSummary.extensionCount
-      })
-    }
     worker.postMessage(
       {
         groupId,

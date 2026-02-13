@@ -11,7 +11,7 @@ MoQT (Media over QUIC Transport) を使用したビデオ通話アプリケー�
 - **Room & User 管理**: Room Name と User Name を入力してルームに参加
 - **Relay 選択**: 127.0.0.1 かドメインの MoQT relay を選択
 - **Catalog 経由購読**: `catalog` track から video/audio track を解決して購読
-- **動的 Catalog 構成**: 初期Catalogは空。camera/mic/screenshare の ON/OFF で track を追加・削除
+- **動的 Catalog 構成**: 初期Catalogは空。camera/mic/screenshare を ON にしたとき未登録なら初期track群を追加し、OFFでは自動削除しない
 - **Catalog プロファイル**: camera は 1080p/720p/480p、audio は 128/64/32kbps、screenshare は 1080p/720p/480p
 - **参加者グリッド表示**: ルーム内の他の参加者を一覧表示
 - **選択的購読**: `Catalog Subscribe` 後に video/audio を個別選択し、`Subscribe Video` / `Subscribe Audio` で個別購読
@@ -27,6 +27,7 @@ MoQT (Media over QUIC Transport) を使用したビデオ通話アプリケー�
 - **購読時codec適用**: Subscriber は選択した Catalog track の codec を decoder 初期化に反映し、screenshare 単独購読時も正しい codec でデコードする
 - **購読時profile反映**: Publisher は incoming SUBSCRIBE の track 名に対応する Catalog profile を source の encoder 設定へ反映し、選択 bitrate/profile で送信する
 - **Track単位Encoder**: Publisher は camera/screen/audio の各 Catalog track ごとに encoder worker を分離し、track 単位の設定（codec/bitrate 等）で送信する
+- **保守性改善**: Subscriber の Catalog 購読UIは role 定義ベース（video/screenshare/audio）で共通描画し、Hook 側の Catalog add/remove も source 別の共通更新処理に統一
 
 ## MoQT プロトコルフロー
 
@@ -53,7 +54,9 @@ MoQT (Media over QUIC Transport) を使用したビデオ通話アプリケー�
 
    - 初期状態では Catalog track は空
    - カメラ ON で camera 3段、マイク ON で audio 3段、画面共有 ON で screenshare 3段を Catalog に追加
-   - OFF にしたメディアの track は Catalog から削除
+
+   - OFF にしたメディアの track は Catalog から自動削除しない（ミュート用途を想定）
+   - ON中でも Catalog Tracks 画面から任意のtrackを手動削除でき、その設定を維持する
    - `ANNOUNCE` メッセージで `/{RoomName}/{UserName}` を通知
    - Catalog subscribe を受けたら `catalog` track へ Catalog object を返却
    - Catalog が更新されたら Catalog object を再送し、Track 追加・削除を通知

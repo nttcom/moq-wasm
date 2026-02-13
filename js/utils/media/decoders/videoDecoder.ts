@@ -15,19 +15,6 @@ const VIDEO_DECODER_CONFIG = {
   scalabilityMode: 'L1T1'
 }
 
-const VERBOSE_VIDEO_DECODER_LOG = false
-
-function debugLog(message: string, data?: unknown): void {
-  if (!VERBOSE_VIDEO_DECODER_LOG) {
-    return
-  }
-  if (typeof data === 'undefined') {
-    console.debug(message)
-    return
-  }
-  console.debug(message, data)
-}
-
 let videoDecoder: VideoDecoder | undefined
 let waitingForKeyFrame = true
 async function initializeVideoDecoder(config: VideoDecoderConfig) {
@@ -44,21 +31,13 @@ async function initializeVideoDecoder(config: VideoDecoderConfig) {
   const init: VideoDecoderInit = {
     output: sendVideoFrameMessage,
     error: (e: any) => {
-      console.log(e.message)
+      console.warn('[videoDecoder] decoder error', e)
       videoDecoder = undefined
       cachedVideoConfig = null
     }
   }
   const decoder = new VideoDecoder(init)
-  VideoDecoder.isConfigSupported(config)
-    .then((support) => {
-      debugLog('[videoDecoder] config supported', support)
-    })
-    .catch((err) => {
-      console.warn('[videoDecoder] config support check failed', err)
-    })
   decoder.configure(config)
-  console.info('[videoDecoder] (re)initializing decoder with config:', config)
   return decoder
 }
 
@@ -119,87 +98,16 @@ function updateJitterBuffer(config: VideoJitterBufferConfig): void {
   jitterBuffer = createJitterBuffer(currentJitterConfig)
 }
 
-type DecodedState = {
-  groupId: bigint
-  objectId: bigint
-}
-
-let lastDecodedState: DecodedState | null = null
-let previousGroupClosed = false
 type CachedVideoConfig = { codec: string; descriptionBase64?: string; avcFormat?: 'annexb' | 'avc' }
 
 let cachedVideoConfig: CachedVideoConfig | null = null
 let catalogCodec: string | null = null
-let lastVideoTimestamp: number | null = null
-let descriptionLogged = false
-let lastTimestampState: { timestamp: number; groupId: bigint; objectId: bigint } | null = null
 let missingCatalogCodecWarned = false
-
-function checkTimestampMonotonic(timestamp: number, groupId: bigint, objectId: bigint): void {
-  if (lastTimestampState && timestamp < lastTimestampState.timestamp) {
-    console.warn(
-      `[videoDecoder] timestamp regression detected: prev=${lastTimestampState.timestamp} (group=${lastTimestampState.groupId.toString()} object=${lastTimestampState.objectId.toString()}) current=${timestamp} (group=${groupId.toString()} object=${objectId.toString()})`
-    )
-  }
-  lastVideoTimestamp = timestamp
-  lastTimestampState = { timestamp, groupId, objectId }
-}
-
-// objectIdの連続性をチェック（JitterBufferがcorrectlyモードの場合は冗長だが、念のため保持）
-function checkObjectIdContinuity(currentGroupId: bigint, currentObjectId: bigint): void {
-  // 初回はgroupId=0, objectId=0であることを確認（キーフレーム）
-  if (!lastDecodedState) {
-    if (currentGroupId !== 0n || currentObjectId !== 0n) {
-      console.warn(
-        `[Video] First frame must be groupId=0, objectId=0 (keyframe). Got: groupId=${currentGroupId}, objectId=${currentObjectId}`
-      )
-    }
-    return
-  }
-
-  // groupIdが変わった場合: 前回のobjectIdが最後のdeltaframeかチェック
-  if (currentGroupId !== lastDecodedState.groupId) {
-    if (!previousGroupClosed) {
-      const expectedLastObjectId = KEYFRAME_INTERVAL_BIGINT - 1n
-      if (lastDecodedState.objectId !== expectedLastObjectId) {
-        debugLog(
-          `[Video] Group ended with unexpected objectId. Expected: ${expectedLastObjectId}, Got: ${lastDecodedState.objectId}, Group: ${lastDecodedState.groupId} -> ${currentGroupId}`
-        )
-      }
-    }
-    // 新しいgroupの最初のobjectIdは0であるべき
-    if (currentObjectId !== 0n) {
-      console.warn(
-        `[Video] New group should start with objectId 0. Got: ${currentObjectId}, GroupId: ${currentGroupId}`
-      )
-    }
-    return
-  }
-
-  // 同一group内での連続性チェック
-  if (currentObjectId !== lastDecodedState.objectId + 1n) {
-    console.warn(
-      `[Video] Non-sequential objectId detected. Expected: ${lastDecodedState.objectId + 1n}, Got: ${currentObjectId}, Gap: ${
-        currentObjectId - lastDecodedState.objectId - 1n
-      }`
-    )
-  }
-}
-
-function recordDecodedFrame(groupId: bigint, objectId: bigint): void {
-  previousGroupClosed = false
-  lastDecodedState = { groupId, objectId }
-}
-
-function markGroupClosed(): void {
-  previousGroupClosed = true
-}
 
 setInterval(() => {
   const entry = jitterBuffer.popWithMetadata()
   if (entry) {
     if (entry.isEndOfGroup) {
-      markGroupClosed()
       return
     }
     decode(entry.groupId, entry.object)
@@ -226,22 +134,6 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
     applyCatalogCodec(event.data.codec)
     return
   }
-
-  const locHeader = event.data.subgroupStreamObject.locHeader
-  const locExtensions = locHeader?.extensions ?? []
-  const hasCaptureTimestamp = locExtensions.some((ext) => ext.type === 'captureTimestamp')
-  const hasVideoConfig = locExtensions.some((ext) => ext.type === 'videoConfig')
-  const hasVideoFrameMarking = locExtensions.some((ext) => ext.type === 'videoFrameMarking')
-  debugLog('[videoDecoder] recv object', {
-    groupId: event.data.groupId,
-    objectId: event.data.subgroupStreamObject.objectId,
-    payloadLength: event.data.subgroupStreamObject.objectPayloadLength,
-    status: event.data.subgroupStreamObject.objectStatus,
-    locExtensionCount: locExtensions.length,
-    hasCaptureTimestamp,
-    hasVideoConfig,
-    hasVideoFrameMarking
-  })
   const subgroupStreamObject: SubgroupObjectWithLoc = {
     objectId: event.data.subgroupStreamObject.objectId,
     objectPayloadLength: event.data.subgroupStreamObject.objectPayloadLength,
@@ -257,10 +149,6 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 }
 
 async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgroupObject) {
-  // objectIdの連続性をチェック
-  checkObjectIdContinuity(groupId, subgroupStreamObject.objectId)
-  recordDecodedFrame(groupId, subgroupStreamObject.objectId)
-
   const decoded = subgroupStreamObject.cachedChunk
   reportLatency(decoded.metadata.sentAt)
 
@@ -268,26 +156,6 @@ async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgrou
   if (!resolvedConfig) {
     return
   }
-  if (decoded.metadata.type === 'key') {
-    const payloadInfo = analyzeKeyframePayload(decoded.data)
-    const prevTimestamp = lastVideoTimestamp
-    const delta = prevTimestamp !== null ? decoded.metadata.timestamp - prevTimestamp : null
-    debugLog('[videoDecoder] keyframe timestamp', {
-      groupId: groupId.toString(),
-      objectId: subgroupStreamObject.objectId.toString(),
-      timestamp: decoded.metadata.timestamp,
-      duration: decoded.metadata.duration ?? null,
-      delta
-    })
-    debugLog('[videoDecoder] keyframe payload', {
-      length: decoded.data.byteLength,
-      head: payloadInfo.head,
-      hasStartCode: payloadInfo.hasStartCode,
-      startCodeAtZero: payloadInfo.startCodeAtZero,
-      nalTypes: payloadInfo.nalSummary
-    })
-  }
-  checkTimestampMonotonic(decoded.metadata.timestamp, groupId, subgroupStreamObject.objectId)
   const desiredConfig = buildVideoDecoderConfig(resolvedConfig)
 
   const encodedVideoChunk = new EncodedVideoChunk({
@@ -410,7 +278,6 @@ function resolveVideoConfig(metadata: ChunkMetadata): CachedVideoConfig | null {
 function buildVideoDecoderConfig(resolved: CachedVideoConfig): VideoDecoderConfig {
   if (resolved.codec.startsWith('avc')) {
     const description = resolved.descriptionBase64 ? base64ToUint8Array(resolved.descriptionBase64) : undefined
-    logDescriptionBytes(description)
     return {
       ...VIDEO_DECODER_CONFIG,
       codec: resolved.codec,
@@ -435,79 +302,4 @@ function base64ToUint8Array(base64: string): Uint8Array {
     bytes[i] = binaryString.charCodeAt(i)
   }
   return bytes
-}
-
-function logDescriptionBytes(description?: Uint8Array): void {
-  if (!description || descriptionLogged || !VERBOSE_VIDEO_DECODER_LOG) {
-    return
-  }
-  const head = formatHexPrefix(description, 8)
-  console.log('[videoDecoder] description bytes', { length: description.byteLength, head })
-  descriptionLogged = true
-}
-
-function formatHexPrefix(bytes: Uint8Array, maxLen: number): string {
-  const parts: string[] = []
-  const size = Math.min(bytes.byteLength, maxLen)
-  for (let i = 0; i < size; i += 1) {
-    parts.push(bytes[i].toString(16).padStart(2, '0').toUpperCase())
-  }
-  return parts.join(' ')
-}
-
-function analyzeKeyframePayload(data: Uint8Array): {
-  head: string
-  hasStartCode: boolean
-  startCodeAtZero: boolean
-  nalSummary: string
-} {
-  const head = formatHexPrefix(data, 12)
-  const nalInfo = collectAnnexbNalTypes(data)
-  return {
-    head,
-    hasStartCode: nalInfo.hasStartCode,
-    startCodeAtZero: nalInfo.startCodeAtZero,
-    nalSummary: nalInfo.types.length ? nalInfo.types.join(',') : 'none'
-  }
-}
-
-function collectAnnexbNalTypes(data: Uint8Array): {
-  hasStartCode: boolean
-  startCodeAtZero: boolean
-  types: number[]
-} {
-  const start = findStartCode(data, 0)
-  if (!start) {
-    return { hasStartCode: false, startCodeAtZero: false, types: [] }
-  }
-  const types: number[] = []
-  let pos = start.index + start.length
-  let next = pos
-  while (true) {
-    const nextStart = findStartCode(data, next)
-    const end = nextStart ? nextStart.index : data.length
-    if (end > pos) {
-      types.push(data[pos] & 0x1f)
-    }
-    if (!nextStart) {
-      break
-    }
-    pos = nextStart.index + nextStart.length
-    next = pos
-  }
-  return { hasStartCode: true, startCodeAtZero: start.index === 0, types }
-}
-
-function findStartCode(data: Uint8Array, offset: number): { index: number; length: number } | null {
-  for (let i = offset; i + 3 <= data.length; i += 1) {
-    if (data[i] === 0 && data[i + 1] === 0) {
-      if (data[i + 2] === 1) {
-        return { index: i, length: 3 }
-      }
-      if (i + 3 < data.length && data[i + 2] === 0 && data[i + 3] === 1) {
-        return { index: i, length: 4 }
-      }
-    }
-  }
-  return null
 }

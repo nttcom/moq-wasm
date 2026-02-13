@@ -29,13 +29,9 @@ import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import {
   appendCatalogTracks,
   createCatalogTrackId,
-  getAudioCatalogTrackNames,
   getAudioCatalogTracks,
-  getCameraCatalogTrackNames,
   getCameraCatalogTracks,
-  getScreenShareCatalogTrackNames,
   getScreenShareCatalogTracks,
-  removeCatalogTracksByNames,
   toCatalogTracks,
   toEditableCatalogTracks
 } from '../media/callCatalog'
@@ -93,6 +89,27 @@ const DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS: VideoEncodingSettings = {
   width: 1920,
   height: 1080,
   bitrate: VIDEO_BITRATE_OPTIONS.find((b) => b.id === '1mbps')?.bitrate ?? VIDEO_BITRATE_OPTIONS[2].bitrate
+}
+
+type CatalogPresetSource = 'camera' | 'screenshare' | 'audio'
+type CatalogPreset = {
+  label: string
+  append: () => ReturnType<typeof getCameraCatalogTracks>
+}
+
+const CATALOG_PRESETS: Record<CatalogPresetSource, CatalogPreset> = {
+  camera: {
+    label: 'camera',
+    append: getCameraCatalogTracks
+  },
+  screenshare: {
+    label: 'screenshare',
+    append: getScreenShareCatalogTracks
+  },
+  audio: {
+    label: 'audio',
+    append: getAudioCatalogTracks
+  }
 }
 
 export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
@@ -433,74 +450,18 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     [persistCatalogTracks]
   )
 
-  const addCameraCatalogTracks = useCallback(() => {
-    updateCatalogTracks((prev) => appendCatalogTracks(prev, getCameraCatalogTracks()), 'add camera catalog tracks')
-  }, [updateCatalogTracks])
-
-  const removeCameraCatalogTracks = useCallback(() => {
-    updateCatalogTracks(
-      (prev) => removeCatalogTracksByNames(prev, getCameraCatalogTrackNames()),
-      'remove camera catalog tracks'
-    )
-  }, [updateCatalogTracks])
-
-  const addScreenShareCatalogTracks = useCallback(() => {
-    updateCatalogTracks(
-      (prev) => appendCatalogTracks(prev, getScreenShareCatalogTracks()),
-      'add screenshare catalog tracks'
-    )
-  }, [updateCatalogTracks])
-
-  const removeScreenShareCatalogTracks = useCallback(() => {
-    updateCatalogTracks(
-      (prev) => removeCatalogTracksByNames(prev, getScreenShareCatalogTrackNames()),
-      'remove screenshare catalog tracks'
-    )
-  }, [updateCatalogTracks])
-
-  const addAudioCatalogTracks = useCallback(() => {
-    updateCatalogTracks((prev) => appendCatalogTracks(prev, getAudioCatalogTracks()), 'add audio catalog tracks')
-  }, [updateCatalogTracks])
-
-  const removeAudioCatalogTracks = useCallback(() => {
-    updateCatalogTracks(
-      (prev) => removeCatalogTracksByNames(prev, getAudioCatalogTrackNames()),
-      'remove audio catalog tracks'
-    )
-  }, [updateCatalogTracks])
-
-  useEffect(() => {
-    if (!session) {
-      return
-    }
-    if (cameraEnabled) {
-      addCameraCatalogTracks()
-      return
-    }
-    removeCameraCatalogTracks()
-  }, [addCameraCatalogTracks, cameraEnabled, removeCameraCatalogTracks, session])
-
-  useEffect(() => {
-    if (!session) {
-      return
-    }
-    if (screenShareEnabled) {
-      addScreenShareCatalogTracks()
-      return
-    }
-    removeScreenShareCatalogTracks()
-  }, [addScreenShareCatalogTracks, removeScreenShareCatalogTracks, screenShareEnabled, session])
-
-  useEffect(() => {
-    if (!session) {
-      return
-    }
-    if (microphoneEnabled) {
-      addAudioCatalogTracks()
-      return
-    }
-    removeAudioCatalogTracks()
-  }, [addAudioCatalogTracks, microphoneEnabled, removeAudioCatalogTracks, session])
+  const ensureCatalogPresetTracks = useCallback(
+    (source: CatalogPresetSource) => {
+      const preset = CATALOG_PRESETS[source]
+      updateCatalogTracks((prev) => {
+        if (hasCatalogTrackForSource(prev, source)) {
+          return prev
+        }
+        return appendCatalogTracks(prev, preset.append())
+      }, `ensure ${preset.label} catalog tracks`)
+    },
+    [updateCatalogTracks]
+  )
 
   const toggleCamera = useCallback(async () => {
     if (!session || cameraBusy) {
@@ -516,10 +477,9 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
           width: captureSettings.width,
           height: captureSettings.height
         })
-        addCameraCatalogTracks()
+        ensureCatalogPresetTracks('camera')
       } else {
         await controller.stopCamera()
-        removeCameraCatalogTracks()
       }
       setCameraEnabled(nextState)
       return nextState
@@ -535,8 +495,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     captureSettings.frameRate,
     captureSettings.height,
     captureSettings.width,
-    addCameraCatalogTracks,
-    removeCameraCatalogTracks,
+    ensureCatalogPresetTracks,
     session,
     selectedVideoDeviceId
   ])
@@ -551,10 +510,9 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     try {
       if (nextState) {
         await controller.startScreenShare()
-        addScreenShareCatalogTracks()
+        ensureCatalogPresetTracks('screenshare')
       } else {
         await controller.stopScreenShare()
-        removeScreenShareCatalogTracks()
       }
       setScreenShareEnabled(nextState)
       return nextState
@@ -564,7 +522,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     } finally {
       setCameraBusy(false)
     }
-  }, [addScreenShareCatalogTracks, cameraBusy, removeScreenShareCatalogTracks, screenShareEnabled, session])
+  }, [cameraBusy, ensureCatalogPresetTracks, screenShareEnabled, session])
 
   const toggleMicrophone = useCallback(async () => {
     if (!session || microphoneBusy) {
@@ -580,10 +538,9 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
           noiseSuppression: captureSettings.noiseSuppression,
           autoGainControl: captureSettings.autoGainControl
         })
-        addAudioCatalogTracks()
+        ensureCatalogPresetTracks('audio')
       } else {
         await controller.stopMicrophone()
-        removeAudioCatalogTracks()
       }
       setMicrophoneEnabled(nextState)
       return nextState
@@ -594,13 +551,12 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setMicrophoneBusy(false)
     }
   }, [
-    addAudioCatalogTracks,
     captureSettings.autoGainControl,
     captureSettings.echoCancellation,
     captureSettings.noiseSuppression,
+    ensureCatalogPresetTracks,
     microphoneBusy,
     microphoneEnabled,
-    removeAudioCatalogTracks,
     selectedAudioDeviceId,
     session
   ])
@@ -772,6 +728,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     setMicrophoneBusy(true)
     try {
       if (captureSettings.videoEnabled) {
+        const isCameraEnabling = !cameraEnabled
         await controller.stopCamera()
         await controller.startCamera(selectedVideoDeviceId ?? undefined, {
           frameRate: captureSettings.frameRate,
@@ -779,26 +736,29 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
           height: captureSettings.height
         })
         await controller.setVideoEncodingSettings(selectedVideoEncoding, selectedVideoDeviceId ?? undefined, true)
-        addCameraCatalogTracks()
+        if (isCameraEnabling) {
+          ensureCatalogPresetTracks('camera')
+        }
         setCameraEnabled(true)
       } else if (cameraEnabled) {
         await controller.stopCamera()
-        removeCameraCatalogTracks()
         setCameraEnabled(false)
       }
 
       if (captureSettings.audioEnabled) {
+        const isMicrophoneEnabling = !microphoneEnabled
         await controller.startMicrophone(selectedAudioDeviceId ?? undefined, {
           echoCancellation: captureSettings.echoCancellation,
           noiseSuppression: captureSettings.noiseSuppression,
           autoGainControl: captureSettings.autoGainControl
         })
         await controller.setAudioEncodingSettings(selectedAudioEncoding, true)
-        addAudioCatalogTracks()
+        if (isMicrophoneEnabling) {
+          ensureCatalogPresetTracks('audio')
+        }
         setMicrophoneEnabled(true)
       } else if (microphoneEnabled) {
         await controller.stopMicrophone()
-        removeAudioCatalogTracks()
         setMicrophoneEnabled(false)
       }
     } catch (err) {
@@ -808,8 +768,6 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setMicrophoneBusy(false)
     }
   }, [
-    addAudioCatalogTracks,
-    addCameraCatalogTracks,
     cameraEnabled,
     captureSettings.audioEnabled,
     captureSettings.autoGainControl,
@@ -817,9 +775,8 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     captureSettings.frameRate,
     captureSettings.noiseSuppression,
     captureSettings.videoEnabled,
+    ensureCatalogPresetTracks,
     microphoneEnabled,
-    removeAudioCatalogTracks,
-    removeCameraCatalogTracks,
     selectedAudioEncoding,
     selectedAudioDeviceId,
     selectedVideoEncoding,
@@ -912,6 +869,14 @@ function deriveScreenShareEncodingFromCatalogTracks(
   fallback: VideoEncodingSettings
 ): VideoEncodingSettings {
   return deriveVideoEncodingFromCatalogTracks(tracks, fallback, 'screenshare')
+}
+
+function hasCatalogTrackForSource(tracks: EditableCallCatalogTrack[], source: CatalogPresetSource): boolean {
+  if (source === 'audio') {
+    return tracks.some((track) => track.role === 'audio')
+  }
+  const isScreenshare = source === 'screenshare'
+  return tracks.some((track) => track.role === 'video' && isScreenShareTrackName(track.name) === isScreenshare)
 }
 
 function deriveVideoEncodingFromCatalogTracks(

@@ -982,13 +982,51 @@ function RemoteCatalogSubscribePanel({
   const selectedScreenshare = selected?.screenshare ?? screenshareTracks[0]?.name ?? ''
   const selectedAudio = selected?.audio ?? audioTracks[0]?.name ?? ''
   const hasCatalog = isCatalogSubscribed
-  const canSubscribeVideo = Boolean(selectedVideo) && !isVideoSubscribed && !isVideoSubscribing && !isVideoUnsubscribing
-  const canSubscribeScreenshare =
-    Boolean(selectedScreenshare) && !isScreenshareSubscribed && !isScreenshareSubscribing && !isScreenshareUnsubscribing
-  const canSubscribeAudio = Boolean(selectedAudio) && !isAudioSubscribed && !isAudioSubscribing && !isAudioUnsubscribing
-  const canUnsubscribeVideo = isVideoSubscribed && !isVideoSubscribing && !isVideoUnsubscribing
-  const canUnsubscribeScreenshare = isScreenshareSubscribed && !isScreenshareSubscribing && !isScreenshareUnsubscribing
-  const canUnsubscribeAudio = isAudioSubscribed && !isAudioSubscribing && !isAudioUnsubscribing
+  const trackRows: {
+    role: CatalogSubscribeRole
+    title: string
+    tracks: CallCatalogTrack[]
+    selectedTrack: string
+    subscribed: boolean
+    subscribing: boolean
+    unsubscribing: boolean
+    onSubscribe: () => void
+    onUnsubscribe: () => void
+  }[] = [
+    {
+      role: 'video',
+      title: 'Video Track',
+      tracks: videoTracks,
+      selectedTrack: selectedVideo,
+      subscribed: isVideoSubscribed,
+      subscribing: isVideoSubscribing,
+      unsubscribing: isVideoUnsubscribing,
+      onSubscribe: onSubscribeVideo,
+      onUnsubscribe: onUnsubscribeVideo
+    },
+    {
+      role: 'screenshare',
+      title: 'Screenshare Track',
+      tracks: screenshareTracks,
+      selectedTrack: selectedScreenshare,
+      subscribed: isScreenshareSubscribed,
+      subscribing: isScreenshareSubscribing,
+      unsubscribing: isScreenshareUnsubscribing,
+      onSubscribe: onSubscribeScreenshare,
+      onUnsubscribe: onUnsubscribeScreenshare
+    },
+    {
+      role: 'audio',
+      title: 'Audio Track',
+      tracks: audioTracks,
+      selectedTrack: selectedAudio,
+      subscribed: isAudioSubscribed,
+      subscribing: isAudioSubscribing,
+      unsubscribing: isAudioUnsubscribing,
+      onSubscribe: onSubscribeAudio,
+      onUnsubscribe: onUnsubscribeAudio
+    }
+  ]
   const catalogButtonLabel = isLoading ? 'Loading...' : 'Catalog Subscribe'
 
   return (
@@ -1005,55 +1043,29 @@ function RemoteCatalogSubscribePanel({
           {catalogButtonLabel}
         </button>
       </div>
-      <TrackSubscribeRow
-        title="Video Track"
-        tracks={videoTracks}
-        selected={selectedVideo}
-        disabled={!hasCatalog || isVideoSubscribed || isVideoSubscribing || isVideoUnsubscribing}
-        statusText={formatSubscribeStatus(isVideoSubscribed, isVideoSubscribing, isVideoUnsubscribing)}
-        subscribeLabel={isVideoSubscribing ? 'Subscribing...' : 'Subscribe'}
-        unsubscribeLabel={isVideoUnsubscribing ? 'Unsubscribing...' : 'Unsubscribe'}
-        canSubscribe={hasCatalog && canSubscribeVideo}
-        canUnsubscribe={hasCatalog && canUnsubscribeVideo}
-        busy={isVideoSubscribing || isVideoUnsubscribing}
-        onChange={(trackName) => onSelectTrack('video', trackName)}
-        onSubscribe={onSubscribeVideo}
-        onUnsubscribe={onUnsubscribeVideo}
-      />
-      <TrackSubscribeRow
-        title="Screenshare Track"
-        tracks={screenshareTracks}
-        selected={selectedScreenshare}
-        disabled={!hasCatalog || isScreenshareSubscribed || isScreenshareSubscribing || isScreenshareUnsubscribing}
-        statusText={formatSubscribeStatus(
-          isScreenshareSubscribed,
-          isScreenshareSubscribing,
-          isScreenshareUnsubscribing
-        )}
-        subscribeLabel={isScreenshareSubscribing ? 'Subscribing...' : 'Subscribe'}
-        unsubscribeLabel={isScreenshareUnsubscribing ? 'Unsubscribing...' : 'Unsubscribe'}
-        canSubscribe={hasCatalog && canSubscribeScreenshare}
-        canUnsubscribe={hasCatalog && canUnsubscribeScreenshare}
-        busy={isScreenshareSubscribing || isScreenshareUnsubscribing}
-        onChange={(trackName) => onSelectTrack('screenshare', trackName)}
-        onSubscribe={onSubscribeScreenshare}
-        onUnsubscribe={onUnsubscribeScreenshare}
-      />
-      <TrackSubscribeRow
-        title="Audio Track"
-        tracks={audioTracks}
-        selected={selectedAudio}
-        disabled={!hasCatalog || isAudioSubscribed || isAudioSubscribing || isAudioUnsubscribing}
-        statusText={formatSubscribeStatus(isAudioSubscribed, isAudioSubscribing, isAudioUnsubscribing)}
-        subscribeLabel={isAudioSubscribing ? 'Subscribing...' : 'Subscribe'}
-        unsubscribeLabel={isAudioUnsubscribing ? 'Unsubscribing...' : 'Unsubscribe'}
-        canSubscribe={hasCatalog && canSubscribeAudio}
-        canUnsubscribe={hasCatalog && canUnsubscribeAudio}
-        busy={isAudioSubscribing || isAudioUnsubscribing}
-        onChange={(trackName) => onSelectTrack('audio', trackName)}
-        onSubscribe={onSubscribeAudio}
-        onUnsubscribe={onUnsubscribeAudio}
-      />
+      {trackRows.map((row) => {
+        const busy = row.subscribing || row.unsubscribing
+        const canSubscribe = hasCatalog && Boolean(row.selectedTrack) && !row.subscribed && !busy
+        const canUnsubscribe = hasCatalog && row.subscribed && !busy
+        return (
+          <TrackSubscribeRow
+            key={row.role}
+            title={row.title}
+            tracks={row.tracks}
+            selected={row.selectedTrack}
+            disabled={!hasCatalog || row.subscribed || busy}
+            statusText={formatSubscribeStatus(row.subscribed, row.subscribing, row.unsubscribing)}
+            subscribeLabel={row.subscribing ? 'Subscribing...' : 'Subscribe'}
+            unsubscribeLabel={row.unsubscribing ? 'Unsubscribing...' : 'Unsubscribe'}
+            canSubscribe={canSubscribe}
+            canUnsubscribe={canUnsubscribe}
+            busy={busy}
+            onChange={(trackName) => onSelectTrack(row.role, trackName)}
+            onSubscribe={row.onSubscribe}
+            onUnsubscribe={row.onUnsubscribe}
+          />
+        )
+      })}
     </div>
   )
 }
