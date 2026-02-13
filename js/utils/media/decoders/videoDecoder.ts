@@ -1,5 +1,5 @@
 import { VideoJitterBuffer, type VideoJitterBufferMode } from '../videoJitterBuffer'
-import type { JitterBufferSubgroupObject, SubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
+import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { KEYFRAME_INTERVAL } from '../constants'
 import { createBitrateLogger } from '../bitrate'
 import type { ChunkMetadata } from '../chunk'
@@ -11,23 +11,14 @@ const bitrateLogger = createBitrateLogger((kbps) => {
 const KEYFRAME_INTERVAL_BIGINT = BigInt(KEYFRAME_INTERVAL)
 
 const VIDEO_DECODER_CONFIG = {
-  //codec: 'av01.0.08M.08',
-  codec: 'avc1.640032',
   hardwareAcceleration: 'prefer-hardware' as any,
   scalabilityMode: 'L1T1'
 }
 
 let videoDecoder: VideoDecoder | undefined
+let waitingForKeyFrame = true
 async function initializeVideoDecoder(config: VideoDecoderConfig) {
   function sendVideoFrameMessage(frame: VideoFrame): void {
-    console.debug('[videoDecoder] decoded frame', {
-      timestamp: frame.timestamp,
-      duration: frame.duration ?? null,
-      codedWidth: frame.codedWidth,
-      codedHeight: frame.codedHeight,
-      displayWidth: frame.displayWidth,
-      displayHeight: frame.displayHeight
-    })
     self.postMessage({
       type: 'frame',
       frame,
@@ -40,21 +31,13 @@ async function initializeVideoDecoder(config: VideoDecoderConfig) {
   const init: VideoDecoderInit = {
     output: sendVideoFrameMessage,
     error: (e: any) => {
-      console.log(e.message)
+      console.warn('[videoDecoder] decoder error', e)
       videoDecoder = undefined
       cachedVideoConfig = null
     }
   }
   const decoder = new VideoDecoder(init)
-  VideoDecoder.isConfigSupported(config)
-    .then((support) => {
-      console.log('[videoDecoder] config supported', support)
-    })
-    .catch((err) => {
-      console.warn('[videoDecoder] config support check failed', err)
-    })
   decoder.configure(config)
-  console.info('[videoDecoder] (re)initializing decoder with config:', config)
   return decoder
 }
 
@@ -115,87 +98,16 @@ function updateJitterBuffer(config: VideoJitterBufferConfig): void {
   jitterBuffer = createJitterBuffer(currentJitterConfig)
 }
 
-type DecodedState = {
-  groupId: bigint
-  objectId: bigint
-}
-
-let lastDecodedState: DecodedState | null = null
-let previousGroupClosed = false
 type CachedVideoConfig = { codec: string; descriptionBase64?: string; avcFormat?: 'annexb' | 'avc' }
 
 let cachedVideoConfig: CachedVideoConfig | null = null
-let pendingReconfigureConfig: CachedVideoConfig | null = null
 let catalogCodec: string | null = null
-let lastVideoTimestamp: number | null = null
-let descriptionLogged = false
-let lastTimestampState: { timestamp: number; groupId: bigint; objectId: bigint } | null = null
-
-function checkTimestampMonotonic(timestamp: number, groupId: bigint, objectId: bigint): void {
-  if (lastTimestampState && timestamp < lastTimestampState.timestamp) {
-    console.warn(
-      `[videoDecoder] timestamp regression detected: prev=${lastTimestampState.timestamp} (group=${lastTimestampState.groupId.toString()} object=${lastTimestampState.objectId.toString()}) current=${timestamp} (group=${groupId.toString()} object=${objectId.toString()})`
-    )
-  }
-  lastVideoTimestamp = timestamp
-  lastTimestampState = { timestamp, groupId, objectId }
-}
-
-// objectIdの連続性をチェック（JitterBufferがcorrectlyモードの場合は冗長だが、念のため保持）
-function checkObjectIdContinuity(currentGroupId: bigint, currentObjectId: bigint): void {
-  // 初回はgroupId=0, objectId=0であることを確認（キーフレーム）
-  if (!lastDecodedState) {
-    if (currentGroupId !== 0n || currentObjectId !== 0n) {
-      console.warn(
-        `[Video] First frame must be groupId=0, objectId=0 (keyframe). Got: groupId=${currentGroupId}, objectId=${currentObjectId}`
-      )
-    }
-    return
-  }
-
-  // groupIdが変わった場合: 前回のobjectIdが最後のdeltaframeかチェック
-  if (currentGroupId !== lastDecodedState.groupId) {
-    if (!previousGroupClosed) {
-      const expectedLastObjectId = KEYFRAME_INTERVAL_BIGINT - 1n
-      if (lastDecodedState.objectId !== expectedLastObjectId) {
-        console.debug(
-          `[Video] Group ended with unexpected objectId. Expected: ${expectedLastObjectId}, Got: ${lastDecodedState.objectId}, Group: ${lastDecodedState.groupId} -> ${currentGroupId}`
-        )
-      }
-    }
-    // 新しいgroupの最初のobjectIdは0であるべき
-    if (currentObjectId !== 0n) {
-      console.warn(
-        `[Video] New group should start with objectId 0. Got: ${currentObjectId}, GroupId: ${currentGroupId}`
-      )
-    }
-    return
-  }
-
-  // 同一group内での連続性チェック
-  if (currentObjectId !== lastDecodedState.objectId + 1n) {
-    console.warn(
-      `[Video] Non-sequential objectId detected. Expected: ${lastDecodedState.objectId + 1n}, Got: ${currentObjectId}, Gap: ${
-        currentObjectId - lastDecodedState.objectId - 1n
-      }`
-    )
-  }
-}
-
-function recordDecodedFrame(groupId: bigint, objectId: bigint): void {
-  previousGroupClosed = false
-  lastDecodedState = { groupId, objectId }
-}
-
-function markGroupClosed(): void {
-  previousGroupClosed = true
-}
+let missingCatalogCodecWarned = false
 
 setInterval(() => {
   const entry = jitterBuffer.popWithMetadata()
   if (entry) {
     if (entry.isEndOfGroup) {
-      markGroupClosed()
       return
     }
     decode(entry.groupId, entry.object)
@@ -222,12 +134,12 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
     applyCatalogCodec(event.data.codec)
     return
   }
-
-  const subgroupStreamObject: SubgroupObject = {
+  const subgroupStreamObject: SubgroupObjectWithLoc = {
     objectId: event.data.subgroupStreamObject.objectId,
     objectPayloadLength: event.data.subgroupStreamObject.objectPayloadLength,
     objectPayload: new Uint8Array(event.data.subgroupStreamObject.objectPayload),
-    objectStatus: event.data.subgroupStreamObject.objectStatus
+    objectStatus: event.data.subgroupStreamObject.objectStatus,
+    locHeader: event.data.subgroupStreamObject.locHeader
   }
   bitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
 
@@ -237,10 +149,6 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 }
 
 async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgroupObject) {
-  // objectIdの連続性をチェック
-  checkObjectIdContinuity(groupId, subgroupStreamObject.objectId)
-  recordDecodedFrame(groupId, subgroupStreamObject.objectId)
-
   const decoded = subgroupStreamObject.cachedChunk
   reportLatency(decoded.metadata.sentAt)
 
@@ -248,40 +156,7 @@ async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgrou
   if (!resolvedConfig) {
     return
   }
-  if (decoded.metadata.type === 'key') {
-    const payloadInfo = analyzeKeyframePayload(decoded.data)
-    const prevTimestamp = lastVideoTimestamp
-    const delta = prevTimestamp !== null ? decoded.metadata.timestamp - prevTimestamp : null
-    console.debug('[videoDecoder] keyframe timestamp', {
-      groupId: groupId.toString(),
-      objectId: subgroupStreamObject.objectId.toString(),
-      timestamp: decoded.metadata.timestamp,
-      duration: decoded.metadata.duration ?? null,
-      delta
-    })
-    console.debug('[videoDecoder] keyframe payload', {
-      length: decoded.data.byteLength,
-      head: payloadInfo.head,
-      hasStartCode: payloadInfo.hasStartCode,
-      startCodeAtZero: payloadInfo.startCodeAtZero,
-      nalTypes: payloadInfo.nalSummary
-    })
-  }
-  checkTimestampMonotonic(decoded.metadata.timestamp, groupId, subgroupStreamObject.objectId)
   const desiredConfig = buildVideoDecoderConfig(resolvedConfig)
-
-  const needsReconfigure = shouldReconfigure(resolvedConfig)
-  if (needsReconfigure && decoded.metadata.type !== 'key') {
-    pendingReconfigureConfig = resolvedConfig
-    return
-  }
-  if (pendingReconfigureConfig && decoded.metadata.type === 'key') {
-    if (shouldReconfigure(pendingReconfigureConfig)) {
-      await reinitializeDecoder(buildVideoDecoderConfig(pendingReconfigureConfig), pendingReconfigureConfig)
-    }
-    pendingReconfigureConfig = null
-    // fallthrough to decode this keyframe
-  }
 
   const encodedVideoChunk = new EncodedVideoChunk({
     type: decoded.metadata.type as EncodedVideoChunkType,
@@ -294,31 +169,33 @@ async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgrou
     videoDecoder = await initializeVideoDecoder(desiredConfig)
     cachedVideoConfig = resolvedConfig
     postDecoderConfig(resolvedConfig, desiredConfig)
+    waitingForKeyFrame = true
     if (decoded.metadata.type !== 'key') {
       return
     }
   }
 
-  if (needsReconfigure) {
-    await reinitializeDecoder(desiredConfig, resolvedConfig)
-    if (decoded.metadata.type !== 'key') {
-      return
-    }
+  if (waitingForKeyFrame && decoded.metadata.type !== 'key') {
+    return
   }
 
-  await videoDecoder.decode(encodedVideoChunk)
-}
-
-async function reinitializeDecoder(desiredConfig: VideoDecoderConfig, resolvedConfig: CachedVideoConfig) {
   try {
-    videoDecoder?.close()
-  } catch (e) {
-    console.warn('[videoDecoder] failed to close before reconfigure', e)
+    await videoDecoder.decode(encodedVideoChunk)
+    if (decoded.metadata.type === 'key') {
+      waitingForKeyFrame = false
+    }
+  } catch (error) {
+    if (isKeyFrameRequiredError(error)) {
+      waitingForKeyFrame = true
+      console.warn('[videoDecoder] decode requires key frame; waiting for next key frame', {
+        groupId: groupId.toString(),
+        objectId: subgroupStreamObject.objectId.toString(),
+        chunkType: decoded.metadata.type
+      })
+      return
+    }
+    throw error
   }
-  videoDecoder = await initializeVideoDecoder(desiredConfig)
-  console.log('[videoDecoder] reinitialize with config:', desiredConfig)
-  cachedVideoConfig = resolvedConfig
-  postDecoderConfig(resolvedConfig, desiredConfig)
 }
 
 function reportLatency(sentAt: number | undefined) {
@@ -330,6 +207,13 @@ function reportLatency(sentAt: number | undefined) {
     return
   }
   postRenderingLatency(latency)
+}
+
+function isKeyFrameRequiredError(error: unknown): boolean {
+  if (!(error instanceof DOMException)) {
+    return false
+  }
+  return error.name === 'DataError' && error.message.includes('A key frame is required')
 }
 
 function postReceiveLatency(latencyMs: number) {
@@ -363,37 +247,37 @@ function applyCatalogCodec(codec?: string): void {
     return
   }
   catalogCodec = codec
-  if (!cachedVideoConfig) {
-    return
-  }
-  if (cachedVideoConfig.codec === codec) {
-    return
-  }
-  pendingReconfigureConfig = {
-    codec,
-    descriptionBase64: cachedVideoConfig.descriptionBase64,
-    avcFormat: cachedVideoConfig.avcFormat
+  if (cachedVideoConfig && cachedVideoConfig.codec !== codec) {
+    console.warn('[videoDecoder] catalog codec changed after decoder initialization; ignoring new codec', {
+      initializedCodec: cachedVideoConfig.codec,
+      catalogCodec: codec
+    })
   }
 }
 
 function resolveVideoConfig(metadata: ChunkMetadata): CachedVideoConfig | null {
-  const hasNewConfig = metadata.codec || metadata.descriptionBase64 || metadata.avcFormat
-  if (!hasNewConfig && !cachedVideoConfig) {
-    return null
+  if (cachedVideoConfig) {
+    return cachedVideoConfig
   }
-  const codec = metadata.codec ?? cachedVideoConfig?.codec ?? catalogCodec ?? undefined
-  const descriptionBase64 = metadata.descriptionBase64 ?? cachedVideoConfig?.descriptionBase64
-  const avcFormat = metadata.avcFormat ?? cachedVideoConfig?.avcFormat
+  const codec = metadata.codec ?? catalogCodec ?? undefined
   if (!codec) {
+    if (!missingCatalogCodecWarned) {
+      missingCatalogCodecWarned = true
+      console.warn('[videoDecoder] skip decode until catalog codec is available')
+    }
     return null
   }
-  return { codec, descriptionBase64, avcFormat }
+  missingCatalogCodecWarned = false
+  return {
+    codec,
+    descriptionBase64: metadata.descriptionBase64,
+    avcFormat: metadata.avcFormat
+  }
 }
 
 function buildVideoDecoderConfig(resolved: CachedVideoConfig): VideoDecoderConfig {
   if (resolved.codec.startsWith('avc')) {
     const description = resolved.descriptionBase64 ? base64ToUint8Array(resolved.descriptionBase64) : undefined
-    logDescriptionBytes(description)
     return {
       ...VIDEO_DECODER_CONFIG,
       codec: resolved.codec,
@@ -410,15 +294,6 @@ function buildVideoDecoderConfig(resolved: CachedVideoConfig): VideoDecoderConfi
   } as VideoDecoderConfig
 }
 
-function shouldReconfigure(resolved: CachedVideoConfig): boolean {
-  if (!cachedVideoConfig) return true
-  return (
-    cachedVideoConfig.codec !== resolved.codec ||
-    cachedVideoConfig.descriptionBase64 !== resolved.descriptionBase64 ||
-    cachedVideoConfig.avcFormat !== resolved.avcFormat
-  )
-}
-
 function base64ToUint8Array(base64: string): Uint8Array {
   const binaryString = atob(base64)
   const len = binaryString.length
@@ -427,79 +302,4 @@ function base64ToUint8Array(base64: string): Uint8Array {
     bytes[i] = binaryString.charCodeAt(i)
   }
   return bytes
-}
-
-function logDescriptionBytes(description?: Uint8Array): void {
-  if (!description || descriptionLogged) {
-    return
-  }
-  const head = formatHexPrefix(description, 8)
-  console.log('[videoDecoder] description bytes', { length: description.byteLength, head })
-  descriptionLogged = true
-}
-
-function formatHexPrefix(bytes: Uint8Array, maxLen: number): string {
-  const parts: string[] = []
-  const size = Math.min(bytes.byteLength, maxLen)
-  for (let i = 0; i < size; i += 1) {
-    parts.push(bytes[i].toString(16).padStart(2, '0').toUpperCase())
-  }
-  return parts.join(' ')
-}
-
-function analyzeKeyframePayload(data: Uint8Array): {
-  head: string
-  hasStartCode: boolean
-  startCodeAtZero: boolean
-  nalSummary: string
-} {
-  const head = formatHexPrefix(data, 12)
-  const nalInfo = collectAnnexbNalTypes(data)
-  return {
-    head,
-    hasStartCode: nalInfo.hasStartCode,
-    startCodeAtZero: nalInfo.startCodeAtZero,
-    nalSummary: nalInfo.types.length ? nalInfo.types.join(',') : 'none'
-  }
-}
-
-function collectAnnexbNalTypes(data: Uint8Array): {
-  hasStartCode: boolean
-  startCodeAtZero: boolean
-  types: number[]
-} {
-  const start = findStartCode(data, 0)
-  if (!start) {
-    return { hasStartCode: false, startCodeAtZero: false, types: [] }
-  }
-  const types: number[] = []
-  let pos = start.index + start.length
-  let next = pos
-  while (true) {
-    const nextStart = findStartCode(data, next)
-    const end = nextStart ? nextStart.index : data.length
-    if (end > pos) {
-      types.push(data[pos] & 0x1f)
-    }
-    if (!nextStart) {
-      break
-    }
-    pos = nextStart.index + nextStart.length
-    next = pos
-  }
-  return { hasStartCode: true, startCodeAtZero: start.index === 0, types }
-}
-
-function findStartCode(data: Uint8Array, offset: number): { index: number; length: number } | null {
-  for (let i = offset; i + 3 <= data.length; i += 1) {
-    if (data[i] === 0 && data[i + 1] === 0) {
-      if (data[i + 2] === 1) {
-        return { index: i, length: 3 }
-      }
-      if (i + 3 < data.length && data[i + 2] === 0 && data[i + 3] === 1) {
-        return { index: i, length: 4 }
-      }
-    }
-  }
-  return null
 }

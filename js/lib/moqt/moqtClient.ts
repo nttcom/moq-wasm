@@ -188,6 +188,12 @@ export class MoqtClientWrapper {
     )
   }
 
+  async unsubscribe(subscribeId: bigint): Promise<void> {
+    const client = this.requireConnectedClient()
+    await client.sendUnsubscribeMessage(subscribeId)
+    this.clearSubgroupObjectHandler(subscribeId)
+  }
+
   async sendSubgroupTextForTrack(trackNamespace: string[], trackName: string, text: string): Promise<void> {
     const client = this.requireConnectedClient()
 
@@ -271,7 +277,8 @@ export class MoqtClientWrapper {
       state.subgroupId,
       state.objectId,
       undefined,
-      payload
+      payload,
+      undefined
     )
     client.incrementSubgroupObject(trackAlias)
   }

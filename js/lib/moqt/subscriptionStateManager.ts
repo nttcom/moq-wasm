@@ -1,6 +1,7 @@
 import { SubgroupStreamObjectMessage } from '../../pkg/moqt_client_wasm'
 
-export type SubgroupObjectHandler = (groupId: bigint, message: SubgroupStreamObjectMessage) => void
+export type SubgroupStreamObjectMessageWithLoc = SubgroupStreamObjectMessage & { locHeader?: any }
+export type SubgroupObjectHandler = (groupId: bigint, message: SubgroupStreamObjectMessageWithLoc) => void
 
 export interface SubscriptionStateStore {
   setSubgroupObjectHandler(trackAlias: bigint, handler: SubgroupObjectHandler): void

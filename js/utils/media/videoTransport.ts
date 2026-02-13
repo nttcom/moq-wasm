@@ -1,6 +1,6 @@
 import type { MOQTClient } from '../../pkg/moqt_client_wasm'
 import { MediaTransportState } from './transportState'
-import { serializeChunk, type ChunkMetadata } from './chunk'
+import { buildLocHeader, arrayBufferToUint8Array, type LocHeader } from './loc'
 
 export type VideoChunkSender = (
   trackAlias: bigint,
@@ -9,7 +9,7 @@ export type VideoChunkSender = (
   objectId: bigint,
   chunk: EncodedVideoChunk,
   client: MOQTClient,
-  extraMetadata?: Partial<ChunkMetadata>
+  locHeader?: LocHeader
 ) => Promise<void>
 
 export interface VideoChunkSendOptions {
@@ -20,7 +20,6 @@ export interface VideoChunkSendOptions {
   client: MOQTClient
   transportState: MediaTransportState
   sender: VideoChunkSender
-  fallbackCodec?: string
 }
 
 export async function sendVideoChunkViaMoqt({
@@ -30,8 +29,7 @@ export async function sendVideoChunkViaMoqt({
   publisherPriority,
   client,
   transportState,
-  sender,
-  fallbackCodec
+  sender
 }: VideoChunkSendOptions): Promise<void> {
   if (!trackAliases.length) {
     return
@@ -42,16 +40,12 @@ export async function sendVideoChunkViaMoqt({
 
   const shouldIncludeCodec = trackAliases.some((alias) => transportState.shouldSendVideoCodec(alias))
   const decoderConfig = metadata?.decoderConfig as any
-  const defaultCodec = fallbackCodec ?? 'avc1.640028'
-  const codec = decoderConfig?.codec ?? defaultCodec
-  const configMeta =
-    codec !== undefined
-      ? decoderConfig?.description
-        ? { codec, descriptionBase64: bufferToBase64(decoderConfig.description) }
-        : { codec }
-      : undefined
-
-  const extraMeta = chunk.type === 'key' ? configMeta : shouldIncludeCodec ? configMeta : undefined
+  const configBytes = arrayBufferToUint8Array(decoderConfig?.description)
+  const includeConfig = chunk.type === 'key' || shouldIncludeCodec
+  const locHeader = buildLocHeader({
+    captureTimestampMicros: Date.now() * 1000,
+    videoConfig: includeConfig ? configBytes : undefined
+  })
 
   if (chunk.type === 'key') {
     transportState.advanceVideoGroup()
@@ -88,21 +82,12 @@ export async function sendVideoChunkViaMoqt({
       transportState.getVideoObjectId(),
       chunk,
       client,
-      extraMeta
+      locHeader
     )
-    if (extraMeta) {
+    if (includeConfig && configBytes) {
       transportState.markVideoCodecSent(alias)
     }
   }
 
   transportState.incrementVideoObject()
-}
-
-function bufferToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf)
-  let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
 }

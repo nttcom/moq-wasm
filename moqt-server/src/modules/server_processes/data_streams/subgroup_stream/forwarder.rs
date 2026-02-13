@@ -12,7 +12,7 @@ use crate::{
     },
     signal_dispatcher::{DataStreamThreadSignal, SignalDispatcher, TerminateReason},
 };
-use anyhow::{Error as AnyError, Result};
+use anyhow::{Error as AnyError, Result, anyhow};
 use bytes::BytesMut;
 use moqt_core::{
     data_stream_type::DataStreamType,
@@ -97,17 +97,35 @@ impl SubgroupStreamObjectForwarder {
         let downstream_track_alias = pubsub_relation_manager
             .get_downstream_track_alias(downstream_session_id, downstream_subscribe_id)
             .await?
-            .unwrap();
+            .ok_or_else(|| {
+                anyhow!(
+                    "downstream subscription not found for track_alias (session_id: {}, subscribe_id: {})",
+                    downstream_session_id,
+                    downstream_subscribe_id
+                )
+            })?;
 
         let filter_type = pubsub_relation_manager
             .get_downstream_filter_type(downstream_session_id, downstream_subscribe_id)
             .await?
-            .unwrap();
+            .ok_or_else(|| {
+                anyhow!(
+                    "downstream subscription not found for filter_type (session_id: {}, subscribe_id: {})",
+                    downstream_session_id,
+                    downstream_subscribe_id
+                )
+            })?;
 
         let requested_object_range = pubsub_relation_manager
             .get_downstream_requested_object_range(downstream_session_id, downstream_subscribe_id)
             .await?
-            .unwrap();
+            .ok_or_else(|| {
+                anyhow!(
+                    "downstream subscription not found for requested_object_range (session_id: {}, subscribe_id: {})",
+                    downstream_session_id,
+                    downstream_subscribe_id
+                )
+            })?;
 
         // Get the information of the original publisher who has the track being requested
         let (upstream_session_id, upstream_subscribe_id) = pubsub_relation_manager

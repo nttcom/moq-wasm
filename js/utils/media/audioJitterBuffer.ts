@@ -1,5 +1,6 @@
-import { deserializeChunk } from './chunk'
-import type { JitterBufferSubgroupObject, SubgroupObject } from './jitterBufferTypes'
+import { tryDeserializeChunk, type ChunkMetadata } from './chunk'
+import { readLocHeader } from './loc'
+import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc } from './jitterBufferTypes'
 
 const DEFAULT_JITTER_BUFFER_SIZE = 1800
 
@@ -32,14 +33,40 @@ export class AudioJitterBuffer {
   push(
     groupId: bigint,
     objectId: bigint,
-    object: SubgroupObject,
+    object: SubgroupObjectWithLoc,
     onReceiveLatency?: (latencyMs: number) => void
   ): void {
     if (!object.objectPayloadLength) {
       return
     }
-    const parsed = deserializeChunk(object.objectPayload)
+    const parsedFromMetadata = tryDeserializeChunk(object.objectPayload)
+    if (!parsedFromMetadata) {
+      const locHeader = object.locHeader
+      const extensions = locHeader?.extensions ?? []
+      if (!locHeader || extensions.length === 0) {
+        console.debug('[AudioJitterBuffer] Missing metadata and LOC header', {
+          groupId,
+          objectId,
+          payloadLength: object.objectPayloadLength
+        })
+      } else {
+        const hasCaptureTimestamp = extensions.some((ext) => ext.type === 'captureTimestamp')
+        console.debug('[AudioJitterBuffer] Using LOC header fallback', {
+          groupId,
+          objectId,
+          payloadLength: object.objectPayloadLength,
+          locExtensionCount: extensions.length,
+          hasCaptureTimestamp
+        })
+      }
+    }
+    const parsed = parsedFromMetadata ?? buildChunkFromLoc(object)
     if (!parsed) {
+      console.debug('[AudioJitterBuffer] Failed to build chunk from payload', {
+        groupId,
+        objectId,
+        payloadLength: object.objectPayloadLength
+      })
       return
     }
 
@@ -108,4 +135,17 @@ export class AudioJitterBuffer {
     }
     return 0
   }
+}
+
+function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } | null {
+  const loc = readLocHeader(object.locHeader)
+  const captureMicros = loc.captureTimestampMicros
+  const sentAt = typeof captureMicros === 'number' ? Math.floor(captureMicros / 1000) : Date.now()
+  const metadata: ChunkMetadata = {
+    type: 'key',
+    timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
+    duration: null,
+    sentAt
+  }
+  return { metadata, data: object.objectPayload }
 }

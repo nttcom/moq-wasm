@@ -28,11 +28,13 @@ export interface RemoteMember {
   announcedTracks: {
     chat: TrackState
     video: TrackState
+    screenshare: TrackState
     audio: TrackState
   }
   subscribedTracks: {
     chat: SubscriptionState
     video: SubscriptionState
+    screenshare: SubscriptionState
     audio: SubscriptionState
   }
 }

@@ -139,7 +139,8 @@ function setupVideoCallbacks(trackAlias: bigint): void {
           objectId: subgroupStreamObject.objectId,
           objectPayloadLength: subgroupStreamObject.objectPayloadLength,
           objectPayload: payload,
-          objectStatus: subgroupStreamObject.objectStatus
+          objectStatus: subgroupStreamObject.objectStatus,
+          locHeader: subgroupStreamObject.locHeader
         }
       },
       [payload.buffer]

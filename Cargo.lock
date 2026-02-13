@@ -2845,6 +2845,7 @@ dependencies = [
  "media-streaming-format",
  "moqt-client-rust",
  "moqt-core",
+ "packages",
  "rand 0.8.5",
  "reqwest",
  "roxmltree",
@@ -2865,6 +2866,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "moqt-core",
+ "packages",
  "tokio",
  "url",
  "wtransport",
@@ -2881,6 +2883,7 @@ dependencies = [
  "js-sys",
  "media-streaming-format",
  "moqt-core",
+ "packages",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -3319,6 +3322,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "packages"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
 ]
 
 [[package]]

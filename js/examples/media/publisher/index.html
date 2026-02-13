@@ -4,111 +4,202 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MOQT Media Publisher Test</title>
+    <link rel="stylesheet" href="../media.css" />
   </head>
   <body>
-    <h1>Publisher</h1>
-    <div id="app">
-      <form name="form" id="form">
+    <div class="page">
+      <header class="hero">
         <div>
-          <h2>Connection</h2>
-          <label for="url">URL:</label>
-          <input type="url" name="url" id="url" value="https://moqt.research.skyway.io:4433" />
-          <button type="button" id="connectBtn">Connect</button>
-          <button type="button" id="closeBtn">Close</button>
+          <span class="pill">Publisher</span>
+          <h1>MoQT Media Publisher</h1>
+          <p>Low-level controls for publishing video and audio objects over MoQT.</p>
         </div>
-        <br />
-        <div>
-          <h2>Forwarding Preference</h2>
-          <label
-            ><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram
-          </label>
-          <label
-            ><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" checked />Subgroup
-          </label>
-          <br />
-          *You must select at first
+      </header>
+      <div id="app">
+        <form name="form" id="form" class="control-grid">
+          <section class="card stack full">
+            <h2>Console</h2>
+            <p class="hint">info / warn / error を表示します。</p>
+            <div id="logPanel"></div>
+          </section>
+          <section class="card stack">
+            <h2>Connection</h2>
+            <label for="url">URL:</label>
+            <input type="url" name="url" id="url" value="https://moqt.research.skyway.io:4433" />
+            <div id="urlPresets" class="preset-bar">
+              Preset:
+              <button type="button" data-url="https://moqt.research.skyway.io:4433">
+                https://moqt.research.skyway.io:4433
+              </button>
+              <button type="button" data-url="https://127.0.0.1:4433">https://127.0.0.1:4433</button>
+            </div>
+            <script>
+              ;(function () {
+                const preset = document.getElementById('urlPresets')
+                const input = document.getElementById('url')
+                if (!preset || !input) return
+                preset.addEventListener('click', (event) => {
+                  const target = event.target
+                  if (!(target instanceof HTMLButtonElement)) return
+                  const value = target.getAttribute('data-url')
+                  if (!value) return
+                  input.value = value
+                })
+              })()
+            </script>
+            <div class="button-row">
+              <button type="button" id="connectBtn">Connect</button>
+              <button type="button" id="closeBtn">Close</button>
+            </div>
+          </section>
 
-          <h3>CLIENT_SETUP</h3>
-          Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="2" />
-          <br />
-          <button type="button" id="sendSetupBtn">Send</button>
+          <section class="card stack">
+            <h2>Forwarding Preference</h2>
+            <div class="radio-group">
+              <label
+                ><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram
+              </label>
+              <label
+                ><input
+                  type="radio"
+                  name="forwarding-preference"
+                  id="selectSubgroup"
+                  value="subgroup"
+                  checked
+                />Subgroup
+              </label>
+            </div>
+            <p class="hint">You must select at first</p>
+          </section>
 
-          <h3>ANNOUNCE</h3>
-          <label
-            >Track Namespace:
-            <input type="text" name="announce-track-namespace" id="announce-track-namespace" value="video_audio" />
-          </label>
-          <script>
-            // Set default value for Track Namespace input
-            ;(function () {
-              function pad(n) {
-                return n < 10 ? '0' + n : n
-              }
-              const now = new Date()
-              const yyyy = now.getFullYear()
-              const mm = pad(now.getMonth() + 1)
-              const dd = pad(now.getDate())
-              const HH = pad(now.getHours())
-              const MM = pad(now.getMinutes())
-              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
-              const input = document.getElementById('announce-track-namespace')
-              if (input) input.value = value
-            })()
-          </script>
-          <br />
-          <button type="button" id="sendAnnounceBtn">Send</button>
-          <h3>OBJECT</h3>
-          <div id="headerField" style="display: blocked">
-            <h4>Header</h4>
-          </div>
-          <label>Video Track Alias: <input type="text" name="video-object-track-alias" id="" value="0" /> </label>
-          <label>Audio Track Alias: <input type="text" name="audio-object-track-alias" id="" value="1" /> </label>
-          <br />
-          <label
-            >Video Publisher Priority: <input type="text" name="video-publisher-priority" id="" value="0" />
-          </label>
-          <label
-            >Audio Publisher Priority: <input type="text" name="audio-publisher-priority" id="" value="0" />
-          </label>
-          <br />
-          <div id="objectField" style="display: blocked">
-            <h4>Object</h4>
-          </div>
-          <div id="datagramObjectContents" style="display: none">
-            Group ID:
-            <p id="datagramGroupId">0</p>
-            <br />
-            <button type="button" id="descendDatagramGroupIdBtn">&lt;</button>
-            <button type="button" id="ascendDatagramGroupIdBtn">&gt;</button>
-            <br />
-            <br />
-          </div>
-          <br />
-          <div>
-            <button type="button" id="startGetUserMediaBtn">getUserMedia</button>
-            <button type="button" id="getSampleVideo">getSampleVideo</button>
-          </div>
-          <div id="sendDatagramObject" style="display: none">
-            <button type="button" id="sendDatagramObjectBtn">Send</button>
-          </div>
-          <div id="sendSubgroupObject" style="display: blocked">
-            <button type="button" id="sendSubgroupObjectBtn">Send</button>
-          </div>
-        </div>
-        <div>
-          <video id="video" autoplay muted inline></video>
-        </div>
-        <br />
+          <section class="card stack">
+            <h3>CLIENT_SETUP</h3>
+            <label>Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
+            <div class="button-row action-row">
+              <button type="button" id="sendSetupBtn" class="compact-button">Send</button>
+            </div>
+          </section>
 
-        <br />
-      </form>
+          <section class="card stack">
+            <h3>ANNOUNCE</h3>
+            <label
+              >Track Namespace:
+              <input type="text" name="announce-track-namespace" id="announce-track-namespace" value="video_audio" />
+            </label>
+            <script>
+              // Set default value for Track Namespace input
+              ;(function () {
+                function pad(n) {
+                  return n < 10 ? '0' + n : n
+                }
+                const now = new Date()
+                const yyyy = now.getFullYear()
+                const mm = pad(now.getMonth() + 1)
+                const dd = pad(now.getDate())
+                const HH = pad(now.getHours())
+                const MM = pad(now.getMinutes())
+                const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+                const input = document.getElementById('announce-track-namespace')
+                if (input) input.value = value
+              })()
+            </script>
+            <div class="button-row action-row">
+              <button type="button" id="sendAnnounceBtn">Send</button>
+            </div>
+          </section>
+
+          <section class="card stack full">
+            <h3>OBJECT</h3>
+            <div id="headerField" style="display: blocked">
+              <h4>Header</h4>
+            </div>
+            <p class="hint">
+              Published tracks: catalog, audio_128kbps, audio_64kbps, audio_32kbps, video_1080p, video_720p, video_480p
+              (catalog returns the 3 video profiles and 3 audio profiles)
+            </p>
+            <div class="field-row">
+              <label
+                >Video Publisher Priority: <input type="text" name="video-publisher-priority" id="" value="0" />
+              </label>
+              <label
+                >Audio Publisher Priority: <input type="text" name="audio-publisher-priority" id="" value="0" />
+              </label>
+            </div>
+            <div id="objectField" style="display: blocked">
+              <h4>Object</h4>
+            </div>
+            <div id="datagramObjectContents" style="display: none">
+              Group ID:
+              <p id="datagramGroupId">0</p>
+              <div class="button-row">
+                <button type="button" id="descendDatagramGroupIdBtn">&lt;</button>
+                <button type="button" id="ascendDatagramGroupIdBtn">&gt;</button>
+              </div>
+            </div>
+            <div class="button-row">
+              <button type="button" id="startGetUserMediaBtn">getUserMedia</button>
+              <button type="button" id="getSampleVideo">getSampleVideo</button>
+            </div>
+            <div id="sendDatagramObject" style="display: none">
+              <button type="button" id="sendDatagramObjectBtn">Send</button>
+            </div>
+            <div id="sendSubgroupObject" style="display: blocked">
+              <button type="button" id="sendSubgroupObjectBtn">Send</button>
+            </div>
+          </section>
+
+          <section class="card stack full">
+            <h2>Preview</h2>
+            <video id="video" autoplay muted inline></video>
+          </section>
+        </form>
+      </div>
     </div>
 
+    <script>
+      ;(function () {
+        const panel = document.getElementById('logPanel')
+        if (!panel) return
+        const levels = ['log', 'info', 'warn', 'error']
+        const original = {}
+        const maxEntries = 200
+
+        function append(level, args) {
+          const entry = document.createElement('div')
+          const classLevel = level === 'log' ? 'info' : level
+          entry.className = `log-entry log-${classLevel}`
+          const label = document.createElement('strong')
+          label.textContent = classLevel.toUpperCase()
+          entry.appendChild(label)
+          const text = document.createElement('span')
+          text.textContent = ' ' + args.map(formatArg).join(' ')
+          entry.appendChild(text)
+          panel.appendChild(entry)
+          while (panel.childNodes.length > maxEntries) {
+            panel.removeChild(panel.firstChild)
+          }
+          panel.scrollTop = panel.scrollHeight
+        }
+
+        function formatArg(arg) {
+          if (typeof arg === 'string') return arg
+          if (arg instanceof Error) return arg.message
+          try {
+            return JSON.stringify(arg)
+          } catch (_e) {
+            return String(arg)
+          }
+        }
+
+        for (const level of levels) {
+          original[level] = console[level].bind(console)
+          console[level] = (...args) => {
+            original[level](...args)
+            append(level, args)
+          }
+        }
+      })()
+    </script>
     <script type="module" src="./main.ts"></script>
   </body>
-  <style>
-    p {
-      display: inline;
-    }
-  </style>
 </html>

@@ -15,8 +15,8 @@ pub struct ExtensionHeader {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ExtensionHeaderValue {
-    EvenTypeValue(Value),
-    OddTypeValue(ValueWithLength),
+    EvenTypeValue(ValueWithLength),
+    OddTypeValue(Value),
 }
 
 impl ExtensionHeader {
@@ -33,13 +33,21 @@ impl ExtensionHeader {
         Ok(ExtensionHeader { header_type, value })
     }
 
+    pub fn header_type(&self) -> u64 {
+        self.header_type
+    }
+
+    pub fn value(&self) -> &ExtensionHeaderValue {
+        &self.value
+    }
+
     pub fn byte_length(&self) -> usize {
         let mut len = write_variable_integer(self.header_type).len();
         match &self.value {
-            ExtensionHeaderValue::EvenTypeValue(value) => len += value.byte_length(),
-            ExtensionHeaderValue::OddTypeValue(value_with_length) => {
+            ExtensionHeaderValue::EvenTypeValue(value_with_length) => {
                 len += value_with_length.byte_length()
             }
+            ExtensionHeaderValue::OddTypeValue(value) => len += value.byte_length(),
         }
         len
     }
@@ -52,10 +60,11 @@ impl DataStreams for ExtensionHeader {
     {
         let header_type = read_variable_integer(read_cur).context("header type")?;
         if header_type % 2 == 0 {
-            let value = ExtensionHeaderValue::EvenTypeValue(Value::depacketize(read_cur)?);
+            let value =
+                ExtensionHeaderValue::EvenTypeValue(ValueWithLength::depacketize(read_cur)?);
             Ok(ExtensionHeader { header_type, value })
         } else {
-            let value = ExtensionHeaderValue::OddTypeValue(ValueWithLength::depacketize(read_cur)?);
+            let value = ExtensionHeaderValue::OddTypeValue(Value::depacketize(read_cur)?);
             Ok(ExtensionHeader { header_type, value })
         }
     }
@@ -63,10 +72,10 @@ impl DataStreams for ExtensionHeader {
     fn packetize(&self, buf: &mut BytesMut) {
         buf.extend(write_variable_integer(self.header_type));
         match &self.value {
-            ExtensionHeaderValue::EvenTypeValue(value) => value.packetize(buf),
-            ExtensionHeaderValue::OddTypeValue(value_with_length) => {
+            ExtensionHeaderValue::EvenTypeValue(value_with_length) => {
                 value_with_length.packetize(buf)
             }
+            ExtensionHeaderValue::OddTypeValue(value) => value.packetize(buf),
         }
     }
 }
@@ -85,6 +94,10 @@ pub struct ValueWithLength {
 impl Value {
     pub fn new(header_value: u64) -> Self {
         Value { header_value }
+    }
+
+    pub fn header_value(&self) -> u64 {
+        self.header_value
     }
 
     pub fn byte_length(&self) -> usize {
@@ -113,6 +126,10 @@ impl ValueWithLength {
             header_length: header_value.len() as u64,
             header_value,
         }
+    }
+
+    pub fn header_value(&self) -> &[u8] {
+        &self.header_value
     }
 
     pub fn byte_length(&self) -> usize {
@@ -148,15 +165,13 @@ impl DataStreams for ValueWithLength {
 
 #[cfg(test)]
 mod failure {
-    use super::ValueWithLength;
-    use crate::messages::data_streams::extension_header::{
-        ExtensionHeader, ExtensionHeaderValue, Value,
-    };
+    use super::{Value, ValueWithLength};
+    use crate::messages::data_streams::extension_header::{ExtensionHeader, ExtensionHeaderValue};
 
     #[test]
     fn new_odd_value_with_even_type() {
         let even_header_type = 0;
-        let odd_type_value = ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(vec![0]));
+        let odd_type_value = ExtensionHeaderValue::OddTypeValue(Value::new(0));
         let extension_header = ExtensionHeader::new(even_header_type, odd_type_value);
 
         assert!(extension_header.is_err());
@@ -165,7 +180,7 @@ mod failure {
     #[test]
     fn new_even_value_with_odd_type() {
         let odd_header_type = 1;
-        let even_type_value = ExtensionHeaderValue::EvenTypeValue(Value::new(0));
+        let even_type_value = ExtensionHeaderValue::EvenTypeValue(ValueWithLength::new(vec![0]));
         let extension_header = ExtensionHeader::new(odd_header_type, even_type_value);
 
         assert!(extension_header.is_err());

@@ -4,8 +4,10 @@ import { Room } from '../../types/room'
 export interface RemoteMemberUpdateResult {
   room: Room
   chatSubscribeId: bigint
+  catalogSubscribeId: bigint
   audioSubscribeId: bigint
   videoSubscribeId: bigint
+  screenshareSubscribeId: bigint
   targetMember: RemoteMember
 }
 
@@ -15,11 +17,8 @@ export function addOrUpdateRemoteMember(
   trackNamespace: string[]
 ): RemoteMemberUpdateResult {
   const existingMember = room.remoteMembers.get(announcedUser)
-  const { chatSubscribeId, audioSubscribeId, videoSubscribeId } = computeSubscribeIds(
-    room,
-    announcedUser,
-    existingMember
-  )
+  const { chatSubscribeId, catalogSubscribeId, audioSubscribeId, videoSubscribeId, screenshareSubscribeId } =
+    computeSubscribeIds(room, announcedUser, existingMember)
 
   const updatedMember = buildRemoteMember({
     existingMember,
@@ -27,7 +26,8 @@ export function addOrUpdateRemoteMember(
     trackNamespace,
     chatSubscribeId,
     audioSubscribeId,
-    videoSubscribeId
+    videoSubscribeId,
+    screenshareSubscribeId
   })
 
   const updatedMembers = new Map(room.remoteMembers)
@@ -36,8 +36,10 @@ export function addOrUpdateRemoteMember(
   return {
     room: { ...room, remoteMembers: updatedMembers },
     chatSubscribeId,
+    catalogSubscribeId,
     audioSubscribeId,
     videoSubscribeId,
+    screenshareSubscribeId,
     targetMember: updatedMember
   }
 }
@@ -52,7 +54,8 @@ export function resetSubscriptionsOnError(room: Room, userId: string): Room {
     subscribedTracks: {
       chat: { ...member.subscribedTracks.chat, isSubscribing: false },
       audio: { ...member.subscribedTracks.audio, isSubscribing: false },
-      video: { ...member.subscribedTracks.video, isSubscribing: false }
+      video: { ...member.subscribedTracks.video, isSubscribing: false },
+      screenshare: { ...member.subscribedTracks.screenshare, isSubscribing: false }
     }
   }
   const updatedMembers = new Map(room.remoteMembers)
@@ -103,6 +106,7 @@ export function alreadySubscribing(existingMember?: RemoteMember): boolean {
   return (
     existingMember.subscribedTracks.chat.isSubscribing ||
     existingMember.subscribedTracks.video.isSubscribing ||
+    existingMember.subscribedTracks.screenshare.isSubscribing ||
     existingMember.subscribedTracks.audio.isSubscribing
   )
 }
@@ -111,11 +115,13 @@ export function computeSubscribeIds(room: Room, announcedUser: string, existingM
   const memberIndex = existingMember
     ? Array.from(room.remoteMembers.keys()).indexOf(announcedUser)
     : room.remoteMembers.size
-  const baseSubscribeId = memberIndex * 3
+  const baseSubscribeId = memberIndex * 5
   return {
     chatSubscribeId: BigInt(baseSubscribeId),
-    audioSubscribeId: BigInt(baseSubscribeId + 1),
-    videoSubscribeId: BigInt(baseSubscribeId + 2)
+    catalogSubscribeId: BigInt(baseSubscribeId + 1),
+    audioSubscribeId: BigInt(baseSubscribeId + 2),
+    videoSubscribeId: BigInt(baseSubscribeId + 3),
+    screenshareSubscribeId: BigInt(baseSubscribeId + 4)
   }
 }
 
@@ -126,6 +132,7 @@ interface BuildRemoteMemberOptions {
   chatSubscribeId: bigint
   audioSubscribeId: bigint
   videoSubscribeId: bigint
+  screenshareSubscribeId: bigint
 }
 
 export function buildRemoteMember({
@@ -134,7 +141,8 @@ export function buildRemoteMember({
   trackNamespace,
   chatSubscribeId,
   audioSubscribeId,
-  videoSubscribeId
+  videoSubscribeId,
+  screenshareSubscribeId
 }: BuildRemoteMemberOptions): RemoteMember {
   if (existingMember) {
     return {
@@ -142,23 +150,29 @@ export function buildRemoteMember({
       announcedTracks: {
         chat: { isAnnounced: true, trackNamespace },
         video: { isAnnounced: true, trackNamespace },
+        screenshare: { isAnnounced: true, trackNamespace },
         audio: { isAnnounced: true, trackNamespace }
       },
       subscribedTracks: {
         chat: {
-          isSubscribing: true,
+          isSubscribing: existingMember.subscribedTracks.chat.isSubscribing,
           isSubscribed: existingMember.subscribedTracks.chat.isSubscribed,
           subscribeId: chatSubscribeId
         },
         audio: {
-          isSubscribing: true,
+          isSubscribing: existingMember.subscribedTracks.audio.isSubscribing,
           isSubscribed: existingMember.subscribedTracks.audio.isSubscribed,
           subscribeId: audioSubscribeId
         },
         video: {
-          isSubscribing: true,
+          isSubscribing: existingMember.subscribedTracks.video.isSubscribing,
           isSubscribed: existingMember.subscribedTracks.video.isSubscribed,
           subscribeId: videoSubscribeId
+        },
+        screenshare: {
+          isSubscribing: existingMember.subscribedTracks.screenshare.isSubscribing,
+          isSubscribed: existingMember.subscribedTracks.screenshare.isSubscribed,
+          subscribeId: screenshareSubscribeId
         }
       }
     }
@@ -170,12 +184,14 @@ export function buildRemoteMember({
     announcedTracks: {
       chat: { isAnnounced: true, trackNamespace },
       video: { isAnnounced: true, trackNamespace },
+      screenshare: { isAnnounced: true, trackNamespace },
       audio: { isAnnounced: true, trackNamespace }
     },
     subscribedTracks: {
-      chat: { isSubscribing: true, isSubscribed: false, subscribeId: chatSubscribeId },
-      audio: { isSubscribing: true, isSubscribed: false, subscribeId: audioSubscribeId },
-      video: { isSubscribing: true, isSubscribed: false, subscribeId: videoSubscribeId }
+      chat: { isSubscribing: false, isSubscribed: false, subscribeId: chatSubscribeId },
+      audio: { isSubscribing: false, isSubscribed: false, subscribeId: audioSubscribeId },
+      video: { isSubscribing: false, isSubscribed: false, subscribeId: videoSubscribeId },
+      screenshare: { isSubscribing: false, isSubscribed: false, subscribeId: screenshareSubscribeId }
     }
   }
 }

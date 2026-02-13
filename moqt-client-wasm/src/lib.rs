@@ -1,5 +1,7 @@
 mod utils;
 
+#[cfg(feature = "web_sys_unstable_apis")]
+mod loc;
 mod media_streaming_format;
 #[cfg(feature = "web_sys_unstable_apis")]
 mod messages;
@@ -30,6 +32,7 @@ use moqt_core::{
         subscribe_announces::SubscribeAnnounces,
         subscribe_announces_error::SubscribeAnnouncesError,
         subscribe_announces_ok::SubscribeAnnouncesOk,
+        subscribe_done::SubscribeDone,
         subscribe_error::{SubscribeError, SubscribeErrorCode},
         subscribe_ok::SubscribeOk,
         unannounce::UnAnnounce,
@@ -773,6 +776,9 @@ impl MOQTClient {
 
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(_) => {
+                    self.subscription_node
+                        .borrow_mut()
+                        .cancel_subscription(subscribe_id);
                     log(std::format!("sent: unsubscribe: {:#x?}", unsubscribe_message).as_str());
                     Ok(())
                 }
@@ -969,6 +975,7 @@ impl MOQTClient {
             .map(|_| ())
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = sendSubgroupStreamObject)]
     pub async fn send_subgroup_stream_object(
         &self,
@@ -978,6 +985,7 @@ impl MOQTClient {
         object_id: u64,
         object_status: Option<u8>,
         object_payload: Vec<u8>,
+        loc_header: JsValue,
     ) -> Result<(), JsValue> {
         let subscribe_id = match self
             .subscription_node
@@ -993,7 +1001,12 @@ impl MOQTClient {
             stream_writers.get(&writer_key).cloned()
         };
         if let Some(writer) = writer {
-            let extension_headers = vec![];
+            let extension_headers = match crate::loc::parse_loc_header(loc_header) {
+                Ok(Some(loc_header)) => crate::loc::loc_header_to_extension_headers(&loc_header)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?,
+                Ok(None) => vec![],
+                Err(e) => return Err(JsValue::from_str(&e.to_string())),
+            };
             let subgroup_stream_object = subgroup_stream::Object::new(
                 object_id,
                 extension_headers,
@@ -1370,6 +1383,25 @@ async fn control_message_handler(
 
                     if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
                         let wrapper = SubscribeErrorMessage::from(&subscribe_error_message);
+                        callback
+                            .call1(&JsValue::null(), &JsValue::from(wrapper))
+                            .unwrap();
+                    }
+                }
+                ControlMessageType::SubscribeDone => {
+                    let subscribe_done_message = SubscribeDone::depacketize(&mut payload_buf)?;
+                    log(std::format!(
+                        "recv: subscribe_done_message: {:#x?}",
+                        subscribe_done_message
+                    )
+                    .as_str());
+
+                    subscription_node
+                        .borrow_mut()
+                        .cancel_subscription(subscribe_done_message.subscribe_id());
+
+                    if let Some(callback) = callbacks.borrow().unsubscribe_callback() {
+                        let wrapper = SubscribeDoneMessage::from(&subscribe_done_message);
                         callback
                             .call1(&JsValue::null(), &JsValue::from(wrapper))
                             .unwrap();
@@ -2113,6 +2145,10 @@ impl MOQTCallbacks {
 
     pub fn set_unsubscribe_callback(&mut self, callback: js_sys::Function) {
         self.unsubscribe_callback = Some(callback);
+    }
+
+    pub fn unsubscribe_callback(&self) -> Option<js_sys::Function> {
+        self.unsubscribe_callback.clone()
     }
 
     pub fn datagram_object_callback(&self) -> Option<js_sys::Function> {
