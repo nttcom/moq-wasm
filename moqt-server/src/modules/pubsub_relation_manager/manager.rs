@@ -340,7 +340,14 @@ pub(crate) async fn pubsub_relation_manager(rx: &mut mpsc::Receiver<PubSubRelati
                     }
                 };
 
-                let track_alias = producer.get_track_alias(downstream_subscribe_id).unwrap();
+                let track_alias = match producer.get_track_alias(downstream_subscribe_id) {
+                    Ok(track_alias) => track_alias,
+                    Err(err) => {
+                        tracing::error!("get_downstream_track_alias: err: {:?}", err.to_string());
+                        resp.send(Err(anyhow!(err))).unwrap();
+                        continue;
+                    }
+                };
                 resp.send(Ok(track_alias)).unwrap();
             }
             IsUpstreamSubscribed {

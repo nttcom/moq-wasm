@@ -16,7 +16,7 @@
         </div>
       </header>
       <div id="app">
-        <form name="form" id="form" class="control-grid">
+        <form name="form" id="form" class="control-grid subscriber-grid">
           <section class="card stack full">
             <h2>Console</h2>
             <p class="hint">info / warn / error を表示します。</p>
@@ -55,11 +55,13 @@
 
           <section class="card stack">
             <h3>CLIENT_SETUP</h3>
-            <label>Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="2" /></label>
-            <button type="button" id="sendSetupBtn">Send</button>
+            <label>Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
+            <div class="button-row action-row">
+              <button type="button" id="sendSetupBtn" class="compact-button">Send</button>
+            </div>
           </section>
 
-          <section class="card stack">
+          <section class="card stack full">
             <h3>SUBSCRIBE</h3>
             <label
               >Track Namespace:
@@ -82,8 +84,41 @@
                 if (input) input.value = value
               })()
             </script>
+            <div class="subscribe-split">
+              <section class="subscribe-panel stack">
+                <h4>Catalog Subscribe</h4>
+                <div class="field-row inline-fields">
+                  <label>Catalog Track: <input type="text" name="catalog-track-name" value="catalog" /></label>
+                  <label>Catalog Subscribe ID: <input type="text" name="catalog-subscribe-id" value="0" /></label>
+                  <label>Catalog Track Alias: <input type="text" name="catalog-track-alias" value="0" /></label>
+                </div>
+                <p class="hint" id="catalog-track-status"></p>
+                <div class="button-row action-row">
+                  <button type="button" id="sendCatalogSubscribeBtn" class="compact-button">Subscribe Catalog</button>
+                </div>
+              </section>
 
-            <button type="button" id="sendSubscribeBtn">Send</button>
+              <section class="subscribe-panel stack">
+                <h4>Track Subscribe</h4>
+                <label
+                  >Video Track (from Catalog):
+                  <select name="selected-video-track" id="selected-video-track"></select>
+                </label>
+                <label
+                  >Audio Track (from Catalog):
+                  <select name="selected-audio-track" id="selected-audio-track"></select>
+                </label>
+                <div class="field-row">
+                  <label>Video Subscribe ID: <input type="text" name="video-subscribe-id" value="1" /></label>
+                  <label>Video Track Alias: <input type="text" name="video-track-alias" value="1" /></label>
+                  <label>Audio Subscribe ID: <input type="text" name="audio-subscribe-id" value="2" /></label>
+                  <label>Audio Track Alias: <input type="text" name="audio-track-alias" value="2" /></label>
+                </div>
+                <div class="button-row action-row">
+                  <button type="button" id="sendSubscribeBtn">Subscribe Selected Tracks</button>
+                </div>
+              </section>
+            </div>
           </section>
 
           <section class="card stack full">

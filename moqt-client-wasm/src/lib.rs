@@ -32,6 +32,7 @@ use moqt_core::{
         subscribe_announces::SubscribeAnnounces,
         subscribe_announces_error::SubscribeAnnouncesError,
         subscribe_announces_ok::SubscribeAnnouncesOk,
+        subscribe_done::SubscribeDone,
         subscribe_error::{SubscribeError, SubscribeErrorCode},
         subscribe_ok::SubscribeOk,
         unannounce::UnAnnounce,
@@ -775,6 +776,9 @@ impl MOQTClient {
 
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(_) => {
+                    self.subscription_node
+                        .borrow_mut()
+                        .cancel_subscription(subscribe_id);
                     log(std::format!("sent: unsubscribe: {:#x?}", unsubscribe_message).as_str());
                     Ok(())
                 }
@@ -1379,6 +1383,25 @@ async fn control_message_handler(
 
                     if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
                         let wrapper = SubscribeErrorMessage::from(&subscribe_error_message);
+                        callback
+                            .call1(&JsValue::null(), &JsValue::from(wrapper))
+                            .unwrap();
+                    }
+                }
+                ControlMessageType::SubscribeDone => {
+                    let subscribe_done_message = SubscribeDone::depacketize(&mut payload_buf)?;
+                    log(std::format!(
+                        "recv: subscribe_done_message: {:#x?}",
+                        subscribe_done_message
+                    )
+                    .as_str());
+
+                    subscription_node
+                        .borrow_mut()
+                        .cancel_subscription(subscribe_done_message.subscribe_id());
+
+                    if let Some(callback) = callbacks.borrow().unsubscribe_callback() {
+                        let wrapper = SubscribeDoneMessage::from(&subscribe_done_message);
                         callback
                             .call1(&JsValue::null(), &JsValue::from(wrapper))
                             .unwrap();
@@ -2122,6 +2145,10 @@ impl MOQTCallbacks {
 
     pub fn set_unsubscribe_callback(&mut self, callback: js_sys::Function) {
         self.unsubscribe_callback = Some(callback);
+    }
+
+    pub fn unsubscribe_callback(&self) -> Option<js_sys::Function> {
+        self.unsubscribe_callback.clone()
     }
 
     pub fn datagram_object_callback(&self) -> Option<js_sys::Function> {

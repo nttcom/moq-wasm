@@ -2,6 +2,7 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { SubgroupStreamObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { VideoJitterBufferMode } from '../../../../utils/media/videoJitterBuffer'
 import type { AudioJitterBufferMode } from '../../../../utils/media/audioJitterBuffer'
+import { summarizeLocHeader } from '../../../../utils/media/locSummary'
 import {
   DEFAULT_VIDEO_JITTER_CONFIG,
   DEFAULT_AUDIO_JITTER_CONFIG,
@@ -10,43 +11,29 @@ import {
   type VideoJitterConfig,
   type AudioJitterConfig
 } from '../types/jitterBuffer'
+import { isScreenShareTrackName } from '../utils/catalogTrackName'
 
-type LocHeaderSummary = {
-  present: boolean
-  extensionCount: number
-  hasCaptureTimestamp: boolean
-  hasVideoConfig: boolean
-  hasVideoFrameMarking: boolean
-  hasAudioLevel: boolean
-}
-
-function summarizeLocHeader(locHeader: any): LocHeaderSummary {
-  const extensions = Array.isArray(locHeader?.extensions) ? locHeader.extensions : []
-  const has = (type: string) => extensions.some((ext: any) => ext?.type === type)
-  return {
-    present: Boolean(locHeader),
-    extensionCount: extensions.length,
-    hasCaptureTimestamp: has('captureTimestamp'),
-    hasVideoConfig: has('videoConfig'),
-    hasVideoFrameMarking: has('videoFrameMarking'),
-    hasAudioLevel: has('audioLevel')
-  }
-}
+export type RemoteVideoSource = 'camera' | 'screenshare'
 
 interface MediaSubscriberHandlers {
-  onRemoteVideoStream?: (userId: string, stream: MediaStream) => void
+  onRemoteVideoStream?: (userId: string, stream: MediaStream, source: RemoteVideoSource) => void
   onRemoteAudioStream?: (userId: string, stream: MediaStream) => void
-  onRemoteVideoBitrate?: (userId: string, mbps: number) => void
+  onRemoteVideoBitrate?: (userId: string, mbps: number, source: RemoteVideoSource) => void
   onRemoteAudioBitrate?: (userId: string, mbps: number) => void
-  onRemoteVideoReceiveLatency?: (userId: string, ms: number) => void
-  onRemoteVideoRenderingLatency?: (userId: string, ms: number) => void
+  onRemoteVideoReceiveLatency?: (userId: string, ms: number, source: RemoteVideoSource) => void
+  onRemoteVideoRenderingLatency?: (userId: string, ms: number, source: RemoteVideoSource) => void
   onRemoteAudioReceiveLatency?: (userId: string, ms: number) => void
   onRemoteAudioRenderingLatency?: (userId: string, ms: number) => void
-  onRemoteVideoConfig?: (userId: string, config: { codec: string; width?: number; height?: number }) => void
+  onRemoteVideoConfig?: (
+    userId: string,
+    config: { codec: string; width?: number; height?: number },
+    source: RemoteVideoSource
+  ) => void
 }
 
 interface VideoSubscriptionContext {
   userId: string
+  source: RemoteVideoSource
   worker: Worker
   writer: WritableStreamDefaultWriter<VideoFrame>
   stream: MediaStream
@@ -65,6 +52,7 @@ export class MediaSubscriber {
   private handlers: MediaSubscriberHandlers = {}
   private readonly videoContexts = new Map<bigint, VideoSubscriptionContext>()
   private readonly audioContexts = new Map<bigint, AudioSubscriptionContext>()
+  private readonly seenFirstVideoObjectByTrackAlias = new Set<bigint>()
   private readonly videoJitterConfigByUserId = new Map<string, VideoJitterConfig>()
   private readonly audioJitterConfigByUserId = new Map<string, AudioJitterConfig>()
   private readonly videoCodecByTrackAlias = new Map<bigint, string>()
@@ -76,10 +64,11 @@ export class MediaSubscriber {
     this.handlers = handlers
   }
 
-  registerVideoTrack(userId: string, trackAlias: bigint): void {
+  registerVideoTrack(userId: string, trackName: string, trackAlias: bigint, codec?: string): void {
     if (this.videoContexts.has(trackAlias)) {
       return
     }
+    const source: RemoteVideoSource = isScreenShareTrackName(trackName) ? 'screenshare' : 'camera'
     const worker = new Worker(new URL('../../../../utils/media/decoders/videoDecoder.ts', import.meta.url), {
       type: 'module'
     })
@@ -92,33 +81,30 @@ export class MediaSubscriber {
         | { type: 'receiveLatency'; media: 'video'; ms: number }
         | { type: 'renderingLatency'; media: 'video'; ms: number }
         | { type: 'decoderConfig'; codec: string; width?: number; height?: number }
-      if (data.type !== 'frame') {
-        console.debug('[CallMediaSubscriber] video worker event', {
-          userId,
-          trackAlias,
-          ...data
-        })
-      }
       if (data.type === 'bitrate') {
-        this.handlers.onRemoteVideoBitrate?.(userId, data.kbps)
+        this.handlers.onRemoteVideoBitrate?.(userId, data.kbps, source)
         return
       }
       if (data.type === 'receiveLatency') {
-        this.handlers.onRemoteVideoReceiveLatency?.(userId, data.ms)
+        this.handlers.onRemoteVideoReceiveLatency?.(userId, data.ms, source)
         return
       }
       if (data.type === 'renderingLatency') {
-        this.handlers.onRemoteVideoRenderingLatency?.(userId, data.ms)
+        this.handlers.onRemoteVideoRenderingLatency?.(userId, data.ms, source)
         return
       }
       if (data.type === 'decoderConfig') {
         this.videoCodecByTrackAlias.set(trackAlias, data.codec)
         const lastSize = this.videoSizeByTrackAlias.get(trackAlias)
-        this.handlers.onRemoteVideoConfig?.(userId, {
-          codec: data.codec,
-          width: data.width ?? lastSize?.width,
-          height: data.height ?? lastSize?.height
-        })
+        this.handlers.onRemoteVideoConfig?.(
+          userId,
+          {
+            codec: data.codec,
+            width: data.width ?? lastSize?.width,
+            height: data.height ?? lastSize?.height
+          },
+          source
+        )
         return
       }
       if (data.type === 'frame') {
@@ -130,11 +116,15 @@ export class MediaSubscriber {
         ) {
           if (typeof data.width === 'number' && typeof data.height === 'number') {
             this.videoSizeByTrackAlias.set(trackAlias, { width: data.width, height: data.height })
-            this.handlers.onRemoteVideoConfig?.(userId, {
-              codec: lastCodec ?? 'unknown',
-              width: data.width,
-              height: data.height
-            })
+            this.handlers.onRemoteVideoConfig?.(
+              userId,
+              {
+                codec: lastCodec ?? 'unknown',
+                width: data.width,
+                height: data.height
+              },
+              source
+            )
           }
         }
       }
@@ -143,8 +133,11 @@ export class MediaSubscriber {
     }
 
     const stream = new MediaStream([generator])
-    this.videoContexts.set(trackAlias, { userId, worker, writer, stream })
-    this.handlers.onRemoteVideoStream?.(userId, stream)
+    this.videoContexts.set(trackAlias, { userId, source, worker, writer, stream })
+    this.handlers.onRemoteVideoStream?.(userId, stream, source)
+    if (codec) {
+      worker.postMessage({ type: 'catalog', codec })
+    }
     const config = this.videoJitterConfigByUserId.get(userId)
     if (config) {
       worker.postMessage({ type: 'config', config })
@@ -176,13 +169,6 @@ export class MediaSubscriber {
         | { type: 'bitrate'; kbps: number }
         | { type: 'receiveLatency'; media: 'audio'; ms: number }
         | { type: 'renderingLatency'; media: 'audio'; ms: number }
-      if (data.type !== 'audioData') {
-        console.debug('[CallMediaSubscriber] audio worker event', {
-          userId,
-          trackAlias,
-          ...data
-        })
-      }
       if (data.type === 'bitrate') {
         this.handlers.onRemoteAudioBitrate?.(userId, data.kbps)
         return
@@ -212,6 +198,35 @@ export class MediaSubscriber {
     )
   }
 
+  unregisterVideoTrack(trackAlias: bigint): void {
+    const context = this.videoContexts.get(trackAlias)
+    if (!context) {
+      this.client.clearSubgroupObjectHandler(trackAlias)
+      return
+    }
+    this.client.clearSubgroupObjectHandler(trackAlias)
+    context.stream.getTracks().forEach((track) => track.stop())
+    void context.writer.close().catch(() => {})
+    context.worker.terminate()
+    this.videoContexts.delete(trackAlias)
+    this.seenFirstVideoObjectByTrackAlias.delete(trackAlias)
+    this.videoCodecByTrackAlias.delete(trackAlias)
+    this.videoSizeByTrackAlias.delete(trackAlias)
+  }
+
+  unregisterAudioTrack(trackAlias: bigint): void {
+    const context = this.audioContexts.get(trackAlias)
+    if (!context) {
+      this.client.clearSubgroupObjectHandler(trackAlias)
+      return
+    }
+    this.client.clearSubgroupObjectHandler(trackAlias)
+    context.stream.getTracks().forEach((track) => track.stop())
+    void context.writer.close().catch(() => {})
+    context.worker.terminate()
+    this.audioContexts.delete(trackAlias)
+  }
+
   private forwardToWorker(
     worker: Worker,
     trackAlias: bigint,
@@ -223,24 +238,18 @@ export class MediaSubscriber {
     }
     const payload = new Uint8Array(message.objectPayload)
     const payloadLength = message.objectPayloadLength
-    const locSummary = summarizeLocHeader(message.locHeader)
-    if (locSummary.present && locSummary.extensionCount > 0) {
-      console.debug('[CallMediaSubscriber] LoC object', {
+    if (this.videoContexts.has(trackAlias) && !this.seenFirstVideoObjectByTrackAlias.has(trackAlias)) {
+      this.seenFirstVideoObjectByTrackAlias.add(trackAlias)
+      const locSummary = summarizeLocHeader(message.locHeader)
+      console.info('[CallMediaSubscriber] first video object', {
         trackAlias,
         groupId,
         objectId: message.objectId,
-        loc: locSummary
+        payloadLength,
+        status: message.objectStatus,
+        locExtensionCount: locSummary.extensionCount
       })
     }
-    console.debug('[CallMediaSubscriber] recv object', {
-      trackAlias,
-      groupId,
-      objectId: message.objectId,
-      payloadLength,
-      payloadByteLength: payload.byteLength,
-      status: message.objectStatus,
-      loc: locSummary
-    })
     worker.postMessage(
       {
         groupId,

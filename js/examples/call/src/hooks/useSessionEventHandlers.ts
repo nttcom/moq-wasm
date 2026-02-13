@@ -3,12 +3,7 @@ import { AnnounceMessage, SubscribeErrorMessage, SubscribeOkMessage } from '../.
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
-import {
-  addOrUpdateRemoteMember,
-  alreadySubscribing,
-  resetSubscriptionsOnError,
-  updateSubscriptionState
-} from '../utils/state/roomState'
+import { addOrUpdateRemoteMember, updateSubscriptionState } from '../utils/state/roomState'
 
 interface EventHandlerParams {
   session: LocalSession
@@ -83,64 +78,10 @@ function createAnnounceHandler({ session, roomName, userName, setRoom }: Announc
     }
 
     setRoom((currentRoom) => {
-      const existingMember = currentRoom.remoteMembers.get(announcedUser)
-      if (alreadySubscribing(existingMember)) {
-        return currentRoom
-      }
-
       const update = addOrUpdateRemoteMember(currentRoom, announcedUser, trackNamespace)
-
-      subscribeTracks({
-        session,
-        announcedUser,
-        trackNamespace,
-        chatSubscribeId: update.chatSubscribeId,
-        audioSubscribeId: update.audioSubscribeId,
-        videoSubscribeId: update.videoSubscribeId,
-        setRoom
-      })
-
       return update.room
     })
   }
-}
-
-interface SubscribeTracksOptions {
-  session: LocalSession
-  announcedUser: string
-  trackNamespace: string[]
-  chatSubscribeId: bigint
-  audioSubscribeId: bigint
-  videoSubscribeId: bigint
-  setRoom: Dispatch<SetStateAction<Room>>
-}
-
-function subscribeTracks({
-  session,
-  announcedUser,
-  trackNamespace,
-  chatSubscribeId,
-  audioSubscribeId,
-  videoSubscribeId,
-  setRoom
-}: SubscribeTracksOptions) {
-  const trackConfigs = [
-    { name: 'chat', subscribeId: chatSubscribeId },
-    { name: 'audio', subscribeId: audioSubscribeId },
-    { name: 'video', subscribeId: videoSubscribeId }
-  ]
-
-  ;(async () => {
-    try {
-      for (const { name, subscribeId } of trackConfigs) {
-        const trackAlias = subscribeId
-        await session.subscribe(subscribeId, trackAlias, trackNamespace, name)
-      }
-    } catch (error) {
-      console.error(`Failed to subscribe to ${announcedUser}'s tracks:`, error)
-      setRoom((currentRoom) => resetSubscriptionsOnError(currentRoom, announcedUser))
-    }
-  })()
 }
 
 function createSubscribeResponseHandler(session: LocalSession, setRoom: Dispatch<SetStateAction<Room>>) {

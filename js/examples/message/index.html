@@ -4,242 +4,616 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MOQT Message Test</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500&display=swap');
+
+      :root {
+        --font-sans: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+        --font-mono: 'Spline Sans Mono', 'SFMono-Regular', Menlo, monospace;
+        --bg-0: #f6f4ee;
+        --bg-1: #e9f2ef;
+        --card: rgba(255, 255, 255, 0.88);
+        --ink: #0f2a29;
+        --muted: #516467;
+        --accent: #0d766e;
+        --accent-strong: #0a4f4a;
+        --warn: #a16207;
+        --border: #cfe2dc;
+        --radius: 16px;
+        --button-height: 36px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: var(--font-sans);
+        color: var(--ink);
+        background:
+          radial-gradient(1200px 640px at 10% -10%, rgba(13, 118, 110, 0.14), transparent 60%),
+          radial-gradient(1200px 760px at 90% -20%, rgba(176, 114, 90, 0.16), transparent 56%),
+          linear-gradient(156deg, var(--bg-0), var(--bg-1));
+      }
+
+      .page {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 32px 20px 52px;
+      }
+
+      .hero {
+        margin-bottom: 20px;
+      }
+
+      .pill {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 999px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        font-size: 0.72rem;
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .hero h1 {
+        margin: 10px 0 8px;
+        font-size: clamp(1.85rem, 3.2vw, 2.5rem);
+        letter-spacing: -0.02em;
+      }
+
+      .hero p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .card {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        min-height: 100%;
+        padding: 18px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--card);
+        box-shadow: 0 26px 56px -42px rgba(15, 42, 41, 0.7);
+        backdrop-filter: blur(6px);
+      }
+
+      .span-2 {
+        grid-column: 1 / -1;
+      }
+
+      .subheading {
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+
+      h2,
+      h3,
+      h4 {
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+
+      .hint {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .hint.warn {
+        color: var(--warn);
+      }
+
+      label {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        font-weight: 600;
+      }
+
+      input[type='text'],
+      input[type='url'],
+      textarea {
+        width: 100%;
+        max-width: 560px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: #fff;
+        font-size: 0.94rem;
+        font-family: var(--font-sans);
+        color: var(--ink);
+        outline: none;
+        transition:
+          border-color 0.2s ease,
+          box-shadow 0.2s ease;
+      }
+
+      label input[type='text'],
+      label input[type='url'] {
+        width: auto;
+        flex: 1 1 230px;
+        max-width: none;
+      }
+
+      input[type='text']:focus,
+      input[type='url']:focus,
+      textarea:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(13, 118, 110, 0.2);
+      }
+
+      input[type='radio'] {
+        accent-color: var(--accent);
+      }
+
+      button {
+        min-height: var(--button-height);
+        border: none;
+        border-radius: 999px;
+        padding: 0 14px;
+        font-weight: 600;
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+        white-space: nowrap;
+        transition:
+          transform 0.16s ease,
+          background 0.16s ease;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+        background: var(--accent-strong);
+      }
+
+      #closeBtn {
+        background: #d97757;
+      }
+
+      #closeBtn:hover {
+        background: #bf6448;
+      }
+
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .action-row {
+        margin-top: auto;
+        justify-content: flex-start;
+      }
+
+      .preset-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .preset-bar button {
+        min-height: var(--button-height);
+        padding: 0 10px;
+        border: 1px dashed var(--border);
+        background: #fff;
+        color: var(--accent);
+      }
+
+      .preset-bar button:hover {
+        background: rgba(13, 118, 110, 0.1);
+        color: var(--accent-strong);
+      }
+
+      .message-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .panel {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 14px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .panel.wide {
+        grid-column: 1 / -1;
+      }
+
+      .inline-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .counter {
+        display: inline-block;
+        min-width: 56px;
+        padding: 4px 8px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: rgba(13, 118, 110, 0.08);
+        font-family: var(--font-mono);
+      }
+
+      #received-text {
+        min-height: 180px;
+        max-height: 340px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        background: rgba(15, 42, 41, 0.04);
+        font-family: var(--font-mono);
+        font-size: 0.84rem;
+        line-height: 1.45;
+      }
+
+      #logPanel {
+        min-height: 140px;
+        max-height: 260px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        background: rgba(15, 42, 41, 0.04);
+        font-family: var(--font-mono);
+        font-size: 0.82rem;
+        line-height: 1.4;
+      }
+
+      .log-entry {
+        margin: 0 0 6px;
+        color: var(--muted);
+      }
+
+      .log-entry strong {
+        color: var(--ink);
+      }
+
+      .log-entry.log-warn strong {
+        color: #b45309;
+      }
+
+      .log-entry.log-error strong {
+        color: #dc2626;
+      }
+
+      @media (max-width: 920px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .message-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .panel.wide {
+          grid-column: 1;
+        }
+
+        button {
+          width: 100%;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="app">
-      <form name="form">
-        <div>
-          <h2>Connection</h2>
-          <label for="url">URL:</label>
-          <input type="url" name="url" id="url" value="https://moqt.research.skyway.io:4433" />
-          <div id="urlPresets" style="margin-top: 4px">
-            Preset:
-            <button type="button" data-url="https://moqt.research.skyway.io:4433">
-              https://moqt.research.skyway.io:4433
-            </button>
-            <button type="button" data-url="https://127.0.0.1:4433">https://127.0.0.1:4433</button>
-          </div>
-          <script>
-            ;(function () {
-              const preset = document.getElementById('urlPresets')
-              const input = document.getElementById('url')
-              if (!preset || !input) return
-              preset.addEventListener('click', (event) => {
-                const target = event.target
-                if (!(target instanceof HTMLButtonElement)) return
-                const value = target.getAttribute('data-url')
-                if (!value) return
-                input.value = value
-              })
-            })()
-          </script>
-          <button type="button" id="connectBtn">Connect</button>
-          <button type="button" id="closeBtn">Close</button>
-        </div>
-        <br />
-        <div>
-          <h2>Forwarding Preference</h2>
-          <label
-            ><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram
-          </label>
-          <label
-            ><input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" checked />Subgroup
-          </label>
-          <br />
-          *You must select at first
-          <h2>Message</h2>
-          <label>AuthInfo: <input type="text" name="auth-info" id="" value="secret" /> </label>
-          <br />
-          <h3>CLIENT_SETUP</h3>
-          <label>Supported Version: <input type="text" name="versions" id="" value="0xff00000A" /></label>
-          <br />
-          Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="1" />
-          <br />
-          <button type="button" id="sendSetupBtn">Send</button>
+    <div class="page">
+      <header class="hero">
+        <span class="pill">Message</span>
+        <h1>MoQT Message Test</h1>
+        <p>MoQT control messages and object flows can be tested from one screen.</p>
+      </header>
 
-          <h3>ANNOUNCE</h3>
-          <label
-            >Track Namespace:
-            <input type="text" name="announce-track-namespace" id="announce-track-namespace" value="vc/aa" />
-          </label>
-          <script>
-            // Set default value for Track Namespace input
-            ;(function () {
-              function pad(n) {
-                return n < 10 ? '0' + n : n
-              }
-              const now = new Date()
-              const yyyy = now.getFullYear()
-              const mm = pad(now.getMonth() + 1)
-              const dd = pad(now.getDate())
-              const HH = pad(now.getHours())
-              const MM = pad(now.getMinutes())
-              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
-              const input = document.getElementById('announce-track-namespace')
-              if (input) input.value = value
-            })()
-          </script>
-          <br />
-          <button type="button" id="sendAnnounceBtn">Send</button>
+      <div id="app">
+        <form name="form" id="form" class="layout">
+          <section class="card span-2">
+            <h2>Console</h2>
+            <p class="hint">info / warn / error を表示します。</p>
+            <div id="logPanel"></div>
+          </section>
 
-          <h3>SUBSCRIBE_ANNOUNCES</h3>
-          <label
-            >Track Namespace Prefix:
-            <input type="text" name="track-namespace-prefix" id="track-namespace-prefix" value="vc" />
-          </label>
-          <script>
-            // Set default value for Track Namespace input
-            ;(function () {
-              function pad(n) {
-                return n < 10 ? '0' + n : n
-              }
-              const now = new Date()
-              const yyyy = now.getFullYear()
-              const mm = pad(now.getMonth() + 1)
-              const dd = pad(now.getDate())
-              const HH = pad(now.getHours())
-              const MM = pad(now.getMinutes())
-              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
-              const input = document.getElementById('track-namespace-prefix')
-              if (input) input.value = value
-            })()
-          </script>
-          <br />
-          <button type="button" id="sendSubscribeAnnouncesBtn">Send</button>
+          <section class="card">
+            <h2>Connection</h2>
+            <label for="url">URL:</label>
+            <input type="url" name="url" id="url" value="https://moqt.research.skyway.io:4433" />
+            <div id="urlPresets" class="preset-bar">
+              Preset:
+              <button type="button" data-url="https://moqt.research.skyway.io:4433">
+                https://moqt.research.skyway.io:4433
+              </button>
+              <button type="button" data-url="https://127.0.0.1:4433">https://127.0.0.1:4433</button>
+            </div>
+            <div class="button-row action-row">
+              <button type="button" id="connectBtn">Connect</button>
+              <button type="button" id="closeBtn">Close</button>
+            </div>
+          </section>
 
-          <h3>SUBSCRIBE</h3>
-          <label>Subscribe ID: <input type="text" name="subscribe-subscribe-id" id="" value="0" /> </label>
-          <br />
-          <label>Track Alias: <input type="text" name="subscribe-track-alias" id="" value="0" /> </label>
-          <br />
-          <label
-            >Track Namespace:
-            <input type="text" name="subscribe-track-namespace" id="subscribe-track-namespace" value="vc/aa" />
-          </label>
-          <script>
-            // Set default value for Track Namespace input
-            ;(function () {
-              function pad(n) {
-                return n < 10 ? '0' + n : n
-              }
-              const now = new Date()
-              const yyyy = now.getFullYear()
-              const mm = pad(now.getMonth() + 1)
-              const dd = pad(now.getDate())
-              const HH = pad(now.getHours())
-              const MM = pad(now.getMinutes())
-              const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
-              const input = document.getElementById('subscribe-track-namespace')
-              if (input) input.value = value
-            })()
-          </script>
-          <br />
-          <label>Track Name: <input type="text" name="track-name" id="" value="vc_track" /> </label>
-          <br />
-          <br />
-          <label>Subscriber Priority: <input type="text" name="subscriber-priority" id="" value="0" /> </label>
-          <br />
-          Group Order:
-          <label><input type="radio" name="group-order" id="" value="0" checked />Original</label>
-          <label><input type="radio" name="group-order" id="" value="1" />Ascending</label>
-          <label><input type="radio" name="group-order" id="" value="2" />Descending</label>
-          <br />
-          <br />
-          Filter Type:
-          <label><input type="radio" name="filter-type" id="" value="1" checked />Latest Group</label>
-          <label><input type="radio" name="filter-type" id="" value="2" />Latest Object</label>
-          <label><input type="radio" name="filter-type" id="" value="3" />Absolute Start </label>
-          <label><input type="radio" name="filter-type" id="" value="4" />Absolute Range</label>
-          <br />
-          Start Group: <input type="text" name="start-group" id="" value="0" /> Start Object:
-          <input type="text" name="start-object" id="" value="0" />
-          <br />
-          End Group: <input type="text" name="end-group" id="" value="10000" /> End Object:
-          <input type="text" name="end-object" id="" value="10000" />
-          <br />
-          <button type="button" id="sendSubscribeBtn">Send</button>
+          <section class="card">
+            <h2>Forwarding Preference</h2>
+            <label>
+              <input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />
+              Datagram
+            </label>
+            <label>
+              <input type="radio" name="forwarding-preference" id="selectSubgroup" value="subgroup" checked />
+              Subgroup
+            </label>
+            <p class="hint warn">*You must select at first</p>
+          </section>
 
-          <h3>UNSUBSCRIBE</h3>
-          <label>SUBSCRIBE_ID: <input type="text" name="unsubscribe-subscribe-id" id="" value="0" /> </label>
-          <br />
-          <button type="button" id="sendUnsubscribeBtn">Send</button>
+          <section class="card span-2">
+            <h2>Message</h2>
+            <label>AuthInfo: <input type="text" name="auth-info" value="secret" /></label>
 
-          <h3>OBJECT</h3>
-          <div id="headerField" style="display: blocked">
-            <h4>Header</h4>
-          </div>
-          <label>Track Alias: <input type="text" name="object-track-alias" id="" value="0" /> </label>
-          <br />
-          <div id="subgroupHeaderContents" style="display: blocked">
-            Group ID:
-            <p id="subgroupGroupId">0</p>
-            <br />
-            <button type="button" id="descendSubgroupGroupIdBtn">&lt;</button>
-            <button type="button" id="ascendSubgroupGroupIdBtn">&gt;</button>
-            <br />
-            Subgroup ID:
-            <p id="subgroupId">0</p>
-            <br />
-            <button type="button" id="descendSubgroupIdBtn">&lt;</button>
-            <button type="button" id="ascendSubgroupIdBtn">&gt;</button>
-            <br />
-          </div>
-          <label>Publisher Priority: <input type="text" name="publisher-priority" id="" value="0" /> </label>
-          <br />
-          <div id="objectField" style="display: blocked">
-            <h4>Object</h4>
-          </div>
-          <div id="datagramObjectContents" style="display: none">
-            Group ID:
-            <p id="datagramGroupId">0</p>
-            <br />
-            <button type="button" id="descendDatagramGroupIdBtn">&lt;</button>
-            <button type="button" id="ascendDatagramGroupIdBtn">&gt;</button>
-            <br />
-            <br />
-          </div>
-          Object ID:
-          <p id="objectId">0</p>
-          <br />
-          <br />
-          Object Status:
-          <label><input type="radio" name="object-status" id="normal" value="0" checked />Normal</label>
-          <label><input type="radio" name="object-status" id="does-not-exist" value="1" />DoesNotExist</label>
-          <label><input type="radio" name="object-status" id="end-of-group" value="3" />EndOfGroup</label>
-          <label
-            ><input type="radio" name="object-status" id="end-of-track-and-group" value="4" />EndOfTrackAndGroup</label
-          >
-          <label><input type="radio" name="object-status" id="end-of-track" value="5" />EndOfTrack</label>
-          <br />
-          <br />
-          <label>Payload: <br /><textarea name="payload" id="object-payload" rows="5" cols="33">test</textarea></label>
-          <br />
-          <div id="sendDatagramObject" style="display: none">
-            <button type="button" id="sendDatagramObjectBtn">Send with Payload</button>
-          </div>
-          <div id="sendDatagramObjectWithStatus" style="display: none">
-            <button type="button" id="sendDatagramObjectWithStatusBtn">Send with Status</button>
-          </div>
-          <div id="sendSubgroupObject" style="display: blocked">
-            <button type="button" id="sendSubgroupObjectBtn">Send with Payload</button>
-          </div>
-          <div id="sendSubgroupObjectWithStatus" style="display: blocked">
-            <button type="button" id="sendSubgroupObjectWithStatusBtn">Send with Status</button>
-          </div>
-        </div>
-        <br />
-        <div>
-          <h2>Received</h2>
-          <div id="received-text"></div>
-        </div>
-      </form>
+            <div class="message-grid">
+              <section class="panel">
+                <h3>CLIENT_SETUP</h3>
+                <label>Supported Version: <input type="text" name="versions" value="0xff00000A" /></label>
+                <label>Max Subscribe ID: <input type="text" name="max-subscribe-id" value="1" /></label>
+                <div class="button-row action-row">
+                  <button type="button" id="sendSetupBtn">Send</button>
+                </div>
+              </section>
+
+              <section class="panel">
+                <h3>ANNOUNCE</h3>
+                <label>
+                  Track Namespace:
+                  <input type="text" name="announce-track-namespace" id="announce-track-namespace" value="vc/aa" />
+                </label>
+                <div class="button-row action-row">
+                  <button type="button" id="sendAnnounceBtn">Send</button>
+                </div>
+              </section>
+
+              <section class="panel">
+                <h3>SUBSCRIBE_ANNOUNCES</h3>
+                <label>
+                  Track Namespace Prefix:
+                  <input type="text" name="track-namespace-prefix" id="track-namespace-prefix" value="vc" />
+                </label>
+                <div class="button-row action-row">
+                  <button type="button" id="sendSubscribeAnnouncesBtn">Send</button>
+                </div>
+              </section>
+
+              <section class="panel">
+                <h3>UNSUBSCRIBE</h3>
+                <label>SUBSCRIBE_ID: <input type="text" name="unsubscribe-subscribe-id" value="0" /></label>
+                <div class="button-row action-row">
+                  <button type="button" id="sendUnsubscribeBtn">Send</button>
+                </div>
+              </section>
+
+              <section class="panel wide">
+                <h3>SUBSCRIBE</h3>
+                <label>Subscribe ID: <input type="text" name="subscribe-subscribe-id" value="0" /></label>
+                <label>Track Alias: <input type="text" name="subscribe-track-alias" value="0" /></label>
+                <label>
+                  Track Namespace:
+                  <input type="text" name="subscribe-track-namespace" id="subscribe-track-namespace" value="vc/aa" />
+                </label>
+                <label>Track Name: <input type="text" name="track-name" value="vc_track" /></label>
+                <label>Subscriber Priority: <input type="text" name="subscriber-priority" value="0" /></label>
+
+                <div>
+                  <p class="subheading">Group Order:</p>
+                  <div class="inline-group">
+                    <label><input type="radio" name="group-order" value="0" checked />Original</label>
+                    <label><input type="radio" name="group-order" value="1" />Ascending</label>
+                    <label><input type="radio" name="group-order" value="2" />Descending</label>
+                  </div>
+                </div>
+
+                <div>
+                  <p class="subheading">Filter Type:</p>
+                  <div class="inline-group">
+                    <label><input type="radio" name="filter-type" value="1" checked />Latest Group</label>
+                    <label><input type="radio" name="filter-type" value="2" />Latest Object</label>
+                    <label><input type="radio" name="filter-type" value="3" />Absolute Start</label>
+                    <label><input type="radio" name="filter-type" value="4" />Absolute Range</label>
+                  </div>
+                </div>
+
+                <div class="inline-group">
+                  <label>Start Group: <input type="text" name="start-group" value="0" /></label>
+                  <label>Start Object: <input type="text" name="start-object" value="0" /></label>
+                </div>
+                <div class="inline-group">
+                  <label>End Group: <input type="text" name="end-group" value="10000" /></label>
+                  <label>End Object: <input type="text" name="end-object" value="10000" /></label>
+                </div>
+                <div class="button-row action-row">
+                  <button type="button" id="sendSubscribeBtn">Send</button>
+                </div>
+              </section>
+
+              <section class="panel wide">
+                <h3>OBJECT</h3>
+                <div id="headerField" style="display: block">
+                  <h4>Header</h4>
+                </div>
+                <label>Track Alias: <input type="text" name="object-track-alias" value="0" /></label>
+
+                <div id="subgroupHeaderContents" style="display: block">
+                  <div class="inline-group">
+                    <span>Group ID:</span>
+                    <span id="subgroupGroupId" class="counter">0</span>
+                    <button type="button" id="descendSubgroupGroupIdBtn">&lt;</button>
+                    <button type="button" id="ascendSubgroupGroupIdBtn">&gt;</button>
+                  </div>
+                  <div class="inline-group">
+                    <span>Subgroup ID:</span>
+                    <span id="subgroupId" class="counter">0</span>
+                    <button type="button" id="descendSubgroupIdBtn">&lt;</button>
+                    <button type="button" id="ascendSubgroupIdBtn">&gt;</button>
+                  </div>
+                </div>
+
+                <label>Publisher Priority: <input type="text" name="publisher-priority" value="0" /></label>
+
+                <div id="objectField" style="display: block">
+                  <h4>Object</h4>
+                </div>
+
+                <div id="datagramObjectContents" style="display: none">
+                  <div class="inline-group">
+                    <span>Group ID:</span>
+                    <span id="datagramGroupId" class="counter">0</span>
+                    <button type="button" id="descendDatagramGroupIdBtn">&lt;</button>
+                    <button type="button" id="ascendDatagramGroupIdBtn">&gt;</button>
+                  </div>
+                </div>
+
+                <div class="inline-group">
+                  <span>Object ID:</span>
+                  <span id="objectId" class="counter">0</span>
+                </div>
+
+                <div>
+                  <p class="subheading">Object Status:</p>
+                  <div class="inline-group">
+                    <label><input type="radio" name="object-status" id="normal" value="0" checked />Normal</label>
+                    <label>
+                      <input type="radio" name="object-status" id="does-not-exist" value="1" />
+                      DoesNotExist
+                    </label>
+                    <label><input type="radio" name="object-status" id="end-of-group" value="3" />EndOfGroup</label>
+                    <label>
+                      <input type="radio" name="object-status" id="end-of-track-and-group" value="4" />
+                      EndOfTrackAndGroup
+                    </label>
+                    <label><input type="radio" name="object-status" id="end-of-track" value="5" />EndOfTrack</label>
+                  </div>
+                </div>
+
+                <label>
+                  Payload:
+                  <textarea name="payload" id="object-payload" rows="5" cols="33">test</textarea>
+                </label>
+
+                <div id="sendDatagramObject" style="display: none" class="button-row">
+                  <button type="button" id="sendDatagramObjectBtn">Send with Payload</button>
+                </div>
+                <div id="sendDatagramObjectWithStatus" style="display: none" class="button-row">
+                  <button type="button" id="sendDatagramObjectWithStatusBtn">Send with Status</button>
+                </div>
+                <div id="sendSubgroupObject" style="display: block" class="button-row">
+                  <button type="button" id="sendSubgroupObjectBtn">Send with Payload</button>
+                </div>
+                <div id="sendSubgroupObjectWithStatus" style="display: block" class="button-row action-row">
+                  <button type="button" id="sendSubgroupObjectWithStatusBtn">Send with Status</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="card span-2">
+            <h2>Received</h2>
+            <div id="received-text"></div>
+          </section>
+        </form>
+      </div>
     </div>
 
+    <script>
+      ;(function () {
+        const preset = document.getElementById('urlPresets')
+        const input = document.getElementById('url')
+        if (!preset || !input) return
+        preset.addEventListener('click', (event) => {
+          const target = event.target
+          if (!(target instanceof HTMLButtonElement)) return
+          const value = target.getAttribute('data-url')
+          if (!value) return
+          input.value = value
+        })
+      })()
+      ;(function () {
+        function pad(n) {
+          return n < 10 ? '0' + n : n
+        }
+        const now = new Date()
+        const yyyy = now.getFullYear()
+        const mm = pad(now.getMonth() + 1)
+        const dd = pad(now.getDate())
+        const HH = pad(now.getHours())
+        const MM = pad(now.getMinutes())
+        const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+        const announceInput = document.getElementById('announce-track-namespace')
+        const prefixInput = document.getElementById('track-namespace-prefix')
+        const subscribeInput = document.getElementById('subscribe-track-namespace')
+        if (announceInput) announceInput.value = value
+        if (prefixInput) prefixInput.value = value
+        if (subscribeInput) subscribeInput.value = value
+      })()
+      ;(function () {
+        const panel = document.getElementById('logPanel')
+        if (!panel) return
+        const levels = ['log', 'info', 'warn', 'error']
+        const original = {}
+        const maxEntries = 200
+
+        function append(level, args) {
+          const entry = document.createElement('div')
+          const classLevel = level === 'log' ? 'info' : level
+          entry.className = `log-entry log-${classLevel}`
+          const label = document.createElement('strong')
+          label.textContent = classLevel.toUpperCase()
+          entry.appendChild(label)
+          const text = document.createElement('span')
+          text.textContent = ' ' + args.map(formatArg).join(' ')
+          entry.appendChild(text)
+          panel.appendChild(entry)
+          while (panel.childNodes.length > maxEntries) {
+            panel.removeChild(panel.firstChild)
+          }
+          panel.scrollTop = panel.scrollHeight
+        }
+
+        function formatArg(arg) {
+          if (typeof arg === 'string') return arg
+          if (arg instanceof Error) return arg.message
+          try {
+            return JSON.stringify(arg)
+          } catch (_e) {
+            return String(arg)
+          }
+        }
+
+        for (const level of levels) {
+          original[level] = console[level].bind(console)
+          console[level] = (...args) => {
+            original[level](...args)
+            append(level, args)
+          }
+        }
+      })()
+    </script>
     <script type="module" src="./main.ts"></script>
   </body>
-  <style>
-    p {
-      display: inline;
-    }
-  </style>
 </html>

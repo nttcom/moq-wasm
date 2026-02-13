@@ -7,8 +7,8 @@ use moqt_core::messages::control_messages::{
     announce::Announce, announce_error::AnnounceError, announce_ok::AnnounceOk,
     server_setup::ServerSetup, subscribe::Subscribe,
     subscribe_announces_error::SubscribeAnnouncesError,
-    subscribe_announces_ok::SubscribeAnnouncesOk, subscribe_error::SubscribeError,
-    subscribe_ok::SubscribeOk,
+    subscribe_announces_ok::SubscribeAnnouncesOk, subscribe_done::SubscribeDone,
+    subscribe_error::SubscribeError, subscribe_ok::SubscribeOk,
 };
 use moqt_core::messages::data_streams::{
     object_status::ObjectStatus, subgroup_stream::Object as CoreSubgroupStreamObject,
@@ -305,6 +305,64 @@ impl From<&SubscribeError> for SubscribeErrorMessage {
             subscribe_id: subscribe_error.subscribe_id(),
             error_code: u8::from(subscribe_error.error_code()) as u64,
             reason_phrase,
+        }
+    }
+}
+
+/// JavaScript-friendly wrapper for SubscribeDone message
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct SubscribeDoneMessage {
+    subscribe_id: u64,
+    status_code: u64,
+    reason_phrase: String,
+    content_exists: bool,
+    final_group_id: Option<u64>,
+    final_object_id: Option<u64>,
+}
+
+#[wasm_bindgen]
+impl SubscribeDoneMessage {
+    #[wasm_bindgen(getter, js_name = subscribeId)]
+    pub fn subscribe_id(&self) -> u64 {
+        self.subscribe_id
+    }
+
+    #[wasm_bindgen(getter, js_name = statusCode)]
+    pub fn status_code(&self) -> u64 {
+        self.status_code
+    }
+
+    #[wasm_bindgen(getter, js_name = reasonPhrase)]
+    pub fn reason_phrase(&self) -> String {
+        self.reason_phrase.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = contentExists)]
+    pub fn content_exists(&self) -> bool {
+        self.content_exists
+    }
+
+    #[wasm_bindgen(getter, js_name = finalGroupId)]
+    pub fn final_group_id(&self) -> Option<u64> {
+        self.final_group_id
+    }
+
+    #[wasm_bindgen(getter, js_name = finalObjectId)]
+    pub fn final_object_id(&self) -> Option<u64> {
+        self.final_object_id
+    }
+}
+
+impl From<&SubscribeDone> for SubscribeDoneMessage {
+    fn from(subscribe_done: &SubscribeDone) -> Self {
+        SubscribeDoneMessage {
+            subscribe_id: subscribe_done.subscribe_id(),
+            status_code: u64::from(subscribe_done.status_code()),
+            reason_phrase: subscribe_done.reason_phrase().to_string(),
+            content_exists: subscribe_done.content_exists(),
+            final_group_id: subscribe_done.final_group_id(),
+            final_object_id: subscribe_done.final_object_id(),
         }
     }
 }

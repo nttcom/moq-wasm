@@ -14,6 +14,7 @@
   --border: #d5e3df;
   --shadow: 0 30px 60px -45px rgba(16, 42, 42, 0.6);
   --radius: 18px;
+  --button-height: 36px;
 }
 
 *,
@@ -86,6 +87,10 @@ a:hover {
   gap: 18px;
 }
 
+.subscriber-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .card {
   padding: 20px 22px;
   border-radius: var(--radius);
@@ -119,7 +124,9 @@ a:hover {
 }
 
 .stack {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   gap: 12px;
 }
 
@@ -151,7 +158,8 @@ label {
 
 input[type='text'],
 input[type='url'],
-input[type='number'] {
+input[type='number'],
+select {
   width: 100%;
   max-width: 520px;
   padding: 10px 12px;
@@ -169,7 +177,8 @@ input[type='number'] {
 
 label input[type='text'],
 label input[type='url'],
-label input[type='number'] {
+label input[type='number'],
+label select {
   width: auto;
   flex: 1 1 220px;
   max-width: none;
@@ -177,7 +186,8 @@ label input[type='number'] {
 
 input[type='text']:focus,
 input[type='url']:focus,
-input[type='number']:focus {
+input[type='number']:focus,
+select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--ring, rgba(15, 118, 110, 0.2));
 }
@@ -187,9 +197,14 @@ input[type='radio'] {
 }
 
 button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   border-radius: 999px;
-  padding: 10px 16px;
+  min-height: var(--button-height);
+  padding: 0 16px;
+  white-space: nowrap;
   font-weight: 600;
   background: var(--accent);
   color: #fff;
@@ -229,7 +244,8 @@ button:active {
 }
 
 .preset-bar button {
-  padding: 6px 12px;
+  min-height: var(--button-height);
+  padding: 0 12px;
   border-radius: 999px;
   background: #fff;
   color: var(--accent);
@@ -255,6 +271,23 @@ button:active {
   gap: 10px;
 }
 
+.action-row {
+  margin-top: auto;
+  align-items: flex-end;
+  justify-content: flex-start;
+}
+
+.compact-button {
+  min-height: var(--button-height);
+  padding: 0 12px;
+  font-size: 0.82rem;
+  line-height: 1.1;
+  width: fit-content;
+  align-self: start;
+  justify-self: start;
+  box-shadow: 0 6px 14px -10px rgba(15, 118, 110, 0.7);
+}
+
 .field-row {
   display: flex;
   flex-wrap: wrap;
@@ -263,6 +296,28 @@ button:active {
 
 .field-row > label {
   flex: 1 1 220px;
+}
+
+.inline-fields > label {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.inline-fields > label input[type='text'] {
+  flex: 1 1 140px;
+}
+
+.subscribe-split {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.subscribe-panel {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
 }
 
 video,
@@ -321,6 +376,18 @@ audio {
 }
 
 @media (max-width: 720px) {
+  .subscriber-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-fields > label {
+    flex-wrap: wrap;
+  }
+
+  .subscribe-split {
+    grid-template-columns: 1fr;
+  }
+
   .page {
     padding: 28px 18px 60px;
   }
@@ -332,5 +399,9 @@ audio {
   button {
     width: 100%;
     justify-content: center;
+  }
+
+  .compact-button {
+    width: auto;
   }
 }

@@ -41,9 +41,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -63,9 +68,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -85,9 +95,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -107,9 +122,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -129,9 +149,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -150,9 +175,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(is_unique) => Ok(is_unique),
@@ -171,9 +201,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(is_less) => Ok(is_less),
@@ -192,9 +227,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(is_unique) => Ok(is_unique),
@@ -213,9 +253,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             track_name,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(is_existing) => Ok(is_existing),
@@ -229,9 +274,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             track_namespace,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(upstream_session_id) => Ok(upstream_session_id),
@@ -250,9 +300,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(track_alias) => Ok(track_alias),
@@ -271,9 +326,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(requesting_subscribers) => Ok(requesting_subscribers),
@@ -294,9 +354,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(subscribe_id) => Ok(subscribe_id),
@@ -315,9 +380,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_track_alias,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(subscribe_id) => Ok(subscribe_id),
@@ -354,9 +424,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             end_group,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -390,9 +465,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             end_group,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok((subscribe_id, track_alias)) => Ok((subscribe_id, track_alias)),
@@ -416,8 +496,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -436,8 +521,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(activation_occured) => Ok(activation_occured),
@@ -456,8 +546,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(activation_occured) => Ok(activation_occured),
@@ -474,8 +569,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             track_namespace_prefix,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(namespaces) => Ok(namespaces),
@@ -494,8 +594,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(is_announced) => Ok(is_announced),
@@ -512,8 +617,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             track_namespace,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(session_ids) => Ok(session_ids),
@@ -532,8 +642,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(delete_occured) => Ok(delete_occured),
@@ -547,8 +662,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(delete_occured) => Ok(delete_occured),
@@ -571,8 +691,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -591,8 +716,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -611,8 +741,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -633,8 +768,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             forwarding_preference,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -655,8 +795,13 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             forwarding_preference,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
-        let result = resp_rx.await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -675,9 +820,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(forwarding_preference) => Ok(forwarding_preference),
@@ -696,9 +846,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(filter_type) => Ok(filter_type),
@@ -717,9 +872,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(filter_type) => Ok(filter_type),
@@ -738,9 +898,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(range) => Ok(range),
@@ -759,9 +924,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(range) => Ok(range),
@@ -782,9 +952,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             actual_object_start,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -803,9 +978,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(actual_object_start) => Ok(actual_object_start),
@@ -830,9 +1010,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             stream_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -849,9 +1034,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(subscribe_ids) => Ok(subscribe_ids),
@@ -870,9 +1060,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(group_ids) => Ok(group_ids),
@@ -893,9 +1088,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             group_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(stream_ids) => Ok(stream_ids),
@@ -918,9 +1118,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             subgroup_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(stream_id) => Ok(stream_id),
@@ -945,9 +1150,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             stream_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(_) => Ok(()),
@@ -964,9 +1174,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_session_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(subscribe_ids) => Ok(subscribe_ids),
@@ -985,9 +1200,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(group_ids) => Ok(group_ids),
@@ -1010,9 +1230,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             subgroup_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(stream_id) => Ok(stream_id),
@@ -1033,9 +1258,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             group_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(stream_ids) => Ok(stream_ids),
@@ -1054,9 +1284,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             upstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(related_subscribers) => Ok(related_subscribers),
@@ -1075,9 +1310,14 @@ impl PubSubRelationManagerRepository for PubSubRelationManagerWrapper {
             downstream_subscribe_id,
             resp: resp_tx,
         };
-        self.tx.send(cmd).await.unwrap();
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to send pubsub relation command: {}", err))?;
 
-        let result = resp_rx.await.unwrap();
+        let result = resp_rx.await.map_err(|err| {
+            anyhow::anyhow!("failed to receive pubsub relation response: {}", err)
+        })?;
 
         match result {
             Ok(related_publisher) => Ok(related_publisher),

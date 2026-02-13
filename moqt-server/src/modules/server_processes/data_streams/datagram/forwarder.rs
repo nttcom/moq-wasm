@@ -5,7 +5,7 @@ use crate::modules::{
     pubsub_relation_manager::wrapper::PubSubRelationManagerWrapper,
     server_processes::senders::Senders,
 };
-use anyhow::{Ok, Result, bail};
+use anyhow::{Result, anyhow, bail};
 use bytes::BytesMut;
 use moqt_core::{
     data_stream_type::DataStreamType,
@@ -51,17 +51,35 @@ impl DatagramObjectForwarder {
         let downstream_track_alias = pubsub_relation_manager
             .get_downstream_track_alias(downstream_session_id, downstream_subscribe_id)
             .await?
-            .unwrap();
+            .ok_or_else(|| {
+                anyhow!(
+                    "downstream subscription not found for track_alias (session_id: {}, subscribe_id: {})",
+                    downstream_session_id,
+                    downstream_subscribe_id
+                )
+            })?;
 
         let filter_type = pubsub_relation_manager
             .get_downstream_filter_type(downstream_session_id, downstream_subscribe_id)
             .await?
-            .unwrap();
+            .ok_or_else(|| {
+                anyhow!(
+                    "downstream subscription not found for filter_type (session_id: {}, subscribe_id: {})",
+                    downstream_session_id,
+                    downstream_subscribe_id
+                )
+            })?;
 
         let requested_object_range = pubsub_relation_manager
             .get_downstream_requested_object_range(downstream_session_id, downstream_subscribe_id)
             .await?
-            .unwrap();
+            .ok_or_else(|| {
+                anyhow!(
+                    "downstream subscription not found for requested_object_range (session_id: {}, subscribe_id: {})",
+                    downstream_session_id,
+                    downstream_subscribe_id
+                )
+            })?;
 
         // Get the information of the original publisher who has the track being requested
         let (upstream_session_id, upstream_subscribe_id) = pubsub_relation_manager
@@ -171,6 +189,15 @@ impl DatagramObjectForwarder {
     ) -> Result<(Option<usize>, bool)> {
         // Do loop until get an object from the cache storage
         loop {
+            if !self.is_downstream_subscription_active().await {
+                tracing::info!(
+                    "DatagramObjectForwarder stopped because downstream subscription was removed (session_id: {}, subscribe_id: {})",
+                    self.session.stable_id(),
+                    self.downstream_subscribe_id
+                );
+                return Ok((cache_id, true));
+            }
+
             let (cache_id, upstream_object) = match self
                 .get_upstream_object(object_cache_storage, cache_id)
                 .await?
@@ -194,6 +221,29 @@ impl DatagramObjectForwarder {
             }
 
             return Ok((Some(cache_id), is_end));
+        }
+    }
+
+    async fn is_downstream_subscription_active(&self) -> bool {
+        let downstream_session_id = self.session.stable_id();
+        let pubsub_relation_manager =
+            PubSubRelationManagerWrapper::new(self.senders.pubsub_relation_tx().clone());
+
+        match pubsub_relation_manager
+            .get_downstream_track_alias(downstream_session_id, self.downstream_subscribe_id)
+            .await
+        {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(err) => {
+                tracing::warn!(
+                    "DatagramObjectForwarder failed to check downstream subscription (session_id: {}, subscribe_id: {}): {:?}",
+                    downstream_session_id,
+                    self.downstream_subscribe_id,
+                    err
+                );
+                false
+            }
         }
     }
 

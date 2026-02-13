@@ -3,6 +3,8 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
 import { CallMediaController } from '../media/callMediaController'
+import { parseCallCatalogTracks } from '../media/callCatalog'
+import type { CallCatalogTrack, CatalogSubscribeRole } from '../types/catalog'
 
 interface LocalSessionOptions {
   roomName: string
@@ -126,14 +128,17 @@ export class LocalSession {
     trackAlias: bigint,
     trackNamespace: string[],
     trackName: string,
-    authInfo: string = this.defaultAuthInfo
+    authInfo: string = this.defaultAuthInfo,
+    role?: CatalogSubscribeRole | 'chat',
+    codec?: string
   ): Promise<void> {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot subscribe when session state is "${this.state}"`)
     }
     const remoteUser = trackNamespace[1] ?? `alias-${trackAlias.toString()}`
 
-    if (trackName === 'chat') {
+    const resolvedRole = role ?? this.resolveTrackRole(trackName)
+    if (resolvedRole === 'chat') {
       this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroup) => {
         try {
           const payload = new Uint8Array(subgroup.objectPayload)
@@ -153,11 +158,77 @@ export class LocalSession {
           console.error('Failed to decode subgroup payload:', error)
         }
       })
-    } else if (trackName === 'video' || trackName === 'audio') {
-      this.mediaController.registerRemoteTrack(remoteUser, trackName, trackAlias)
+    } else if (resolvedRole === 'video' || resolvedRole === 'screenshare' || resolvedRole === 'audio') {
+      this.mediaController.registerRemoteTrack(remoteUser, trackName, trackAlias, resolvedRole, codec)
     }
 
     await this.client.subscribe(subscribeId, trackAlias, trackNamespace, trackName, authInfo)
+  }
+
+  async subscribeCatalog(
+    subscribeId: bigint,
+    trackAlias: bigint,
+    trackNamespace: string[],
+    authInfo: string = this.defaultAuthInfo,
+    timeoutMs: number = 5000,
+    onTracksUpdated?: (tracks: CallCatalogTrack[]) => void
+  ): Promise<CallCatalogTrack[]> {
+    if (this.state !== LocalSessionState.Ready) {
+      throw new Error(`Cannot subscribe catalog when session state is "${this.state}"`)
+    }
+    return new Promise<CallCatalogTrack[]>((resolve, reject) => {
+      let settled = false
+      const timeoutId = window.setTimeout(() => {
+        if (settled) {
+          return
+        }
+        settled = true
+        reject(new Error('Catalog subscribe timed out'))
+      }, timeoutMs)
+
+      this.client.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroup) => {
+        try {
+          const payload = new TextDecoder().decode(new Uint8Array(subgroup.objectPayload))
+          const tracks = parseCallCatalogTracks(payload)
+          onTracksUpdated?.(tracks)
+          if (settled) {
+            return
+          }
+          settled = true
+          window.clearTimeout(timeoutId)
+          resolve(tracks)
+        } catch (error) {
+          if (settled) {
+            console.error('Failed to parse updated catalog payload:', error)
+            return
+          }
+          settled = true
+          window.clearTimeout(timeoutId)
+          reject(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
+        }
+      })
+
+      this.client.subscribe(subscribeId, trackAlias, trackNamespace, 'catalog', authInfo).catch((error) => {
+        if (settled) {
+          return
+        }
+        settled = true
+        window.clearTimeout(timeoutId)
+        reject(error instanceof Error ? error : new Error('Catalog subscribe failed'))
+      })
+    })
+  }
+
+  async unsubscribe(subscribeId: bigint, role?: CatalogSubscribeRole | 'chat'): Promise<void> {
+    if (this.state !== LocalSessionState.Ready) {
+      throw new Error(`Cannot unsubscribe when session state is "${this.state}"`)
+    }
+    await this.client.unsubscribe(subscribeId)
+    if (role === 'video' || role === 'screenshare' || role === 'audio') {
+      this.mediaController.unregisterRemoteTrack(subscribeId, role)
+      return
+    }
+    this.mediaController.unregisterRemoteTrack(subscribeId)
   }
 
   async sendChatMessage(message: string): Promise<void> {
@@ -172,5 +243,16 @@ export class LocalSession {
 
   getMediaController(): CallMediaController {
     return this.mediaController
+  }
+
+  private resolveTrackRole(trackName: string): CatalogSubscribeRole | 'chat' | null {
+    if (trackName === 'chat') {
+      return 'chat'
+    }
+    const role = this.mediaController.resolveTrackRole(trackName)
+    if (role === 'video' && trackName.trim().toLowerCase().startsWith('screenshare')) {
+      return 'screenshare'
+    }
+    return role
   }
 }
