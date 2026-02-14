@@ -84,7 +84,7 @@ impl Notifier {
         session_id: Uuid,
         track_namespace: String,
         track_name: String,
-    ) -> anyhow::Result<Box<dyn Subscription>> {
+    ) -> anyhow::Result<Subscription> {
         if let Some(subscriber) = self
             .repository
             .lock()

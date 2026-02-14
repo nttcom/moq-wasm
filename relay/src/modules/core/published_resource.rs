@@ -1,37 +1,23 @@
-use async_trait::async_trait;
+use crate::modules::enums::{FilterType, GroupOrder};
 
-use crate::modules::{
-    core::data_sender::{DataSender, datagram_sender::DatagramSender, stream_sender::StreamSender},
-    enums::{FilterType, GroupOrder},
-};
-
-#[async_trait]
-pub(crate) trait PublishedResource: 'static + Send + Sync {
-    fn group_order(&self) -> GroupOrder;
-    fn filter_type(&self) -> FilterType;
-    async fn new_stream(&self) -> anyhow::Result<Box<dyn DataSender>>;
-    fn new_datagram(&self) -> Box<dyn DataSender>;
+pub(crate) struct PublishedResource {
+    published_resource: moqt::PublishedResource,
 }
 
-#[async_trait]
-impl<T: moqt::TransportProtocol> PublishedResource for moqt::PublishedResource<T> {
-    fn group_order(&self) -> GroupOrder {
-        GroupOrder::from(self.group_order)
+impl PublishedResource {
+    pub(crate) fn from(published_resource: moqt::PublishedResource) -> Self {
+        Self { published_resource }
     }
 
-    fn filter_type(&self) -> FilterType {
-        FilterType::from(self.filter_type)
+    pub(crate) fn as_moqt(&self) -> &moqt::PublishedResource {
+        &self.published_resource
     }
 
-    async fn new_stream(&self) -> anyhow::Result<Box<dyn DataSender>> {
-        let sender = self.create_stream().await?;
-        let sender = StreamSender::new(sender);
-        Ok(Box::new(sender))
+    pub(crate) fn group_order(&self) -> GroupOrder {
+        GroupOrder::from(self.published_resource.group_order)
     }
 
-    fn new_datagram(&self) -> Box<dyn DataSender> {
-        let sender = self.create_datagram();
-        let sender = DatagramSender::new(sender);
-        Box::new(sender)
+    pub(crate) fn filter_type(&self) -> FilterType {
+        FilterType::from(self.published_resource.filter_type)
     }
 }

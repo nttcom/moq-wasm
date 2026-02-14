@@ -3,9 +3,6 @@ name = "client"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-path = "src/lib.rs" # これを追加
-
 [dependencies]
 moqt = {path = "../moqt"}
 tokio = { version = "1.45.0", features = ["full", "tracing"] }

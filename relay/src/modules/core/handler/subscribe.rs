@@ -23,7 +23,7 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
         content_exists: ContentExists,
     ) -> anyhow::Result<()>;
     async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
-    fn into_publication(&self, track_alias: u64) -> Box<dyn PublishedResource>;
+    fn into_publication(&self, track_alias: u64) -> PublishedResource;
 }
 
 #[async_trait]
@@ -70,8 +70,7 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
         self.error(code, reason_phrase).await
     }
 
-    fn into_publication(&self, track_alias: u64) -> Box<dyn PublishedResource> {
-        let publication = self.into_publication(track_alias);
-        Box::new(publication)
+    fn into_publication(&self, track_alias: u64) -> PublishedResource {
+        PublishedResource::from(self.into_publication(track_alias))
     }
 }

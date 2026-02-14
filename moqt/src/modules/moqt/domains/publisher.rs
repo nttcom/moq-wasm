@@ -2,16 +2,21 @@ use std::sync::Arc;
 
 use anyhow::bail;
 
-use crate::modules::moqt::{
-    control_plane::enums::ResponseMessage,
-    control_plane::messages::{
-        control_message_type::ControlMessageType,
-        control_messages::{publish::Publish, publish_namespace::PublishNamespace},
+use crate::{
+    DatagramSender, StreamDataSender,
+    modules::moqt::{
+        control_plane::{
+            enums::ResponseMessage,
+            messages::{
+                control_message_type::ControlMessageType,
+                control_messages::{publish::Publish, publish_namespace::PublishNamespace},
+            },
+            options::PublishOption,
+            utils,
+        },
+        domains::{published_resource::PublishedResource, session_context::SessionContext},
+        protocol::TransportProtocol,
     },
-    control_plane::options::PublishOption,
-    control_plane::utils,
-    domains::{published_resource::PublishedResource, session_context::SessionContext},
-    protocol::TransportProtocol,
 };
 
 pub struct Publisher<T: TransportProtocol> {
@@ -62,7 +67,7 @@ impl<T: TransportProtocol> Publisher<T> {
         track_namespace: String,
         track_name: String,
         option: PublishOption,
-    ) -> anyhow::Result<PublishedResource<T>> {
+    ) -> anyhow::Result<PublishedResource> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -95,8 +100,7 @@ impl<T: TransportProtocol> Publisher<T> {
                     bail!("Protocol violation")
                 } else {
                     tracing::info!("Publish ok");
-                    Ok(PublishedResource::<T>::new(
-                        self.session.clone(),
+                    Ok(PublishedResource::new(
                         track_namespace,
                         track_name,
                         option.track_alias,
@@ -110,5 +114,18 @@ impl<T: TransportProtocol> Publisher<T> {
             }
             _ => bail!("Protocol violation"),
         }
+    }
+
+    pub async fn create_stream(
+        &self,
+        published_resource: &PublishedResource,
+    ) -> anyhow::Result<StreamDataSender<T>> {
+        let stream_data_sender =
+            StreamDataSender::new(published_resource.track_alias, self.session.clone()).await?;
+        Ok(stream_data_sender)
+    }
+
+    pub fn create_datagram(&self, published_resource: &PublishedResource) -> DatagramSender<T> {
+        DatagramSender::new(published_resource.track_alias, self.session.clone())
     }
 }

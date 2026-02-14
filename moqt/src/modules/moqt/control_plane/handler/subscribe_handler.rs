@@ -80,7 +80,7 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         self.session_context.send_stream.send(&bytes).await
     }
 
-    pub fn into_publication(&self, track_alias: u64) -> PublishedResource<T> {
-        PublishedResource::from_subscribe_handler(self.session_context.clone(), track_alias, self)
+    pub fn into_publication(&self, track_alias: u64) -> PublishedResource {
+        PublishedResource::from_subscribe_handler(track_alias, self)
     }
 }
