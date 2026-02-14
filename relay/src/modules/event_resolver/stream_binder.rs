@@ -39,19 +39,16 @@ impl StreamBinder {
             .await
             .get_publisher(subscriber_session_id)
             .await;
-        tracing::warn!("qqq publisher");
         let subscriber = self
             .session_repo
             .lock()
             .await
             .get_subscriber(publisher_session_id)
             .await;
-        tracing::warn!("qqq subscriber");
         if publisher.is_none() || subscriber.is_none() {
             tracing::error!("Publisher or Subscriber session not found.");
             return;
         }
-        tracing::warn!("qqq both found");
         let (publisher, subscriber) = (publisher.unwrap(), subscriber.unwrap());
         let task = async move {
             tracing::info!(

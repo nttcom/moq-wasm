@@ -115,19 +115,16 @@ impl<T: TransportProtocol> Subscriber<T> {
         &self,
         subscription: &Subscription,
     ) -> anyhow::Result<DataReceiver<T>> {
-        tracing::info!("qqq accept data receiver");
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
         self.session
             .notification_map
             .write()
             .await
             .insert(subscription.track_alias, sender);
-        tracing::info!("qqq waiting for data receiver");
         let result = receiver
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
-        tracing::info!("qqq received data receiver");
         match result {
             StreamWithObject::StreamHeader { stream, header } => {
                 let data_receiver = StreamDataReceiver::new(receiver, stream, header).await?;
