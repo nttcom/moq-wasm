@@ -1,18 +1,9 @@
-use std::sync::Arc;
-
 use crate::{
     FilterType, GroupOrder, SubscribeHandler, TransportProtocol,
-    modules::moqt::{
-        control_plane::messages::control_messages::publish_ok::PublishOk,
-        data_plane::streams::{
-            datagram::datagram_sender::DatagramSender, stream::stream_data_sender::StreamDataSender,
-        },
-        domains::session_context::SessionContext,
-    },
+    modules::moqt::control_plane::messages::control_messages::publish_ok::PublishOk,
 };
 
-pub struct PublishedResource<T: TransportProtocol> {
-    pub(crate) session_context: Arc<SessionContext<T>>,
+pub struct PublishedResource {
     pub track_namespace: String,
     pub track_name: String,
     pub track_alias: u64,
@@ -23,16 +14,14 @@ pub struct PublishedResource<T: TransportProtocol> {
     pub delivery_timeout: Option<u64>,
 }
 
-impl<T: TransportProtocol> PublishedResource<T> {
+impl PublishedResource {
     pub(crate) fn new(
-        session_context: Arc<SessionContext<T>>,
         track_namespace: String,
         track_name: String,
         track_alias: u64,
         publish_ok: PublishOk,
     ) -> Self {
         Self {
-            session_context,
             track_namespace,
             track_name,
             track_alias,
@@ -44,13 +33,11 @@ impl<T: TransportProtocol> PublishedResource<T> {
         }
     }
 
-    pub(crate) fn from_subscribe_handler(
-        session_context: Arc<SessionContext<T>>,
+    pub(crate) fn from_subscribe_handler<T: TransportProtocol>(
         track_alias: u64,
         handler: &SubscribeHandler<T>,
     ) -> Self {
         Self {
-            session_context,
             track_namespace: handler.track_namespace.clone(),
             track_name: handler.track_name.clone(),
             track_alias,
@@ -60,15 +47,5 @@ impl<T: TransportProtocol> PublishedResource<T> {
             filter_type: handler.filter_type,
             delivery_timeout: None,
         }
-    }
-
-    pub async fn create_stream(&self) -> anyhow::Result<StreamDataSender<T>> {
-        let stream_data_sender =
-            StreamDataSender::new(self.track_alias, self.session_context.clone()).await?;
-        Ok(stream_data_sender)
-    }
-
-    pub fn create_datagram(&self) -> DatagramSender<T> {
-        DatagramSender::new(self.track_alias, self.session_context.clone())
     }
 }

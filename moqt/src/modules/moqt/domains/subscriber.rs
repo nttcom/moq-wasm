@@ -3,17 +3,20 @@ use std::sync::Arc;
 use anyhow::bail;
 
 use crate::{
-    SubscribeOption, Subscription,
-    modules::moqt::control_plane::{
-        enums::ResponseMessage,
-        messages::{
-            control_message_type::ControlMessageType,
-            control_messages::{subscribe::Subscribe, subscribe_namespace::SubscribeNamespace},
+    DataReceiver, DatagramReceiver, StreamDataReceiver, SubscribeOption, Subscription,
+    modules::moqt::{
+        control_plane::{
+            enums::ResponseMessage,
+            messages::{
+                control_message_type::ControlMessageType,
+                control_messages::{subscribe::Subscribe, subscribe_namespace::SubscribeNamespace},
+            },
+            threads::enums::StreamWithObject,
+            utils,
         },
-        utils,
+        domains::session_context::SessionContext,
+        protocol::TransportProtocol,
     },
-    modules::moqt::domains::session_context::SessionContext,
-    modules::moqt::protocol::TransportProtocol,
 };
 
 pub struct Subscriber<T: TransportProtocol> {
@@ -64,7 +67,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         track_namespace: String,
         track_name: String,
         option: SubscribeOption,
-    ) -> anyhow::Result<Subscription<T>> {
+    ) -> anyhow::Result<Subscription> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -97,7 +100,7 @@ impl<T: TransportProtocol> Subscriber<T> {
                     bail!("Protocol violation")
                 } else {
                     tracing::info!("Subscribe ok");
-                    Ok(Subscription::new(self.session.clone(), message))
+                    Ok(Subscription::new(message))
                 }
             }
             ResponseMessage::SubscribeError(_, _, _) => {
@@ -105,6 +108,35 @@ impl<T: TransportProtocol> Subscriber<T> {
                 bail!("Subscribe error")
             }
             _ => bail!("Protocol violation"),
+        }
+    }
+
+    pub async fn accept_data_receiver(
+        &self,
+        subscription: &Subscription,
+    ) -> anyhow::Result<DataReceiver<T>> {
+        tracing::info!("qqq accept data receiver");
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
+        self.session
+            .notification_map
+            .write()
+            .await
+            .insert(subscription.track_alias, sender);
+        tracing::info!("qqq waiting for data receiver");
+        let result = receiver
+            .recv()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
+        tracing::info!("qqq received data receiver");
+        match result {
+            StreamWithObject::StreamHeader { stream, header } => {
+                let data_receiver = StreamDataReceiver::new(receiver, stream, header).await?;
+                Ok(DataReceiver::Stream(data_receiver))
+            }
+            StreamWithObject::Datagram(object) => {
+                let data_receiver = DatagramReceiver::new(object, receiver).await;
+                Ok(DataReceiver::Datagram(data_receiver))
+            }
         }
     }
 }

@@ -71,9 +71,8 @@ impl<T: TransportProtocol> PublishHandler<T> {
         self.session_context.send_stream.send(&bytes).await
     }
 
-    pub fn into_subscription(&self, expires: u64) -> Subscription<T> {
-        Subscription::<T> {
-            session_context: self.session_context.clone(),
+    pub fn into_subscription(&self, expires: u64) -> Subscription {
+        Subscription {
             track_alias: self.track_alias,
             expires,
             group_order: self.group_order,

@@ -5,7 +5,7 @@ use crate::modules::{
         publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
         subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
     },
-    enums::{ContentExists, FilterType, Location},
+    enums::{ContentExists, FilterType},
     event_resolver::stream_binder::StreamBinder,
     repositories::session_repository::SessionRepository,
     sequences::{
@@ -24,7 +24,7 @@ pub(crate) struct SequenceHandler {
 impl SequenceHandler {
     pub(crate) fn new(session_repo: Arc<tokio::sync::Mutex<SessionRepository>>) -> Self {
         Self {
-            stream_handler: StreamBinder::new(),
+            stream_handler: StreamBinder::new(session_repo.clone()),
             notifier: Notifier {
                 repository: session_repo,
             },
@@ -186,7 +186,11 @@ impl SequenceHandler {
         // Send ok or error failed then close session.
         // forward: true case. prepare to accept stream/datagram before it returns the result.
         match handler.ok(128, FilterType::LatestObject).await {
-            Ok(()) => self.table.register_publish(Arc::from(handler)).await,
+            Ok(()) => {
+                self.table
+                    .register_publish(session_id, Arc::from(handler))
+                    .await
+            }
             Err(_) => tracing::error!("failed to accept publish. close session."),
         }
         tracing::info!("SequenceHandler::publish: {} DONE", session_id);
@@ -207,7 +211,7 @@ impl SequenceHandler {
             .table
             .find_publish_handler_with(handler.track_namespace(), handler.track_name())
             .await;
-        if let Some(pub_handler) = pub_handler {
+        if let Some((pub_session_id, pub_handler)) = pub_handler {
             tracing::info!(
                 "publisher found. {}/{} (alias {})",
                 pub_handler.track_namespace(),
@@ -215,37 +219,34 @@ impl SequenceHandler {
                 pub_handler.track_alias()
             );
             let subscription = pub_handler.into_subscription(0);
-            match handler
+
+            if handler
                 .ok(
                     subscription.track_alias(),
                     subscription.expires(),
-                    // TODO: implements cache then assign accurate value.
-                    ContentExists::True {
-                        location: Location {
-                            group_id: 0,
-                            object_id: 0,
-                        },
-                    },
+                    subscription.content_exists(),
                 )
-                .await
+                .await.is_ok()
             {
-                Ok(_) => {
-                    tracing::info!("send `SUBSCRIBE_OK` ok");
-                    let track_alias = subscription.track_alias();
-                    let _ = self
-                        .stream_handler
-                        .bind_by_subscribe(subscription, handler.into_publication(track_alias))
-                        .await;
-                }
-                Err(_) => {
-                    tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
-                }
+                tracing::info!("send `SUBSCRIBE_OK` ok");
+                let track_alias = subscription.track_alias();
+                let _ = self
+                    .stream_handler
+                    .bind_by_subscribe(
+                        session_id,
+                        subscription,
+                        pub_session_id,
+                        handler.into_publication(track_alias),
+                    )
+                    .await;
+            } else {
+                tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
             }
-        } else if let Some(session_id) = self.table.get_publish_namespace(track_namespace) {
+        } else if let Some(pub_session_id) = self.table.get_publish_namespace(track_namespace) {
             if let Ok(subscription) = self
                 .notifier
                 .subscribe(
-                    session_id,
+                    pub_session_id,
                     track_namespace.to_string(),
                     track_name.to_string(),
                 )
@@ -263,7 +264,7 @@ impl SequenceHandler {
                 {
                     let pub_resource = handler.into_publication(subscription.track_alias());
                     self.stream_handler
-                        .bind_by_subscribe(subscription, pub_resource)
+                        .bind_by_subscribe(session_id, subscription, pub_session_id, pub_resource)
                         .await;
                 } else {
                     tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");

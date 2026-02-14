@@ -21,7 +21,7 @@ pub(crate) struct HashMapTable {
      */
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, SessionId>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashSet<SessionId>>,
-    pub(crate) published_handlers: RwLock<Vec<Arc<dyn PublishHandler>>>,
+    pub(crate) published_handlers: RwLock<Vec<(Uuid, Arc<dyn PublishHandler>)>>,
 }
 
 #[async_trait::async_trait]
@@ -72,8 +72,11 @@ impl Table for HashMapTable {
         }
     }
 
-    async fn register_publish(&self, handler: Arc<dyn PublishHandler>) {
-        self.published_handlers.write().await.push(handler);
+    async fn register_publish(&self, session_id: Uuid, handler: Arc<dyn PublishHandler>) {
+        self.published_handlers
+            .write()
+            .await
+            .push((session_id, handler));
     }
 
     fn get_namespace_subscribers(&self, track_namespace: &str) -> DashSet<SessionId> {
@@ -102,7 +105,7 @@ impl Table for HashMapTable {
             }
         }
 
-        for handler in self.published_handlers.read().await.iter() {
+        for (_, handler) in self.published_handlers.read().await.iter() {
             if handler
                 .track_namespace()
                 .starts_with(track_namespace_prefix)
@@ -128,13 +131,13 @@ impl Table for HashMapTable {
         &self,
         track_namespace: &str,
         track_name: &str,
-    ) -> Option<Arc<dyn PublishHandler>> {
+    ) -> Option<(Uuid, Arc<dyn PublishHandler>)> {
         let handlers = self.published_handlers.read().await;
-        if let Some(handler) = handlers
+        if let Some((session_id, handler)) = handlers
             .iter()
-            .find(|h| h.track_namespace() == track_namespace && h.track_name() == track_name)
+            .find(|(_, h)| h.track_namespace() == track_namespace && h.track_name() == track_name)
         {
-            Some(handler.clone())
+            Some((session_id.clone(), handler.clone()))
         } else {
             None
         }
