@@ -49,7 +49,6 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
         &self,
         subscription: Subscription,
     ) -> anyhow::Result<Box<dyn DataReceiver>> {
-        tracing::info!("qqq create data receiver");
         let result = self.accept_data_receiver(subscription.as_moqt()).await?;
         match result {
             moqt::DataReceiver::Stream(inner) => {
