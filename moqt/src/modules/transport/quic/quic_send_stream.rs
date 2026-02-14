@@ -4,6 +4,7 @@ use quinn::{self};
 
 use crate::modules::transport::transport_send_stream::TransportSendStream;
 
+#[derive(Debug)]
 pub struct QUICSendStream {
     pub(crate) stable_id: usize,
     pub(crate) stream_id: u64,
@@ -14,5 +15,9 @@ pub struct QUICSendStream {
 impl TransportSendStream for QUICSendStream {
     async fn send(&mut self, buffer: &BytesMut) -> anyhow::Result<()> {
         Ok(self.send_stream.write_all(buffer).await?)
+    }
+
+    fn close(&mut self) -> anyhow::Result<()> {
+        Ok(self.send_stream.finish()?)
     }
 }
