@@ -12,7 +12,7 @@ fn create_client_thread(
     mut signal_receiver: tokio::sync::broadcast::Receiver<()>,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::task::spawn(async move {
-        let client = Client::new(cert_path, "user1".to_string()).await?;
+        let client = Client::<moqt::QUIC>::new(cert_path, "user1".to_string()).await?;
         client.publish_namespace("room1/user1".to_string()).await;
         client.subscribe_namespace("room".to_string()).await;
         // client
@@ -31,7 +31,7 @@ fn create_client_thread2(
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::task::spawn(async move {
         sleep(Duration::from_secs(5)).await;
-        let client = Client::new(cert_path, "user2".to_string()).await?;
+        let client = Client::<moqt::QUIC>::new(cert_path, "user2".to_string()).await?;
         client.publish_namespace("room2/user2".to_string()).await;
         client.subscribe_namespace("room1".to_string()).await;
         client
