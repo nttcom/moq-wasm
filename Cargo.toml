@@ -9,4 +9,5 @@ members = [
     'relay',
     'client',
     'integration-test',
+    'gstreamer-client-sample'
 ]
