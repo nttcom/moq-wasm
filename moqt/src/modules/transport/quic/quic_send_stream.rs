@@ -17,7 +17,7 @@ impl TransportSendStream for QUICSendStream {
         Ok(self.send_stream.write_all(buffer).await?)
     }
 
-    fn close(&mut self) -> anyhow::Result<()> {
+    async fn close(&mut self) -> anyhow::Result<()> {
         Ok(self.send_stream.finish()?)
     }
 }
