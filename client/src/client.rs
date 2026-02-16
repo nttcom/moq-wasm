@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::bail;
-use moqt::{DatagramField, Endpoint, QUIC, Session, SubscribeOption};
+use moqt::{DatagramField, Endpoint, TransportProtocol, Session, SubscribeOption};
 
 use crate::stream_runner::StreamTaskRunner;
 
@@ -18,20 +18,18 @@ use crate::stream_runner::StreamTaskRunner;
 // We can remove the dead code when we have implemented the test cases that use these functionalities.
 
 #[allow(dead_code)]
-pub struct Client {
-    // pub(crate) -> pub
+pub struct Client<T: TransportProtocol> {
     label: String,
     join_handle: tokio::task::JoinHandle<()>,
     track_alias: Arc<AtomicU64>,
-    publisher: Arc<moqt::Publisher<moqt::QUIC>>,
-    subscriber: Arc<moqt::Subscriber<moqt::QUIC>>,
+    publisher: Arc<moqt::Publisher<T>>,
+    subscriber: Arc<moqt::Subscriber<T>>,
     runner: StreamTaskRunner,
 }
 
-impl Client {
+impl<T: TransportProtocol> Client<T> {
     pub async fn new(cert_path: String, label: String) -> anyhow::Result<Self> {
-        // pub(crate) -> pub
-        let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
+        let endpoint = Endpoint::<T>::create_client_with_custom_cert(0, &cert_path)?;
         let url = url::Url::from_str("moqt://localhost:4434")?; // ここも変更
         let host = url.host_str().unwrap();
         let remote_address = (host, url.port().unwrap_or(4433))
@@ -71,8 +69,8 @@ impl Client {
     pub fn create_receiver(
         // pub(crate) -> pub
         label: String,
-        publisher: Arc<moqt::Publisher<moqt::QUIC>>,
-        session: Session<moqt::QUIC>,
+        publisher: Arc<moqt::Publisher<T>>,
+        session: Session<T>,
         track_alias: Arc<AtomicU64>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
@@ -225,7 +223,7 @@ impl Client {
 
     async fn create_stream(
         label: String,
-        publisher: &moqt::Publisher<moqt::QUIC>,
+        publisher: &moqt::Publisher<T>,
         publication: moqt::PublishedResource,
         runner: &StreamTaskRunner,
     ) {
@@ -275,7 +273,7 @@ impl Client {
     #[allow(dead_code)]
     async fn create_datagram(
         label: String,
-        publisher: &moqt::Publisher<moqt::QUIC>,
+        publisher: &moqt::Publisher<T>,
         publication: moqt::PublishedResource,
         runner: &StreamTaskRunner,
     ) {
@@ -370,7 +368,7 @@ impl Client {
     }
 }
 
-impl Drop for Client {
+impl<T: TransportProtocol> Drop for Client<T> {
     fn drop(&mut self) {
         tracing::info!("Client dropped.");
         self.join_handle.abort();
