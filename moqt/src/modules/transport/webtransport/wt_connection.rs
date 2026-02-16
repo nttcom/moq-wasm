@@ -21,30 +21,68 @@ impl TransportConnection for WtConnection {
     type ReceiveStream = WtReceiveStream;
 
     fn id(&self) -> usize {
-        todo!("WebTransport connection id not yet implemented")
+        self.connection.stable_id()
     }
 
     async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
-        todo!("WebTransport open_bi not yet implemented")
+        let (send, recv) = self.connection.open_bi().await?.await?;
+        let send_stream = WtSendStream {
+            stable_id: self.connection.stable_id(),
+            stream_id: recv.id().into_u64(),
+            send_stream: send,
+        };
+        let receive_stream = WtReceiveStream {
+            stable_id: self.connection.stable_id(),
+            stream_id: recv.id().into_u64(),
+            recv_stream: recv,
+        };
+        Ok((send_stream, receive_stream))
     }
 
     async fn accept_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
-        todo!("WebTransport accept_bi not yet implemented")
+        let (send, recv) = self.connection.accept_bi().await?;
+        let send_stream = WtSendStream {
+            stable_id: self.connection.stable_id(),
+            stream_id: recv.id().into_u64(),
+            send_stream: send,
+        };
+        let receive_stream = WtReceiveStream {
+            stable_id: self.connection.stable_id(),
+            stream_id: recv.id().into_u64(),
+            recv_stream: recv,
+        };
+        Ok((send_stream, receive_stream))
     }
 
     async fn open_uni(&self) -> anyhow::Result<Self::SendStream> {
-        todo!("WebTransport open_uni not yet implemented")
+        let send = self.connection.open_uni().await?.await?;
+        Ok(WtSendStream {
+            stable_id: self.connection.stable_id(),
+            stream_id: send.id().into_u64(),
+            send_stream: send,
+        })
     }
 
     async fn accept_uni(&self) -> anyhow::Result<Self::ReceiveStream> {
-        todo!("WebTransport accept_uni not yet implemented")
+        let recv = self.connection.accept_uni().await?;
+        Ok(WtReceiveStream {
+            stable_id: self.connection.stable_id(),
+            stream_id: recv.id().into_u64(),
+            recv_stream: recv,
+        })
     }
 
-    fn send_datagram(&self, _bytes: bytes::BytesMut) -> anyhow::Result<()> {
-        todo!("WebTransport send_datagram not yet implemented")
+    fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<()> {
+        Ok(self.connection.send_datagram(bytes)?)
     }
 
     async fn receive_datagram(&self) -> anyhow::Result<bytes::BytesMut> {
-        todo!("WebTransport receive_datagram not yet implemented")
+        match self.connection.receive_datagram().await {
+            Ok(datagram) => Ok(bytes::BytesMut::from(&datagram[..])),
+            Err(e) => {
+                tracing::error!("Failed to receive datagram: {:?}", e);
+                anyhow::bail!("Failed to receive datagram: {:?}", e)
+            }
+        }
     }
 }

@@ -155,4 +155,57 @@ mod integration_test {
 
         Ok(())
     }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn wt_publish_namespace_already_subscribe_namespace() -> Result<()> {
+        let port_num = get_port();
+        let (relay_shutdown_tx, relay_shutdown_rx) = oneshot::channel();
+        let relay_handle = activate_server::<moqt::WEBTRANSPORT>(port_num, relay_shutdown_rx);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // Client Aのインスタンス化と名前空間の公開
+        let client_a = Client::<moqt::WEBTRANSPORT>::new(
+            get_cert_path().to_str().unwrap().to_string(),
+            port_num,
+            "Client A".to_string(),
+            None,
+        )
+        .await?;
+        let publish_namespace_a_result =
+            client_a.publish_namespace("room/member".to_string()).await;
+        assert!(
+            publish_namespace_a_result.is_ok(),
+            "Client A publish_namespace should return Ok"
+        );
+
+        // Client Bのインスタンス化と名前空間の購読
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let client_b = Client::<moqt::WEBTRANSPORT>::new(
+            get_cert_path().to_str().unwrap().to_string(),
+            port_num,
+            "Client B".to_string(),
+            Some(tx),
+        )
+        .await?;
+        let subscribe_namespace_b_result = client_b.subscribe_namespace("room".to_string()).await;
+        assert!(
+            subscribe_namespace_b_result.is_ok(),
+            "Client B subscribe_namespace should return Ok"
+        );
+
+        // Client BがPublishNamespace通知を受け取ったことをアサート
+        let received_namespace = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        assert!(received_namespace.is_ok(), "Did not receive notification in time");
+        assert_eq!(
+            received_namespace.unwrap().unwrap(),
+            "room/member".to_string()
+        );
+
+        // relayサーバーをシャットダウン
+        let _ = relay_shutdown_tx.send(());
+        relay_handle.await?;
+
+        Ok(())
+    }
 }
