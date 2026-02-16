@@ -18,8 +18,40 @@ pub struct WtConnectionCreator {
 impl TransportConnectionCreator for WtConnectionCreator {
     type Connection = WtConnection;
 
-    fn client(_port_num: u16, _verify_certificate: bool) -> anyhow::Result<Self> {
-        todo!("WebTransport client not yet implemented")
+    fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
+        use wtransport::tls::rustls;
+
+        let tls_config = if verify_certificate {
+            let mut roots = rustls::RootCertStore::empty();
+            for cert in rustls_native_certs::load_native_certs().unwrap() {
+                roots.add(cert).unwrap();
+            }
+            rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth()
+        } else {
+            // Currently quinn and wtransport share the same rustls version,
+            // so we reuse the QUIC SkipVerification to avoid duplication.
+            // If their rustls versions diverge, this may need a separate implementation.
+            rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(std::sync::Arc::new(
+                    crate::modules::transport::quic::skip_certd_validation::SkipVerification,
+                ))
+                .with_no_client_auth()
+        };
+
+        let config = wtransport::ClientConfig::builder()
+            .with_bind_default()
+            .with_custom_tls(tls_config)
+            .build();
+
+        let endpoint = wtransport::Endpoint::client(config)?;
+        tracing::info!("Client ready! for WebTransport port: {}", port_num);
+
+        Ok(WtConnectionCreator {
+            endpoint: WtEndpoint::Client(endpoint),
+        })
     }
 
     fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
