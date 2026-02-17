@@ -1,16 +1,23 @@
 use bytes::Bytes;
-use gstreamer::prelude::*;
-use gstreamer_app::prelude::GstBinExt;
+use gstreamer::{
+    glib::object::Cast,
+    prelude::{ElementExt, GstBinExt},
+};
+
+pub(super) struct SendData {
+    pub group_id: u64,
+    pub object_id: u64,
+    pub payload: Bytes,
+}
 
 pub(crate) struct GStreamerSender {
-    gst_pipeline: gstreamer::Bin,
+    pipeline: gstreamer::Bin,
     _appsink: gstreamer_app::AppSink,
 }
 
 impl GStreamerSender {
-    pub(crate) fn new(
-        event_sender: tokio::sync::mpsc::Sender<(u64, Bytes)>,
-    ) -> anyhow::Result<Self> {
+    pub(crate) async fn new(data_sender: tokio::sync::mpsc::Sender<SendData>) -> Self {
+        gstreamer::init().unwrap();
         let pipeline_str = "videotestsrc ! videoconvert ! x264enc key-int-max=30 ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream ! appsink name=sink";
         let pipeline = gstreamer::parse::launch(pipeline_str).unwrap();
         let pipeline = pipeline.downcast::<gstreamer::Bin>().unwrap();
@@ -19,54 +26,54 @@ impl GStreamerSender {
             .unwrap()
             .dynamic_cast::<gstreamer_app::AppSink>()
             .unwrap();
+        Self::set_appsink_callbacks(&appsink, data_sender);
 
-        let mut id = 0;
+        Self {
+            pipeline,
+            _appsink: appsink,
+        }
+    }
+
+    fn set_appsink_callbacks(
+        appsink: &gstreamer_app::AppSink,
+        sender: tokio::sync::mpsc::Sender<SendData>,
+    ) {
+        let mut group_id = 0;
+        let mut object_id = 0;
         appsink.set_callbacks(
             gstreamer_app::AppSinkCallbacks::builder()
-                .new_sample(move |appsink| {
+                .new_sample(move |sink| {
                     tracing::info!("New sample received from appsink");
-                    let sample = appsink
-                        .pull_sample()
-                        .map_err(|_| gstreamer::FlowError::Eos)?;
+                    let sample = sink.pull_sample().map_err(|_| gstreamer::FlowError::Eos)?;
                     let buffer = sample.buffer().ok_or(gstreamer::FlowError::Error)?;
-
-                    // キーフレーム（Iフレーム）かどうか判定
                     let is_keyframe = !buffer.flags().contains(gstreamer::BufferFlags::DELTA_UNIT);
 
                     if is_keyframe {
-                        id += 1;
                         println!("🔑 key frame");
+                        group_id += 1;
+                        object_id = 0;
                     } else {
                         println!("📹 delta frame (P/B frame)");
+                        object_id += 1;
                     }
 
                     let map = buffer
                         .map_readable()
                         .map_err(|_| gstreamer::FlowError::Error)?;
-                    match event_sender.try_send((id, Bytes::copy_from_slice(map.as_slice()))) {
-                        Ok(_) => tracing::info!("Sent buffer for group_id: {}", id),
-                        Err(e) => {
-                            tracing::error!("Failed to send buffer for group_id: {}: {}", id, e)
-                        }
-                    }
+
+                    let send_data = SendData {
+                        group_id,
+                        object_id,
+                        payload: Bytes::copy_from_slice(map.as_slice()),
+                    };
+                    let _ = sender.try_send(send_data);
                     Ok(gstreamer::FlowSuccess::Ok)
                 })
                 .build(),
         );
-
-        Ok(Self {
-            gst_pipeline: pipeline,
-            _appsink: appsink,
-        })
     }
 
-    pub(crate) fn start(&self) -> anyhow::Result<()> {
-        self.gst_pipeline.set_state(gstreamer::State::Playing)?;
-        Ok(())
-    }
-
-    pub(crate) fn stop(&self) -> anyhow::Result<()> {
-        self.gst_pipeline.set_state(gstreamer::State::Null)?;
-        Ok(())
+    pub(crate) fn start(&self) {
+        self.pipeline.set_state(gstreamer::State::Playing).unwrap();
     }
 }
