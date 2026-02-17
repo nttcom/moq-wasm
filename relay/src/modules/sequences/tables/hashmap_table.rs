@@ -137,7 +137,7 @@ impl Table for HashMapTable {
             .iter()
             .find(|(_, h)| h.track_namespace() == track_namespace && h.track_name() == track_name)
         {
-            Some((session_id.clone(), handler.clone()))
+            Some((*session_id, handler.clone()))
         } else {
             None
         }

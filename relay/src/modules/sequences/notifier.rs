@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::modules::{
     core::{handler::publish::SubscribeOption, subscription::Subscription},
     enums::{FilterType, GroupOrder},
-    repositories::session_repository::SessionRepository,
+    session_repository::SessionRepository,
 };
 
 pub(crate) struct Notifier {
