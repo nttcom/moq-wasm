@@ -4,7 +4,7 @@ use moqt::{Endpoint, QUIC};
 use uuid::Uuid;
 
 use crate::modules::{
-    enums::MOQTMessageReceived, repositories::session_repository::SessionRepository,
+    enums::MOQTMessageReceived, session_repository::SessionRepository,
 };
 
 pub struct SessionHandler {

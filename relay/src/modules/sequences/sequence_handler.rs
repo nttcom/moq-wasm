@@ -7,11 +7,11 @@ use crate::modules::{
     },
     enums::{ContentExists, FilterType},
     event_resolver::stream_binder::StreamBinder,
-    repositories::session_repository::SessionRepository,
     sequences::{
         notifier::Notifier,
         tables::{hashmap_table::HashMapTable, table::Table},
     },
+    session_repository::SessionRepository,
     types::SessionId,
 };
 
@@ -226,7 +226,8 @@ impl SequenceHandler {
                     subscription.expires(),
                     subscription.content_exists(),
                 )
-                .await.is_ok()
+                .await
+                .is_ok()
             {
                 tracing::info!("send `SUBSCRIBE_OK` ok");
                 let track_alias = subscription.track_alias();

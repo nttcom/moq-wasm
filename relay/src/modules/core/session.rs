@@ -6,15 +6,19 @@ use crate::modules::core::{
 
 #[async_trait]
 pub(crate) trait Session: 'static + Send + Sync {
-    fn new_publisher_subscriber_pair(&self) -> (Box<dyn Publisher>, Box<dyn Subscriber>);
+    fn as_publisher(&self) -> Box<dyn Publisher>;
+    fn as_subscriber(&self) -> Box<dyn Subscriber>;
     async fn receive_session_event(&self) -> anyhow::Result<SessionEvent>;
 }
 
 #[async_trait]
 impl<T: moqt::TransportProtocol> Session for moqt::Session<T> {
-    fn new_publisher_subscriber_pair(&self) -> (Box<dyn Publisher>, Box<dyn Subscriber>) {
-        let (publisher, subscriber) = self.create_publisher_subscriber_pair();
-        (Box::new(publisher), Box::new(subscriber))
+    fn as_publisher(&self) -> Box<dyn Publisher> {
+        Box::new(self.create_publisher())
+    }
+
+    fn as_subscriber(&self) -> Box<dyn Subscriber> {
+        Box::new(self.create_subscriber())
     }
 
     async fn receive_session_event(&self) -> anyhow::Result<SessionEvent> {
