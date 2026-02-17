@@ -3,7 +3,7 @@ pub(crate) mod enums;
 pub(crate) mod event_handler;
 pub(crate) mod event_resolver;
 pub(crate) mod relaies;
-pub(crate) mod repositories;
+pub(crate) mod session_repository;
 pub(crate) mod sequences;
 pub(crate) mod session_handler;
 pub(crate) mod thread_manager;

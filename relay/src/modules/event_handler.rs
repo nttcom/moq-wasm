@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::modules::{
-    enums::MOQTMessageReceived, repositories::session_repository::SessionRepository,
-    sequences::sequence_handler::SequenceHandler,
+    enums::MOQTMessageReceived, sequences::sequence_handler::SequenceHandler,
+    session_repository::SessionRepository,
 };
 
 pub(crate) struct EventHandler {

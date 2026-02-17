@@ -6,7 +6,6 @@ use crate::modules::{
     core::{publisher::Publisher, session::Session, subscriber::Subscriber},
     enums::MOQTMessageReceived,
     event_resolver::moqt_session_event_resolver::MOQTSessionEventResolver,
-    repositories::subscriber_repository::SubscriberRepository,
     thread_manager::ThreadManager,
     types::SessionId,
 };
@@ -14,8 +13,6 @@ use crate::modules::{
 pub(crate) struct SessionRepository {
     thread_manager: ThreadManager,
     sessions: DashMap<SessionId, Arc<dyn Session>>,
-    publishers: DashMap<SessionId, Arc<dyn Publisher>>,
-    subscriber_repo: SubscriberRepository,
 }
 
 impl SessionRepository {
@@ -23,8 +20,6 @@ impl SessionRepository {
         Self {
             thread_manager: ThreadManager::new(),
             sessions: DashMap::new(),
-            publishers: DashMap::new(),
-            subscriber_repo: SubscriberRepository::new(),
         }
     }
 
@@ -35,12 +30,8 @@ impl SessionRepository {
         event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
     ) {
         let arc_session: Arc<dyn Session> = Arc::from(session);
-        let (publisher, subscriber) = arc_session.new_publisher_subscriber_pair();
-        let arc_publisher = Arc::from(publisher);
         self.start_receive(session_id, Arc::downgrade(&arc_session), event_sender);
         self.sessions.insert(session_id, arc_session);
-        self.publishers.insert(session_id, arc_publisher);
-        self.subscriber_repo.add(session_id, subscriber).await;
     }
 
     fn start_receive(
@@ -69,7 +60,7 @@ impl SessionRepository {
                 }
             })
             .unwrap();
-        self.thread_manager.add_join_handle(join_handle);
+        self.thread_manager.add(session_id, join_handle);
     }
 
     pub(crate) async fn get_session(&self, session_id: SessionId) -> Option<Arc<dyn Session>> {
@@ -80,14 +71,17 @@ impl SessionRepository {
     pub(crate) async fn get_subscriber(
         &self,
         session_id: SessionId,
-    ) -> Option<Arc<dyn Subscriber>> {
-        self.subscriber_repo.get(session_id).await
+    ) -> Option<Box<dyn Subscriber>> {
+        if let Some(session) = self.sessions.get(&session_id) {
+            Some(session.value().as_subscriber())
+        } else {
+            None
+        }
     }
 
-    pub(crate) async fn get_publisher(&self, session_id: SessionId) -> Option<Arc<dyn Publisher>> {
-        let publishers = self.publishers.get(&session_id);
-        if let Some(publisher) = publishers {
-            Some(publisher.clone())
+    pub(crate) async fn get_publisher(&self, session_id: SessionId) -> Option<Box<dyn Publisher>> {
+        if let Some(session) = self.sessions.get(&session_id) {
+            Some(session.value().as_publisher())
         } else {
             None
         }
