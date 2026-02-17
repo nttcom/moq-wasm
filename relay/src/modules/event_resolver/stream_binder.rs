@@ -6,7 +6,7 @@ use crate::modules::{
     core::{published_resource::PublishedResource, subscription::Subscription},
     event_resolver::stream_runner::StreamTaskRunner,
     relaies::{relay::Relay, relay_manager::RelayManager, relay_properties::RelayProperties},
-    repositories::session_repository::SessionRepository,
+    session_repository::SessionRepository,
 };
 
 pub(crate) struct StreamBinder {
