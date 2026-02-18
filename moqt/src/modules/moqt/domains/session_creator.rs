@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use crate::modules::moqt::data_plane::streams::stream::stream_receiver::StreamReceiver;
 use crate::modules::moqt::data_plane::streams::stream::stream_sender::StreamSender;
 use crate::modules::moqt::domains::session::Session;
-use crate::modules::moqt::domains::session_context::SessionContext;
+use crate::modules::moqt::domains::session_context_factory::SessionContextFactory;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::transport::transport_connection::TransportConnection;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
@@ -27,7 +27,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let mut moqt_receiver = StreamReceiver { receive_stream };
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let inner =
-            SessionContext::<T>::client(transport_conn, moqt_sender, &mut moqt_receiver, sender)
+            SessionContextFactory::client(transport_conn, moqt_sender, &mut moqt_receiver, sender)
                 .await
                 .inspect(|_| tracing::info!("Session is created."))?;
         Ok(Session::<T>::new(moqt_receiver, inner, receiver))
@@ -41,7 +41,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let mut moqt_receiver = StreamReceiver { receive_stream };
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let inner =
-            SessionContext::<T>::server(transport_conn, moqt_sender, &mut moqt_receiver, sender)
+            SessionContextFactory::server(transport_conn, moqt_sender, &mut moqt_receiver, sender)
                 .await
                 .inspect(|_| tracing::info!("Session is established."))?;
         Ok(Session::<T>::new(moqt_receiver, inner, receiver))
