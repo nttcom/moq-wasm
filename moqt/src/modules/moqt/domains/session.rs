@@ -37,20 +37,20 @@ impl<T: TransportProtocol> Session<T> {
         }
     }
 
-    pub fn create_publisher(&self) -> Publisher<T> {
+    pub fn publisher(&self) -> Publisher<T> {
         Publisher::<T> {
             session: self.inner.clone(),
         }
     }
 
-    pub fn create_subscriber(&self) -> Subscriber<T> {
+    pub fn subscriber(&self) -> Subscriber<T> {
         Subscriber::<T> {
             session: self.inner.clone(),
         }
     }
 
-    pub fn create_publisher_subscriber_pair(&self) -> (Publisher<T>, Subscriber<T>) {
-        (self.create_publisher(), self.create_subscriber())
+    pub fn publisher_subscriber_pair(&self) -> (Publisher<T>, Subscriber<T>) {
+        (self.publisher(), self.subscriber())
     }
 
     pub async fn receive_event(&self) -> anyhow::Result<SessionEvent<T>> {
