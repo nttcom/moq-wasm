@@ -14,11 +14,11 @@ pub(crate) trait Session: 'static + Send + Sync {
 #[async_trait]
 impl<T: moqt::TransportProtocol> Session for moqt::Session<T> {
     fn as_publisher(&self) -> Box<dyn Publisher> {
-        Box::new(self.create_publisher())
+        Box::new(self.publisher())
     }
 
     fn as_subscriber(&self) -> Box<dyn Subscriber> {
-        Box::new(self.create_subscriber())
+        Box::new(self.subscriber())
     }
 
     async fn receive_session_event(&self) -> anyhow::Result<SessionEvent> {
