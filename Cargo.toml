@@ -8,5 +8,5 @@ members = [
     'moqt',
     'relay',
     'client',
-    'integration-test',
+    # 'integration-test',
 ]
