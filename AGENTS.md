@@ -1,12 +1,12 @@
-# Claude Configuration
+# Codex Configuration
 
 - 日本語で回答してください
 
 ## ブランチ戦略
 
-- ブランチ名のプレフィックス: Claude Code が作業するブランチ名の prefix に claude/ をつける
+- ブランチ名のプレフィックス: Claude Code が作業するブランチ名の prefix に codex/ をつける
   - 作業しているブランチ名のprefixが異なる場合はrenameしてください
-- Pull Request のラベル: Claude Code が作成したコードの Pull Request に claude code のラベルをつける
+- Pull Request のラベル: Claude Code が作成したコードの Pull Request に codex のラベルをつける
 
 ## プロトコル仕様
 

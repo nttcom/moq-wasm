@@ -13,10 +13,12 @@ permissions:
 jobs:
   copyright-check:
     runs-on: ubuntu-latest
-    # ブランチ名が claude/** または ラベルが claude code の場合のみ実行
+    # ブランチ名が claude/** / codex/** または ラベルが claude code / codex の場合のみ実行
     if: |
       startsWith(github.head_ref, 'claude/') ||
-      contains(github.event.pull_request.labels.*.name, 'claude code')
+      startsWith(github.head_ref, 'codex/') ||
+      contains(github.event.pull_request.labels.*.name, 'claude code') ||
+      contains(github.event.pull_request.labels.*.name, 'codex')
     steps:
       - name: Run copyright check
         uses: nttcom-ic/CodeCopyrightChecker@v1
