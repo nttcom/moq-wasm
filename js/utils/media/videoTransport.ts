@@ -1,6 +1,7 @@
 import type { MOQTClient } from '../../pkg/moqt_client_wasm'
 import { MediaTransportState } from './transportState'
 import { buildLocHeader, arrayBufferToUint8Array, type LocHeader } from './loc'
+import { monotonicUnixMicros } from './clock'
 
 export type VideoChunkSender = (
   trackAlias: bigint,
@@ -15,6 +16,7 @@ export type VideoChunkSender = (
 export interface VideoChunkSendOptions {
   chunk: EncodedVideoChunk
   metadata: EncodedVideoChunkMetadata | undefined
+  captureTimestampMicros?: number
   trackAliases: bigint[]
   publisherPriority: number
   client: MOQTClient
@@ -25,6 +27,7 @@ export interface VideoChunkSendOptions {
 export async function sendVideoChunkViaMoqt({
   chunk,
   metadata,
+  captureTimestampMicros,
   trackAliases,
   publisherPriority,
   client,
@@ -42,8 +45,12 @@ export async function sendVideoChunkViaMoqt({
   const decoderConfig = metadata?.decoderConfig as any
   const configBytes = arrayBufferToUint8Array(decoderConfig?.description)
   const includeConfig = chunk.type === 'key' || shouldIncludeCodec
+  const resolvedCaptureTimestampMicros =
+    typeof captureTimestampMicros === 'number' && Number.isFinite(captureTimestampMicros)
+      ? Math.round(captureTimestampMicros)
+      : monotonicUnixMicros()
   const locHeader = buildLocHeader({
-    captureTimestampMicros: Date.now() * 1000,
+    captureTimestampMicros: resolvedCaptureTimestampMicros,
     videoConfig: includeConfig ? configBytes : undefined
   })
 

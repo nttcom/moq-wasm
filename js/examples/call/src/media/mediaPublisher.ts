@@ -5,12 +5,15 @@ import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/
 import { sendAudioChunkViaMoqt } from '../../../../utils/media/audioTransport'
 import { serializeChunk } from '../../../../utils/media/chunk'
 import type { LocHeader } from '../../../../utils/media/loc'
-import { KEYFRAME_INTERVAL } from '../../../../utils/media/constants'
 import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 import { DEFAULT_AUDIO_ENCODING_SETTINGS, type AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 import { buildCallCatalogJson, getDefaultCallCatalogTracks } from './callCatalog'
-import type { CallCatalogTrack } from '../types/catalog'
+import {
+  DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
+  DEFAULT_VIDEO_KEYFRAME_INTERVAL,
+  type CallCatalogTrack
+} from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 
 type LocalStreamHandler = (stream: MediaStream | null) => void
@@ -47,6 +50,10 @@ type AudioTrackEncoderContext = {
   track: MediaStreamTrack
   worker: Worker
   config: AudioEncodingSettings
+  streamUpdateMode: 'single' | 'interval'
+  streamUpdateIntervalSeconds: number
+  streamUpdateTimer: ReturnType<typeof setInterval> | null
+  streamUpdateInFlight: boolean
   transportState: MediaTransportState
   sendQueue: Promise<void>
   activeAliases: Set<string>
@@ -110,7 +117,7 @@ export class MediaPublisher {
     await this.broadcastCatalog()
   }
 
-  resolveTrackRole(trackName: string): 'video' | 'audio' | null {
+  resolveTrackRole(trackName: string): CallCatalogTrack['role'] | null {
     const track = this.catalogTracks.find((entry) => entry.name === trackName)
     return track?.role ?? null
   }
@@ -319,6 +326,7 @@ export class MediaPublisher {
     const source: VideoSource = isScreenShareTrackName(trackName) ? 'screenshare' : 'camera'
     const fallback = source === 'screenshare' ? this.screenShareEncodingSettings : this.videoEncodingSettings
     const settings = this.buildVideoEncodingFromTrack(track, fallback)
+    const keyframeInterval = this.normalizeTrackKeyframeInterval(track.keyframeInterval)
 
     const context = this.videoTrackContexts.get(trackName)
     if (context) {
@@ -326,6 +334,7 @@ export class MediaPublisher {
         context.config = settings
         context.worker.postMessage({ type: 'encoderConfig', config: settings })
       }
+      context.worker.postMessage({ type: 'keyframeInterval', keyframeInterval })
       this.restartVideoTrackContext(trackName)
       return
     }
@@ -340,12 +349,14 @@ export class MediaPublisher {
       return
     }
     const settings = this.buildAudioEncodingFromTrack(track, this.audioEncodingSettings)
+    const streamUpdateSettings = this.resolveAudioStreamUpdateSettingsForTrack(track)
     const context = this.audioTrackContexts.get(trackName)
     if (context) {
       if (!this.isSameAudioEncoding(context.config, settings)) {
         context.config = settings
         context.worker.postMessage({ type: 'config', config: this.buildAudioEncoderConfig(settings) })
       }
+      this.applyAudioStreamUpdateSettingsToContext(context, streamUpdateSettings)
       this.restartAudioTrackContext(trackName)
       return
     }
@@ -384,15 +395,17 @@ export class MediaPublisher {
 
     for (const track of desiredTracks) {
       const config = this.buildVideoEncodingFromTrack(track, fallback)
+      const keyframeInterval = this.normalizeTrackKeyframeInterval(track.keyframeInterval)
       const existing = this.videoTrackContexts.get(track.name)
       if (existing) {
         if (!this.isSameVideoEncoding(existing.config, config)) {
           existing.config = config
           existing.worker.postMessage({ type: 'encoderConfig', config })
         }
+        existing.worker.postMessage({ type: 'keyframeInterval', keyframeInterval })
         continue
       }
-      this.createVideoTrackContext(source, track.name, sourceTrack, config)
+      this.createVideoTrackContext(source, track.name, sourceTrack, config, keyframeInterval)
     }
   }
 
@@ -413,15 +426,17 @@ export class MediaPublisher {
 
     for (const track of desiredTracks) {
       const config = this.buildAudioEncodingFromTrack(track, this.audioEncodingSettings)
+      const streamUpdateSettings = this.resolveAudioStreamUpdateSettingsForTrack(track)
       const existing = this.audioTrackContexts.get(track.name)
       if (existing) {
         if (!this.isSameAudioEncoding(existing.config, config)) {
           existing.config = config
           existing.worker.postMessage({ type: 'config', config: this.buildAudioEncoderConfig(config) })
         }
+        this.applyAudioStreamUpdateSettingsToContext(existing, streamUpdateSettings)
         continue
       }
-      this.createAudioTrackContext(track.name, sourceTrack, config)
+      this.createAudioTrackContext(track.name, sourceTrack, config, streamUpdateSettings)
     }
   }
 
@@ -429,7 +444,8 @@ export class MediaPublisher {
     source: VideoSource,
     trackName: string,
     sourceTrack: MediaStreamTrack,
-    config: VideoEncodingSettings
+    config: VideoEncodingSettings,
+    keyframeInterval: number
   ): void {
     const track = sourceTrack.clone()
     const processor = new MediaStreamTrackProcessor({ track })
@@ -451,10 +467,15 @@ export class MediaPublisher {
 
     context.worker.onmessage = async (event: MessageEvent) => {
       const data = event.data as
-        | { type: 'chunk'; chunk: EncodedVideoChunk; metadata: EncodedVideoChunkMetadata | undefined }
+        | {
+            type: 'chunk'
+            chunk: EncodedVideoChunk
+            metadata: EncodedVideoChunkMetadata | undefined
+            captureTimestampMicros?: number
+          }
         | { type: 'bitrate'; kbps: number }
         | { type: 'configError'; reason: string; config: any }
-        | { chunk: EncodedVideoChunk; metadata: EncodedVideoChunkMetadata | undefined }
+        | { chunk: EncodedVideoChunk; metadata: EncodedVideoChunkMetadata | undefined; captureTimestampMicros?: number }
 
       if ('type' in data && data.type === 'bitrate') {
         this.videoBitrateByTrackName.set(trackName, data.kbps)
@@ -474,11 +495,12 @@ export class MediaPublisher {
 
       const chunkData = 'type' in data ? data.chunk : data.chunk
       const metadata = 'type' in data ? data.metadata : data.metadata
-      this.handleVideoTrackChunk(context, chunkData, metadata)
+      const captureTimestampMicros = 'type' in data ? data.captureTimestampMicros : data.captureTimestampMicros
+      this.handleVideoTrackChunk(context, chunkData, metadata, captureTimestampMicros)
     }
 
     context.worker.postMessage({ type: 'encoderConfig', config })
-    context.worker.postMessage({ type: 'keyframeInterval', keyframeInterval: KEYFRAME_INTERVAL })
+    context.worker.postMessage({ type: 'keyframeInterval', keyframeInterval })
     context.worker.postMessage({ type: 'videoStream', videoStream: readable }, [readable])
 
     this.videoTrackContexts.set(trackName, context)
@@ -487,7 +509,8 @@ export class MediaPublisher {
   private createAudioTrackContext(
     trackName: string,
     sourceTrack: MediaStreamTrack,
-    config: AudioEncodingSettings
+    config: AudioEncodingSettings,
+    streamUpdateSettings: { mode: 'single' | 'interval'; intervalSeconds: number }
   ): void {
     const track = sourceTrack.clone()
     const processor = new MediaStreamTrackProcessor({ track })
@@ -500,6 +523,10 @@ export class MediaPublisher {
       worker: new Worker(new URL('../../../../utils/media/encoders/audioEncoder.ts', import.meta.url), {
         type: 'module'
       }),
+      streamUpdateMode: streamUpdateSettings.mode,
+      streamUpdateIntervalSeconds: streamUpdateSettings.intervalSeconds,
+      streamUpdateTimer: null,
+      streamUpdateInFlight: false,
       transportState: new MediaTransportState(),
       sendQueue: Promise.resolve(),
       activeAliases: new Set<string>()
@@ -507,10 +534,15 @@ export class MediaPublisher {
 
     context.worker.onmessage = async (event: MessageEvent) => {
       const data = event.data as
-        | { type: 'chunk'; chunk: EncodedAudioChunk; metadata: EncodedAudioChunkMetadata | undefined }
+        | {
+            type: 'chunk'
+            chunk: EncodedAudioChunk
+            metadata: EncodedAudioChunkMetadata | undefined
+            captureTimestampMicros?: number
+          }
         | { type: 'bitrate'; media: 'audio'; kbps: number }
         | { type: 'configError'; media: 'audio'; reason: string; config: any }
-        | { chunk: EncodedAudioChunk; metadata: EncodedAudioChunkMetadata | undefined }
+        | { chunk: EncodedAudioChunk; metadata: EncodedAudioChunkMetadata | undefined; captureTimestampMicros?: number }
 
       if ('type' in data && data.type === 'bitrate') {
         this.audioBitrateByTrackName.set(trackName, data.kbps)
@@ -533,11 +565,13 @@ export class MediaPublisher {
 
       const chunkData = 'type' in data ? data.chunk : data.chunk
       const metadata = 'type' in data ? data.metadata : data.metadata
-      this.handleAudioTrackChunk(context, chunkData, metadata)
+      const captureTimestampMicros = 'type' in data ? data.captureTimestampMicros : data.captureTimestampMicros
+      this.handleAudioTrackChunk(context, chunkData, metadata, captureTimestampMicros)
     }
 
     context.worker.postMessage({ type: 'config', config: this.buildAudioEncoderConfig(config) })
     context.worker.postMessage({ audioStream: readable }, [readable])
+    this.configureAudioStreamUpdateTimerForContext(context)
 
     this.audioTrackContexts.set(trackName, context)
   }
@@ -559,6 +593,7 @@ export class MediaPublisher {
     if (!context) {
       return
     }
+    this.stopAudioStreamUpdateTimerForContext(context)
     context.worker.terminate()
     context.track.stop()
     this.audioTrackContexts.delete(trackName)
@@ -606,8 +641,9 @@ export class MediaPublisher {
       return
     }
     const { source, config } = context
+    const keyframeInterval = this.getKeyframeIntervalForTrackName(trackName)
     this.stopVideoTrackContext(trackName)
-    this.createVideoTrackContext(source, trackName, sourceTrack, config)
+    this.createVideoTrackContext(source, trackName, sourceTrack, config, keyframeInterval)
   }
 
   private restartAudioTrackContext(trackName: string): void {
@@ -619,15 +655,19 @@ export class MediaPublisher {
     if (!sourceTrack) {
       return
     }
-    const { config } = context
+    const { config, streamUpdateMode, streamUpdateIntervalSeconds } = context
     this.stopAudioTrackContext(trackName)
-    this.createAudioTrackContext(trackName, sourceTrack, config)
+    this.createAudioTrackContext(trackName, sourceTrack, config, {
+      mode: streamUpdateMode,
+      intervalSeconds: streamUpdateIntervalSeconds
+    })
   }
 
   private handleVideoTrackChunk(
     context: VideoTrackEncoderContext,
     chunk: EncodedVideoChunk,
-    metadata: EncodedVideoChunkMetadata | undefined
+    metadata: EncodedVideoChunkMetadata | undefined,
+    captureTimestampMicros?: number
   ): void {
     const aliases = this.collectAliasesForTrack(context.trackName, context.activeAliases, (alias) => {
       context.transportState.resetAlias(alias)
@@ -666,6 +706,7 @@ export class MediaPublisher {
         await sendVideoChunkViaMoqt({
           chunk,
           metadata,
+          captureTimestampMicros,
           trackAliases: aliases,
           publisherPriority: 0,
           client,
@@ -681,7 +722,8 @@ export class MediaPublisher {
   private handleAudioTrackChunk(
     context: AudioTrackEncoderContext,
     chunk: EncodedAudioChunk,
-    metadata: EncodedAudioChunkMetadata | undefined
+    metadata: EncodedAudioChunkMetadata | undefined,
+    captureTimestampMicros?: number
   ): void {
     const aliases = this.collectAliasesForTrack(context.trackName, context.activeAliases, (alias) => {
       context.transportState.resetAlias(alias)
@@ -699,6 +741,7 @@ export class MediaPublisher {
         await sendAudioChunkViaMoqt({
           chunk,
           metadata,
+          captureTimestampMicros,
           trackAliases: aliases,
           client,
           transportState: context.transportState
@@ -877,6 +920,104 @@ export class MediaPublisher {
     this.handlers.onEncodedAudioBitrate?.(maxKbps)
   }
 
+  private getKeyframeIntervalForTrackName(trackName: string): number {
+    const track = this.catalogTracks.find((entry) => entry.name === trackName && entry.role === 'video')
+    return this.normalizeTrackKeyframeInterval(track?.keyframeInterval)
+  }
+
+  private normalizeTrackKeyframeInterval(value: number | undefined): number {
+    return this.normalizePositiveNumber(value) ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
+  }
+
+  private resolveAudioStreamUpdateSettingsForTrack(track: CallCatalogTrack): {
+    mode: 'single' | 'interval'
+    intervalSeconds: number
+  } {
+    const mode = track.audioStreamUpdateMode === 'single' ? 'single' : DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode
+    const intervalSeconds =
+      this.normalizePositiveNumber(track.audioStreamUpdateIntervalSeconds) ??
+      DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
+    return { mode, intervalSeconds }
+  }
+
+  private applyAudioStreamUpdateSettingsToContext(
+    context: AudioTrackEncoderContext,
+    settings: { mode: 'single' | 'interval'; intervalSeconds: number }
+  ): void {
+    if (
+      context.streamUpdateMode === settings.mode &&
+      context.streamUpdateIntervalSeconds === settings.intervalSeconds
+    ) {
+      return
+    }
+    context.streamUpdateMode = settings.mode
+    context.streamUpdateIntervalSeconds = settings.intervalSeconds
+    this.configureAudioStreamUpdateTimerForContext(context)
+  }
+
+  private configureAudioStreamUpdateTimerForContext(context: AudioTrackEncoderContext): void {
+    this.stopAudioStreamUpdateTimerForContext(context)
+    if (context.streamUpdateMode !== 'interval') {
+      return
+    }
+    if (!this.audioStream) {
+      return
+    }
+    const intervalMs = context.streamUpdateIntervalSeconds * 1000
+    context.streamUpdateTimer = setInterval(() => {
+      void this.rotateAudioStreamGroupForTrackContext(context)
+    }, intervalMs)
+  }
+
+  private stopAudioStreamUpdateTimerForContext(context: AudioTrackEncoderContext): void {
+    if (context.streamUpdateTimer) {
+      clearInterval(context.streamUpdateTimer)
+      context.streamUpdateTimer = null
+    }
+  }
+
+  private async rotateAudioStreamGroupForTrackContext(context: AudioTrackEncoderContext): Promise<void> {
+    if (context.streamUpdateInFlight) {
+      return
+    }
+    context.streamUpdateInFlight = true
+    try {
+      context.sendQueue = context.sendQueue
+        .then(async () => {
+          await this.sendAudioEndOfGroupForTrackContext(context)
+          // Advancing the group resets subgroup headers and starts a fresh audio subgroup stream.
+          context.transportState.advanceAudioGroup()
+        })
+        .catch((error) => {
+          console.error(`${context.trackName} audio group rotation failed:`, error)
+        })
+      await context.sendQueue
+    } finally {
+      context.streamUpdateInFlight = false
+    }
+  }
+
+  private async sendAudioEndOfGroupForTrackContext(context: AudioTrackEncoderContext): Promise<void> {
+    const aliases = this.collectAliasesForTrack(context.trackName, context.activeAliases, (alias) => {
+      context.transportState.resetAlias(alias)
+    })
+    if (!aliases.length) {
+      return
+    }
+    const client = this.client.getRawClient()
+    if (!client) {
+      return
+    }
+    const currentGroupId = context.transportState.getAudioGroupId()
+    const endObjectId = context.transportState.getAudioObjectId()
+    if (endObjectId === 0n) {
+      return
+    }
+    for (const alias of aliases) {
+      await client.sendSubgroupStreamObject(alias, currentGroupId, 0n, endObjectId, 3, new Uint8Array(0), undefined)
+    }
+  }
+
   private normalizeCatalogTracks(tracks: CallCatalogTrack[]): CallCatalogTrack[] {
     const normalized: CallCatalogTrack[] = []
     for (const track of tracks) {
@@ -884,10 +1025,17 @@ export class MediaPublisher {
       if (!name) {
         continue
       }
+      const keyframeInterval =
+        track.role === 'video' ? this.normalizeTrackKeyframeInterval(track.keyframeInterval) : undefined
+      const audioStreamSettings =
+        track.role === 'audio' ? this.resolveAudioStreamUpdateSettingsForTrack(track) : undefined
       normalized.push({
         ...track,
         name,
         label: track.label.trim() || name,
+        keyframeInterval,
+        audioStreamUpdateMode: audioStreamSettings?.mode,
+        audioStreamUpdateIntervalSeconds: audioStreamSettings?.intervalSeconds,
         isLive: track.isLive ?? true
       })
     }

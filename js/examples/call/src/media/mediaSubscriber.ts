@@ -10,19 +10,35 @@ import {
   type VideoJitterConfig,
   type AudioJitterConfig
 } from '../types/jitterBuffer'
+import type { JitterBufferEvent } from '../types/media'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 
 export type RemoteVideoSource = 'camera' | 'screenshare'
+type JitterBufferActivity = {
+  event: JitterBufferEvent
+  bufferedFrames: number
+  capacityFrames: number
+}
+const AUDIO_PLAYBACK_QUEUE_REPORT_INTERVAL_MS = 100
 
 interface MediaSubscriberHandlers {
   onRemoteVideoStream?: (userId: string, stream: MediaStream, source: RemoteVideoSource) => void
   onRemoteAudioStream?: (userId: string, stream: MediaStream) => void
+  onRemoteAudioStreamClosed?: (userId: string) => void
   onRemoteVideoBitrate?: (userId: string, mbps: number, source: RemoteVideoSource) => void
+  onRemoteVideoKeyframeInterval?: (userId: string, frames: number, source: RemoteVideoSource) => void
   onRemoteAudioBitrate?: (userId: string, mbps: number) => void
   onRemoteVideoReceiveLatency?: (userId: string, ms: number, source: RemoteVideoSource) => void
   onRemoteVideoRenderingLatency?: (userId: string, ms: number, source: RemoteVideoSource) => void
   onRemoteAudioReceiveLatency?: (userId: string, ms: number) => void
   onRemoteAudioRenderingLatency?: (userId: string, ms: number) => void
+  onRemoteAudioPlaybackQueue?: (userId: string, queuedMs: number) => void
+  onRemoteVideoJitterBufferActivity?: (
+    userId: string,
+    activity: JitterBufferActivity,
+    source: RemoteVideoSource
+  ) => void
+  onRemoteAudioJitterBufferActivity?: (userId: string, activity: JitterBufferActivity) => void
   onRemoteVideoConfig?: (
     userId: string,
     config: { codec: string; width?: number; height?: number },
@@ -43,6 +59,8 @@ interface AudioSubscriptionContext {
   worker: Worker
   writer: WritableStreamDefaultWriter<AudioData>
   stream: MediaStream
+  pendingPlaybackQueueMs: number
+  lastPlaybackQueueReportAtMs: number
 }
 
 type SubgroupStreamObjectMessageWithLoc = SubgroupStreamObjectMessage & { locHeader?: any }
@@ -76,11 +94,23 @@ export class MediaSubscriber {
       const data = event.data as
         | { type: 'frame'; frame: VideoFrame; width?: number; height?: number }
         | { type: 'bitrate'; kbps: number }
+        | { type: 'keyframeInterval'; media: 'video'; frames: number }
         | { type: 'receiveLatency'; media: 'video'; ms: number }
         | { type: 'renderingLatency'; media: 'video'; ms: number }
+        | {
+            type: 'jitterBufferActivity'
+            media: 'video'
+            event: JitterBufferEvent
+            bufferedFrames: number
+            capacityFrames: number
+          }
         | { type: 'decoderConfig'; codec: string; width?: number; height?: number }
       if (data.type === 'bitrate') {
         this.handlers.onRemoteVideoBitrate?.(userId, data.kbps, source)
+        return
+      }
+      if (data.type === 'keyframeInterval') {
+        this.handlers.onRemoteVideoKeyframeInterval?.(userId, data.frames, source)
         return
       }
       if (data.type === 'receiveLatency') {
@@ -89,6 +119,18 @@ export class MediaSubscriber {
       }
       if (data.type === 'renderingLatency') {
         this.handlers.onRemoteVideoRenderingLatency?.(userId, data.ms, source)
+        return
+      }
+      if (data.type === 'jitterBufferActivity') {
+        this.handlers.onRemoteVideoJitterBufferActivity?.(
+          userId,
+          {
+            event: data.event,
+            bufferedFrames: data.bufferedFrames,
+            capacityFrames: data.capacityFrames
+          },
+          source
+        )
         return
       }
       if (data.type === 'decoderConfig') {
@@ -159,7 +201,9 @@ export class MediaSubscriber {
       userId,
       worker,
       writer,
-      stream: new MediaStream([generator])
+      stream: new MediaStream([generator]),
+      pendingPlaybackQueueMs: 0,
+      lastPlaybackQueueReportAtMs: Number.NEGATIVE_INFINITY
     }
     worker.onmessage = async (event: MessageEvent) => {
       const data = event.data as
@@ -167,6 +211,13 @@ export class MediaSubscriber {
         | { type: 'bitrate'; kbps: number }
         | { type: 'receiveLatency'; media: 'audio'; ms: number }
         | { type: 'renderingLatency'; media: 'audio'; ms: number }
+        | {
+            type: 'jitterBufferActivity'
+            media: 'audio'
+            event: JitterBufferEvent
+            bufferedFrames: number
+            capacityFrames: number
+          }
       if (data.type === 'bitrate') {
         this.handlers.onRemoteAudioBitrate?.(userId, data.kbps)
         return
@@ -179,13 +230,34 @@ export class MediaSubscriber {
         this.handlers.onRemoteAudioRenderingLatency?.(userId, data.ms)
         return
       }
+      if (data.type === 'jitterBufferActivity') {
+        this.handlers.onRemoteAudioJitterBufferActivity?.(userId, {
+          event: data.event,
+          bufferedFrames: data.bufferedFrames,
+          capacityFrames: data.capacityFrames
+        })
+        return
+      }
       const audioData = data.audioData
-      await writer.ready
-      await writer.write(audioData)
+      const queuedDurationMs = estimateAudioDataDurationMs(audioData)
+      if (queuedDurationMs > 0) {
+        context.pendingPlaybackQueueMs += queuedDurationMs
+        this.maybeReportAudioPlaybackQueue(context)
+      }
+      try {
+        await writer.ready
+        await writer.write(audioData)
+      } finally {
+        if (queuedDurationMs > 0) {
+          context.pendingPlaybackQueueMs = Math.max(0, context.pendingPlaybackQueueMs - queuedDurationMs)
+          this.maybeReportAudioPlaybackQueue(context)
+        }
+      }
     }
 
     this.audioContexts.set(trackAlias, context)
     this.handlers.onRemoteAudioStream?.(userId, context.stream)
+    this.maybeReportAudioPlaybackQueue(context, true)
     const config = this.audioJitterConfigByUserId.get(userId)
     if (config) {
       worker.postMessage({ type: 'config', config })
@@ -221,6 +293,8 @@ export class MediaSubscriber {
     context.stream.getTracks().forEach((track) => track.stop())
     void context.writer.close().catch(() => {})
     context.worker.terminate()
+    this.handlers.onRemoteAudioStreamClosed?.(context.userId)
+    this.handlers.onRemoteAudioPlaybackQueue?.(context.userId, 0)
     this.audioContexts.delete(trackAlias)
   }
 
@@ -273,4 +347,22 @@ export class MediaSubscriber {
     const mode: AudioJitterBufferMode = normalized.mode ?? DEFAULT_AUDIO_JITTER_CONFIG.mode
     return { ...normalized, mode }
   }
+
+  private maybeReportAudioPlaybackQueue(context: AudioSubscriptionContext, force: boolean = false): void {
+    const now = performance.now()
+    if (!force && now - context.lastPlaybackQueueReportAtMs < AUDIO_PLAYBACK_QUEUE_REPORT_INTERVAL_MS) {
+      return
+    }
+    context.lastPlaybackQueueReportAtMs = now
+    this.handlers.onRemoteAudioPlaybackQueue?.(context.userId, context.pendingPlaybackQueueMs)
+  }
+}
+
+function estimateAudioDataDurationMs(audioData: AudioData): number {
+  const sampleRate = audioData.sampleRate
+  const numberOfFrames = audioData.numberOfFrames
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0 || !Number.isFinite(numberOfFrames) || numberOfFrames <= 0) {
+    return 0
+  }
+  return (numberOfFrames / sampleRate) * 1000
 }

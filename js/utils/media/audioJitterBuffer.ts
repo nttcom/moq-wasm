@@ -1,5 +1,6 @@
 import { tryDeserializeChunk, type ChunkMetadata } from './chunk'
 import { readLocHeader } from './loc'
+import { latencyMsFromCaptureMicros } from './clock'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc } from './jitterBufferTypes'
 
 const DEFAULT_JITTER_BUFFER_SIZE = 1800
@@ -10,7 +11,7 @@ type AudioJitterBufferEntry = {
   groupId: bigint
   objectId: bigint
   bufferInsertTimestamp: number
-  sentAt: number
+  captureTimestampMicros?: number
   object: JitterBufferSubgroupObject
 }
 
@@ -35,10 +36,13 @@ export class AudioJitterBuffer {
     objectId: bigint,
     object: SubgroupObjectWithLoc,
     onReceiveLatency?: (latencyMs: number) => void
-  ): void {
+  ): boolean {
     if (!object.objectPayloadLength) {
-      return
+      return false
     }
+    const locMetadata = readLocHeader(object.locHeader)
+    const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
+
     const parsedFromMetadata = tryDeserializeChunk(object.objectPayload)
     if (!parsedFromMetadata) {
       const locHeader = object.locHeader
@@ -67,21 +71,23 @@ export class AudioJitterBuffer {
         objectId,
         payloadLength: object.objectPayloadLength
       })
-      return
+      return false
     }
 
     const bufferObject = object as JitterBufferSubgroupObject
     bufferObject.cachedChunk = parsed
     bufferObject.remotePTS = parsed.metadata.timestamp
     bufferObject.localPTS = performance.timeOrigin + performance.now()
-    onReceiveLatency?.(Date.now() - parsed.metadata.sentAt)
+    if (typeof captureTimestampMicros === 'number') {
+      onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))
+    }
 
     const insertTimestamp = performance.now()
     const entry: AudioJitterBufferEntry = {
       groupId,
       objectId,
       bufferInsertTimestamp: insertTimestamp,
-      sentAt: parsed.metadata.sentAt,
+      captureTimestampMicros,
       object: bufferObject
     }
 
@@ -92,6 +98,7 @@ export class AudioJitterBuffer {
       console.warn('[AudioJitterBuffer] Buffer full, dropping oldest entry')
       this.buffer.shift()
     }
+    return true
   }
 
   pop(): AudioJitterBufferEntry | null {
@@ -135,17 +142,30 @@ export class AudioJitterBuffer {
     }
     return 0
   }
+
+  getBufferedFrameCount(): number {
+    return this.buffer.length
+  }
+
+  getMaxBufferSize(): number {
+    return this.maxBufferSize
+  }
 }
 
 function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } | null {
   const loc = readLocHeader(object.locHeader)
-  const captureMicros = loc.captureTimestampMicros
-  const sentAt = typeof captureMicros === 'number' ? Math.floor(captureMicros / 1000) : Date.now()
+  const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
   const metadata: ChunkMetadata = {
     type: 'key',
     timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
-    duration: null,
-    sentAt
+    duration: null
   }
   return { metadata, data: object.objectPayload }
+}
+
+function getCaptureTimestampMicros(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return undefined
+  }
+  return value
 }

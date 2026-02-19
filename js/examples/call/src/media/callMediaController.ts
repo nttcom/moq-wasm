@@ -7,6 +7,7 @@ import type { AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 import type { SubscribeMessage } from '../../../../pkg/moqt_client_wasm'
 import type { CallCatalogTrack, CatalogSubscribeRole, CatalogTrackRole } from '../types/catalog'
+import type { JitterBufferEvent } from '../types/media'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 
 export interface MediaHandlers {
@@ -16,12 +17,24 @@ export interface MediaHandlers {
   onLocalAudioBitrate?: (mbps: number) => void
   onRemoteVideoStream?: (userId: string, stream: MediaStream, source: 'camera' | 'screenshare') => void
   onRemoteAudioStream?: (userId: string, stream: MediaStream) => void
+  onRemoteAudioStreamClosed?: (userId: string) => void
   onRemoteVideoBitrate?: (userId: string, mbps: number, source: 'camera' | 'screenshare') => void
+  onRemoteVideoKeyframeInterval?: (userId: string, frames: number, source: 'camera' | 'screenshare') => void
   onRemoteAudioBitrate?: (userId: string, mbps: number) => void
   onRemoteVideoReceiveLatency?: (userId: string, ms: number, source: 'camera' | 'screenshare') => void
   onRemoteVideoRenderingLatency?: (userId: string, ms: number, source: 'camera' | 'screenshare') => void
   onRemoteAudioReceiveLatency?: (userId: string, ms: number) => void
   onRemoteAudioRenderingLatency?: (userId: string, ms: number) => void
+  onRemoteAudioPlaybackQueue?: (userId: string, queuedMs: number) => void
+  onRemoteVideoJitterBufferActivity?: (
+    userId: string,
+    activity: { event: JitterBufferEvent; bufferedFrames: number; capacityFrames: number },
+    source: 'camera' | 'screenshare'
+  ) => void
+  onRemoteAudioJitterBufferActivity?: (
+    userId: string,
+    activity: { event: JitterBufferEvent; bufferedFrames: number; capacityFrames: number }
+  ) => void
   onRemoteVideoConfig?: (
     userId: string,
     config: { codec: string; width?: number; height?: number },
@@ -59,7 +72,10 @@ export class CallMediaController {
     this.subscriber.setHandlers({
       onRemoteVideoStream: (userId, stream, source) => this.handlers.onRemoteVideoStream?.(userId, stream, source),
       onRemoteAudioStream: (userId, stream) => this.handlers.onRemoteAudioStream?.(userId, stream),
+      onRemoteAudioStreamClosed: (userId) => this.handlers.onRemoteAudioStreamClosed?.(userId),
       onRemoteVideoBitrate: (userId, mbps, source) => this.handlers.onRemoteVideoBitrate?.(userId, mbps, source),
+      onRemoteVideoKeyframeInterval: (userId, frames, source) =>
+        this.handlers.onRemoteVideoKeyframeInterval?.(userId, frames, source),
       onRemoteAudioBitrate: (userId, mbps) => this.handlers.onRemoteAudioBitrate?.(userId, mbps),
       onRemoteVideoReceiveLatency: (userId, ms, source) =>
         this.handlers.onRemoteVideoReceiveLatency?.(userId, ms, source),
@@ -67,6 +83,11 @@ export class CallMediaController {
         this.handlers.onRemoteVideoRenderingLatency?.(userId, ms, source),
       onRemoteAudioReceiveLatency: (userId, ms) => this.handlers.onRemoteAudioReceiveLatency?.(userId, ms),
       onRemoteAudioRenderingLatency: (userId, ms) => this.handlers.onRemoteAudioRenderingLatency?.(userId, ms),
+      onRemoteAudioPlaybackQueue: (userId, queuedMs) => this.handlers.onRemoteAudioPlaybackQueue?.(userId, queuedMs),
+      onRemoteVideoJitterBufferActivity: (userId, activity, source) =>
+        this.handlers.onRemoteVideoJitterBufferActivity?.(userId, activity, source),
+      onRemoteAudioJitterBufferActivity: (userId, activity) =>
+        this.handlers.onRemoteAudioJitterBufferActivity?.(userId, activity),
       onRemoteVideoConfig: (userId, config, source) => this.handlers.onRemoteVideoConfig?.(userId, config, source)
     })
 

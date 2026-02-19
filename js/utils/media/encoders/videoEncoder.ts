@@ -1,9 +1,11 @@
 import { createBitrateLogger } from '../bitrate'
+import { monotonicUnixMicros } from '../clock'
 
 let videoEncoder: VideoEncoder | undefined
 let keyframeInterval: number
 let encoderConfig: VideoEncoderConfig | null = null
 let timestampOffset: number | null = null
+const captureTimestampByChunkTimestamp = new Map<number, number>()
 
 // H264 プロファイル
 // Baseline: 42 Main: 4D High: 64
@@ -46,7 +48,8 @@ function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoC
     data: buffer
   })
 
-  self.postMessage({ type: 'chunk', chunk: adjustedChunk, metadata })
+  const captureTimestampMicros = takeCaptureTimestampMicros(chunk.timestamp)
+  self.postMessage({ type: 'chunk', chunk: adjustedChunk, metadata, captureTimestampMicros })
 }
 
 async function initializeVideoEncoder() {
@@ -83,6 +86,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
   let frameCounter = 0
   // 新しいストリーム開始時にtimestampのoffsetをリセット
   timestampOffset = null
+  captureTimestampByChunkTimestamp.clear()
   console.log('initializeVideoEncoder')
   videoEncoder = await initializeVideoEncoder()
   if (!videoEncoder) {
@@ -99,6 +103,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
       console.log('Re-initialize video encoder')
       videoEncoder = await initializeVideoEncoder()
       frameCounter = 0
+      captureTimestampByChunkTimestamp.clear()
       if (!videoEncoder) {
         console.error('Failed to initialize video encoder, dropping frame')
         videoFrame.close()
@@ -114,10 +119,36 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     }
 
     const keyFrame = frameCounter % keyframeInterval == 0
+    setCaptureTimestampMicros(videoFrame.timestamp, monotonicUnixMicros())
     videoEncoder.encode(videoFrame, { keyFrame })
     frameCounter++
     videoFrame.close()
   }
+}
+
+function setCaptureTimestampMicros(timestamp: number | null, captureTimestampMicros: number): void {
+  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
+    return
+  }
+  captureTimestampByChunkTimestamp.set(timestamp, captureTimestampMicros)
+  if (captureTimestampByChunkTimestamp.size > 1024) {
+    const oldestKey = captureTimestampByChunkTimestamp.keys().next().value
+    if (typeof oldestKey === 'number') {
+      captureTimestampByChunkTimestamp.delete(oldestKey)
+    }
+  }
+}
+
+function takeCaptureTimestampMicros(timestamp: number): number | undefined {
+  if (!Number.isFinite(timestamp)) {
+    return undefined
+  }
+  const value = captureTimestampByChunkTimestamp.get(timestamp)
+  if (value !== undefined) {
+    captureTimestampByChunkTimestamp.delete(timestamp)
+    return value
+  }
+  return undefined
 }
 
 self.onmessage = async (event) => {
