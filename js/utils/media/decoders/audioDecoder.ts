@@ -2,6 +2,7 @@ import { AudioJitterBuffer } from '../audioJitterBuffer'
 import type { SubgroupObjectWithLoc, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import type { ChunkMetadata } from '../chunk'
+import { latencyMsFromCaptureMicros } from '../clock'
 
 type CachedAudioConfig = {
   codec: string
@@ -51,9 +52,10 @@ setInterval(() => {
   if (!jitterBufferEntry) {
     return
   }
+  postJitterBufferActivity('pop')
   const subgroupStreamObject = jitterBufferEntry?.object
   if (subgroupStreamObject) {
-    decode(subgroupStreamObject)
+    decode(subgroupStreamObject, jitterBufferEntry.captureTimestampMicros)
   }
 }, POP_INTERVAL_MS)
 
@@ -78,14 +80,20 @@ self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
   }
   audioBitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
 
-  jitterBuffer.push(message.groupId, subgroupStreamObject.objectId, subgroupStreamObject, (latencyMs) =>
-    postReceiveLatency(latencyMs)
+  const inserted = jitterBuffer.push(
+    message.groupId,
+    subgroupStreamObject.objectId,
+    subgroupStreamObject,
+    (latencyMs) => postReceiveLatency(latencyMs)
   )
+  if (inserted) {
+    postJitterBufferActivity('push')
+  }
 }
 
-async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
+async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureTimestampMicros?: number) {
   const decoded = subgroupStreamObject.cachedChunk
-  reportAudioLatency(decoded.metadata.sentAt)
+  reportAudioLatency(captureTimestampMicros)
 
   const resolvedConfig = resolveAudioConfig(decoded.metadata)
   if (!resolvedConfig) {
@@ -121,8 +129,11 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject) {
   await audioDecoder.decode(encodedAudioChunk)
 }
 
-function reportAudioLatency(sentAt: number) {
-  postRenderingLatency(Date.now() - sentAt)
+function reportAudioLatency(captureTimestampMicros: number | undefined) {
+  if (typeof captureTimestampMicros !== 'number') {
+    return
+  }
+  postRenderingLatency(latencyMsFromCaptureMicros(captureTimestampMicros))
 }
 
 function postReceiveLatency(latencyMs: number) {
@@ -137,6 +148,16 @@ function postRenderingLatency(latencyMs: number) {
     return
   }
   self.postMessage({ type: 'renderingLatency', media: 'audio', ms: latencyMs })
+}
+
+function postJitterBufferActivity(event: 'push' | 'pop') {
+  self.postMessage({
+    type: 'jitterBufferActivity',
+    media: 'audio',
+    event,
+    bufferedFrames: jitterBuffer.getBufferedFrameCount(),
+    capacityFrames: jitterBuffer.getMaxBufferSize()
+  })
 }
 
 /**

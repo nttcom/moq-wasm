@@ -1,5 +1,6 @@
 import { tryDeserializeChunk, type ChunkMetadata } from './chunk'
 import { bytesToBase64, readLocHeader } from './loc'
+import { latencyMsFromCaptureMicros } from './clock'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc } from './jitterBufferTypes'
 
 const DEFAULT_MIN_DELAY_MS = 250
@@ -14,7 +15,7 @@ type VideoJitterBufferEntry = {
   groupId: bigint
   objectId: bigint
   bufferInsertTimestamp: number
-  sentAt: number
+  captureTimestampMicros?: number
   object: JitterBufferSubgroupObject
   isEndOfGroup: boolean
 }
@@ -35,7 +36,7 @@ export class VideoJitterBuffer {
     keyframeInterval?: number | bigint
   ) {
     this.keyframeInterval =
-      typeof keyframeInterval === 'number' ? BigInt(keyframeInterval) : (keyframeInterval ?? undefined)
+      typeof keyframeInterval === 'number' ? BigInt(keyframeInterval) : keyframeInterval ?? undefined
   }
 
   setMinDelay(minDelayMs: number): void {
@@ -57,10 +58,13 @@ export class VideoJitterBuffer {
     objectId: bigint,
     object: SubgroupObjectWithLoc,
     onReceiveLatency?: (latencyMs: number) => void
-  ): void {
+  ): boolean {
     if (!object.objectPayloadLength) {
-      return
+      return false
     }
+    const locMetadata = readLocHeader(object.locHeader)
+    const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
+
     const parsedFromMetadata = tryDeserializeChunk(object.objectPayload)
     if (!parsedFromMetadata) {
       const locHeader = object.locHeader
@@ -91,29 +95,29 @@ export class VideoJitterBuffer {
         objectId,
         payloadLength: object.objectPayloadLength
       })
-      return
+      return false
     }
 
     const bufferObject = object as JitterBufferSubgroupObject
     bufferObject.cachedChunk = parsed
     bufferObject.remotePTS = parsed.metadata.timestamp
     bufferObject.localPTS = performance.timeOrigin + performance.now()
-    if (typeof parsed.metadata.sentAt === 'number') {
-      onReceiveLatency?.(Date.now() - parsed.metadata.sentAt)
+    if (typeof captureTimestampMicros === 'number') {
+      onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))
     }
 
     if (this.mode === 'correctly' && this.shouldRejectOldData(groupId, objectId)) {
       console.warn(
         `[VideoJitterBuffer] Rejecting old data. Expected: (group:${this.lastPoppedGroupId}, object:${this.lastPoppedObjectId}), Got: (group:${groupId}, object:${objectId})`
       )
-      return
+      return false
     }
 
     const entry: VideoJitterBufferEntry = {
       groupId,
       objectId,
       bufferInsertTimestamp: performance.now(),
-      sentAt: parsed.metadata.sentAt,
+      captureTimestampMicros,
       object: bufferObject,
       isEndOfGroup: object.objectStatus === OBJECT_STATUS_END_OF_GROUP
     }
@@ -125,6 +129,7 @@ export class VideoJitterBuffer {
       console.warn('[VideoJitterBuffer] Buffer full, dropping oldest entry')
       this.buffer.shift()
     }
+    return true
   }
 
   pop(): VideoJitterBufferEntry | null {
@@ -207,8 +212,7 @@ export class VideoJitterBuffer {
   private popNormalMode(): VideoJitterBufferEntry | null {
     const head = this.buffer[0]
     const nowMs = Date.now()
-    const base = head.sentAt
-    const delayMs = nowMs - base
+    const delayMs = this.computeDelayMs(head)
     if (delayMs < this.minDelayMs) {
       return null
     }
@@ -239,8 +243,7 @@ export class VideoJitterBuffer {
 
     const entry = this.buffer[index]
     const nowMs = Date.now()
-    const base = entry.sentAt
-    const delayMs = nowMs - base
+    const delayMs = this.computeDelayMs(entry)
     const sinceLastPop = this.lastPopWallTime === null ? Number.POSITIVE_INFINITY : nowMs - this.lastPopWallTime
     if (delayMs < this.minDelayMs || sinceLastPop < MIN_FRAME_INTERVAL_MS) {
       return null
@@ -315,6 +318,21 @@ export class VideoJitterBuffer {
     }
     return this.buffer.findIndex((entry) => entry.objectId === 0n && entry.groupId > this.lastPoppedGroupId!)
   }
+
+  private computeDelayMs(entry: VideoJitterBufferEntry): number {
+    if (typeof entry.captureTimestampMicros === 'number') {
+      return latencyMsFromCaptureMicros(entry.captureTimestampMicros)
+    }
+    return performance.now() - entry.bufferInsertTimestamp
+  }
+
+  getBufferedFrameCount(): number {
+    return this.buffer.length
+  }
+
+  getMaxBufferSize(): number {
+    return this.maxBufferSize
+  }
 }
 
 function buildChunkFromLoc(
@@ -322,14 +340,19 @@ function buildChunkFromLoc(
   objectId: bigint
 ): { metadata: ChunkMetadata; data: Uint8Array } | null {
   const loc = readLocHeader(object.locHeader)
-  const captureMicros = loc.captureTimestampMicros
-  const sentAt = typeof captureMicros === 'number' ? Math.floor(captureMicros / 1000) : Date.now()
+  const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
   const metadata: ChunkMetadata = {
     type: objectId === 0n ? 'key' : 'delta',
     timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
     duration: null,
-    sentAt,
     descriptionBase64: loc.videoConfig ? bytesToBase64(loc.videoConfig) : undefined
   }
   return { metadata, data: object.objectPayload }
+}
+
+function getCaptureTimestampMicros(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return undefined
+  }
+  return value
 }

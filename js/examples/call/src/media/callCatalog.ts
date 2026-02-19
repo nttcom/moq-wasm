@@ -1,5 +1,12 @@
 import { parse_msf_catalog_json } from '../../../../pkg/moqt_client_wasm'
-import type { CallCatalogTrack, CatalogTrackRole, EditableCallCatalogTrack } from '../types/catalog'
+import {
+  DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
+  DEFAULT_VIDEO_KEYFRAME_INTERVAL,
+  type AudioStreamUpdateMode,
+  type CallCatalogTrack,
+  type CatalogTrackRole,
+  type EditableCallCatalogTrack
+} from '../types/catalog'
 
 const DEFAULT_CALL_CATALOG_TRACKS: CallCatalogTrack[] = []
 
@@ -102,14 +109,21 @@ const AUDIO_CATALOG_TRACKS: CallCatalogTrack[] = [
   }
 ]
 
+const CHAT_TRACK_NAME = 'chat'
+const CHAT_TRACK_LABEL = 'Chat'
+const CHAT_EVENT_TYPE = 'com.skyway.chat.v1'
+
 type MsfTrack = {
   namespace?: string
   name: string
   packaging: string
+  eventType?: string
   role?: string
   isLive?: boolean
   label?: string
   codec?: string
+  mimeType?: string
+  depends?: string[]
   bitrate?: number
   width?: number
   height?: number
@@ -156,6 +170,21 @@ export function buildCallCatalogJson(trackNamespace: string[], tracks: CallCatal
     samplerate: track.samplerate,
     channelConfig: track.channelConfig
   }))
+  const existingNames = new Set(catalogTracks.map((track) => track.name))
+  if (!existingNames.has(CHAT_TRACK_NAME)) {
+    const depends = tracks.map((track) => track.name)
+    catalogTracks.push({
+      namespace,
+      name: CHAT_TRACK_NAME,
+      packaging: 'eventtimeline',
+      role: 'chat',
+      isLive: true,
+      label: CHAT_TRACK_LABEL,
+      mimeType: 'application/json',
+      eventType: CHAT_EVENT_TYPE,
+      depends
+    })
+  }
   const catalog: MsfCatalog = {
     version: 1,
     generatedAt: Date.now(),
@@ -172,7 +201,7 @@ export function parseCallCatalogTracks(payload: string): CallCatalogTrack[] {
 
 export function extractCallCatalogTracks(catalog: unknown): CallCatalogTrack[] {
   const tracks = Array.isArray((catalog as { tracks?: unknown[] } | undefined)?.tracks)
-    ? ((catalog as { tracks: unknown[] }).tracks ?? [])
+    ? (catalog as { tracks: unknown[] }).tracks ?? []
     : []
   return tracks.reduce<CallCatalogTrack[]>((acc, rawTrack) => {
     if (!isObject(rawTrack)) {
@@ -277,6 +306,25 @@ export function getAudioCatalogTrackNames(): string[] {
 }
 
 export function createEmptyEditableCatalogTrack(role: CatalogTrackRole): EditableCallCatalogTrack {
+  if (role === 'chat') {
+    const name = `chat_${Date.now()}`
+    return {
+      id: createCatalogTrackId(),
+      name,
+      label: 'chat',
+      role: 'chat',
+      codec: undefined,
+      bitrate: undefined,
+      width: undefined,
+      height: undefined,
+      keyframeInterval: undefined,
+      samplerate: undefined,
+      channelConfig: undefined,
+      audioStreamUpdateMode: undefined,
+      audioStreamUpdateIntervalSeconds: undefined,
+      isLive: true
+    }
+  }
   return {
     id: createCatalogTrackId(),
     name: role === 'video' ? `video_${Date.now()}` : `audio_${Date.now()}`,
@@ -286,8 +334,12 @@ export function createEmptyEditableCatalogTrack(role: CatalogTrackRole): Editabl
     bitrate: role === 'video' ? 800_000 : 64_000,
     width: role === 'video' ? 1280 : undefined,
     height: role === 'video' ? 720 : undefined,
+    keyframeInterval: role === 'video' ? DEFAULT_VIDEO_KEYFRAME_INTERVAL : undefined,
     samplerate: role === 'audio' ? 48_000 : undefined,
     channelConfig: role === 'audio' ? 'mono' : undefined,
+    audioStreamUpdateMode: role === 'audio' ? DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode : undefined,
+    audioStreamUpdateIntervalSeconds:
+      role === 'audio' ? DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds : undefined,
     isLive: true
   }
 }
@@ -302,8 +354,11 @@ export function createEmptyEditableScreenShareCatalogTrack(): EditableCallCatalo
     bitrate: 1_200_000,
     width: 1280,
     height: 720,
+    keyframeInterval: DEFAULT_VIDEO_KEYFRAME_INTERVAL,
     samplerate: undefined,
     channelConfig: undefined,
+    audioStreamUpdateMode: undefined,
+    audioStreamUpdateIntervalSeconds: undefined,
     isLive: true
   }
 }
@@ -326,14 +381,26 @@ function sanitizeTrack(track: EditableCallCatalogTrack): CallCatalogTrack | null
     bitrate: toPositiveNumber(track.bitrate),
     width: track.role === 'video' ? toPositiveNumber(track.width) : undefined,
     height: track.role === 'video' ? toPositiveNumber(track.height) : undefined,
+    keyframeInterval:
+      track.role === 'video' ? toPositiveNumber(track.keyframeInterval) ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL : undefined,
     samplerate: track.role === 'audio' ? toPositiveNumber(track.samplerate) : undefined,
     channelConfig: track.role === 'audio' ? track.channelConfig?.trim() || undefined : undefined,
+    audioStreamUpdateMode:
+      track.role === 'audio' ? normalizeAudioStreamUpdateMode(track.audioStreamUpdateMode) : undefined,
+    audioStreamUpdateIntervalSeconds:
+      track.role === 'audio'
+        ? toPositiveNumber(track.audioStreamUpdateIntervalSeconds) ??
+          DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
+        : undefined,
     isLive: track.isLive ?? true
   }
 }
 
 function resolveRole(track: Record<string, unknown>, name: string): CatalogTrackRole | null {
   const role = asString(track.role)
+  if (role === 'chat' || name === CHAT_TRACK_NAME) {
+    return 'chat'
+  }
   if (role === 'video' || role === 'audio') {
     return role
   }
@@ -367,4 +434,8 @@ function toPositiveNumber(value: number | undefined): number | undefined {
     return undefined
   }
   return Math.floor(value)
+}
+
+function normalizeAudioStreamUpdateMode(value: AudioStreamUpdateMode | undefined): AudioStreamUpdateMode {
+  return value === 'single' ? 'single' : DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode
 }

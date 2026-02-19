@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useRef, useState } from 'react'
 import { LocalSession } from '../session/localSession'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
@@ -9,6 +9,8 @@ import { RoomHeader } from './RoomHeader'
 import { useSessionEventHandlers } from '../hooks/useSessionEventHandlers'
 import { useCallMedia } from '../hooks/useCallMedia'
 import type { CallCatalogTrack, CatalogSubscribeRole } from '../types/catalog'
+import type { RemoteMediaStreams } from '../types/media'
+import type { SidebarStatsSample } from '../types/stats'
 import { updateSubscriptionState } from '../utils/state/roomState'
 
 interface CallRoomProps {
@@ -20,14 +22,27 @@ type CatalogSelections = {
   video?: string
   screenshare?: string
   audio?: string
+  chat?: string
 }
+
+type StatsSnapshot = {
+  localMemberId: string
+  localVideoBitrate: number | null
+  localAudioBitrate: number | null
+  remoteMembers: RemoteMember[]
+  remoteMedia: Map<string, RemoteMediaStreams>
+}
+
+const SIDEBAR_STATS_SAMPLE_INTERVAL_MS = 1000
+const SIDEBAR_STATS_HISTORY_LIMIT = 120
 
 export function CallRoom({ session, onLeave }: CallRoomProps) {
   const roomName = session.roomName
   const userName = session.localMember.name
   const [chatMessage, setChatMessage] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
-  const [isChatOpen, setIsChatOpen] = useState(true)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [statsHistory, setStatsHistory] = useState<Map<string, SidebarStatsSample[]>>(new Map())
   const [remoteCatalogTracks, setRemoteCatalogTracks] = useState<Map<string, CallCatalogTrack[]>>(new Map())
   const [remoteCatalogSelections, setRemoteCatalogSelections] = useState<Map<string, CatalogSelections>>(new Map())
   const [catalogLoadingMemberIds, setCatalogLoadingMemberIds] = useState<Set<string>>(new Set())
@@ -68,8 +83,17 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     applyCaptureSettings,
     catalogTracks,
     addCatalogTrack,
+    updateCatalogTrack,
     removeCatalogTrack
   } = useCallMedia(session)
+
+  const statsSnapshotRef = useRef<StatsSnapshot>({
+    localMemberId: session.localMember.id,
+    localVideoBitrate,
+    localAudioBitrate,
+    remoteMembers: [],
+    remoteMedia
+  })
 
   const [room, setRoom] = useState<Room>(() => ({
     name: roomName,
@@ -119,7 +143,8 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     setCatalogLoadingMemberIds(new Set())
     setCatalogSubscribedMemberIds(new Set())
     setCatalogUnsubscribingTrackKeys(new Set())
-    setIsChatOpen(true)
+    setIsSidebarOpen(true)
+    setStatsHistory(new Map())
   }, [session])
 
   useEffect(() => {
@@ -130,6 +155,57 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     setCatalogSubscribedMemberIds((prev) => filterSetByKeys(prev, memberIds))
     setCatalogUnsubscribingTrackKeys((prev) => filterSetByTrackKeys(prev, memberIds))
   }, [room.remoteMembers])
+
+  useEffect(() => {
+    statsSnapshotRef.current = {
+      localMemberId: room.localMember.id,
+      localVideoBitrate,
+      localAudioBitrate,
+      remoteMembers: Array.from(room.remoteMembers.values()),
+      remoteMedia
+    }
+  }, [localAudioBitrate, localVideoBitrate, remoteMedia, room.localMember.id, room.remoteMembers])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const snapshot = statsSnapshotRef.current
+      const sampledAt = Date.now()
+      setStatsHistory((prev) => {
+        const next = new Map<string, SidebarStatsSample[]>()
+        const localSample: SidebarStatsSample = {
+          timestamp: sampledAt,
+          videoBitrateKbps: snapshot.localVideoBitrate,
+          audioBitrateKbps: snapshot.localAudioBitrate
+        }
+        next.set(snapshot.localMemberId, appendStatsSample(prev.get(snapshot.localMemberId), localSample))
+        for (const remoteMember of snapshot.remoteMembers) {
+          const media = snapshot.remoteMedia.get(remoteMember.id)
+          const remoteSample: SidebarStatsSample = {
+            timestamp: sampledAt,
+            videoBitrateKbps: media?.videoBitrateKbps,
+            screenShareBitrateKbps: media?.screenShareBitrateKbps,
+            audioBitrateKbps: media?.audioBitrateKbps,
+            videoKeyframeIntervalFrames: media?.videoKeyframeIntervalFrames,
+            screenShareKeyframeIntervalFrames: media?.screenShareKeyframeIntervalFrames,
+            videoReceiveLatencyMs: media?.videoLatencyReceiveMs,
+            screenShareReceiveLatencyMs: media?.screenShareLatencyReceiveMs,
+            audioReceiveLatencyMs: media?.audioLatencyReceiveMs,
+            videoRenderLatencyMs: media?.videoLatencyRenderMs,
+            screenShareRenderLatencyMs: media?.screenShareLatencyRenderMs,
+            audioRenderLatencyMs: media?.audioLatencyRenderMs,
+            audioPlaybackQueueMs: media?.audioPlaybackQueueMs,
+            videoRenderingRateFps: media?.videoRenderingRateFps,
+            screenShareRenderingRateFps: media?.screenShareRenderingRateFps,
+            audioRenderingRateFps: media?.audioRenderingRateFps
+          }
+          next.set(remoteMember.id, appendStatsSample(prev.get(remoteMember.id), remoteSample))
+        }
+        return next
+      })
+    }, SIDEBAR_STATS_SAMPLE_INTERVAL_MS)
+
+    return () => window.clearInterval(timer)
+  }, [session])
 
   useSessionEventHandlers({
     session,
@@ -169,16 +245,6 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     return chatSubscribeId + 1n
   }
 
-  const ensureChatSubscribed = async (member: RemoteMember, trackNamespace: string[]) => {
-    const chatState = member.subscribedTracks.chat
-    const chatSubscribeId = chatState.subscribeId
-    if (chatState.isSubscribed || chatState.isSubscribing || typeof chatSubscribeId !== 'bigint') {
-      return
-    }
-    markTrackSubscribing(chatSubscribeId)
-    await session.subscribe(chatSubscribeId, chatSubscribeId, trackNamespace, 'chat', undefined, 'chat')
-  }
-
   const applyRemoteCatalogTracks = (memberId: string, tracks: CallCatalogTrack[]) => {
     setRemoteCatalogTracks((prev) => {
       const next = new Map(prev)
@@ -191,7 +257,13 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
       const selectedVideo = ensureSelectedTrackName(current.video, tracks, 'video')
       const selectedScreenShare = ensureSelectedTrackName(current.screenshare, tracks, 'screenshare')
       const selectedAudio = ensureSelectedTrackName(current.audio, tracks, 'audio')
-      next.set(memberId, { video: selectedVideo, screenshare: selectedScreenShare, audio: selectedAudio })
+      const selectedChat = ensureSelectedTrackName(current.chat, tracks, 'chat')
+      next.set(memberId, {
+        video: selectedVideo,
+        screenshare: selectedScreenShare,
+        audio: selectedAudio,
+        chat: selectedChat
+      })
       return next
     })
   }
@@ -217,7 +289,6 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     })
 
     try {
-      await ensureChatSubscribed(member, trackNamespace)
       const tracks = await session.subscribeCatalog(
         catalogSubscribeId,
         catalogSubscribeId,
@@ -262,11 +333,20 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     if (!trackName) {
       return
     }
-    const trackCodec = remoteCatalogTracks
-      .get(memberId)
-      ?.find(
-        (track) => track.name === trackName && (role === 'audio' ? track.role === 'audio' : track.role === 'video')
-      )?.codec
+    const trackCodec =
+      role === 'audio' || role === 'video' || role === 'screenshare'
+        ? remoteCatalogTracks
+            .get(memberId)
+            ?.find((track) => {
+              if (track.name !== trackName) {
+                return false
+              }
+              if (role === 'audio') {
+                return track.role === 'audio'
+              }
+              return track.role === 'video'
+            })?.codec
+        : undefined
     const trackState = getSubscriptionStateByRole(member, role)
     const subscribeId = trackState.subscribeId
     const trackKey = buildTrackActionKey(memberId, role)
@@ -347,7 +427,6 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     const trackName = getSelectedTrackName(selected, role)
 
     try {
-      await ensureChatSubscribed(member, trackNamespace)
       await subscribeCatalogTrack(member, memberId, trackNamespace, role, trackName)
     } catch (error) {
       console.error(`Failed to subscribe ${role} track for ${memberId}:`, error)
@@ -394,8 +473,6 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
             remoteMembers={Array.from(room.remoteMembers.values())}
             localVideoStream={localVideoStream}
             localScreenShareStream={localScreenShareStream}
-            localVideoBitrate={localVideoBitrate}
-            localAudioBitrate={localAudioBitrate}
             remoteMedia={remoteMedia}
             videoJitterConfigs={videoJitterConfigs}
             onChangeVideoJitterConfig={setVideoJitterBufferConfig}
@@ -443,6 +520,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
             onApplyCaptureSettings={applyCaptureSettings}
             catalogTracks={catalogTracks}
             onAddCatalogTrack={addCatalogTrack}
+            onUpdateCatalogTrack={updateCatalogTrack}
             onRemoveCatalogTrack={removeCatalogTrack}
             remoteCatalogTracks={remoteCatalogTracks}
             remoteCatalogSelections={remoteCatalogSelections}
@@ -454,26 +532,29 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
             onSubscribeVideoTrack={(memberId) => handleSubscribeCatalogTrack(memberId, 'video')}
             onSubscribeScreenshareTrack={(memberId) => handleSubscribeCatalogTrack(memberId, 'screenshare')}
             onSubscribeAudioTrack={(memberId) => handleSubscribeCatalogTrack(memberId, 'audio')}
+            onSubscribeChatTrack={(memberId) => handleSubscribeCatalogTrack(memberId, 'chat')}
             onUnsubscribeVideoTrack={(memberId) => handleUnsubscribeCatalogTrack(memberId, 'video')}
             onUnsubscribeScreenshareTrack={(memberId) => handleUnsubscribeCatalogTrack(memberId, 'screenshare')}
             onUnsubscribeAudioTrack={(memberId) => handleUnsubscribeCatalogTrack(memberId, 'audio')}
+            onUnsubscribeChatTrack={(memberId) => handleUnsubscribeCatalogTrack(memberId, 'chat')}
+            statsHistory={statsHistory}
           />
         </main>
 
-        {isChatOpen ? (
+        {isSidebarOpen ? (
           <ChatSidebar
             messages={chatMessages}
             chatMessage={chatMessage}
             onMessageChange={setChatMessage}
             onSend={handleSendChatMessage}
-            onToggle={() => setIsChatOpen(false)}
+            onToggle={() => setIsSidebarOpen(false)}
           />
         ) : (
-          <aside className="w-full border-t border-white/10 bg-gray-900/80 px-4 py-4 backdrop-blur lg:w-14 lg:border-l lg:border-t-0 lg:px-2 lg:py-6">
+          <aside className="w-full border-t border-white/10 bg-gray-900/80 px-4 py-4 backdrop-blur lg:w-20 lg:border-l lg:border-t-0 lg:px-2 lg:py-6">
             <button
               type="button"
-              onClick={() => setIsChatOpen(true)}
-              className="w-full rounded-lg bg-blue-600 px-2 py-2 text-xs font-semibold text-white transition hover:bg-blue-700"
+              onClick={() => setIsSidebarOpen(true)}
+              className="mb-2 w-full rounded-lg bg-blue-600 px-2 py-2 text-xs font-semibold text-white transition hover:bg-blue-700"
               title="Open chat"
             >
               Chat
@@ -485,9 +566,24 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
   )
 }
 
+function appendStatsSample(
+  current: SidebarStatsSample[] | undefined,
+  sample: SidebarStatsSample
+): SidebarStatsSample[] {
+  const base = current ?? []
+  const next = [...base, sample]
+  if (next.length <= SIDEBAR_STATS_HISTORY_LIMIT) {
+    return next
+  }
+  return next.slice(next.length - SIDEBAR_STATS_HISTORY_LIMIT)
+}
+
 function getTracksForRole(tracks: CallCatalogTrack[], role: CatalogSubscribeRole): CallCatalogTrack[] {
   if (role === 'audio') {
     return tracks.filter((track) => track.role === 'audio')
+  }
+  if (role === 'chat') {
+    return tracks.filter((track) => track.role === 'chat')
   }
   return tracks.filter((track) =>
     role === 'screenshare'
@@ -530,6 +626,9 @@ function getSelectedTrackName(selected: CatalogSelections | undefined, role: Cat
   }
   if (role === 'screenshare') {
     return selected.screenshare
+  }
+  if (role === 'chat') {
+    return selected.chat
   }
   return selected.audio
 }
@@ -576,6 +675,9 @@ function getSubscriptionStateByRole(member: RemoteMember, role: CatalogSubscribe
   }
   if (role === 'screenshare') {
     return member.subscribedTracks.screenshare
+  }
+  if (role === 'chat') {
+    return member.subscribedTracks.chat
   }
   return member.subscribedTracks.audio
 }
