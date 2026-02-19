@@ -51,7 +51,7 @@ jobs:
       - name: Install cargo-audit
         run: cargo install --locked cargo-audit
       - name: Run cargo audit
-        run: cargo audit --locked
+        run: cargo audit
   test-coverage-report:
     name: coverage
     runs-on: ubuntu-latest
