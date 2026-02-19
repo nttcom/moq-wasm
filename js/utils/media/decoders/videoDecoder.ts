@@ -3,6 +3,7 @@ import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc, SubgroupWorkerM
 import { KEYFRAME_INTERVAL } from '../constants'
 import { createBitrateLogger } from '../bitrate'
 import type { ChunkMetadata } from '../chunk'
+import { latencyMsFromCaptureMicros } from '../clock'
 
 const bitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', kbps })
@@ -17,6 +18,7 @@ const VIDEO_DECODER_CONFIG = {
 
 let videoDecoder: VideoDecoder | undefined
 let waitingForKeyFrame = true
+let framesSinceLastKeyFrame: number | null = null
 async function initializeVideoDecoder(config: VideoDecoderConfig) {
   function sendVideoFrameMessage(frame: VideoFrame): void {
     self.postMessage({
@@ -107,10 +109,11 @@ let missingCatalogCodecWarned = false
 setInterval(() => {
   const entry = jitterBuffer.popWithMetadata()
   if (entry) {
+    postJitterBufferActivity('pop')
     if (entry.isEndOfGroup) {
       return
     }
-    decode(entry.groupId, entry.object)
+    decode(entry.groupId, entry.object, entry.captureTimestampMicros)
   }
 }, POP_INTERVAL_MS)
 
@@ -143,14 +146,25 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
   }
   bitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
 
-  jitterBuffer.push(event.data.groupId, subgroupStreamObject.objectId, subgroupStreamObject, (latencyMs) =>
-    postReceiveLatency(latencyMs)
+  const inserted = jitterBuffer.push(
+    event.data.groupId,
+    subgroupStreamObject.objectId,
+    subgroupStreamObject,
+    (latencyMs) => postReceiveLatency(latencyMs)
   )
+  if (inserted) {
+    postJitterBufferActivity('push')
+  }
 }
 
-async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgroupObject) {
+async function decode(
+  groupId: bigint,
+  subgroupStreamObject: JitterBufferSubgroupObject,
+  captureTimestampMicros?: number
+) {
   const decoded = subgroupStreamObject.cachedChunk
-  reportLatency(decoded.metadata.sentAt)
+  trackKeyframeInterval(decoded.metadata.type)
+  reportLatency(captureTimestampMicros)
 
   const resolvedConfig = resolveVideoConfig(decoded.metadata)
   if (!resolvedConfig) {
@@ -198,11 +212,24 @@ async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgrou
   }
 }
 
-function reportLatency(sentAt: number | undefined) {
-  if (typeof sentAt !== 'number') {
+function trackKeyframeInterval(chunkType: string): void {
+  if (framesSinceLastKeyFrame !== null) {
+    framesSinceLastKeyFrame += 1
+  }
+  if (chunkType !== 'key') {
     return
   }
-  const latency = Date.now() - sentAt
+  if (typeof framesSinceLastKeyFrame === 'number' && framesSinceLastKeyFrame > 0) {
+    self.postMessage({ type: 'keyframeInterval', media: 'video', frames: framesSinceLastKeyFrame })
+  }
+  framesSinceLastKeyFrame = 0
+}
+
+function reportLatency(captureTimestampMicros: number | undefined) {
+  if (typeof captureTimestampMicros !== 'number') {
+    return
+  }
+  const latency = latencyMsFromCaptureMicros(captureTimestampMicros)
   if (latency < 0) {
     return
   }
@@ -228,6 +255,16 @@ function postRenderingLatency(latencyMs: number) {
     return
   }
   self.postMessage({ type: 'renderingLatency', media: 'video', ms: latencyMs })
+}
+
+function postJitterBufferActivity(event: 'push' | 'pop') {
+  self.postMessage({
+    type: 'jitterBufferActivity',
+    media: 'video',
+    event,
+    bufferedFrames: jitterBuffer.getBufferedFrameCount(),
+    capacityFrames: jitterBuffer.getMaxBufferSize()
+  })
 }
 
 function postDecoderConfig(resolvedConfig: CachedVideoConfig, desired: VideoDecoderConfig) {

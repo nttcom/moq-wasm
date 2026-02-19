@@ -1,15 +1,19 @@
 import { LocalMember, RemoteMember } from '../types/member'
 import { RemoteMediaStreams } from '../types/media'
 import { MediaStreamVideo, MediaStreamAudio } from './MediaStreamElements'
-import { ReactNode, useState } from 'react'
+import { ReactNode, useEffect, useRef, useState } from 'react'
 import type { VideoJitterConfig, AudioJitterConfig } from '../types/jitterBuffer'
 import { VideoJitterBufferControls, AudioJitterBufferControls } from './JitterBufferControls'
-import { Mic, MicOff, Monitor, Settings2, Video, VideoOff } from 'lucide-react'
+import { BarChart3, LayoutGrid, Mic, MicOff, Monitor, Settings2, Video, VideoOff } from 'lucide-react'
 import { DeviceSelector } from './DeviceSelector'
 import type { CaptureSettingsState } from '../types/captureConstraints'
 import { GetUserMediaForm } from './GetUserMediaForm'
 import type { CallCatalogTrack, CatalogSubscribeRole, EditableCallCatalogTrack } from '../types/catalog'
+import { DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS, DEFAULT_VIDEO_KEYFRAME_INTERVAL } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import type { SidebarStatsSample } from '../types/stats'
+import { MemberStatsCharts } from './MemberStatsCharts'
+import { JitterBufferVisualizer } from './JitterBufferVisualizer'
 
 type VideoEncodingOptionSet = {
   codecOptions: { id: string; label: string; codec: string }[]
@@ -24,14 +28,13 @@ type AudioEncodingOptionSet = {
 }
 
 type CatalogTabKey = 'video' | 'screenshare' | 'audio'
+const TRACK_ROW_COMPACT_BREAKPOINT_PX = 440
 
 interface MemberGridProps {
   localMember: LocalMember
   remoteMembers: RemoteMember[]
   localVideoStream?: MediaStream | null
   localScreenShareStream?: MediaStream | null
-  localVideoBitrate?: number | null
-  localAudioBitrate?: number | null
   remoteMedia: Map<string, RemoteMediaStreams>
   videoJitterConfigs: Map<string, VideoJitterConfig>
   onChangeVideoJitterConfig: (userId: string, config: Partial<VideoJitterConfig>) => void
@@ -58,9 +61,10 @@ interface MemberGridProps {
   onApplyCaptureSettings: () => void
   catalogTracks: EditableCallCatalogTrack[]
   onAddCatalogTrack: (track: Omit<EditableCallCatalogTrack, 'id'>) => void
+  onUpdateCatalogTrack: (id: string, patch: Partial<EditableCallCatalogTrack>) => void
   onRemoveCatalogTrack: (id: string) => void
   remoteCatalogTracks: Map<string, CallCatalogTrack[]>
-  remoteCatalogSelections: Map<string, { video?: string; screenshare?: string; audio?: string }>
+  remoteCatalogSelections: Map<string, { video?: string; screenshare?: string; audio?: string; chat?: string }>
   catalogLoadingMemberIds: Set<string>
   catalogSubscribedMemberIds: Set<string>
   catalogUnsubscribingTrackKeys: Set<string>
@@ -69,9 +73,12 @@ interface MemberGridProps {
   onSubscribeVideoTrack: (memberId: string) => void
   onSubscribeScreenshareTrack: (memberId: string) => void
   onSubscribeAudioTrack: (memberId: string) => void
+  onSubscribeChatTrack: (memberId: string) => void
   onUnsubscribeVideoTrack: (memberId: string) => void
   onUnsubscribeScreenshareTrack: (memberId: string) => void
   onUnsubscribeAudioTrack: (memberId: string) => void
+  onUnsubscribeChatTrack: (memberId: string) => void
+  statsHistory: Map<string, SidebarStatsSample[]>
 }
 
 export function MemberGrid({
@@ -79,8 +86,6 @@ export function MemberGrid({
   remoteMembers,
   localVideoStream,
   localScreenShareStream,
-  localVideoBitrate,
-  localAudioBitrate,
   remoteMedia,
   videoJitterConfigs,
   onChangeVideoJitterConfig,
@@ -107,6 +112,7 @@ export function MemberGrid({
   onApplyCaptureSettings,
   catalogTracks,
   onAddCatalogTrack,
+  onUpdateCatalogTrack,
   onRemoveCatalogTrack,
   remoteCatalogTracks,
   remoteCatalogSelections,
@@ -118,17 +124,50 @@ export function MemberGrid({
   onSubscribeVideoTrack,
   onSubscribeScreenshareTrack,
   onSubscribeAudioTrack,
+  onSubscribeChatTrack,
   onUnsubscribeVideoTrack,
   onUnsubscribeScreenshareTrack,
-  onUnsubscribeAudioTrack
+  onUnsubscribeAudioTrack,
+  onUnsubscribeChatTrack,
+  statsHistory
 }: MemberGridProps) {
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false)
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false)
   const [jitterModalTarget, setJitterModalTarget] = useState<string | null>(null)
+  const [statsModalTarget, setStatsModalTarget] = useState<string | null>(null)
+  const [visualizedMemberIds, setVisualizedMemberIds] = useState<Set<string>>(new Set())
 
-  const localOverlay = renderStatsOverlay('Encoded', { bitrate: localVideoBitrate }, { bitrate: localAudioBitrate })
   const localPrimaryVideoStream = localVideoStream ?? localScreenShareStream ?? null
   const localSecondaryVideoStream = localVideoStream && localScreenShareStream ? localScreenShareStream : null
+
+  useEffect(() => {
+    const remoteIds = new Set(remoteMembers.map((member) => member.id))
+    setVisualizedMemberIds((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const memberId of prev) {
+        if (remoteIds.has(memberId)) {
+          next.add(memberId)
+        } else {
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [remoteMembers])
+
+  const toggleMemberVisualization = (memberId: string) => {
+    setVisualizedMemberIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(memberId)) {
+        next.delete(memberId)
+      } else {
+        next.add(memberId)
+      }
+      return next
+    })
+  }
+
   return (
     <section className="mt-8 grid gap-6 md:grid-cols-2 xl:grid-cols-2">
       <MemberCard
@@ -140,8 +179,8 @@ export function MemberGrid({
               active={cameraEnabled}
               disabled={cameraBusy}
               onClick={onToggleCamera}
-              activeLabel="Camera On"
-              inactiveLabel="Camera Off"
+              activeLabel="Turn camera off"
+              inactiveLabel="Turn camera on"
               IconOn={Video}
               IconOff={VideoOff}
             />
@@ -149,8 +188,8 @@ export function MemberGrid({
               active={screenShareEnabled}
               disabled={cameraBusy}
               onClick={onToggleScreenShare}
-              activeLabel="Sharing"
-              inactiveLabel="Share"
+              activeLabel="Stop screen share"
+              inactiveLabel="Start screen share"
               IconOn={Monitor}
               IconOff={Monitor}
             />
@@ -158,8 +197,8 @@ export function MemberGrid({
               active={microphoneEnabled}
               disabled={microphoneBusy}
               onClick={onToggleMicrophone}
-              activeLabel="Mic On"
-              inactiveLabel="Mic Off"
+              activeLabel="Turn microphone off"
+              inactiveLabel="Turn microphone on"
               IconOn={Mic}
               IconOff={MicOff}
             />
@@ -176,7 +215,6 @@ export function MemberGrid({
           </div>
         }
         videoStream={localPrimaryVideoStream}
-        videoOverlay={localOverlay}
         secondaryVideoStream={localSecondaryVideoStream}
         secondaryVideoTitle={localSecondaryVideoStream ? 'Screen Share' : undefined}
         audioStream={null}
@@ -229,6 +267,7 @@ export function MemberGrid({
             videoEncodingOptions={videoEncodingOptions}
             audioEncodingOptions={audioEncodingOptions}
             onAddTrack={onAddCatalogTrack}
+            onUpdateTrack={onUpdateCatalogTrack}
             onRemoveTrack={onRemoveCatalogTrack}
           />
         </DeviceModal>
@@ -236,49 +275,57 @@ export function MemberGrid({
 
       {remoteMembers.map((member) => {
         const media = remoteMedia.get(member.id)
-        const cameraOverlay = renderStatsOverlay(
-          'Received',
-          {
-            bitrate: media?.videoBitrateKbps,
-            latencyRender: media?.videoLatencyRenderMs,
-            latencyReceive: media?.videoLatencyReceiveMs
-          },
-          {
-            bitrate: media?.audioBitrateKbps,
-            latencyRender: media?.audioLatencyRenderMs,
-            latencyReceive: media?.audioLatencyReceiveMs
-          }
-        )
-        const screenShareOverlay = renderStatsOverlay(
-          'Received',
-          {
-            bitrate: media?.screenShareBitrateKbps,
-            latencyRender: media?.screenShareLatencyRenderMs,
-            latencyReceive: media?.screenShareLatencyReceiveMs
-          },
-          undefined
-        )
+        const isVisualizationEnabled = visualizedMemberIds.has(member.id)
         const remotePrimaryVideoStream = media?.videoStream ?? media?.screenShareStream ?? null
+        const primaryVideoJitterBuffer =
+          media?.videoStream && media.videoJitterBuffer ? media.videoJitterBuffer : media?.screenShareJitterBuffer
         const remoteSecondaryVideoStream =
           media?.videoStream && media?.screenShareStream ? media.screenShareStream : null
-        const remotePrimaryOverlay = media?.videoStream ? cameraOverlay : screenShareOverlay
         return (
           <MemberCard
             key={member.id}
             title={member.name}
             headerActions={
-              <IconButton
-                ariaLabel="Configure jitter buffer"
-                title="Jitter buffer settings"
-                onClick={() => setJitterModalTarget(member.id)}
-              >
-                <Settings2 className="h-4 w-4" />
-              </IconButton>
+              <div className="flex items-center gap-2">
+                <IconButton
+                  ariaLabel="Configure jitter buffer"
+                  title="Jitter buffer settings"
+                  onClick={() => setJitterModalTarget(member.id)}
+                >
+                  <Settings2 className="h-4 w-4" />
+                </IconButton>
+                <IconButton ariaLabel="Show stats" title="Show stats" onClick={() => setStatsModalTarget(member.id)}>
+                  <BarChart3 className="h-4 w-4" />
+                </IconButton>
+                <IconButton
+                  ariaLabel={
+                    isVisualizationEnabled
+                      ? 'Hide receive jitter buffer visualization'
+                      : 'Show receive jitter buffer visualization'
+                  }
+                  title={
+                    isVisualizationEnabled
+                      ? 'Hide receive jitter buffer visualization'
+                      : 'Show receive jitter buffer visualization'
+                  }
+                  onClick={() => toggleMemberVisualization(member.id)}
+                  className={`rounded-lg px-2 py-2 transition ${
+                    isVisualizationEnabled
+                      ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                      : 'bg-white/10 text-blue-100 hover:bg-white/20'
+                  }`}
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </IconButton>
+              </div>
             }
             videoStream={remotePrimaryVideoStream}
-            videoOverlay={remotePrimaryOverlay}
+            videoFooter={
+              isVisualizationEnabled ? (
+                <JitterBufferVisualizer videoBuffer={primaryVideoJitterBuffer} audioBuffer={media?.audioJitterBuffer} />
+              ) : undefined
+            }
             secondaryVideoStream={remoteSecondaryVideoStream}
-            secondaryVideoOverlay={screenShareOverlay}
             secondaryVideoTitle={remoteSecondaryVideoStream ? 'Screen Share' : undefined}
             audioStream={media?.audioStream ?? null}
             placeholder="Awaiting video"
@@ -300,14 +347,19 @@ export function MemberGrid({
                 isAudioSubscribed={member.subscribedTracks.audio.isSubscribed}
                 isAudioSubscribing={member.subscribedTracks.audio.isSubscribing}
                 isAudioUnsubscribing={catalogUnsubscribingTrackKeys.has(buildTrackActionKey(member.id, 'audio'))}
+                isChatSubscribed={member.subscribedTracks.chat.isSubscribed}
+                isChatSubscribing={member.subscribedTracks.chat.isSubscribing}
+                isChatUnsubscribing={catalogUnsubscribingTrackKeys.has(buildTrackActionKey(member.id, 'chat'))}
                 onLoadCatalog={() => onLoadCatalogTracks(member.id)}
                 onSelectTrack={(role, trackName) => onSelectCatalogTrack(member.id, role, trackName)}
                 onSubscribeVideo={() => onSubscribeVideoTrack(member.id)}
                 onSubscribeScreenshare={() => onSubscribeScreenshareTrack(member.id)}
                 onSubscribeAudio={() => onSubscribeAudioTrack(member.id)}
+                onSubscribeChat={() => onSubscribeChatTrack(member.id)}
                 onUnsubscribeVideo={() => onUnsubscribeVideoTrack(member.id)}
                 onUnsubscribeScreenshare={() => onUnsubscribeScreenshareTrack(member.id)}
                 onUnsubscribeAudio={() => onUnsubscribeAudioTrack(member.id)}
+                onUnsubscribeChat={() => onUnsubscribeChatTrack(member.id)}
               />
             }
           />
@@ -330,6 +382,17 @@ export function MemberGrid({
           </div>
         </DeviceModal>
       )}
+      {statsModalTarget && (
+        <DeviceModal
+          title={`Stats (${findMemberName(remoteMembers, statsModalTarget)})`}
+          onClose={() => setStatsModalTarget(null)}
+          size="wide"
+        >
+          <div className="space-y-4">
+            <MemberStatsCharts samples={statsHistory.get(statsModalTarget) ?? []} chartHeightClass="h-64" />
+          </div>
+        </DeviceModal>
+      )}
     </section>
   )
 }
@@ -338,9 +401,8 @@ interface MemberCardProps {
   title: string
   headerActions?: ReactNode
   videoStream?: MediaStream | null
-  videoOverlay?: ReactNode
+  videoFooter?: ReactNode
   secondaryVideoStream?: MediaStream | null
-  secondaryVideoOverlay?: ReactNode
   secondaryVideoTitle?: string
   audioStream?: MediaStream | null
   placeholder: string
@@ -353,9 +415,8 @@ function MemberCard({
   title,
   headerActions,
   videoStream,
-  videoOverlay,
+  videoFooter,
   secondaryVideoStream,
-  secondaryVideoOverlay,
   secondaryVideoTitle,
   audioStream,
   placeholder,
@@ -369,18 +430,13 @@ function MemberCard({
         <h3 className="text-xl font-semibold text-white">{title}</h3>
         {headerActions}
       </div>
-      <MediaStreamVideo stream={videoStream} muted={muted} placeholder={placeholder} overlay={videoOverlay} />
+      <MediaStreamVideo stream={videoStream} muted={muted} placeholder={placeholder} footer={videoFooter} />
       {secondaryVideoStream && (
         <div className="mt-2 space-y-1">
           {secondaryVideoTitle ? (
             <div className="text-xs font-semibold text-blue-200">{secondaryVideoTitle}</div>
           ) : null}
-          <MediaStreamVideo
-            stream={secondaryVideoStream}
-            muted={muted}
-            placeholder={secondaryPlaceholder}
-            overlay={secondaryVideoOverlay}
-          />
+          <MediaStreamVideo stream={secondaryVideoStream} muted={muted} placeholder={secondaryPlaceholder} />
         </div>
       )}
       {audioStream && <MediaStreamAudio stream={audioStream} className="hidden" />}
@@ -401,16 +457,19 @@ interface ControlButtonProps {
 
 function ControlButton({ active, disabled, onClick, activeLabel, inactiveLabel, IconOn, IconOff }: ControlButtonProps) {
   const Icon = active ? IconOn : IconOff
+  const label = active ? activeLabel : inactiveLabel
   return (
     <button
+      type="button"
+      aria-label={label}
+      title={label}
       onClick={onClick}
       disabled={disabled}
-      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition ${
+      className={`inline-flex h-9 w-9 items-center justify-center rounded-lg p-2 transition ${
         active ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-white/10 text-blue-100 hover:bg-white/20'
       } ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
     >
       <Icon className="h-4 w-4" />
-      <span>{active ? activeLabel : inactiveLabel}</span>
     </button>
   )
 }
@@ -419,12 +478,14 @@ function IconButton({
   ariaLabel,
   onClick,
   children,
-  title
+  title,
+  className
 }: {
   ariaLabel: string
   onClick: () => void
   children: ReactNode
   title?: string
+  className?: string
 }) {
   return (
     <button
@@ -432,7 +493,7 @@ function IconButton({
       aria-label={ariaLabel}
       title={title}
       onClick={onClick}
-      className="rounded-lg bg-white/10 px-2 py-2 text-blue-100 transition hover:bg-white/20"
+      className={className ?? 'rounded-lg bg-white/10 px-2 py-2 text-blue-100 transition hover:bg-white/20'}
     >
       {children}
     </button>
@@ -480,12 +541,14 @@ function CatalogTrackEditor({
   videoEncodingOptions,
   audioEncodingOptions,
   onAddTrack,
+  onUpdateTrack,
   onRemoveTrack
 }: {
   tracks: EditableCallCatalogTrack[]
   videoEncodingOptions: VideoEncodingOptionSet
   audioEncodingOptions: AudioEncodingOptionSet
   onAddTrack: (track: Omit<EditableCallCatalogTrack, 'id'>) => void
+  onUpdateTrack: (id: string, patch: Partial<EditableCallCatalogTrack>) => void
   onRemoveTrack: (id: string) => void
 }) {
   const videoTracks = tracks.filter((track) => track.role === 'video' && !isScreenShareTrackName(track.name))
@@ -696,6 +759,21 @@ function CatalogTrackEditor({
                     ))}
                   </select>
                 </label>
+                <label className="col-span-full flex max-w-xs flex-col gap-1 text-xs text-blue-100">
+                  <span>Keyframe Interval (frames)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={normalizeTrackKeyframeInterval(currentDraft)}
+                    onChange={(event) =>
+                      setCurrentDraft({
+                        keyframeInterval: toPositiveInteger(event.target.value, DEFAULT_VIDEO_KEYFRAME_INTERVAL)
+                      })
+                    }
+                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+                  />
+                </label>
               </>
             ) : (
               <>
@@ -763,6 +841,49 @@ function CatalogTrackEditor({
                     ))}
                   </select>
                 </label>
+                <div className="col-span-full rounded border border-white/10 bg-white/5 p-2">
+                  <div className="text-xs font-semibold text-white">Audio Group Update</div>
+                  <div className="mt-2 flex flex-wrap items-center gap-4">
+                    <label className="inline-flex items-center gap-2 text-xs text-blue-100">
+                      <input
+                        type="radio"
+                        name="draft-audio-stream-update-mode"
+                        checked={resolveAudioStreamUpdateMode(currentDraft) === 'single'}
+                        onChange={() => setCurrentDraft({ audioStreamUpdateMode: 'single' })}
+                      />
+                      <span>単一 Stream</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-xs text-blue-100">
+                      <input
+                        type="radio"
+                        name="draft-audio-stream-update-mode"
+                        checked={resolveAudioStreamUpdateMode(currentDraft) === 'interval'}
+                        onChange={() => setCurrentDraft({ audioStreamUpdateMode: 'interval' })}
+                      />
+                      <span>N 秒ごとに更新</span>
+                    </label>
+                  </div>
+                  {resolveAudioStreamUpdateMode(currentDraft) === 'interval' ? (
+                    <label className="mt-2 flex max-w-xs flex-col gap-1 text-xs text-blue-100">
+                      <span>更新間隔 (秒)</span>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={resolveAudioStreamUpdateIntervalSeconds(currentDraft)}
+                        onChange={(event) =>
+                          setCurrentDraft({
+                            audioStreamUpdateIntervalSeconds: toPositiveInteger(
+                              event.target.value,
+                              DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
+                            )
+                          })
+                        }
+                        className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+                      />
+                    </label>
+                  ) : null}
+                </div>
               </>
             )}
           </div>
@@ -809,6 +930,69 @@ function CatalogTrackEditor({
                         ))}
                       </dl>
                     ) : null}
+                    <div className="mt-2">
+                      {track.role === 'video' ? (
+                        <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
+                          <span>Keyframe Interval (frames)</span>
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={normalizeTrackKeyframeInterval(track)}
+                            onChange={(event) =>
+                              onUpdateTrack(track.id, {
+                                keyframeInterval: toPositiveInteger(event.target.value, DEFAULT_VIDEO_KEYFRAME_INTERVAL)
+                              })
+                            }
+                            className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+                          />
+                        </label>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="text-xs font-semibold text-white">Audio Group Update</div>
+                          <div className="flex flex-wrap items-center gap-4">
+                            <label className="inline-flex items-center gap-2 text-xs text-blue-100">
+                              <input
+                                type="radio"
+                                name={`audio-stream-update-mode-${track.id}`}
+                                checked={resolveAudioStreamUpdateMode(track) === 'single'}
+                                onChange={() => onUpdateTrack(track.id, { audioStreamUpdateMode: 'single' })}
+                              />
+                              <span>単一 Stream</span>
+                            </label>
+                            <label className="inline-flex items-center gap-2 text-xs text-blue-100">
+                              <input
+                                type="radio"
+                                name={`audio-stream-update-mode-${track.id}`}
+                                checked={resolveAudioStreamUpdateMode(track) === 'interval'}
+                                onChange={() => onUpdateTrack(track.id, { audioStreamUpdateMode: 'interval' })}
+                              />
+                              <span>N 秒ごとに更新</span>
+                            </label>
+                          </div>
+                          {resolveAudioStreamUpdateMode(track) === 'interval' ? (
+                            <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
+                              <span>更新間隔 (秒)</span>
+                              <input
+                                type="number"
+                                min={1}
+                                step={1}
+                                value={resolveAudioStreamUpdateIntervalSeconds(track)}
+                                onChange={(event) =>
+                                  onUpdateTrack(track.id, {
+                                    audioStreamUpdateIntervalSeconds: toPositiveInteger(
+                                      event.target.value,
+                                      DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
+                                    )
+                                  })
+                                }
+                                className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+                              />
+                            </label>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -843,8 +1027,11 @@ function createVideoTrackDraft(options: VideoEncodingOptionSet): Omit<EditableCa
     width: resolution?.width ?? 1280,
     height: resolution?.height ?? 720,
     bitrate,
+    keyframeInterval: DEFAULT_VIDEO_KEYFRAME_INTERVAL,
     samplerate: undefined,
     channelConfig: undefined,
+    audioStreamUpdateMode: undefined,
+    audioStreamUpdateIntervalSeconds: undefined,
     isLive: true
   }
 }
@@ -861,8 +1048,11 @@ function createScreenShareTrackDraft(options: VideoEncodingOptionSet): Omit<Edit
     width: resolution?.width ?? 1920,
     height: resolution?.height ?? 1080,
     bitrate,
+    keyframeInterval: DEFAULT_VIDEO_KEYFRAME_INTERVAL,
     samplerate: undefined,
     channelConfig: undefined,
+    audioStreamUpdateMode: undefined,
+    audioStreamUpdateIntervalSeconds: undefined,
     isLive: true
   }
 }
@@ -879,8 +1069,11 @@ function createAudioTrackDraft(options: AudioEncodingOptionSet): Omit<EditableCa
     bitrate,
     width: undefined,
     height: undefined,
+    keyframeInterval: undefined,
     samplerate: 48_000,
     channelConfig: channelConfigForChannels(channels),
+    audioStreamUpdateMode: DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode,
+    audioStreamUpdateIntervalSeconds: DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds,
     isLive: true
   }
 }
@@ -930,6 +1123,28 @@ function channelConfigForChannels(channels: number): string {
   return `${channels}ch`
 }
 
+function normalizeTrackKeyframeInterval(track: Pick<CallCatalogTrack, 'keyframeInterval'>): number {
+  return toPositiveInteger(track.keyframeInterval, DEFAULT_VIDEO_KEYFRAME_INTERVAL)
+}
+
+function resolveAudioStreamUpdateMode(track: Pick<CallCatalogTrack, 'audioStreamUpdateMode'>): 'single' | 'interval' {
+  return track.audioStreamUpdateMode === 'single' ? 'single' : DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode
+}
+
+function resolveAudioStreamUpdateIntervalSeconds(
+  track: Pick<CallCatalogTrack, 'audioStreamUpdateIntervalSeconds'>
+): number {
+  return toPositiveInteger(track.audioStreamUpdateIntervalSeconds, DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds)
+}
+
+function toPositiveInteger(value: unknown, fallback: number): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback
+  }
+  return Math.floor(parsed)
+}
+
 function RemoteCatalogSubscribePanel({
   tracks,
   selected,
@@ -944,17 +1159,22 @@ function RemoteCatalogSubscribePanel({
   isAudioSubscribed,
   isAudioSubscribing,
   isAudioUnsubscribing,
+  isChatSubscribed,
+  isChatSubscribing,
+  isChatUnsubscribing,
   onLoadCatalog,
   onSelectTrack,
   onSubscribeVideo,
   onSubscribeScreenshare,
   onSubscribeAudio,
+  onSubscribeChat,
   onUnsubscribeVideo,
   onUnsubscribeScreenshare,
-  onUnsubscribeAudio
+  onUnsubscribeAudio,
+  onUnsubscribeChat
 }: {
   tracks: CallCatalogTrack[]
-  selected?: { video?: string; screenshare?: string; audio?: string }
+  selected?: { video?: string; screenshare?: string; audio?: string; chat?: string }
   isLoading: boolean
   isCatalogSubscribed: boolean
   isVideoSubscribed: boolean
@@ -966,21 +1186,28 @@ function RemoteCatalogSubscribePanel({
   isAudioSubscribed: boolean
   isAudioSubscribing: boolean
   isAudioUnsubscribing: boolean
+  isChatSubscribed: boolean
+  isChatSubscribing: boolean
+  isChatUnsubscribing: boolean
   onLoadCatalog: () => void
   onSelectTrack: (role: CatalogSubscribeRole, trackName: string) => void
   onSubscribeVideo: () => void
   onSubscribeScreenshare: () => void
   onSubscribeAudio: () => void
+  onSubscribeChat: () => void
   onUnsubscribeVideo: () => void
   onUnsubscribeScreenshare: () => void
   onUnsubscribeAudio: () => void
+  onUnsubscribeChat: () => void
 }) {
   const videoTracks = tracks.filter((track) => track.role === 'video' && !isScreenShareTrackName(track.name))
   const screenshareTracks = tracks.filter((track) => track.role === 'video' && isScreenShareTrackName(track.name))
   const audioTracks = tracks.filter((track) => track.role === 'audio')
+  const chatTracks = tracks.filter((track) => track.role === 'chat')
   const selectedVideo = selected?.video ?? videoTracks[0]?.name ?? ''
   const selectedScreenshare = selected?.screenshare ?? screenshareTracks[0]?.name ?? ''
   const selectedAudio = selected?.audio ?? audioTracks[0]?.name ?? ''
+  const selectedChat = selected?.chat ?? chatTracks[0]?.name ?? ''
   const hasCatalog = isCatalogSubscribed
   const trackRows: {
     role: CatalogSubscribeRole
@@ -1025,6 +1252,17 @@ function RemoteCatalogSubscribePanel({
       unsubscribing: isAudioUnsubscribing,
       onSubscribe: onSubscribeAudio,
       onUnsubscribe: onUnsubscribeAudio
+    },
+    {
+      role: 'chat',
+      title: 'Chat Track',
+      tracks: chatTracks,
+      selectedTrack: selectedChat,
+      subscribed: isChatSubscribed,
+      subscribing: isChatSubscribing,
+      unsubscribing: isChatUnsubscribing,
+      onSubscribe: onSubscribeChat,
+      onUnsubscribe: onUnsubscribeChat
     }
   ]
   const catalogButtonLabel = isLoading ? 'Loading...' : 'Catalog Subscribe'
@@ -1099,18 +1337,45 @@ function TrackSubscribeRow({
   onSubscribe: () => void
   onUnsubscribe: () => void
 }) {
+  const layoutContainerRef = useRef<HTMLDivElement | null>(null)
+  const [isCompactLayout, setIsCompactLayout] = useState(false)
+
+  useEffect(() => {
+    const container = layoutContainerRef.current
+    if (!container || typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    const updateLayout = (width: number) => {
+      setIsCompactLayout(width < TRACK_ROW_COMPACT_BREAKPOINT_PX)
+    }
+
+    updateLayout(container.getBoundingClientRect().width)
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) {
+        updateLayout(entry.contentRect.width)
+      }
+    })
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [])
+
   return (
     <div className="space-y-1 rounded-md border border-white/10 bg-white/[0.03] p-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-blue-100">{title}</span>
         <span className="text-[11px] text-blue-300">{statusText}</span>
       </div>
-      <div className="grid gap-2 md:grid-cols-[1fr_auto_auto]">
+      <div
+        ref={layoutContainerRef}
+        className={isCompactLayout ? 'space-y-2' : 'grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2'}
+      >
         <select
           value={selected}
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
-          className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white outline-none focus:border-blue-300 focus:ring-1 focus:ring-blue-300 disabled:opacity-60"
+          className="w-full min-w-0 rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white outline-none focus:border-blue-300 focus:ring-1 focus:ring-blue-300 disabled:opacity-60"
         >
           {tracks.length === 0 ? (
             <option value="" className="bg-slate-900 text-white">
@@ -1128,7 +1393,7 @@ function TrackSubscribeRow({
           type="button"
           disabled={!canSubscribe}
           onClick={onSubscribe}
-          className={`rounded px-3 py-1 text-xs font-semibold text-white transition ${
+          className={`${isCompactLayout ? 'w-full' : ''} rounded px-3 py-1 text-xs font-semibold text-white transition ${
             canSubscribe ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-500/70'
           } ${busy ? 'cursor-wait opacity-70' : ''} ${!canSubscribe ? 'cursor-not-allowed opacity-70' : ''}`}
         >
@@ -1138,7 +1403,7 @@ function TrackSubscribeRow({
           type="button"
           disabled={!canUnsubscribe}
           onClick={onUnsubscribe}
-          className={`rounded px-3 py-1 text-xs font-semibold text-white transition ${
+          className={`${isCompactLayout ? 'w-full' : ''} rounded px-3 py-1 text-xs font-semibold text-white transition ${
             canUnsubscribe ? 'bg-amber-600 hover:bg-amber-700' : 'bg-slate-500/70'
           } ${busy ? 'cursor-wait opacity-70' : ''} ${!canUnsubscribe ? 'cursor-not-allowed opacity-70' : ''}`}
         >
@@ -1190,11 +1455,26 @@ function buildCatalogTrackMetadataEntries(
   if (track.role === 'video' && typeof track.width === 'number' && typeof track.height === 'number') {
     entries.push({ key: 'resolution', label: 'Resolution', value: `${track.width}x${track.height}` })
   }
+  if (track.role === 'video') {
+    entries.push({
+      key: 'keyframe-interval',
+      label: 'Keyframe Interval',
+      value: `${normalizeTrackKeyframeInterval(track)} frames`
+    })
+  }
   if (track.role === 'audio' && typeof track.samplerate === 'number') {
     entries.push({ key: 'samplerate', label: 'Sample Rate', value: `${track.samplerate}Hz` })
   }
   if (track.role === 'audio' && track.channelConfig) {
     entries.push({ key: 'channel', label: 'Channel', value: track.channelConfig })
+  }
+  if (track.role === 'audio') {
+    const mode = resolveAudioStreamUpdateMode(track)
+    entries.push({
+      key: 'audio-update-mode',
+      label: 'Audio Group Update',
+      value: mode === 'single' ? 'Single stream' : `Every ${resolveAudioStreamUpdateIntervalSeconds(track)}s`
+    })
   }
   if (typeof track.isLive === 'boolean') {
     entries.push({ key: 'live', label: 'Live', value: track.isLive ? 'true' : 'false' })
@@ -1222,68 +1502,6 @@ function TrackList({ title, items }: { title: string; items: { label: string; en
           </li>
         ))}
       </ul>
-    </div>
-  )
-}
-
-type TrackStats = {
-  bitrate?: number | null
-  latencyRender?: number | null
-  latencyReceive?: number | null
-}
-
-function renderStatsOverlay(label: string, video?: TrackStats, audio?: TrackStats): ReactNode | undefined {
-  const rows: string[] = []
-
-  const formatBitrate = (kbps?: number | null) => {
-    if (typeof kbps !== 'number') {
-      return null
-    }
-    return `${kbps.toFixed(0)} kbps`
-  }
-
-  const formatLatencyPair = (renderMs?: number | null, receiveMs?: number | null) => {
-    const renderText = typeof renderMs === 'number' ? `render ${renderMs.toFixed(0)} ms` : null
-    const receiveText = typeof receiveMs === 'number' ? `recv ${receiveMs.toFixed(0)} ms` : null
-    const parts = [renderText, receiveText].filter(Boolean)
-    return parts.length ? parts.join(' / ') : null
-  }
-
-  const videoParts: string[] = []
-  const videoBitrate = formatBitrate(video?.bitrate)
-  if (videoBitrate) {
-    videoParts.push(videoBitrate)
-  }
-  const videoLatency = formatLatencyPair(video?.latencyRender, video?.latencyReceive)
-  if (videoLatency) {
-    videoParts.push(videoLatency)
-  }
-  if (videoParts.length) {
-    rows.push(`${label} Video: ${videoParts.join(' / ')}`)
-  }
-
-  const audioParts: string[] = []
-  const audioBitrate = formatBitrate(audio?.bitrate)
-  if (audioBitrate) {
-    audioParts.push(audioBitrate)
-  }
-  const audioLatency = formatLatencyPair(audio?.latencyRender, audio?.latencyReceive)
-  if (audioLatency) {
-    audioParts.push(audioLatency)
-  }
-  if (audioParts.length) {
-    rows.push(`${label} Audio: ${audioParts.join(' / ')}`)
-  }
-
-  if (!rows.length) {
-    return undefined
-  }
-
-  return (
-    <div className="flex flex-col text-right leading-tight">
-      {rows.map((text) => (
-        <span key={text}>{text}</span>
-      ))}
     </div>
   )
 }

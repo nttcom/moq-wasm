@@ -1001,6 +1001,7 @@ impl MOQTClient {
             stream_writers.get(&writer_key).cloned()
         };
         if let Some(writer) = writer {
+            let is_end_of_group = object_status == Some(3);
             let extension_headers = match crate::loc::parse_loc_header(loc_header) {
                 Ok(Some(loc_header)) => crate::loc::loc_header_to_extension_headers(&loc_header)
                     .map_err(|e| JsValue::from_str(&e.to_string()))?,
@@ -1025,6 +1026,10 @@ impl MOQTClient {
             buffer.copy_from(&buf);
             match JsFuture::from(writer.write_with_chunk(&buffer)).await {
                 Ok(_) => {
+                    if is_end_of_group {
+                        let _ = JsFuture::from(writer.close()).await;
+                        self.stream_writers.borrow_mut().remove(&writer_key);
+                    }
                     // log(std::format!(
                     //     "sent: trackAlias: {:#?} object . group_id: {:#?} subgroup_id: {:#?} object_id: {:#?} object_status: {:#?}",
                     //     track_alias,
@@ -1037,6 +1042,7 @@ impl MOQTClient {
                     Ok(())
                 }
                 Err(e) => {
+                    self.stream_writers.borrow_mut().remove(&writer_key);
                     log(std::format!("err: {:?}", e).as_str());
                     Err(e)
                 }

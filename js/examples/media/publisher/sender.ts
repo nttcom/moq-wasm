@@ -1,6 +1,7 @@
 import { MOQTClient } from '../../../pkg/moqt_client_wasm'
 import { createBitrateLogger } from '../../../utils/media/logger'
 import { buildLocHeader, type LocHeader, arrayBufferToUint8Array } from '../../../utils/media/loc'
+import { monotonicUnixMicros } from '../../../utils/media/clock'
 
 const chunkDataBitrateLogger = createBitrateLogger('chunkData bitrate')
 const videoGroupStates = new Map<bigint, { groupId: bigint; lastObjectId: bigint }>()
@@ -81,13 +82,13 @@ export function buildVideoLocHeader(metadata?: EncodedVideoChunkMetadata): LocHe
     (metadata as { decoderConfig?: any } | undefined)?.decoderConfig?.description
   )
   return buildLocHeader({
-    captureTimestampMicros: Date.now() * 1000,
+    captureTimestampMicros: monotonicUnixMicros(),
     videoConfig: configBytes
   })
 }
 
 export function buildAudioLocHeader(): LocHeader {
   return buildLocHeader({
-    captureTimestampMicros: Date.now() * 1000
+    captureTimestampMicros: monotonicUnixMicros()
   })
 }

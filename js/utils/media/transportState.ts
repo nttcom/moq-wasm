@@ -79,6 +79,12 @@ export class MediaTransportState {
     return this.audio.groupId
   }
 
+  advanceAudioGroup(): void {
+    this.audio.groupId += 1n
+    this.audio.objectId = 0n
+    this.resetHeaders(this.audio)
+  }
+
   getAudioObjectId(): bigint {
     return this.audio.objectId
   }
