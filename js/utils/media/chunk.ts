@@ -4,7 +4,6 @@ export type ChunkMetadata = {
   type: string
   timestamp: number
   duration: number | null
-  sentAt: number
   codec?: string
   descriptionBase64?: string
   avcFormat?: 'annexb' | 'avc'
@@ -30,7 +29,6 @@ export function serializeChunk(chunk: EncodedChunkLike, extraMetadata?: Partial<
     type: chunk.type,
     timestamp: chunk.timestamp,
     duration: chunk.duration ?? null,
-    sentAt: Date.now(),
     ...extraMetadata
   }
   const metaBytes = new TextEncoder().encode(JSON.stringify(metadata))

@@ -129,7 +129,7 @@ export class LocalSession {
     trackNamespace: string[],
     trackName: string,
     authInfo: string = this.defaultAuthInfo,
-    role?: CatalogSubscribeRole | 'chat',
+    role?: CatalogSubscribeRole,
     codec?: string
   ): Promise<void> {
     if (this.state !== LocalSessionState.Ready) {
@@ -142,14 +142,15 @@ export class LocalSession {
       this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroup) => {
         try {
           const payload = new Uint8Array(subgroup.objectPayload)
-          const text = new TextDecoder().decode(payload)
+          const decoded = new TextDecoder().decode(payload)
+          const { text, timestamp } = decodeChatPayload(decoded)
           if (this.chatMessageHandler) {
             const message: ChatMessage = {
               sender: remoteUser,
               trackNamespace: [...trackNamespace],
               groupId,
               text,
-              timestamp: Date.now(),
+              timestamp,
               isLocal: false
             }
             this.chatMessageHandler(message)
@@ -219,7 +220,7 @@ export class LocalSession {
     })
   }
 
-  async unsubscribe(subscribeId: bigint, role?: CatalogSubscribeRole | 'chat'): Promise<void> {
+  async unsubscribe(subscribeId: bigint, role?: CatalogSubscribeRole): Promise<void> {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot unsubscribe when session state is "${this.state}"`)
     }
@@ -238,14 +239,14 @@ export class LocalSession {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot send chat message when session state is "${this.state}"`)
     }
-    await this.client.sendSubgroupTextForTrack(this.trackNamespace, 'chat', message)
+    await this.client.sendSubgroupTextForTrack(this.trackNamespace, 'chat', encodeChatPayload(message))
   }
 
   getMediaController(): CallMediaController {
     return this.mediaController
   }
 
-  private resolveTrackRole(trackName: string): CatalogSubscribeRole | 'chat' | null {
+  private resolveTrackRole(trackName: string): CatalogSubscribeRole | null {
     if (trackName === 'chat') {
       return 'chat'
     }
@@ -255,4 +256,35 @@ export class LocalSession {
     }
     return role
   }
+}
+
+type ChatEventRecord = {
+  t?: number
+  data?: { text?: string }
+}
+
+function decodeChatPayload(payload: string): { text: string; timestamp: number } {
+  const fallback = { text: payload, timestamp: Date.now() }
+  try {
+    const parsed = JSON.parse(payload)
+    const record = Array.isArray(parsed) ? parsed[parsed.length - 1] : parsed
+    if (!isObject(record)) {
+      return fallback
+    }
+    const data = isObject(record.data) ? record.data : null
+    const text = typeof data?.text === 'string' && data.text.trim() ? data.text : payload
+    const timestamp = typeof record.t === 'number' && Number.isFinite(record.t) ? record.t : fallback.timestamp
+    return { text, timestamp }
+  } catch {
+    return fallback
+  }
+}
+
+function encodeChatPayload(message: string): string {
+  const record: ChatEventRecord = { t: Date.now(), data: { text: message } }
+  return JSON.stringify([record])
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }

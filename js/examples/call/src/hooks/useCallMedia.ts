@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { LocalSession } from '../session/localSession'
-import { RemoteMediaStreams } from '../types/media'
+import type { JitterBufferEvent, JitterBufferSnapshot, RemoteMediaStreams } from '../types/media'
 import {
   DEFAULT_VIDEO_JITTER_CONFIG,
   normalizeVideoJitterConfig,
@@ -112,6 +112,15 @@ const CATALOG_PRESETS: Record<CatalogPresetSource, CatalogPreset> = {
   }
 }
 
+type RenderingRateState = {
+  lastEventAtMs: number
+  smoothedFps: number
+}
+
+const RENDERING_RATE_SMOOTHING_FACTOR = 0.2
+const MIN_RENDERING_INTERVAL_MS = 1
+const MAX_RENDERING_FPS = 120
+
 export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
   const [cameraEnabled, setCameraEnabled] = useState(false)
   const [screenShareEnabled, setScreenShareEnabled] = useState(false)
@@ -152,6 +161,8 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     autoGainControl: true
   })
   const [catalogTracks, setCatalogTracks] = useState<EditableCallCatalogTrack[]>([])
+  const videoRenderingRateStateRef = useRef<Map<string, RenderingRateState>>(new Map())
+  const audioRenderingRateStateRef = useRef<Map<string, RenderingRateState>>(new Map())
 
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -184,6 +195,8 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setVideoEncoderError(null)
       setAudioEncoderError(null)
       setCatalogTracks([])
+      videoRenderingRateStateRef.current.clear()
+      audioRenderingRateStateRef.current.clear()
       return
     }
 
@@ -243,7 +256,21 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
         setRemoteMedia((prev) => {
           const updated = new Map(prev)
           const current = updated.get(userId) ?? {}
-          updated.set(userId, { ...current, audioStream: stream })
+          updated.set(userId, { ...current, audioStream: stream, audioPlaybackQueueMs: 0 })
+          return updated
+        }),
+      onRemoteAudioStreamClosed: (userId) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId)
+          if (!current) {
+            return prev
+          }
+          updated.set(userId, {
+            ...current,
+            audioStream: null,
+            audioPlaybackQueueMs: 0
+          })
           return updated
         }),
       onLocalVideoBitrate: (kbps) => setLocalVideoBitrate(kbps),
@@ -257,6 +284,17 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
             return updated
           }
           updated.set(userId, { ...current, videoBitrateKbps: kbps })
+          return updated
+        }),
+      onRemoteVideoKeyframeInterval: (userId, frames, source) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId) ?? {}
+          if (source === 'screenshare') {
+            updated.set(userId, { ...current, screenShareKeyframeIntervalFrames: frames })
+            return updated
+          }
+          updated.set(userId, { ...current, videoKeyframeIntervalFrames: frames })
           return updated
         }),
       onRemoteAudioBitrate: (userId, kbps) =>
@@ -284,14 +322,23 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
         setRemoteMedia((prev) => {
           const updated = new Map(prev)
           const current = updated.get(userId) ?? {}
+          const renderingRate = updateRenderingRate(
+            videoRenderingRateStateRef.current,
+            buildVideoRenderingRateKey(userId, source)
+          )
           if (source === 'screenshare') {
             updated.set(userId, {
               ...current,
-              screenShareLatencyRenderMs: ms
+              screenShareLatencyRenderMs: ms,
+              screenShareRenderingRateFps: renderingRate
             })
             return updated
           }
-          updated.set(userId, { ...current, videoLatencyRenderMs: ms })
+          updated.set(userId, {
+            ...current,
+            videoLatencyRenderMs: ms,
+            videoRenderingRateFps: renderingRate
+          })
           return updated
         }),
       onRemoteAudioReceiveLatency: (userId, ms) =>
@@ -308,9 +355,59 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
         setRemoteMedia((prev) => {
           const updated = new Map(prev)
           const current = updated.get(userId) ?? {}
+          const renderingRate = updateRenderingRate(audioRenderingRateStateRef.current, userId)
           updated.set(userId, {
             ...current,
-            audioLatencyRenderMs: ms
+            audioLatencyRenderMs: ms,
+            audioRenderingRateFps: renderingRate
+          })
+          return updated
+        }),
+      onRemoteAudioPlaybackQueue: (userId, queuedMs) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId) ?? {}
+          updated.set(userId, {
+            ...current,
+            audioPlaybackQueueMs: queuedMs
+          })
+          return updated
+        }),
+      onRemoteVideoJitterBufferActivity: (userId, activity, source) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId) ?? {}
+          const nextSnapshot = createJitterBufferSnapshot(
+            source === 'screenshare' ? current.screenShareJitterBuffer : current.videoJitterBuffer,
+            activity.event,
+            activity.bufferedFrames,
+            activity.capacityFrames
+          )
+          if (source === 'screenshare') {
+            updated.set(userId, {
+              ...current,
+              screenShareJitterBuffer: nextSnapshot
+            })
+            return updated
+          }
+          updated.set(userId, {
+            ...current,
+            videoJitterBuffer: nextSnapshot
+          })
+          return updated
+        }),
+      onRemoteAudioJitterBufferActivity: (userId, activity) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId) ?? {}
+          updated.set(userId, {
+            ...current,
+            audioJitterBuffer: createJitterBufferSnapshot(
+              current.audioJitterBuffer,
+              activity.event,
+              activity.bufferedFrames,
+              activity.capacityFrames
+            )
           })
           return updated
         }),
@@ -354,6 +451,8 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setMicrophoneEnabled(session.localMember.publishedTracks.audio)
       setVideoJitterConfigs(new Map())
       setAudioJitterConfigs(new Map())
+      videoRenderingRateStateRef.current.clear()
+      audioRenderingRateStateRef.current.clear()
     }
   }, [session])
 
@@ -854,6 +953,49 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     addCatalogTrack,
     updateCatalogTrack,
     removeCatalogTrack
+  }
+}
+
+function buildVideoRenderingRateKey(userId: string, source: 'camera' | 'screenshare'): string {
+  return `${userId}:${source}`
+}
+
+function updateRenderingRate(states: Map<string, RenderingRateState>, key: string): number | undefined {
+  const now = performance.now()
+  const previous = states.get(key)
+  if (!previous) {
+    states.set(key, { lastEventAtMs: now, smoothedFps: 0 })
+    return undefined
+  }
+
+  const intervalMs = now - previous.lastEventAtMs
+  if (!Number.isFinite(intervalMs) || intervalMs < MIN_RENDERING_INTERVAL_MS) {
+    states.set(key, { ...previous, lastEventAtMs: now })
+    return previous.smoothedFps > 0 ? previous.smoothedFps : undefined
+  }
+
+  const instantaneousFps = Math.min(MAX_RENDERING_FPS, 1000 / intervalMs)
+  const nextFps =
+    previous.smoothedFps > 0
+      ? previous.smoothedFps * (1 - RENDERING_RATE_SMOOTHING_FACTOR) +
+        instantaneousFps * RENDERING_RATE_SMOOTHING_FACTOR
+      : instantaneousFps
+  states.set(key, { lastEventAtMs: now, smoothedFps: nextFps })
+  return nextFps
+}
+
+function createJitterBufferSnapshot(
+  current: JitterBufferSnapshot | undefined,
+  event: JitterBufferEvent,
+  bufferedFrames: number,
+  capacityFrames: number
+): JitterBufferSnapshot {
+  return {
+    bufferedFrames: Math.max(0, Math.floor(bufferedFrames)),
+    capacityFrames: Math.max(1, Math.floor(capacityFrames)),
+    lastEvent: event,
+    sequence: (current?.sequence ?? 0) + 1,
+    updatedAtMs: Date.now()
   }
 }
 

@@ -58,11 +58,21 @@ const audioEncoderContexts: AudioProfileEncoderContext[] = MEDIA_AUDIO_PROFILES.
 }))
 
 type VideoEncoderWorkerMessage =
-  | { type: 'chunk'; chunk: EncodedVideoChunk; metadata: EncodedVideoChunkMetadata | undefined }
+  | {
+      type: 'chunk'
+      chunk: EncodedVideoChunk
+      metadata: EncodedVideoChunkMetadata | undefined
+      captureTimestampMicros?: number
+    }
   | { type: 'bitrate'; kbps: number }
 
 type AudioEncoderWorkerMessage =
-  | { type: 'chunk'; chunk: EncodedAudioChunk; metadata: EncodedAudioChunkMetadata | undefined }
+  | {
+      type: 'chunk'
+      chunk: EncodedAudioChunk
+      metadata: EncodedAudioChunkMetadata | undefined
+      captureTimestampMicros?: number
+    }
   | { type: 'bitrate'; media: 'audio'; kbps: number }
 
 function parseTrackNamespace(raw: string): string[] {
@@ -157,7 +167,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
       if (data.type !== 'chunk') {
         return
       }
-      const { chunk, metadata } = data
+      const { chunk, metadata, captureTimestampMicros } = data
       console.debug('[MediaPublisher] video chunk', {
         byteLength: chunk.byteLength,
         type: chunk.type,
@@ -174,6 +184,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
       await sendVideoChunkViaMoqt({
         chunk,
         metadata,
+        captureTimestampMicros,
         trackAliases,
         publisherPriority,
         client,
@@ -187,7 +198,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
         if (data.type !== 'chunk') {
           return
         }
-        const { chunk, metadata } = data
+        const { chunk, metadata, captureTimestampMicros } = data
         const form = getFormElement()
         const trackNamespace = parseTrackNamespace(form['announce-track-namespace'].value)
         const trackAliases = getAudioTrackAliases(client, trackNamespace, context.trackName)
@@ -197,6 +208,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
         await sendAudioChunkViaMoqt({
           chunk,
           metadata,
+          captureTimestampMicros,
           trackAliases,
           client,
           transportState
