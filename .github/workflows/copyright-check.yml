@@ -1,0 +1,30 @@
+name: Run CodeCopyrightCheck on PR
+
+# PR 作成・更新時に発火して、composite action を呼び出す
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+  pull-requests: write # ← これが無いとコメントできないことが多い
+  issues: write # ← gh issue comment を使うならあると安心
+
+jobs:
+  copyright-check:
+    runs-on: ubuntu-latest
+    # ブランチ名が claude/** / codex/** または ラベルが claude code / codex の場合のみ実行
+    if: |
+      startsWith(github.head_ref, 'claude/') ||
+      startsWith(github.head_ref, 'codex/') ||
+      contains(github.event.pull_request.labels.*.name, 'claude code') ||
+      contains(github.event.pull_request.labels.*.name, 'codex')
+    steps:
+      - name: Run copyright check
+        uses: nttcom-ic/CodeCopyrightChecker@v1
+        with:
+          pr_number: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+          AACS: ${{ secrets.AACS }}
+          AACSAPIkey: ${{ secrets.AACSAPIkey }}
