@@ -11,7 +11,9 @@ use moqt_client_onvif::{
 use moqt_client_rust::{
     datagram_io::DatagramEvent, loc::loc_header_to_extension_headers, publisher::MoqtPublisher,
 };
-use moqt_core::messages::control_messages::subscribe::FilterType;
+use moqt_core::messages::{
+    control_messages::subscribe::FilterType, data_streams::object_status::ObjectStatus,
+};
 use packages::loc::{CaptureTimestamp, LocHeader, LocHeaderExtension, VideoConfig};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -561,6 +563,38 @@ struct VideoStreamState {
 }
 
 impl VideoStreamState {
+    async fn close_current_group(
+        &mut self,
+        publisher: &MoqtPublisher,
+        track_alias: u64,
+    ) -> Result<()> {
+        let Some(mut stream) = self.stream.take() else {
+            return Ok(());
+        };
+        let end_object_id = self.object_id;
+        publisher
+            .write_subgroup_object(
+                &mut stream,
+                track_alias,
+                self.group_id,
+                SUBGROUP_ID,
+                end_object_id,
+                Vec::new(),
+                Some(ObjectStatus::EndOfGroup),
+                &[],
+            )
+            .await
+            .context("send end of group object")?;
+        stream.finish().await.context("finish subgroup stream")?;
+        log::info!(
+            "MoQ send end of group group_id={} object_id={} track_alias={}",
+            self.group_id,
+            end_object_id,
+            track_alias
+        );
+        Ok(())
+    }
+
     async fn start_group(
         &mut self,
         publisher: &MoqtPublisher,
@@ -568,6 +602,9 @@ impl VideoStreamState {
         publisher_priority: u8,
     ) -> Result<()> {
         if self.started {
+            self.close_current_group(publisher, track_alias)
+                .await
+                .context("close previous subgroup stream")?;
             self.group_id += 1;
         }
         self.object_id = 0;
