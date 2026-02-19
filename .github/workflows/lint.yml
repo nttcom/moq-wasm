@@ -42,6 +42,16 @@ jobs:
         run: cargo fmt -- --check
       - name: Run Unit Tests
         run: cargo test
+  cargo-audit:
+    runs-on: ubuntu-latest
+    container:
+      image: rust:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+      - name: Run cargo audit
+        run: cargo audit --locked
   test-coverage-report:
     name: coverage
     runs-on: ubuntu-latest
