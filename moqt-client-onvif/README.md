@@ -9,7 +9,7 @@ An ONVIF PTZ client with a minimal GUI and RTSP preview.
 - RTSP: display the live preview in the GUI.
 - RTSP: log SDP details once at startup when available.
 - Startup: fetch PTZ configuration/option info and print a short summary (token/spaces/limits) grouped by `[GetToken]`, etc.
-- MoQ: publish RTSP video as subgroup streams and subscribe to ONVIF command datagrams over a single WebTransport connection (AnnexB conversion applied; keyframes include LoC videoConfig derived from SPS/PPS when available; codec string is derived from SPS with the CLI value used as a fallback; RTSP capture starts after MoQ setup/announce/subscribe).
+- MoQ: publish RTSP video as subgroup streams and subscribe to ONVIF command datagrams over a single WebTransport connection (AnnexB conversion applied; keyframes include LoC videoConfig derived from SPS/PPS when available; codec string is derived from SPS with the CLI value used as a fallback; RTSP capture starts after MoQ setup/announce/subscribe; each group switch sends an `EndOfGroup` object and finishes the previous subgroup stream).
 
 ## Usage
 
