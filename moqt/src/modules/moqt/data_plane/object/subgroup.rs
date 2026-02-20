@@ -134,17 +134,23 @@ impl SubgroupHeaderType {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubgroupObject {
-    Payload(Bytes),
-    Status(u64),
+    Payload { length: usize, data: Bytes },
+    Status { length: usize, code: u64 },
 }
 
 impl SubgroupObject {
     pub fn new_payload(payload: Bytes) -> Self {
-        Self::Payload(payload)
+        Self::Payload {
+            length: payload.len(),
+            data: payload,
+        }
     }
 
     pub fn new_status(status: u64) -> Self {
-        Self::Status(status)
+        Self::Status {
+            length: 0,
+            code: status,
+        }
     }
 
     pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
@@ -154,26 +160,32 @@ impl SubgroupObject {
         };
         if length == 0 {
             let status = buf.try_get_varint().log_context("status code").ok()?;
-            Some(Self::Status(status))
+            Some(Self::Status {
+                length,
+                code: status,
+            })
         } else {
             if buf.len() < length {
                 return None;
             }
             let payload = buf.split_to(length);
-            Some(Self::Payload(payload.freeze()))
+            Some(Self::Payload {
+                length,
+                data: payload.freeze(),
+            })
         }
     }
 
     pub(crate) fn encode(&self) -> BytesMut {
         let mut buf = BytesMut::new();
         match self {
-            SubgroupObject::Payload(payload) => {
-                buf.put_varint(payload.len() as u64);
-                buf.extend_from_slice(payload);
+            SubgroupObject::Payload { length, data } => {
+                buf.put_varint(*length as u64);
+                buf.extend_from_slice(data);
             }
-            SubgroupObject::Status(status) => {
-                buf.put_varint(0); // length 0 indicates status
-                buf.put_varint(*status);
+            SubgroupObject::Status { length, code } => {
+                buf.put_varint(*length as u64); // length 0 indicates status
+                buf.put_varint(*code);
             }
         }
         buf
