@@ -15,7 +15,7 @@ use crate::{
             utils::add_message_type,
         },
         data_plane::streams::stream::{
-            stream_receiver::BiStreamReceiver, stream_sender::StreamSender,
+            stream_receiver::StreamReceiver, stream_sender::StreamSender,
         },
         domains::session_context::SessionContext,
     },
@@ -27,7 +27,7 @@ impl SessionContextFactory {
     pub(crate) async fn client<T: TransportProtocol>(
         transport_connection: T::Connection,
         mut send_stream: StreamSender<T>,
-        receive_stream: &mut BiStreamReceiver<T>,
+        receive_stream: &mut StreamReceiver<T>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     ) -> anyhow::Result<SessionContext<T>> {
         Self::setup_client(&mut send_stream, receive_stream).await?;
@@ -43,7 +43,7 @@ impl SessionContextFactory {
     pub(crate) async fn server<T: TransportProtocol>(
         transport_connection: T::Connection,
         mut send_stream: StreamSender<T>,
-        receive_stream: &mut BiStreamReceiver<T>,
+        receive_stream: &mut StreamReceiver<T>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     ) -> anyhow::Result<SessionContext<T>> {
         Self::setup_server(&mut send_stream, receive_stream).await?;
@@ -58,7 +58,7 @@ impl SessionContextFactory {
 
     async fn setup_client<T: TransportProtocol>(
         send_stream: &mut StreamSender<T>,
-        receive_stream: &mut BiStreamReceiver<T>,
+        receive_stream: &mut StreamReceiver<T>,
     ) -> anyhow::Result<()> {
         let setup_param = SetupParameter {
             path: None,
@@ -92,7 +92,7 @@ impl SessionContextFactory {
 
     async fn setup_server<T: TransportProtocol>(
         send_stream: &mut StreamSender<T>,
-        receive_stream: &mut BiStreamReceiver<T>,
+        receive_stream: &mut StreamReceiver<T>,
     ) -> anyhow::Result<()> {
         tracing::info!("Waiting for server setup.");
         let mut bytes_mut = receive_stream.receive().await?;
