@@ -201,7 +201,7 @@ export function parseCallCatalogTracks(payload: string): CallCatalogTrack[] {
 
 export function extractCallCatalogTracks(catalog: unknown): CallCatalogTrack[] {
   const tracks = Array.isArray((catalog as { tracks?: unknown[] } | undefined)?.tracks)
-    ? (catalog as { tracks: unknown[] }).tracks ?? []
+    ? ((catalog as { tracks: unknown[] }).tracks ?? [])
     : []
   return tracks.reduce<CallCatalogTrack[]>((acc, rawTrack) => {
     if (!isObject(rawTrack)) {
@@ -382,15 +382,17 @@ function sanitizeTrack(track: EditableCallCatalogTrack): CallCatalogTrack | null
     width: track.role === 'video' ? toPositiveNumber(track.width) : undefined,
     height: track.role === 'video' ? toPositiveNumber(track.height) : undefined,
     keyframeInterval:
-      track.role === 'video' ? toPositiveNumber(track.keyframeInterval) ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL : undefined,
+      track.role === 'video'
+        ? (toPositiveNumber(track.keyframeInterval) ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL)
+        : undefined,
     samplerate: track.role === 'audio' ? toPositiveNumber(track.samplerate) : undefined,
     channelConfig: track.role === 'audio' ? track.channelConfig?.trim() || undefined : undefined,
     audioStreamUpdateMode:
       track.role === 'audio' ? normalizeAudioStreamUpdateMode(track.audioStreamUpdateMode) : undefined,
     audioStreamUpdateIntervalSeconds:
       track.role === 'audio'
-        ? toPositiveNumber(track.audioStreamUpdateIntervalSeconds) ??
-          DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
+        ? (toPositiveNumber(track.audioStreamUpdateIntervalSeconds) ??
+          DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds)
         : undefined,
     isLive: track.isLive ?? true
   }

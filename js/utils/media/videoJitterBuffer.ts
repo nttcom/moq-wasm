@@ -36,7 +36,7 @@ export class VideoJitterBuffer {
     keyframeInterval?: number | bigint
   ) {
     this.keyframeInterval =
-      typeof keyframeInterval === 'number' ? BigInt(keyframeInterval) : keyframeInterval ?? undefined
+      typeof keyframeInterval === 'number' ? BigInt(keyframeInterval) : (keyframeInterval ?? undefined)
   }
 
   setMinDelay(minDelayMs: number): void {
