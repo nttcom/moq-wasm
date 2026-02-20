@@ -335,17 +335,15 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     }
     const trackCodec =
       role === 'audio' || role === 'video' || role === 'screenshare'
-        ? remoteCatalogTracks
-            .get(memberId)
-            ?.find((track) => {
-              if (track.name !== trackName) {
-                return false
-              }
-              if (role === 'audio') {
-                return track.role === 'audio'
-              }
-              return track.role === 'video'
-            })?.codec
+        ? remoteCatalogTracks.get(memberId)?.find((track) => {
+            if (track.name !== trackName) {
+              return false
+            }
+            if (role === 'audio') {
+              return track.role === 'audio'
+            }
+            return track.role === 'video'
+          })?.codec
         : undefined
     const trackState = getSubscriptionStateByRole(member, role)
     const subscribeId = trackState.subscribeId
