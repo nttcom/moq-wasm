@@ -5,12 +5,13 @@ use crate::{
     modules::moqt::{
         control_plane::{
             constants::{self, MOQ_TRANSPORT_VERSION},
-            messages::{
+            control_messages::{
                 control_message_type::ControlMessageType,
-                control_messages::{
-                    client_setup::ClientSetup, server_setup::ServerSetup,
-                    setup_parameters::SetupParameter, util,
+                messages::{
+                    client_setup::ClientSetup, parameters::setup_parameters::SetupParameter,
+                    server_setup::ServerSetup,
                 },
+                util,
             },
             utils::add_message_type,
         },

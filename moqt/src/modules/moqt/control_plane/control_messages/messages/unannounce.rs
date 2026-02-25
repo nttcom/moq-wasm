@@ -1,15 +1,12 @@
-use crate::{
-    modules::moqt::control_plane::messages::moqt_payload::MOQTPayload,
-    modules::moqt::control_plane::messages::variable_bytes::{
-        read_variable_bytes_from_buffer, write_variable_bytes,
-    },
-    modules::moqt::control_plane::messages::variable_integer::{
-        read_variable_integer_from_buffer, write_variable_integer,
-    },
-};
 use anyhow::{Context, Result};
 use bytes::BytesMut;
 use std::any::Any;
+
+use crate::modules::moqt::control_plane::control_messages::{
+    moqt_payload::MOQTPayload,
+    variable_bytes::{read_variable_bytes_from_buffer, write_variable_bytes},
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnAnnounce {
@@ -61,8 +58,8 @@ impl MOQTPayload for UnAnnounce {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::control_plane::messages::{
-            control_messages::unannounce::UnAnnounce, moqt_payload::MOQTPayload,
+        use crate::modules::moqt::control_plane::control_messages::{
+            messages::unannounce::UnAnnounce, moqt_payload::MOQTPayload,
         };
         use bytes::BytesMut;
 

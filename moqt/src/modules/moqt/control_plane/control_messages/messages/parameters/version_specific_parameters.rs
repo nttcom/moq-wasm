@@ -1,9 +1,9 @@
 use crate::{
-    modules::moqt::control_plane::messages::moqt_payload::MOQTPayload,
-    modules::moqt::control_plane::messages::variable_bytes::{
+    modules::moqt::control_plane::control_messages::moqt_payload::MOQTPayload,
+    modules::moqt::control_plane::control_messages::variable_bytes::{
         bytes_to_integer, read_bytes_from_buffer, write_bytes,
     },
-    modules::moqt::control_plane::messages::variable_integer::{
+    modules::moqt::control_plane::control_messages::variable_integer::{
         get_2msb_length_from_first_byte, get_2msb_value, read_variable_integer_from_buffer,
         write_variable_integer,
     },
@@ -189,11 +189,11 @@ impl MaxCacheDuration {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::control_plane::messages::{
-            control_messages::version_specific_parameters::{
+        use crate::modules::moqt::control_plane::{
+            control_messages::messages::parameters::version_specific_parameters::{
                 AuthorizationInfo, DeliveryTimeout, MaxCacheDuration, VersionSpecificParameter,
             },
-            moqt_payload::MOQTPayload,
+            control_messages::moqt_payload::MOQTPayload,
         };
         use bytes::BytesMut;
 
@@ -316,8 +316,8 @@ mod tests {
     }
 
     mod failure {
-        use crate::modules::moqt::control_plane::messages::{
-            control_messages::version_specific_parameters::VersionSpecificParameter,
+        use crate::modules::moqt::control_plane::control_messages::{
+            messages::parameters::version_specific_parameters::VersionSpecificParameter,
             moqt_payload::MOQTPayload,
         };
         use bytes::BytesMut;

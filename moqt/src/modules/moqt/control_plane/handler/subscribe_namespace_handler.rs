@@ -3,9 +3,9 @@ use std::sync::Arc;
 use crate::{
     TransportProtocol,
     modules::moqt::{
-        control_plane::messages::{
+        control_plane::control_messages::{
             control_message_type::ControlMessageType,
-            control_messages::{
+            messages::{
                 namespace_ok::NamespaceOk, request_error::RequestError,
                 subscribe_namespace::SubscribeNamespace,
             },

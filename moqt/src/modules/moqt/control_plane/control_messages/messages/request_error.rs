@@ -1,8 +1,5 @@
-use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::control_plane::messages::control_messages::util::{
-        add_payload_length, validate_payload_length,
-    },
+use crate::modules::extensions::{
+    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
 };
 use bytes::BytesMut;
 use serde::Serialize;
@@ -16,10 +13,6 @@ pub struct RequestError {
 
 impl RequestError {
     pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
-        if !validate_payload_length(buf) {
-            return None;
-        }
-
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let error_code = buf.try_get_varint().log_context("error code").ok()?;
         let reason_phrase = buf.try_get_string().log_context("reason phrase").ok()?;
@@ -36,14 +29,14 @@ impl RequestError {
         payload.put_varint(self.request_id);
         payload.put_varint(self.error_code);
         payload.put_string(&self.reason_phrase);
-        add_payload_length(payload)
+        payload
     }
 }
 
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::control_plane::messages::control_messages::request_error::RequestError;
+        use crate::modules::moqt::control_plane::control_messages::messages::request_error::RequestError;
         use bytes::BytesMut;
 
         #[test]
@@ -59,8 +52,6 @@ mod tests {
             };
             let buf = announce_error.encode();
             let expected_bytes_array = [
-                0,  // Message Length(16)
-                16, // Message Length(16)
                 0,  // Request ID(i)
                 1,  // Error Code (i)
                 13, // Reason Phrase (b): length
@@ -73,8 +64,6 @@ mod tests {
         #[test]
         fn depacketize() {
             let bytes_array = [
-                0,  // Message Length(16)
-                16, // Message Length(16)
                 0,  // Request ID(i)
                 1,  // Error Code (i)
                 13, // Reason Phrase (b): length

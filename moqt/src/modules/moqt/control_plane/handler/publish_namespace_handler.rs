@@ -3,14 +3,16 @@ use std::sync::Arc;
 use crate::{
     TransportProtocol,
     modules::moqt::{
-        control_plane::messages::{
-            control_message_type::ControlMessageType,
+        control_plane::{
             control_messages::{
-                namespace_ok::NamespaceOk, publish_namespace::PublishNamespace,
-                request_error::RequestError,
+                control_message_type::ControlMessageType,
+                messages::{
+                    namespace_ok::NamespaceOk, publish_namespace::PublishNamespace,
+                    request_error::RequestError,
+                },
             },
+            utils,
         },
-        control_plane::utils,
         domains::session_context::SessionContext,
     },
 };

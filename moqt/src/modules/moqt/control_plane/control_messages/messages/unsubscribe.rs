@@ -1,8 +1,6 @@
-use crate::{
-    modules::moqt::control_plane::messages::moqt_payload::MOQTPayload,
-    modules::moqt::control_plane::messages::variable_integer::{
-        read_variable_integer_from_buffer, write_variable_integer,
-    },
+use crate::modules::moqt::control_plane::control_messages::{
+    moqt_payload::MOQTPayload,
+    variable_integer::{read_variable_integer_from_buffer, write_variable_integer},
 };
 use anyhow::{Context, Result};
 use bytes::BytesMut;
@@ -40,8 +38,8 @@ impl MOQTPayload for Unsubscribe {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::control_plane::messages::{
-            control_messages::unsubscribe::Unsubscribe, moqt_payload::MOQTPayload,
+        use crate::modules::moqt::control_plane::control_messages::{
+            messages::unsubscribe::Unsubscribe, moqt_payload::MOQTPayload,
         };
         use bytes::BytesMut;
         #[test]

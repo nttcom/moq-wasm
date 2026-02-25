@@ -13,7 +13,7 @@ use crate::{
                 subscribe_handler::SubscribeHandler,
                 subscribe_namespace_handler::SubscribeNamespaceHandler,
             },
-            messages::{
+            control_messages::{
                 control_message_type::ControlMessageType,
                 control_messages::{
                     namespace_ok::NamespaceOk, publish::Publish,

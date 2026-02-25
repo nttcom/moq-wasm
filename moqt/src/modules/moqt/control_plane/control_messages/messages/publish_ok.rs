@@ -2,14 +2,13 @@ use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::control_plane::messages::{
-        control_messages::{
-            enums::FilterType,
-            group_order::GroupOrder,
-            util::{self, add_payload_length, validate_payload_length},
+    moqt::control_plane::control_messages::{
+        messages::parameters::{
+            filter_type::FilterType, group_order::GroupOrder,
             version_specific_parameters::VersionSpecificParameter,
         },
         moqt_payload::MOQTPayload,
+        util,
     },
 };
 
@@ -25,9 +24,6 @@ pub(crate) struct PublishOk {
 
 impl PublishOk {
     pub(crate) fn decode(buf: &mut bytes::BytesMut) -> Option<Self> {
-        if !validate_payload_length(buf) {
-            return None;
-        }
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let forward_u8 = buf.try_get_u8().log_context("forward u8").ok()?;
         let forward = util::u8_to_bool(forward_u8).log_context("forward").ok()?;
@@ -75,22 +71,21 @@ impl PublishOk {
         }
 
         tracing::trace!("Packetized Publish_OK message.");
-        add_payload_length(payload)
+        payload
     }
 }
 
 #[cfg(test)]
 mod tests {
     mod success {
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
+        use crate::modules::moqt::control_plane::control_messages::messages::publish_ok::PublishOk;
 
-        use crate::modules::moqt::control_plane::messages::control_messages::{
-            enums::FilterType,
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::{
+            filter_type::FilterType,
             group_order::GroupOrder,
-            location::Location,
-            publish_ok::PublishOk,
             version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
         };
-
         #[test]
         fn packetize_and_depacketize_absolute_start() {
             let publish_ok_message = PublishOk {

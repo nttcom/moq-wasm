@@ -1,13 +1,11 @@
 use crate::{
     TransportProtocol,
-    modules::moqt::{
-        control_plane::handler::{
+    modules::moqt::control_plane::{
+        control_messages::messages::{publish_ok::PublishOk, subscribe_ok::SubscribeOk},
+        handler::{
             publish_handler::PublishHandler, publish_namespace_handler::PublishNamespaceHandler,
             subscribe_handler::SubscribeHandler,
             subscribe_namespace_handler::SubscribeNamespaceHandler,
-        },
-        control_plane::messages::control_messages::{
-            publish_ok::PublishOk, subscribe_ok::SubscribeOk,
         },
     },
 };

@@ -1,9 +1,6 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::control_plane::messages::control_messages::{
-        setup_parameters::SetupParameter,
-        util::{add_payload_length, validate_payload_length},
-    },
+    moqt::control_plane::control_messages::messages::parameters::setup_parameters::SetupParameter,
 };
 use bytes::BytesMut;
 
@@ -26,10 +23,6 @@ impl ClientSetup {
 
 impl ClientSetup {
     pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
-        if !validate_payload_length(buf) {
-            return None;
-        }
-
         let number_of_supported_versions = buf
             .try_get_varint()
             .log_context("number_of_supported_versions")
@@ -58,18 +51,17 @@ impl ClientSetup {
             payload.put_varint(*supported_version as u64);
         }
         payload.unsplit(self.setup_parameters.encode());
-
-        add_payload_length(payload)
+        payload
     }
 }
 
 #[cfg(test)]
 mod test {
     mod success {
-        use crate::modules::moqt::{
-            control_plane::constants::MOQ_TRANSPORT_VERSION,
-            control_plane::messages::control_messages::{
-                client_setup::ClientSetup, setup_parameters::SetupParameter,
+        use crate::modules::moqt::control_plane::{
+            constants::MOQ_TRANSPORT_VERSION,
+            control_messages::messages::{
+                client_setup::ClientSetup, parameters::setup_parameters::SetupParameter,
             },
         };
         use bytes::BytesMut;
@@ -89,7 +81,6 @@ mod test {
             let buf = client_setup.encode();
 
             let expected_bytes_array = [
-                0, 23,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000008) in 62bit
@@ -106,7 +97,6 @@ mod test {
         #[test]
         fn decode() {
             let bytes_array = [
-                0, 23,  // Payload length
                 1,   // Number of Supported Versions (i)
                 192, // Supported Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000008) in 62bit

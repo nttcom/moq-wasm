@@ -1,10 +1,8 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::control_plane::messages::{
-        control_messages::{
-            enums::ContentExists,
-            group_order::GroupOrder,
-            util::{add_payload_length, validate_payload_length},
+    moqt::control_plane::control_messages::{
+        messages::parameters::{
+            content_exists::ContentExists, group_order::GroupOrder,
             version_specific_parameters::VersionSpecificParameter,
         },
         moqt_payload::MOQTPayload,
@@ -24,9 +22,6 @@ pub struct SubscribeOk {
 
 impl SubscribeOk {
     pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
-        if !validate_payload_length(buf) {
-            return None;
-        }
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_alias = buf.try_get_varint().log_context("track alias").ok()?;
         let expires = buf.try_get_varint().log_context("expires").ok()?;
@@ -74,18 +69,21 @@ impl SubscribeOk {
         for version_specific_parameter in &self.subscribe_parameters {
             version_specific_parameter.packetize(&mut payload);
         }
-        add_payload_length(payload)
+        payload
     }
 }
 
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::control_plane::messages::control_messages::{
-            enums::ContentExists,
-            location::Location,
-            subscribe_ok::{GroupOrder, SubscribeOk},
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        use crate::modules::moqt::control_plane::control_messages::messages::{
+            parameters::{
+                content_exists::ContentExists,
+                group_order::GroupOrder,
+                location::Location,
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            },
+            subscribe_ok::SubscribeOk,
         };
         use bytes::BytesMut;
 
@@ -154,8 +152,6 @@ mod tests {
             let buf = subscribe_ok.encode();
 
             let expected_bytes_array = [
-                0,  // Message Length(16)
-                14, // Message Length(i)
                 0,  // Request ID (i)
                 2,  // Track alias (i)
                 1,  // Expires (i)
@@ -174,16 +170,14 @@ mod tests {
         #[test]
         fn depacketize_content_not_exists() {
             let bytes_array = [
-                0,  // Message Length(16)
-                12, // Message Length(i)
-                0,  // Request ID (i)
-                1,  // Track alias (i)
-                1,  // Expires (i)
-                2,  // Group Order (8)
-                0,  // Content Exists (f)
-                1,  // Track Request Parameters (..): Number of Parameters
-                2,  // Parameter Type (i): AuthorizationInfo
-                4,  // Parameter Length (i)
+                0, // Request ID (i)
+                1, // Track alias (i)
+                1, // Expires (i)
+                2, // Group Order (8)
+                0, // Content Exists (f)
+                1, // Track Request Parameters (..): Number of Parameters
+                2, // Parameter Type (i): AuthorizationInfo
+                4, // Parameter Length (i)
                 116, 101, 115, 116, // Parameter Value (..): test
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
