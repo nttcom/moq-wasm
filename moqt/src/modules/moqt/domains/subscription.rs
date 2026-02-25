@@ -1,7 +1,7 @@
 use crate::{
     DatagramReceiver, GroupOrder, StreamDataReceiver, TransportProtocol,
-    modules::moqt::control_plane::messages::control_messages::{
-        enums::ContentExists, subscribe_ok::SubscribeOk,
+    modules::moqt::control_plane::control_messages::messages::{
+        parameters::content_exists::ContentExists, subscribe_ok::SubscribeOk,
     },
 };
 

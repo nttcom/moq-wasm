@@ -2,7 +2,7 @@ use bytes::Bytes;
 
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::control_plane::messages::control_messages::key_value_pair::{KeyValuePair, VariantType},
+    moqt::control_plane::control_messages::key_value_pair::{KeyValuePair, VariantType},
 };
 
 pub enum ExtensionHeaderType {

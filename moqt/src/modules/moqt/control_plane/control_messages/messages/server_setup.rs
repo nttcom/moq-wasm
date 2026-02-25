@@ -1,9 +1,6 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::control_plane::messages::control_messages::{
-        setup_parameters::SetupParameter,
-        util::{add_payload_length, validate_payload_length},
-    },
+    moqt::control_plane::control_messages::messages::parameters::setup_parameters::SetupParameter,
 };
 use bytes::BytesMut;
 
@@ -24,10 +21,6 @@ impl ServerSetup {
 
 impl ServerSetup {
     pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
-        if !validate_payload_length(buf) {
-            return None;
-        }
-
         let selected_version = buf.try_get_varint().log_context("selected version").ok()?;
         let setup_parameters = SetupParameter::decode(buf)?;
 
@@ -42,8 +35,7 @@ impl ServerSetup {
         let mut payload = BytesMut::new();
         payload.put_varint(self.selected_version as u64);
         payload.extend_from_slice(&self.setup_parameters.encode());
-
-        add_payload_length(payload)
+        payload
     }
 }
 
@@ -52,8 +44,8 @@ mod tests {
     mod success {
         use crate::modules::moqt::{
             control_plane::constants::MOQ_TRANSPORT_VERSION,
-            control_plane::messages::control_messages::{
-                server_setup::ServerSetup, setup_parameters::SetupParameter,
+            control_plane::control_messages::messages::{
+                parameters::setup_parameters::SetupParameter, server_setup::ServerSetup,
             },
         };
         use bytes::BytesMut;

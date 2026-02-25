@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use bytes::{Buf, BytesMut};
 use std::io::Cursor;
 
-use crate::modules::moqt::control_plane::messages::variable_integer::{
+use crate::modules::moqt::control_plane::control_messages::variable_integer::{
     read_variable_integer, write_variable_integer,
 };
 

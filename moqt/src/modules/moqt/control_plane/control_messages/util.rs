@@ -3,7 +3,7 @@ use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, result_ext::ResultExt},
-    moqt::control_plane::messages::control_message_type::ControlMessageType,
+    moqt::control_plane::control_messages::control_message_type::ControlMessageType,
 };
 
 pub(crate) fn get_message_type(read_buf: &mut BytesMut) -> anyhow::Result<ControlMessageType> {
@@ -24,7 +24,7 @@ pub(crate) fn validate_payload_length(read_buf: &mut BytesMut) -> bool {
         }
     };
 
-    if read_buf.len() != payload_length as usize {
+    if read_buf.len() >= payload_length as usize {
         tracing::error!(
             "Message length unmatches. expect {}, actual {}",
             payload_length,

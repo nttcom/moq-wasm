@@ -64,7 +64,7 @@ impl KeyValuePair {
 mod tests {
     mod success {
 
-        use crate::modules::moqt::control_plane::messages::control_messages::key_value_pair::{
+        use crate::modules::moqt::control_plane::control_messages::key_value_pair::{
             KeyValuePair, VariantType,
         };
         use bytes::Bytes;

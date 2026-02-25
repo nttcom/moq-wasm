@@ -1,13 +1,12 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::control_plane::messages::{
-        control_messages::{
-            enums::FilterType,
-            group_order::GroupOrder,
-            util::{self, add_payload_length, validate_payload_length},
+    moqt::control_plane::control_messages::{
+        messages::parameters::{
+            filter_type::FilterType, group_order::GroupOrder,
             version_specific_parameters::VersionSpecificParameter,
         },
         moqt_payload::MOQTPayload,
+        util,
     },
 };
 use bytes::{Buf, BufMut, BytesMut};
@@ -27,9 +26,6 @@ pub struct Subscribe {
 
 impl Subscribe {
     pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
-        if !validate_payload_length(buf) {
-            return None;
-        }
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_namespace_tuple_length = buf
             .try_get_varint()
@@ -96,8 +92,7 @@ impl Subscribe {
         }
 
         tracing::trace!("Packetized Subscribe message.");
-
-        add_payload_length(payload)
+        payload
     }
 }
 
@@ -106,10 +101,14 @@ mod tests {
     mod success {
         use bytes::BytesMut;
 
-        use crate::modules::moqt::control_plane::messages::control_messages::{
-            location::Location,
-            subscribe::{FilterType, GroupOrder, Subscribe},
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+        use crate::modules::moqt::control_plane::control_messages::messages::{
+            parameters::{
+                filter_type::FilterType,
+                group_order::GroupOrder,
+                location::Location,
+                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            },
+            subscribe::Subscribe,
         };
 
         #[test]
@@ -140,11 +139,9 @@ mod tests {
             let buf = subscribe.encode();
 
             let expected_bytes_array = [
-                0,  // Message Length(16)
-                34, // Message Length(16)
-                0,  // Subscribe ID (i)
-                2,  // Track Namespace(tuple): Number of elements
-                4,  // Track Namespace(b): Length
+                0, // Subscribe ID (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
                 4,   // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -196,11 +193,9 @@ mod tests {
             let buf = subscribe.encode();
 
             let expected_bytes_array = [
-                0,  // Message Length(16)
-                36, // Message Length(16)
-                0,  // Subscribe ID (i)
-                2,  // Track Namespace(tuple): Number of elements
-                4,  // Track Namespace(b): Length
+                0, // Subscribe ID (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
                 4,   // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -255,11 +250,9 @@ mod tests {
             let buf = subscribe.encode();
 
             let expected_bytes_array = [
-                0,  // Message Length(16)
-                37, // Message Length(16)
-                0,  // Subscribe ID (i)
-                2,  // Track Namespace(tuple): Number of elements
-                4,  // Track Namespace(b): Length
+                0, // Subscribe ID (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
                 4,   // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -284,11 +277,9 @@ mod tests {
         #[test]
         fn depacketize_latest_group() {
             let bytes_array = [
-                0,  // Message Length(16)
-                34, // Message Length(16)
-                0,  // Subscribe ID (i)
-                2,  // Track Namespace(tuple): Number of elements
-                4,  // Track Namespace(b): Length
+                0, // Subscribe ID (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
                 4,   // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -336,11 +327,9 @@ mod tests {
         #[test]
         fn depacketize_absolute_start() {
             let bytes_array = [
-                0,  // Message Length(16)
-                36, // Message Length(16)
-                0,  // Subscribe ID (i)
-                2,  // Track Namespace(tuple): Number of elements
-                4,  // Track Namespace(b): Length
+                0, // Subscribe ID (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
                 4,   // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -395,11 +384,9 @@ mod tests {
         #[test]
         fn depacketize_absolute_range() {
             let bytes_array = [
-                0,  // Message Length(16)
-                37, // Message Length(16)
-                0,  // Subscribe ID (i)
-                2,  // Track Namespace(tuple): Number of elements
-                4,  // Track Namespace(b): Length
+                0, // Subscribe ID (i)
+                2, // Track Namespace(tuple): Number of elements
+                4, // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")
                 4,   // Track Namespace(b): Length
                 116, 101, 115, 116, // Track Namespace(b): Value("test")

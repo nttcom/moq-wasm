@@ -84,7 +84,7 @@ pub fn write_variable_integer(value: u64) -> BytesMut {
 mod decoder {
     use bytes::{Buf, BufMut, BytesMut};
 
-    use crate::modules::moqt::control_plane::messages::variable_integer::read_variable_integer;
+    use crate::modules::moqt::control_plane::control_messages::variable_integer::read_variable_integer;
 
     use std::io::Cursor;
 
@@ -164,7 +164,7 @@ mod decoder {
 mod encoder {
     use bytes::Buf;
 
-    use crate::modules::moqt::control_plane::messages::variable_integer::write_variable_integer;
+    use crate::modules::moqt::control_plane::control_messages::variable_integer::write_variable_integer;
 
     #[test]
     fn encode_single_byte_1() {

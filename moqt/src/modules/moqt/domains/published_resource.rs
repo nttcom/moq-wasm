@@ -1,6 +1,6 @@
 use crate::{
     FilterType, GroupOrder, SubscribeHandler, TransportProtocol,
-    modules::moqt::control_plane::messages::control_messages::publish_ok::PublishOk,
+    modules::moqt::control_plane::control_messages::messages::publish_ok::PublishOk,
 };
 
 pub struct PublishedResource {

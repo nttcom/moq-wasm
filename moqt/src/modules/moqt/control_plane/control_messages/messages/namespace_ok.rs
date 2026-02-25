@@ -1,8 +1,5 @@
-use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::control_plane::messages::control_messages::util::{
-        add_payload_length, validate_payload_length,
-    },
+use crate::modules::extensions::{
+    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
 };
 use bytes::BytesMut;
 use serde::Serialize;
@@ -14,10 +11,6 @@ pub struct NamespaceOk {
 
 impl NamespaceOk {
     pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
-        if !validate_payload_length(buf) {
-            return None;
-        }
-
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         Some(NamespaceOk { request_id })
     }
@@ -25,15 +18,14 @@ impl NamespaceOk {
     pub(crate) fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
-
-        add_payload_length(payload)
+        payload
     }
 }
 
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::control_plane::messages::control_messages::namespace_ok::NamespaceOk;
+        use crate::modules::moqt::control_plane::control_messages::messages::namespace_ok::NamespaceOk;
         use bytes::BytesMut;
 
         #[test]

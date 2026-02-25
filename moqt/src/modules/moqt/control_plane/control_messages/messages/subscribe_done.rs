@@ -1,9 +1,9 @@
 use crate::{
-    modules::moqt::control_plane::messages::moqt_payload::MOQTPayload,
-    modules::moqt::control_plane::messages::variable_bytes::{
+    modules::moqt::control_plane::control_messages::moqt_payload::MOQTPayload,
+    modules::moqt::control_plane::control_messages::variable_bytes::{
         read_bytes_from_buffer, read_variable_bytes_from_buffer, write_variable_bytes,
     },
-    modules::moqt::control_plane::messages::variable_integer::{
+    modules::moqt::control_plane::control_messages::variable_integer::{
         read_variable_integer_from_buffer, write_variable_integer,
     },
 };
@@ -112,8 +112,8 @@ impl MOQTPayload for SubscribeDone {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::control_plane::messages::{
-            control_messages::subscribe_done::{StatusCode, SubscribeDone},
+        use crate::modules::moqt::control_plane::control_messages::{
+            messages::subscribe_done::{StatusCode, SubscribeDone},
             moqt_payload::MOQTPayload,
         };
         use bytes::BytesMut;

@@ -1,11 +1,8 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::control_plane::messages::{
-        control_messages::{
-            util::{add_payload_length, validate_payload_length},
-            version_specific_parameters::VersionSpecificParameter,
-        },
-        moqt_payload::MOQTPayload,
+    moqt::control_plane::control_messages::{
+        messages::parameters::version_specific_parameters::VersionSpecificParameter,
+        moqt_payload::MOQTPayload, util::add_payload_length,
     },
 };
 use bytes::BytesMut;
@@ -33,14 +30,8 @@ impl PublishNamespace {
             parameters,
         }
     }
-}
 
-impl PublishNamespace {
     pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
-        if !validate_payload_length(buf) {
-            return None;
-        }
-
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_namespace_tuple_length = buf
             .try_get_varint()
@@ -99,9 +90,11 @@ mod tests {
     mod success {
 
         mod packetize {
-            use crate::modules::moqt::control_plane::messages::control_messages::{
+            use crate::modules::moqt::control_plane::control_messages::messages::{
+                parameters::version_specific_parameters::{
+                    AuthorizationInfo, VersionSpecificParameter,
+                },
                 publish_namespace::PublishNamespace,
-                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             };
 
             #[test]
@@ -119,11 +112,9 @@ mod tests {
                 let buf = announce_message.encode();
 
                 let expected_bytes_array = [
-                    0,  // Message Length(16)
-                    19, // Message Length(16)
-                    0,  // request id(u64)
-                    2,  // Track Namespace(tuple): Number of elements
-                    4,  // Track Namespace(b): Length
+                    0, // request id(u64)
+                    2, // Track Namespace(tuple): Number of elements
+                    4, // Track Namespace(b): Length
                     116, 101, 115, 116, // Track Namespace(b): Value("test")
                     4,   // Track Namespace(b): Length
                     116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -145,11 +136,9 @@ mod tests {
                 let buf = announce_message.encode();
 
                 let expected_bytes_array = [
-                    0,  // Message Length(16)
-                    13, // Message Length(16)
-                    0,  // request id(u64)
-                    2,  // Track Namespace(tuple): Number of elements
-                    4,  // Track Namespace(b): Length
+                    0, // request id(u64)
+                    2, // Track Namespace(tuple): Number of elements
+                    4, // Track Namespace(b): Length
                     116, 101, 115, 116, // Track Namespace(b): Value("test")
                     4,   // Track Namespace(b): Length
                     116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -161,9 +150,11 @@ mod tests {
         }
 
         mod depacketize {
-            use crate::modules::moqt::control_plane::messages::control_messages::{
+            use crate::modules::moqt::control_plane::control_messages::messages::{
+                parameters::version_specific_parameters::{
+                    AuthorizationInfo, VersionSpecificParameter,
+                },
                 publish_namespace::PublishNamespace,
-                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             };
             use bytes::BytesMut;
             #[test]

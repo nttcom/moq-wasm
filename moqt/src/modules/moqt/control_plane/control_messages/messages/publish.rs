@@ -2,14 +2,13 @@ use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::control_plane::messages::{
-        control_messages::{
-            enums::ContentExists,
-            group_order::GroupOrder,
-            util::{self, add_payload_length, validate_payload_length},
+    moqt::control_plane::control_messages::{
+        messages::parameters::{
+            content_exists::ContentExists, group_order::GroupOrder,
             version_specific_parameters::VersionSpecificParameter,
         },
         moqt_payload::MOQTPayload,
+        util,
     },
 };
 
@@ -26,9 +25,6 @@ pub(crate) struct Publish {
 
 impl Publish {
     pub(crate) fn decode(buf: &mut bytes::BytesMut) -> Option<Self> {
-        if !validate_payload_length(buf) {
-            return None;
-        }
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_namespace_tuple_length = buf
             .try_get_varint()
@@ -91,17 +87,23 @@ impl Publish {
         payload.unsplit(self.content_exists.encode());
         payload.put_u8(self.forward as u8);
         payload.put_varint(self.parameters.len() as u64);
+        // Parameters
+        for param in &self.parameters {
+            param.packetize(&mut payload);
+        }
 
         tracing::trace!("Packetized Publish message.");
-        add_payload_length(payload)
+        payload
     }
 }
 
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::control_plane::messages::control_messages::{
-            enums::ContentExists, group_order::GroupOrder, location::Location, publish::Publish,
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::group_order::GroupOrder;
+        use crate::modules::moqt::control_plane::control_messages::messages::{
+            parameters::location::Location, publish::Publish,
         };
 
         #[test]
@@ -205,7 +207,7 @@ mod tests {
             let buf = publish_message.encode();
 
             let expected_bytes = vec![
-                0, 17, 1, 1, 3, b'm', b'o', b'q', 5, b'v', b'i', b'd', b'e', b'o', 2, 1, 0, 1, 0,
+                1, 1, 3, b'm', b'o', b'q', 5, b'v', b'i', b'd', b'e', b'o', 2, 1, 0, 1, 0,
             ];
             assert_eq!(buf.as_ref(), expected_bytes.as_slice());
         }

@@ -36,7 +36,7 @@ mod tests {
     mod success {
         use bytes::BytesMut;
 
-        use crate::modules::moqt::control_plane::messages::control_messages::location::Location;
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
 
         #[test]
         fn packetize_and_depacketize() {
