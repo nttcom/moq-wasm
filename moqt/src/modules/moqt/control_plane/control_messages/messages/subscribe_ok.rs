@@ -1,11 +1,10 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::control_messages::{
+        key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::{
             content_exists::ContentExists, group_order::GroupOrder,
-            version_specific_parameters::VersionSpecificParameter,
         },
-        moqt_payload::MOQTPayload,
     },
 };
 use bytes::{Buf, BufMut, BytesMut};
@@ -17,11 +16,12 @@ pub struct SubscribeOk {
     pub(crate) expires: u64,
     pub(crate) group_order: GroupOrder,
     pub(crate) content_exists: ContentExists,
-    pub(crate) subscribe_parameters: Vec<VersionSpecificParameter>,
+    pub(crate) delivery_timeout: Option<u64>,
+    pub(crate) max_duration: Option<u64>,
 }
 
 impl SubscribeOk {
-    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
+    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_alias = buf.try_get_varint().log_context("track alias").ok()?;
         let expires = buf.try_get_varint().log_context("expires").ok()?;
@@ -38,15 +38,26 @@ impl SubscribeOk {
             .try_get_varint()
             .log_context("number of parameters")
             .ok()?;
-        let mut subscribe_parameters = Vec::new();
+        let mut parameters = vec![];
         for _ in 0..number_of_parameters {
-            let version_specific_parameter = VersionSpecificParameter::depacketize(buf).ok()?;
-            if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
-                tracing::warn!("unknown track request parameter {}", code);
-            } else {
-                subscribe_parameters.push(version_specific_parameter);
-            }
+            let params = KeyValuePair::decode(buf)?;
+            parameters.push(params);
         }
+        let delivery_timeout =
+            parameters
+                .iter()
+                .find(|kv_pair| kv_pair.key == 0x02)
+                .map(|kv_pair| match kv_pair.value {
+                    VariantType::Odd(_) => unreachable!(),
+                    VariantType::Even(value) => value,
+                });
+        let max_duration = parameters
+            .iter()
+            .find(|kv_pair| kv_pair.key == 0x04)
+            .map(|kv_pair| match kv_pair.value {
+                VariantType::Odd(_) => unreachable!(),
+                VariantType::Even(value) => value,
+            });
 
         Some(SubscribeOk {
             request_id,
@@ -54,7 +65,8 @@ impl SubscribeOk {
             expires,
             group_order,
             content_exists,
-            subscribe_parameters,
+            delivery_timeout,
+            max_duration,
         })
     }
 
@@ -65,10 +77,28 @@ impl SubscribeOk {
         payload.put_varint(self.expires);
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.content_exists.encode());
-        payload.put_varint(self.subscribe_parameters.len() as u64);
-        for version_specific_parameter in &self.subscribe_parameters {
-            version_specific_parameter.packetize(&mut payload);
+        let mut number_of_parameters = 0;
+        let mut parameters_payload = BytesMut::new();
+        if let Some(delivery_timeout) = self.delivery_timeout {
+            let delivery_timeout_payload = KeyValuePair {
+                key: 0x02,
+                value: VariantType::Even(delivery_timeout),
+            }
+            .encode();
+            parameters_payload.unsplit(delivery_timeout_payload);
+            number_of_parameters += 1;
         }
+        if let Some(max_duration) = self.max_duration {
+            let max_duration_payload = KeyValuePair {
+                key: 0x04,
+                value: VariantType::Even(max_duration),
+            }
+            .encode();
+            parameters_payload.unsplit(max_duration_payload);
+            number_of_parameters += 1;
+        }
+        payload.put_varint(number_of_parameters);
+        payload.unsplit(parameters_payload);
         payload
     }
 }
@@ -81,7 +111,6 @@ mod tests {
                 content_exists::ContentExists,
                 group_order::GroupOrder,
                 location::Location,
-                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
             },
             subscribe_ok::SubscribeOk,
         };
@@ -94,10 +123,6 @@ mod tests {
             let expires = 1;
             let group_order = GroupOrder::Ascending;
             let content_exists = ContentExists::False;
-            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
-                AuthorizationInfo::new("test".to_string()),
-            );
-            let subscribe_parameters = vec![version_specific_parameter];
 
             let subscribe_ok = SubscribeOk {
                 request_id,
@@ -105,21 +130,18 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                subscribe_parameters,
+                delivery_timeout: None,
+                max_duration: None,
             };
             let buf = subscribe_ok.encode();
 
             let expected_bytes_array = [
-                0, 12, // Message Length(i)
-                0,  // Request ID (i)
-                1,  // Track alias (i)
-                1,  // Expires (i)
-                1,  // Group Order (8)
-                0,  // Content Exists (f)
-                1,  // Track Request Parameters (..): Number of Parameters
-                2,  // Parameter Type (i): AuthorizationInfo
-                4,  // Parameter Length (i)
-                116, 101, 115, 116, // Parameter Value (..): test
+                0, // Request ID (i)
+                1, // Track alias (i)
+                1, // Expires (i)
+                1, // Group Order (8)
+                0, // Content Exists (f)
+                0, // Track Request Parameters (..): Number of Parameters
             ];
             assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
         }
@@ -136,10 +158,6 @@ mod tests {
                     object_id: 20,
                 },
             };
-            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
-                AuthorizationInfo::new("test".to_string()),
-            );
-            let subscribe_parameters = vec![version_specific_parameter];
 
             let subscribe_ok = SubscribeOk {
                 request_id,
@@ -147,7 +165,8 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                subscribe_parameters,
+                delivery_timeout: None,
+                max_duration: None,
             };
             let buf = subscribe_ok.encode();
 
@@ -159,10 +178,7 @@ mod tests {
                 1,  // Content Exists (f)
                 10, // Largest Group ID (i)
                 20, // Largest Object ID (i)
-                1,  // Track Request Parameters (..): Number of Parameters
-                2,  // Parameter Type (i): AuthorizationInfo
-                4,  // Parameter Length (i)
-                116, 101, 115, 116, // Parameter Value (..): test
+                0,  // Track Request Parameters (..): Number of Parameters
             ];
             assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
         }
@@ -175,13 +191,11 @@ mod tests {
                 1, // Expires (i)
                 2, // Group Order (8)
                 0, // Content Exists (f)
-                1, // Track Request Parameters (..): Number of Parameters
-                2, // Parameter Type (i): AuthorizationInfo
-                4, // Parameter Length (i)
-                116, 101, 115, 116, // Parameter Value (..): test
+                0, // Track Request Parameters (..): Number of Parameters
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_subscribe_ok = SubscribeOk::decode(&mut buf).unwrap();
 
             let request_id = 0;
@@ -189,10 +203,6 @@ mod tests {
             let expires = 1;
             let group_order = GroupOrder::Descending;
             let content_exists = ContentExists::False;
-            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
-                AuthorizationInfo::new("test".to_string()),
-            );
-            let subscribe_parameters = vec![version_specific_parameter];
 
             let expected_subscribe_ok = SubscribeOk {
                 request_id,
@@ -200,7 +210,8 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                subscribe_parameters,
+                delivery_timeout: None,
+                max_duration: None,
             };
 
             assert_eq!(depacketized_subscribe_ok, expected_subscribe_ok);
@@ -218,13 +229,11 @@ mod tests {
                 1,  // Content Exists (f)
                 0,  // Largest Group ID (i)
                 5,  // Largest Object ID (i)
-                1,  // Track Request Parameters (..): Number of Parameters
-                2,  // Parameter Type (i): AuthorizationInfo
-                4,  // Parameter Length (i)
-                116, 101, 115, 116, // Parameter Value (..): test
+                0,  // Track Request Parameters (..): Number of Parameters
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_subscribe_ok = SubscribeOk::decode(&mut buf).unwrap();
 
             let request_id = 0;
@@ -237,10 +246,6 @@ mod tests {
                     object_id: 5,
                 },
             };
-            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
-                AuthorizationInfo::new("test".to_string()),
-            );
-            let subscribe_parameters = vec![version_specific_parameter];
 
             let expected_subscribe_ok = SubscribeOk {
                 request_id,
@@ -248,7 +253,8 @@ mod tests {
                 expires,
                 group_order,
                 content_exists,
-                subscribe_parameters,
+                delivery_timeout: None,
+                max_duration: None,
             };
 
             assert_eq!(depacketized_subscribe_ok, expected_subscribe_ok);

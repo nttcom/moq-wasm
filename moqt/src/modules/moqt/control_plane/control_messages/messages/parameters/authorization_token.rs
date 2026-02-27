@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::modules::extensions::{
@@ -32,7 +32,7 @@ pub(crate) enum AuthorizationToken {
 }
 
 impl AuthorizationToken {
-    pub(crate) fn decode(buf: &mut bytes::BytesMut) -> Option<Self> {
+    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let token_alias = buf.try_get_varint().log_context("alias type").ok()?;
         if let Ok(token_alias) = AliasType::try_from(token_alias) {
             match token_alias {
@@ -40,7 +40,7 @@ impl AuthorizationToken {
                 AliasType::Register => {
                     let token_alias = buf.try_get_varint().log_context("token alias").ok()?;
                     let token_type = buf.try_get_varint().log_context("token type").ok()?;
-                    let token_value = Bytes::copy_from_slice(buf);
+                    let token_value = buf.copy_to_bytes(buf.remaining());
                     Some(AuthorizationToken::Register {
                         token_alias,
                         token_type,
@@ -53,7 +53,7 @@ impl AuthorizationToken {
                 }
                 AliasType::UseValue => {
                     let token_type = buf.try_get_varint().log_context("token type").ok()?;
-                    let token_value = Bytes::copy_from_slice(buf);
+                    let token_value = buf.copy_to_bytes(buf.remaining());
                     Some(AuthorizationToken::UseValue {
                         token_type,
                         token_value,

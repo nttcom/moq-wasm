@@ -10,7 +10,7 @@ pub struct NamespaceOk {
 }
 
 impl NamespaceOk {
-    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
+    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         Some(NamespaceOk { request_id })
     }
@@ -52,6 +52,7 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let announce_ok = NamespaceOk::decode(&mut buf).unwrap();
 
             let expected_announce_ok = NamespaceOk { request_id };

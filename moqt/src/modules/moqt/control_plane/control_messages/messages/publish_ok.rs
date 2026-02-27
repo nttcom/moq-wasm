@@ -3,11 +3,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::control_messages::{
-        messages::parameters::{
-            filter_type::FilterType, group_order::GroupOrder,
-            version_specific_parameters::VersionSpecificParameter,
-        },
-        moqt_payload::MOQTPayload,
+        messages::parameters::{filter_type::FilterType, group_order::GroupOrder},
         util,
     },
 };
@@ -19,11 +15,11 @@ pub(crate) struct PublishOk {
     pub(crate) subscriber_priority: u8,
     pub(crate) group_order: GroupOrder,
     pub(crate) filter_type: FilterType,
-    pub(crate) parameters: Vec<VersionSpecificParameter>,
+    pub(crate) delivery_timeout: Option<u64>,
 }
 
 impl PublishOk {
-    pub(crate) fn decode(buf: &mut bytes::BytesMut) -> Option<Self> {
+    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let forward_u8 = buf.try_get_u8().log_context("forward u8").ok()?;
         let forward = util::u8_to_bool(forward_u8).log_context("forward").ok()?;
@@ -33,19 +29,12 @@ impl PublishOk {
             .log_context("group order")
             .ok()?;
         let filter_type = FilterType::decode(buf)?;
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
-        let mut parameters = vec![];
-        for _ in 0..number_of_parameters {
-            let version_specific_parameter = VersionSpecificParameter::depacketize(buf).ok()?;
-            if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
-                tracing::warn!("unknown track request parameter {}", code);
+        let delivery_timeout =
+            if let Ok(delivery_timeout) = buf.try_get_varint().log_context("delivery timeout") {
+                Some(delivery_timeout)
             } else {
-                parameters.push(version_specific_parameter);
-            }
-        }
+                None
+            };
 
         Some(Self {
             request_id,
@@ -53,7 +42,7 @@ impl PublishOk {
             subscriber_priority,
             group_order,
             filter_type,
-            parameters,
+            delivery_timeout,
         })
     }
 
@@ -64,10 +53,8 @@ impl PublishOk {
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.filter_type.encode());
-        payload.put_varint(self.parameters.len() as u64);
-        // Parameters
-        for param in &self.parameters {
-            param.packetize(&mut payload);
+        if let Some(delivery_timeout) = self.delivery_timeout {
+            payload.put_varint(delivery_timeout);
         }
 
         tracing::trace!("Packetized Publish_OK message.");
@@ -82,9 +69,7 @@ mod tests {
         use crate::modules::moqt::control_plane::control_messages::messages::publish_ok::PublishOk;
 
         use crate::modules::moqt::control_plane::control_messages::messages::parameters::{
-            filter_type::FilterType,
-            group_order::GroupOrder,
-            version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
+            filter_type::FilterType, group_order::GroupOrder,
         };
         #[test]
         fn packetize_and_depacketize_absolute_start() {
@@ -99,12 +84,11 @@ mod tests {
                         object_id: 5,
                     },
                 },
-                parameters: vec![VersionSpecificParameter::AuthorizationInfo(
-                    AuthorizationInfo::new("token".to_string()),
-                )],
+                delivery_timeout: Some(1000),
             };
 
-            let mut buf = publish_ok_message.encode();
+            let buf = publish_ok_message.encode();
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_message = PublishOk::decode(&mut buf).unwrap();
 
             assert_eq!(
@@ -140,10 +124,11 @@ mod tests {
                     },
                     end_group: 30,
                 },
-                parameters: vec![],
+                delivery_timeout: Some(1000),
             };
 
-            let mut buf = publish_ok_message.encode();
+            let buf = publish_ok_message.encode();
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_message = PublishOk::decode(&mut buf).unwrap();
 
             assert_eq!(
@@ -163,7 +148,10 @@ mod tests {
                 publish_ok_message.filter_type,
                 depacketized_message.filter_type
             );
-            assert!(depacketized_message.parameters.is_empty());
+            assert_eq!(
+                publish_ok_message.delivery_timeout,
+                depacketized_message.delivery_timeout
+            );
         }
 
         #[test]
@@ -174,10 +162,11 @@ mod tests {
                 subscriber_priority: 0,
                 group_order: GroupOrder::Ascending, // Ascending
                 filter_type: FilterType::LatestGroup,
-                parameters: vec![],
+                delivery_timeout: Some(1000),
             };
 
-            let mut buf = publish_ok_message.encode();
+            let buf = publish_ok_message.encode();
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_message = PublishOk::decode(&mut buf).unwrap();
 
             assert_eq!(
@@ -188,7 +177,10 @@ mod tests {
                 publish_ok_message.filter_type,
                 depacketized_message.filter_type
             );
-            assert!(depacketized_message.parameters.is_empty());
+            assert_eq!(
+                publish_ok_message.delivery_timeout,
+                depacketized_message.delivery_timeout
+            );
         }
     }
 }

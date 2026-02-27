@@ -1,11 +1,11 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::control_messages::{
+        key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::{
-            filter_type::FilterType, group_order::GroupOrder,
-            version_specific_parameters::VersionSpecificParameter,
+            authorization_token::AuthorizationToken, filter_type::FilterType,
+            group_order::GroupOrder,
         },
-        moqt_payload::MOQTPayload,
         util,
     },
 };
@@ -21,11 +21,12 @@ pub struct Subscribe {
     pub(crate) group_order: GroupOrder,
     pub(crate) forward: bool,
     pub(crate) filter_type: FilterType,
-    pub(crate) subscribe_parameters: Vec<VersionSpecificParameter>,
+    pub(crate) authorization_tokens: Vec<AuthorizationToken>,
+    pub(crate) delivery_timeout: Option<u64>,
 }
 
 impl Subscribe {
-    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
+    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_namespace_tuple_length = buf
             .try_get_varint()
@@ -49,15 +50,30 @@ impl Subscribe {
             .try_get_varint()
             .log_context("number of parameters")
             .ok()?;
-        let mut subscribe_parameters = Vec::new();
+        let mut parameters = vec![];
         for _ in 0..number_of_parameters {
-            let version_specific_parameter = VersionSpecificParameter::depacketize(buf).ok()?;
-            if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
-                tracing::warn!("unknown track request parameter {}", code);
-            } else {
-                subscribe_parameters.push(version_specific_parameter);
-            }
+            let params = KeyValuePair::decode(buf)?;
+            parameters.push(params);
         }
+        let authorization_tokens = parameters
+            .iter()
+            .filter(|kv_pair| kv_pair.key == 0x03)
+            .filter_map(|kv_pair| match &kv_pair.value {
+                VariantType::Odd(value) => {
+                    let mut value = std::io::Cursor::new(&value[..]);
+                    AuthorizationToken::decode(&mut value)
+                }
+                VariantType::Even(_) => unreachable!(),
+            })
+            .collect();
+        let delivery_timeout =
+            parameters
+                .iter()
+                .find(|kv_pair| kv_pair.key == 0x02)
+                .map(|kv_pair| match kv_pair.value {
+                    VariantType::Odd(_) => unreachable!(),
+                    VariantType::Even(value) => value,
+                });
         tracing::trace!("Depacketized Subscribe message.");
 
         Some(Subscribe {
@@ -68,7 +84,8 @@ impl Subscribe {
             group_order,
             forward,
             filter_type,
-            subscribe_parameters,
+            authorization_tokens,
+            delivery_timeout,
         })
     }
 
@@ -86,10 +103,24 @@ impl Subscribe {
         payload.put_u8(self.group_order as u8);
         payload.put_u8(self.forward as u8);
         payload.unsplit(self.filter_type.encode());
-        payload.put_varint(self.subscribe_parameters.len() as u64);
-        for version_specific_parameter in &self.subscribe_parameters {
-            version_specific_parameter.packetize(&mut payload);
+        let mut number_of_parameters = 0;
+        let mut parameters_payload = BytesMut::new();
+        for token in &self.authorization_tokens {
+            let token_payload = token.encode();
+            parameters_payload.unsplit(token_payload);
+            number_of_parameters += 1;
         }
+        if let Some(delivery_timeout) = self.delivery_timeout {
+            let delivery_timeout_payload = KeyValuePair {
+                key: 0x02,
+                value: VariantType::Even(delivery_timeout),
+            }
+            .encode();
+            parameters_payload.unsplit(delivery_timeout_payload);
+            number_of_parameters += 1;
+        }
+        payload.put_varint(number_of_parameters);
+        payload.unsplit(parameters_payload);
 
         tracing::trace!("Packetized Subscribe message.");
         payload
@@ -102,12 +133,7 @@ mod tests {
         use bytes::BytesMut;
 
         use crate::modules::moqt::control_plane::control_messages::messages::{
-            parameters::{
-                filter_type::FilterType,
-                group_order::GroupOrder,
-                location::Location,
-                version_specific_parameters::{AuthorizationInfo, VersionSpecificParameter},
-            },
+            parameters::{filter_type::FilterType, group_order::GroupOrder, location::Location},
             subscribe::Subscribe,
         };
 
@@ -120,10 +146,6 @@ mod tests {
             let group_order = GroupOrder::Ascending;
             let forward = false;
             let filter_type = FilterType::LatestGroup;
-            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
-                AuthorizationInfo::new("test".to_string()),
-            );
-            let subscribe_parameters = vec![version_specific_parameter];
 
             let subscribe = Subscribe {
                 request_id,
@@ -133,7 +155,8 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                subscribe_parameters,
+                authorization_tokens: vec![],
+                delivery_timeout: None,
             };
 
             let buf = subscribe.encode();
@@ -152,10 +175,7 @@ mod tests {
                 1,   // Group Order (8): Assending
                 0,   // Forward(8)
                 1,   // Filter Type (i): LatestGroup
-                1,   // Track Request Parameters (..): Number of Parameters
-                2,   // Parameter Type (i): AuthorizationInfo
-                4,   // Parameter Length (i)
-                116, 101, 115, 116, // Parameter Value (..): test
+                0,   // Track Request Parameters (..): Number of Parameters
             ];
             assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
         }
@@ -174,10 +194,6 @@ mod tests {
                     object_id: 20,
                 },
             };
-            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
-                AuthorizationInfo::new("test".to_string()),
-            );
-            let subscribe_parameters = vec![version_specific_parameter];
 
             let subscribe = Subscribe {
                 request_id,
@@ -187,7 +203,8 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                subscribe_parameters,
+                authorization_tokens: vec![],
+                delivery_timeout: None,
             };
 
             let buf = subscribe.encode();
@@ -208,10 +225,7 @@ mod tests {
                 3,   // Filter Type (i): AbsoluteStart
                 10,  // Location: group id (i)
                 20,  // Location: object id (i)
-                1,   // Track Request Parameters (..): Number of Parameters
-                2,   // Parameter Type (i): AuthorizationInfo
-                4,   // Parameter Length
-                116, 101, 115, 116, // Parameter Value (..): test
+                0,   // Track Request Parameters (..): Number of Parameters
             ];
             assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
         }
@@ -231,10 +245,6 @@ mod tests {
                 },
                 end_group: 10,
             };
-            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
-                AuthorizationInfo::new("test".to_string()),
-            );
-            let subscribe_parameters = vec![version_specific_parameter];
 
             let subscribe = Subscribe {
                 request_id,
@@ -244,7 +254,8 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                subscribe_parameters,
+                authorization_tokens: vec![],
+                delivery_timeout: None,
             };
 
             let buf = subscribe.encode();
@@ -266,10 +277,7 @@ mod tests {
                 10,  // Location: group id (i)
                 20,  // Location: object id (i)
                 10,  // End Group (i)
-                1,   // Track Request Parameters (..): Number of Parameters
-                2,   // Parameter Type (i): AuthorizationInfo
-                4,   // Parameter Length
-                116, 101, 115, 116, // Parameter Value (..): test
+                0,   // Track Request Parameters (..): Number of Parameters
             ];
             assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
         }
@@ -290,13 +298,11 @@ mod tests {
                 1,   // Group Order (8): Assending
                 1,   // Forward(8)
                 1,   // Filter Type (i): LatestGroup
-                1,   // Track Request Parameters (..): Number of Parameters
-                2,   // Parameter Type (i): AuthorizationInfo
-                4,   // Parameter Length (i)
-                116, 101, 115, 116, // Parameter Value (..): test
+                0,   // Track Request Parameters (..): Number of Parameters
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_subscribe = Subscribe::decode(&mut buf).unwrap();
 
             let request_id = 0;
@@ -306,10 +312,6 @@ mod tests {
             let group_order = GroupOrder::Ascending;
             let forward = true;
             let filter_type = FilterType::LatestGroup;
-            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
-                AuthorizationInfo::new("test".to_string()),
-            );
-            let subscribe_parameters = vec![version_specific_parameter];
             let expected_subscribe = Subscribe {
                 request_id,
                 track_namespace,
@@ -318,7 +320,8 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                subscribe_parameters,
+                authorization_tokens: vec![],
+                delivery_timeout: None,
             };
 
             assert_eq!(depacketized_subscribe, expected_subscribe);
@@ -342,13 +345,11 @@ mod tests {
                 3,   // Filter Type (i): AbsoluteStart
                 5,   // Location: group id (i)
                 10,  // Location: object id (i)
-                1,   // Track Request Parameters (..): Number of Parameters
-                2,   // Parameter Type (i): AuthorizationInfo
-                4,   // Parameter Length
-                116, 101, 115, 116, // Parameter Value (..): test
+                0,   // Track Request Parameters (..): Number of Parameters
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_subscribe = Subscribe::decode(&mut buf).unwrap();
 
             let request_id = 0;
@@ -363,10 +364,6 @@ mod tests {
                     object_id: 10,
                 },
             };
-            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
-                AuthorizationInfo::new("test".to_string()),
-            );
-            let subscribe_parameters = vec![version_specific_parameter];
             let expected_subscribe = Subscribe {
                 request_id,
                 track_namespace,
@@ -375,7 +372,8 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                subscribe_parameters,
+                authorization_tokens: vec![],
+                delivery_timeout: None,
             };
 
             assert_eq!(depacketized_subscribe, expected_subscribe);
@@ -400,13 +398,11 @@ mod tests {
                 5,   // Location: group id (i)
                 10,  // Location: object id (i)
                 10,  // End Group (i)
-                1,   // Track Request Parameters (..): Number of Parameters
-                2,   // Parameter Type (i): AuthorizationInfo
-                4,   // Parameter Length
-                116, 101, 115, 116, // Parameter Value (..): test
+                0,   // Track Request Parameters (..): Number of Parameters
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_subscribe = Subscribe::decode(&mut buf);
             let depacketized_subscribe = match depacketized_subscribe {
                 Some(s) => s,
@@ -428,10 +424,7 @@ mod tests {
                 },
                 end_group: 10,
             };
-            let version_specific_parameter = VersionSpecificParameter::AuthorizationInfo(
-                AuthorizationInfo::new("test".to_string()),
-            );
-            let subscribe_parameters = vec![version_specific_parameter];
+
             let expected_subscribe = Subscribe {
                 request_id,
                 track_namespace,
@@ -440,7 +433,8 @@ mod tests {
                 group_order,
                 forward,
                 filter_type,
-                subscribe_parameters,
+                authorization_tokens: vec![],
+                delivery_timeout: None,
             };
             assert_eq!(depacketized_subscribe, expected_subscribe);
         }

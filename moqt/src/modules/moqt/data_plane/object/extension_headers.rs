@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
@@ -19,14 +19,14 @@ pub struct ExtensionHeaders {
 }
 
 impl ExtensionHeaders {
-    pub fn decode(buf: &mut bytes::BytesMut) -> Option<Self> {
+    pub fn decode(cursor: &mut impl Buf) -> Option<Self> {
         let mut kv_pairs = Vec::new();
-        let number_of_parameters = buf
+        let number_of_parameters = cursor
             .try_get_varint()
             .log_context("number of parameters")
             .ok()?;
         for _ in 0..number_of_parameters {
-            let key_value_pair = KeyValuePair::decode(buf)?;
+            let key_value_pair = KeyValuePair::decode(cursor)?;
             kv_pairs.push(key_value_pair);
         }
         let prior_group_id_gap = kv_pairs

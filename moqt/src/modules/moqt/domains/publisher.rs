@@ -84,7 +84,9 @@ impl<T: TransportProtocol> Publisher<T> {
             group_order: option.group_order,
             content_exists: option.content_exists,
             forward: option.forward,
-            parameters: vec![],
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+            max_duration: None,
         };
         let bytes = utils::create_full_message(ControlMessageType::Publish, publish.encode());
         self.session.send_stream.send(&bytes).await?;

@@ -37,34 +37,43 @@ mod tests {
         fn put_varint_1_byte() {
             let mut bytes = BytesMut::new();
             bytes.put_varint(3);
-            assert_eq!(bytes.try_get_varint(), Ok(3));
+            let mut bytes = std::io::Cursor::new(&bytes[..]);
+            let result = bytes.try_get_varint();
+            assert_eq!(result, Ok(3));
         }
 
         #[test]
         fn put_varint_2_bytes() {
             let mut bytes = BytesMut::new();
             bytes.put_varint(75);
-            assert_eq!(bytes.try_get_varint(), Ok(75));
+            let mut bytes = std::io::Cursor::new(&bytes[..]);
+            let result = bytes.try_get_varint();
+            assert_eq!(result, Ok(75));
         }
 
         #[test]
         fn put_varint_4_bytes() {
             let mut bytes = BytesMut::new();
             bytes.put_varint(123456);
-            assert_eq!(bytes.try_get_varint(), Ok(123456));
+            let mut bytes = std::io::Cursor::new(&bytes[..]);
+            let result = bytes.try_get_varint();
+            assert_eq!(result, Ok(123456));
         }
 
         #[test]
         fn put_varint_8_bytes() {
             let mut bytes = BytesMut::new();
             bytes.put_varint(15000000000);
-            assert_eq!(bytes.try_get_varint(), Ok(15000000000));
+            let mut bytes = std::io::Cursor::new(&bytes[..]);
+            let result = bytes.try_get_varint();
+            assert_eq!(result, Ok(15000000000));
         }
 
         #[test]
         fn put_string_ok() {
             let mut bytes = BytesMut::new();
             bytes.put_string("abcd");
+            let mut bytes = std::io::Cursor::new(&bytes[..]);
             let result = bytes.try_get_string().unwrap();
             assert_eq!(result, "abcd");
         }

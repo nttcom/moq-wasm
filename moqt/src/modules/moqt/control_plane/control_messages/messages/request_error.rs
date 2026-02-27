@@ -12,7 +12,7 @@ pub struct RequestError {
 }
 
 impl RequestError {
-    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
+    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let error_code = buf.try_get_varint().log_context("error code").ok()?;
         let reason_phrase = buf.try_get_string().log_context("reason phrase").ok()?;
@@ -72,7 +72,8 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let depacketized_announce_error = RequestError::decode(&mut buf).unwrap();
+            let mut cursor = std::io::Cursor::new(buf.as_ref());
+            let depacketized_announce_error = RequestError::decode(&mut cursor).unwrap();
 
             let request_id = 0;
             let error_code: u64 = 1;

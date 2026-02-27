@@ -37,7 +37,7 @@ pub struct SetupParameter {
 }
 
 impl SetupParameter {
-    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
+    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let mut kv_pairs = Vec::new();
         let number_of_parameters = buf
             .try_get_varint()
@@ -68,7 +68,7 @@ impl SetupParameter {
             .filter(|kv_pair| kv_pair.key == 0x03)
             .filter_map(|kv_pair| match &kv_pair.value {
                 VariantType::Odd(value) => {
-                    let mut value = BytesMut::from(value.iter().as_slice());
+                    let mut value = std::io::Cursor::new(&value[..]);
                     AuthorizationToken::decode(&mut value)
                 }
                 VariantType::Even(_) => unreachable!(),
@@ -259,6 +259,7 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_setup_parameter = SetupParameter::decode(&mut buf).unwrap();
             assert_eq!(depacketized_setup_parameter.max_request_id, 2000);
             assert_eq!(depacketized_setup_parameter.path, Some("path".to_string()));

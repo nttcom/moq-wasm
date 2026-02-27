@@ -1,7 +1,5 @@
 use std::sync::{Arc, Weak};
 
-use bytes::BytesMut;
-
 use crate::{
     SessionEvent, TransportProtocol,
     modules::moqt::{
@@ -13,18 +11,10 @@ use crate::{
                 subscribe_handler::SubscribeHandler,
                 subscribe_namespace_handler::SubscribeNamespaceHandler,
             },
-            control_messages::{
-                control_message_type::ControlMessageType,
-                control_messages::{
-                    namespace_ok::NamespaceOk, publish::Publish,
-                    publish_namespace::PublishNamespace, publish_ok::PublishOk,
-                    request_error::RequestError, subscribe::Subscribe,
-                    subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
-                    util::get_message_type,
-                },
-            },
         },
-        data_plane::streams::stream::stream_receiver::StreamReceiver,
+        data_plane::streams::stream::{
+            received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
+        },
         domains::session_context::SessionContext,
     },
 };
@@ -38,7 +28,7 @@ pub(crate) struct ControlMessageReceiveThread;
 
 impl ControlMessageReceiveThread {
     pub(crate) fn run<T: TransportProtocol>(
-        mut receive_stream: StreamReceiver<T>,
+        mut receive_stream: BiStreamReceiver<T>,
         session_context: Weak<SessionContext<T>>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
@@ -48,23 +38,16 @@ impl ControlMessageReceiveThread {
                     if let Some(session) = session_context.upgrade() {
                         tracing::debug!("Session is alive.");
 
-                        let mut bytes = match receive_stream.receive().await {
-                            Ok(b) => b,
-                            Err(e) => {
-                                tracing::error!("failed to receive message: {:?}", e);
+                        let received_message = match receive_stream.receive().await {
+                            Some(Ok(b)) => b,
+                            _ => {
+                                tracing::error!("Stream ended.");
                                 break;
                             }
                         };
                         tracing::info!("Message received.");
-                        let message_type = match get_message_type(&mut bytes) {
-                            Ok(m) => m,
-                            Err(e) => {
-                                tracing::error!("Receiving error: {:?}", e);
-                                break;
-                            }
-                        };
                         let depack_result =
-                            Self::resolve_message(session.clone(), message_type, bytes);
+                            Self::resolve_message(session.clone(), received_message);
                         match depack_result {
                             DepacketizeResult::SessionEvent(event) => {
                                 if let Err(e) = session.event_sender.send(event) {
@@ -94,209 +77,95 @@ impl ControlMessageReceiveThread {
 
     fn resolve_message<T: TransportProtocol>(
         session: Arc<SessionContext<T>>,
-        message_type: ControlMessageType,
-        mut bytes_mut: BytesMut,
+        received_message: ReceivedMessage,
     ) -> DepacketizeResult<T> {
-        tracing::debug!("Event: message_type: {:?}", message_type);
-        match message_type {
-            ControlMessageType::GoAway => todo!(),
-            ControlMessageType::MaxSubscribeId => todo!(),
-            ControlMessageType::RequestsBlocked => todo!(),
-            ControlMessageType::Subscribe => {
+        tracing::debug!("Event: message_type: {:?}", received_message);
+        match received_message {
+            ReceivedMessage::Subscribe(subscribe) => {
                 tracing::debug!("Event: Subscribe");
-                let result = Subscribe::decode(&mut bytes_mut);
-                if result.is_none() {
-                    tracing::warn!("Error detected.");
-                    DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
-                } else {
-                    let result = result.unwrap();
-                    let subscribe: SubscribeHandler<T> =
-                        SubscribeHandler::new(session.clone(), result);
-                    DepacketizeResult::SessionEvent(SessionEvent::<T>::Subscribe(subscribe))
-                }
+                let subscribe_handler = SubscribeHandler::new(session.clone(), subscribe);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::Subscribe(subscribe_handler))
             }
-            ControlMessageType::SubscribeOk => {
+            ReceivedMessage::SubscribeOk(subscribe_ok) => {
                 tracing::debug!("Event: Subscribe ok");
-                let result = match SubscribeOk::decode(&mut bytes_mut) {
-                    Some(v) => v,
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        return DepacketizeResult::SessionEvent(
-                            SessionEvent::<T>::ProtocolViolation(),
-                        );
-                    }
-                };
-                let request_id = result.request_id;
-                let reponse = ResponseMessage::SubscribeOk(result);
+                let request_id = subscribe_ok.request_id;
+                let reponse = ResponseMessage::SubscribeOk(subscribe_ok);
                 DepacketizeResult::ResponseMessage(request_id, reponse)
             }
-            ControlMessageType::SubscribeError => {
+            ReceivedMessage::SubscribeError(subscribe_error) => {
                 tracing::debug!("Event: Subscribe error");
-                let result = match RequestError::decode(&mut bytes_mut) {
-                    Some(v) => v,
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        return DepacketizeResult::SessionEvent(
-                            SessionEvent::<T>::ProtocolViolation(),
-                        );
-                    }
-                };
                 let reponse = ResponseMessage::SubscribeError(
-                    result.request_id,
-                    result.error_code,
-                    result.reason_phrase,
+                    subscribe_error.request_id,
+                    subscribe_error.error_code,
+                    subscribe_error.reason_phrase,
                 );
-                DepacketizeResult::ResponseMessage(result.request_id, reponse)
+                DepacketizeResult::ResponseMessage(subscribe_error.request_id, reponse)
             }
-            ControlMessageType::SubscribeUpdate => todo!(),
-            ControlMessageType::UnSubscribe => todo!(),
-            ControlMessageType::PublishDone => todo!(),
-            ControlMessageType::Publish => {
+            ReceivedMessage::Publish(publish) => {
                 tracing::debug!("Event: Publish");
-                let result = Publish::decode(&mut bytes_mut);
-                if result.is_none() {
-                    tracing::error!("Protocol violation is detected.");
-                    DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
-                } else {
-                    let result = result.unwrap();
-                    let pub_handler = PublishHandler::new(session.clone(), result);
-                    DepacketizeResult::SessionEvent(SessionEvent::<T>::Publish(pub_handler))
-                }
+                let publish_handler = PublishHandler::new(session.clone(), publish);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::Publish(publish_handler))
             }
-            ControlMessageType::PublishOk => {
+            ReceivedMessage::PublishOk(publish_ok) => {
                 tracing::debug!("Event: Publish ok");
-                let result = match PublishOk::decode(&mut bytes_mut) {
-                    Some(v) => v,
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        return DepacketizeResult::SessionEvent(
-                            SessionEvent::<T>::ProtocolViolation(),
-                        );
-                    }
-                };
-                let request_id = result.request_id;
-                let reponse = ResponseMessage::PublishOk(result);
+                let request_id = publish_ok.request_id;
+                let reponse = ResponseMessage::PublishOk(publish_ok);
                 DepacketizeResult::ResponseMessage(request_id, reponse)
             }
-            ControlMessageType::PublishError => {
+            ReceivedMessage::PublishError(publish_error) => {
                 tracing::debug!("Event: Publish error");
-                let result = match RequestError::decode(&mut bytes_mut) {
-                    Some(v) => v,
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        return DepacketizeResult::SessionEvent(
-                            SessionEvent::<T>::ProtocolViolation(),
-                        );
-                    }
-                };
-                let reponse = ResponseMessage::PublishError(
-                    result.request_id,
-                    result.error_code,
-                    result.reason_phrase,
-                );
-                DepacketizeResult::ResponseMessage(result.request_id, reponse)
+                let request_id = publish_error.request_id;
+                let error_code = publish_error.error_code;
+                let reason_phrase = publish_error.reason_phrase.clone();
+                let reponse = ResponseMessage::PublishError(request_id, error_code, reason_phrase);
+                DepacketizeResult::ResponseMessage(request_id, reponse)
             }
-            ControlMessageType::Fetch => todo!(),
-            ControlMessageType::FetchOk => todo!(),
-            ControlMessageType::FetchError => todo!(),
-            ControlMessageType::FetchCancel => todo!(),
-            ControlMessageType::TrackStatusRequest => todo!(),
-            ControlMessageType::TrackStatus => todo!(),
-            ControlMessageType::PublishNamespace => {
+            ReceivedMessage::PublishNamespace(publish_namespace) => {
                 tracing::debug!("Event: Publish namespace");
-                let result = PublishNamespace::decode(&mut bytes_mut);
-                if result.is_none() {
-                    tracing::error!("Protocol violation is detected.");
-                    DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
-                } else {
-                    let result = result.unwrap();
-                    let pub_ns_handler = PublishNamespaceHandler::new(session.clone(), result);
-                    DepacketizeResult::SessionEvent(SessionEvent::<T>::PublishNamespace(
-                        pub_ns_handler,
-                    ))
-                }
+                let publish_namespace_handler =
+                    PublishNamespaceHandler::new(session.clone(), publish_namespace);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::PublishNamespace(
+                    publish_namespace_handler,
+                ))
             }
-            ControlMessageType::PublishNamespaceOk => {
+            ReceivedMessage::PublishNamespaceOk(publish_namespace_ok) => {
                 tracing::debug!("Event: Publish namespace ok");
-                let result = match NamespaceOk::decode(&mut bytes_mut) {
-                    Some(v) => v,
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        return DepacketizeResult::SessionEvent(
-                            SessionEvent::<T>::ProtocolViolation(),
-                        );
-                    }
-                };
-                let reponse = ResponseMessage::PublishNamespaceOk(result.request_id);
-                DepacketizeResult::ResponseMessage(result.request_id, reponse)
+                let request_id = publish_namespace_ok.request_id;
+                let reponse = ResponseMessage::PublishNamespaceOk(request_id);
+                DepacketizeResult::ResponseMessage(request_id, reponse)
             }
-            ControlMessageType::PublishNamespaceError => {
+            ReceivedMessage::PublishNamespaceError(publish_namespace_error) => {
                 tracing::debug!("Event: Publish namespace error");
-                let result = match RequestError::decode(&mut bytes_mut) {
-                    Some(v) => v,
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        return DepacketizeResult::SessionEvent(
-                            SessionEvent::<T>::ProtocolViolation(),
-                        );
-                    }
-                };
-                let reponse = ResponseMessage::PublishNamespaceError(
-                    result.request_id,
-                    result.error_code,
-                    result.reason_phrase,
-                );
-                DepacketizeResult::ResponseMessage(result.request_id, reponse)
+                let request_id = publish_namespace_error.request_id;
+                let error_code = publish_namespace_error.error_code;
+                let reason_phrase = publish_namespace_error.reason_phrase.clone();
+                let reponse =
+                    ResponseMessage::PublishNamespaceError(request_id, error_code, reason_phrase);
+                DepacketizeResult::ResponseMessage(request_id, reponse)
             }
-            ControlMessageType::PublishNamespaceDone => todo!(),
-            ControlMessageType::PublishNamespaceCancel => todo!(),
-            ControlMessageType::SubscribeNamespace => {
+            ReceivedMessage::SubscribeNamespace(subscribe_namespace) => {
                 tracing::debug!("Event: Subscribe namespace");
-                let result = SubscribeNamespace::decode(&mut bytes_mut);
-                if result.is_none() {
-                    tracing::error!("Protocol violation is detected.");
-                    DepacketizeResult::SessionEvent(SessionEvent::<T>::ProtocolViolation())
-                } else {
-                    let result = result.unwrap();
-                    let sub_ns_handler = SubscribeNamespaceHandler::new(session.clone(), result);
-                    DepacketizeResult::SessionEvent(SessionEvent::<T>::SubscribeNameSpace(
-                        sub_ns_handler,
-                    ))
-                }
+                let subscribe_namespace_handler =
+                    SubscribeNamespaceHandler::new(session.clone(), subscribe_namespace);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::SubscribeNameSpace(
+                    subscribe_namespace_handler,
+                ))
             }
-            ControlMessageType::SubscribeNamespaceOk => {
+            ReceivedMessage::SubscribeNamespaceOk(subscribe_namespace_ok) => {
                 tracing::debug!("Event: Subscribe namespace ok");
-                let result = match NamespaceOk::decode(&mut bytes_mut) {
-                    Some(v) => v,
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        return DepacketizeResult::SessionEvent(
-                            SessionEvent::<T>::ProtocolViolation(),
-                        );
-                    }
-                };
-                let reponse = ResponseMessage::SubscribeNameSpaceOk(result.request_id);
-                DepacketizeResult::ResponseMessage(result.request_id, reponse)
+                let request_id = subscribe_namespace_ok.request_id;
+                let reponse = ResponseMessage::SubscribeNameSpaceOk(request_id);
+                DepacketizeResult::ResponseMessage(request_id, reponse)
             }
-            ControlMessageType::SubscribeNamespaceError => {
+            ReceivedMessage::SubscribeNamespaceError(subscribe_namespace_error) => {
                 tracing::debug!("Event: Subscribe namespace error");
-                let result = match RequestError::decode(&mut bytes_mut) {
-                    Some(v) => v,
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        return DepacketizeResult::SessionEvent(
-                            SessionEvent::<T>::ProtocolViolation(),
-                        );
-                    }
-                };
-                let reponse = ResponseMessage::SubscribeNameSpaceError(
-                    result.request_id,
-                    result.error_code,
-                    result.reason_phrase,
-                );
-                DepacketizeResult::ResponseMessage(result.request_id, reponse)
+                let request_id = subscribe_namespace_error.request_id;
+                let error_code = subscribe_namespace_error.error_code;
+                let reason_phrase = subscribe_namespace_error.reason_phrase.clone();
+                let reponse =
+                    ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase);
+                DepacketizeResult::ResponseMessage(request_id, reponse)
             }
-            ControlMessageType::UnSubscribeNamespace => todo!(),
             _ => todo!(),
         }
     }

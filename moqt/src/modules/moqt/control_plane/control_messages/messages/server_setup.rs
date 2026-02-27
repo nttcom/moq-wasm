@@ -20,7 +20,7 @@ impl ServerSetup {
 }
 
 impl ServerSetup {
-    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
+    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let selected_version = buf.try_get_varint().log_context("selected version").ok()?;
         let setup_parameters = SetupParameter::decode(buf)?;
 
@@ -92,7 +92,8 @@ mod tests {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
-            let depacketized_server_setup = ServerSetup::decode(&mut buf).unwrap();
+            let mut cursor = std::io::Cursor::new(buf.as_ref());
+            let depacketized_server_setup = ServerSetup::decode(&mut cursor).unwrap();
             assert_eq!(depacketized_server_setup.selected_version, 0xff00000e);
             assert_eq!(
                 depacketized_server_setup.setup_parameters.max_request_id,

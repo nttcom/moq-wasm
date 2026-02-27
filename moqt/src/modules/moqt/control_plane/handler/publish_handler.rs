@@ -56,7 +56,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
             subscriber_priority,
             group_order: self.group_order,
             filter_type,
-            parameters: vec![],
+            delivery_timeout: self.delivery_timeout,
         };
         let bytes = utils::create_full_message(ControlMessageType::PublishOk, publish_ok.encode());
         self.session_context.send_stream.send(&bytes).await

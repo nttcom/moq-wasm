@@ -24,7 +24,7 @@ pub enum FilterType {
 }
 
 impl FilterType {
-    pub(crate) fn decode(bytes: &mut BytesMut) -> Option<Self> {
+    pub(crate) fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let value = FilterTypeValue::try_from(bytes.get_u8()).ok()?;
         match value {
             FilterTypeValue::LatestObject => Some(FilterType::LatestObject),
