@@ -10,14 +10,14 @@ use crate::{
             enums::{RequestId, ResponseMessage},
             threads::enums::StreamWithObject,
         },
-        data_plane::streams::stream::stream_sender::StreamSender,
+        data_plane::streams::stream::bi_stream_sender::BiStreamSender,
     },
 };
 
 #[derive(Debug)]
 pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) transport_connection: T::Connection,
-    pub(crate) send_stream: StreamSender<T>,
+    pub(crate) send_stream: BiStreamSender<T>,
     request_id: AtomicU64,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     pub(crate) sender_map:
@@ -29,7 +29,7 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
 impl<T: TransportProtocol> SessionContext<T> {
     pub(crate) fn new(
         transport_connection: T::Connection,
-        send_stream: StreamSender<T>,
+        send_stream: BiStreamSender<T>,
         request_id: AtomicU64,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     ) -> Self {

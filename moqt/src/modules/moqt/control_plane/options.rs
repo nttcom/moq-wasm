@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    FilterType, GroupOrder, TransportProtocol,
+    FilterType, GroupOrder,
     modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists,
 };
 

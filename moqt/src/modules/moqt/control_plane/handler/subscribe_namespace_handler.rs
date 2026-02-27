@@ -10,7 +10,6 @@ use crate::{
                 subscribe_namespace::SubscribeNamespace,
             },
         },
-        control_plane::utils,
         domains::session_context::SessionContext,
     },
 };
@@ -40,11 +39,13 @@ impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
         let publish_namespace_ok = NamespaceOk {
             request_id: self.request_id,
         };
-        let bytes = utils::create_full_message(
-            ControlMessageType::SubscribeNamespaceOk,
-            publish_namespace_ok.encode(),
-        );
-        self.session_context.send_stream.send(&bytes).await
+        self.session_context
+            .send_stream
+            .send(
+                ControlMessageType::SubscribeNamespaceOk,
+                publish_namespace_ok.encode(),
+            )
+            .await
     }
 
     pub async fn error(&self, error_code: u64, reason_phrase: String) -> anyhow::Result<()> {
@@ -54,8 +55,9 @@ impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
             error_code,
             reason_phrase,
         };
-        let bytes =
-            utils::create_full_message(ControlMessageType::SubscribeNamespaceError, err.encode());
-        self.session_context.send_stream.send(&bytes).await
+        self.session_context
+            .send_stream
+            .send(ControlMessageType::SubscribeNamespaceError, err.encode())
+            .await
     }
 }

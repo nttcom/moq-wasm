@@ -65,7 +65,6 @@ mod tests {
             let buf = server_setup.encode();
 
             let expected_bytes_array = [
-                0, 22,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff000a) in 62bit
                 2,   // Number of Parameters (i)
@@ -81,7 +80,6 @@ mod tests {
         #[test]
         fn decode() {
             let bytes_array = [
-                0, 22,  // Payload length
                 192, // Selected Version (i): Length(11 of 2MSB)
                 0, 0, 0, 255, 0, 0, 14,  // Supported Version(i): Value(0xff00000a) in 62bit
                 2,   // Number of Parameters (i)
