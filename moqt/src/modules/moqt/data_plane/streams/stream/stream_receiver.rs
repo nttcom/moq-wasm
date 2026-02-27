@@ -29,7 +29,10 @@ impl<T: TransportProtocol, const U: usize, D: Decoder> StreamReceiver<T, U, D> {
             Some(Ok(item)) => Some(Ok(item)),
             Some(Err(_)) => Some(Err(anyhow::anyhow!("Failed to decode message"))),
             // The stream has ended.
-            None => None,
+            None => {
+                tracing::debug!("Stream has ended");
+                None
+            }
         }
     }
 }

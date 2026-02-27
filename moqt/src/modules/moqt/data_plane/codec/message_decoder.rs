@@ -44,7 +44,7 @@ impl Decoder for MessageDecoder {
             return Ok(None);
         }
         let result = self.resolve_message(message_type, &mut cursor_buf);
-        src.split_to(cursor_buf.position() as usize);
+        let _ = src.split_to(cursor_buf.position() as usize);
         Ok(Some(result))
     }
 }
@@ -89,13 +89,13 @@ impl MessageDecoder {
     fn resolve_message(
         &self,
         message_type: ControlMessageType,
-        mut cursor_buf: &mut Cursor<&[u8]>,
+        cursor_buf: &mut Cursor<&[u8]>,
     ) -> ReceivedMessage {
         tracing::debug!("Event: message_type: {:?}", message_type);
         match message_type {
             ControlMessageType::ClientSetup => {
                 tracing::debug!("Event: Client setup");
-                match ClientSetup::decode(&mut cursor_buf) {
+                match ClientSetup::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::ClientSetup(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
@@ -105,7 +105,7 @@ impl MessageDecoder {
             }
             ControlMessageType::ServerSetup => {
                 tracing::debug!("Event: Server setup");
-                match ServerSetup::decode(&mut cursor_buf) {
+                match ServerSetup::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::ServerSetup(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
@@ -118,7 +118,7 @@ impl MessageDecoder {
             ControlMessageType::RequestsBlocked => todo!(),
             ControlMessageType::Subscribe => {
                 tracing::debug!("Event: Subscribe");
-                match Subscribe::decode(&mut cursor_buf) {
+                match Subscribe::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::Subscribe(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
@@ -128,21 +128,21 @@ impl MessageDecoder {
             }
             ControlMessageType::SubscribeOk => {
                 tracing::debug!("Event: Subscribe ok");
-                match SubscribeOk::decode(&mut cursor_buf) {
+                match SubscribeOk::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::SubscribeOk(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
-                        return ReceivedMessage::FatalError();
+                        ReceivedMessage::FatalError()
                     }
                 }
             }
             ControlMessageType::SubscribeError => {
                 tracing::debug!("Event: Subscribe error");
-                match RequestError::decode(&mut cursor_buf) {
+                match RequestError::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::SubscribeError(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
-                        return ReceivedMessage::FatalError();
+                        ReceivedMessage::FatalError()
                     }
                 }
             }
@@ -151,31 +151,31 @@ impl MessageDecoder {
             ControlMessageType::PublishDone => todo!(),
             ControlMessageType::Publish => {
                 tracing::debug!("Event: Publish");
-                match Publish::decode(&mut cursor_buf) {
+                match Publish::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::Publish(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
-                        return ReceivedMessage::FatalError();
+                        ReceivedMessage::FatalError()
                     }
                 }
             }
             ControlMessageType::PublishOk => {
                 tracing::debug!("Event: Publish ok");
-                match PublishOk::decode(&mut cursor_buf) {
+                match PublishOk::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::PublishOk(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
-                        return ReceivedMessage::FatalError();
+                        ReceivedMessage::FatalError()
                     }
                 }
             }
             ControlMessageType::PublishError => {
                 tracing::debug!("Event: Publish error");
-                match RequestError::decode(&mut cursor_buf) {
+                match RequestError::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::PublishError(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
-                        return ReceivedMessage::FatalError();
+                        ReceivedMessage::FatalError()
                     }
                 }
             }
@@ -187,31 +187,31 @@ impl MessageDecoder {
             ControlMessageType::TrackStatus => todo!(),
             ControlMessageType::PublishNamespace => {
                 tracing::debug!("Event: Publish namespace");
-                match PublishNamespace::decode(&mut cursor_buf) {
+                match PublishNamespace::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::PublishNamespace(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
-                        return ReceivedMessage::FatalError();
+                        ReceivedMessage::FatalError()
                     }
                 }
             }
             ControlMessageType::PublishNamespaceOk => {
                 tracing::debug!("Event: Publish namespace ok");
-                match NamespaceOk::decode(&mut cursor_buf) {
+                match NamespaceOk::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::PublishNamespaceOk(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
-                        return ReceivedMessage::FatalError();
+                        ReceivedMessage::FatalError()
                     }
                 }
             }
             ControlMessageType::PublishNamespaceError => {
                 tracing::debug!("Event: Publish namespace error");
-                match RequestError::decode(&mut cursor_buf) {
+                match RequestError::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::PublishNamespaceError(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
-                        return ReceivedMessage::FatalError();
+                        ReceivedMessage::FatalError()
                     }
                 }
             }
@@ -219,31 +219,31 @@ impl MessageDecoder {
             ControlMessageType::PublishNamespaceCancel => todo!(),
             ControlMessageType::SubscribeNamespace => {
                 tracing::debug!("Event: Subscribe namespace");
-                match SubscribeNamespace::decode(&mut cursor_buf) {
+                match SubscribeNamespace::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::SubscribeNamespace(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
-                        return ReceivedMessage::FatalError();
+                        ReceivedMessage::FatalError()
                     }
                 }
             }
             ControlMessageType::SubscribeNamespaceOk => {
                 tracing::debug!("Event: Subscribe namespace ok");
-                match NamespaceOk::decode(&mut cursor_buf) {
+                match NamespaceOk::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::SubscribeNamespaceOk(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
-                        return ReceivedMessage::FatalError();
+                        ReceivedMessage::FatalError()
                     }
                 }
             }
             ControlMessageType::SubscribeNamespaceError => {
                 tracing::debug!("Event: Subscribe namespace error");
-                match RequestError::decode(&mut cursor_buf) {
+                match RequestError::decode(cursor_buf) {
                     Some(v) => ReceivedMessage::SubscribeNamespaceError(v),
                     None => {
                         tracing::error!("Protocol violation is detected.");
-                        return ReceivedMessage::FatalError();
+                        ReceivedMessage::FatalError()
                     }
                 }
             }

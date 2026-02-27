@@ -16,15 +16,15 @@ impl Decoder for DataFrameDecoder {
     // TODO: define a proper error type.
     type Error = std::io::Error;
 
-    fn decode(&mut self, mut src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if self.subgroup_header_type.is_none() {
             let mut cursor_buf = std::io::Cursor::new(&src[..]);
             let subgroup = self.decode_header(&mut cursor_buf)?;
             let pos = cursor_buf.position() as usize;
-            src.split_to(pos);
+            let _ = src.split_to(pos);
             Ok(subgroup)
         } else {
-            self.decode_object_field(&mut src)
+            self.decode_object_field(src)
         }
     }
 }
