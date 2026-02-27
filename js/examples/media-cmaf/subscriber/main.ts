@@ -1,11 +1,8 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../../pkg/moqt_client_wasm'
-import { AUTH_INFO } from '../const'
+import { AUTH_INFO, CMAF_FPS, CMAF_KEYFRAME_INTERVAL_FRAMES } from '../const'
 import { getFormElement } from '../utils'
-import {
-  extractCatalogVideoTracks,
-  type MediaCatalogTrack
-} from '../catalog'
+import { extractCatalogVideoTracks, type MediaCatalogTrack } from '../catalog'
 
 const moqtClient = new MoqtClientWrapper()
 
@@ -19,11 +16,14 @@ let sourceBuffer: SourceBuffer | null = null
 let initSegmentReceived = false
 const appendQueue: Uint8Array[] = []
 let isAppending = false
-let receivedBytes = 0
-let lastStatBytes = 0
-let lastStatTime = 0
-let lastE2eDelay = 0
+
+// Stats state
+let lastNetworkDelay = 0
+let lastMediaSegmentTime: number | undefined
+let lastSegArrivalInterval = 0
+let lastBitrate = 0
 let statsIntervalId: ReturnType<typeof setInterval> | null = null
+const gopSec = CMAF_KEYFRAME_INTERVAL_FRAMES / CMAF_FPS
 
 function toBigUint64Array(value: string): BigUint64Array {
   const values = value
@@ -129,8 +129,10 @@ function setupCatalogCallbacks(trackAlias: bigint): void {
 
 // --- MSE helpers ---
 
+// TODO: 音声コーデックがハードコードされている。映像と音声を別 MoQ トラックに
+// 分離した際に、カタログから音声コーデックを取得するようにすべき。
 function buildMimeType(codec: string | undefined): string {
-  return `video/mp4; codecs="${codec ?? 'avc1.640032'}"`
+  return `video/mp4; codecs="${codec ?? 'avc1.640032'}, mp4a.40.2"`
 }
 
 function appendBuffer(data: Uint8Array): void {
@@ -150,9 +152,10 @@ function flushAppendQueue(): void {
     isAppending = false
     console.error('[CmafSubscriber] appendBuffer failed', e, {
       queueLength: appendQueue.length,
-      buffered: sourceBuffer.buffered.length > 0
-        ? `${sourceBuffer.buffered.start(0).toFixed(2)}-${sourceBuffer.buffered.end(0).toFixed(2)}`
-        : '(empty)',
+      buffered:
+        sourceBuffer.buffered.length > 0
+          ? `${sourceBuffer.buffered.start(0).toFixed(2)}-${sourceBuffer.buffered.end(0).toFixed(2)}`
+          : '(empty)'
     })
   }
 }
@@ -188,21 +191,31 @@ function setupTrackObjectCallbacks(trackAlias: bigint): void {
 
     // Read 8-byte timestamp prefix and extract fMP4 payload
     const sendTime = Number(new DataView(raw.buffer, raw.byteOffset).getBigUint64(0))
-    lastE2eDelay = Date.now() - sendTime
+    lastNetworkDelay = Date.now() - sendTime
     const payload = raw.subarray(8)
 
-    receivedBytes += payload.byteLength
-    console.debug('[CmafSubscriber] recv object', {
+    console.info('[CmafSubscriber] recv object', {
       groupId: _groupId,
       objectId,
       byteLength: payload.byteLength,
-      e2eDelay: lastE2eDelay,
+      networkDelay: lastNetworkDelay
     })
 
-    if (!initSegmentReceived && objectId === 0n) {
-      console.info('[CmafSubscriber] init segment received', { byteLength: payload.byteLength })
-      initSegmentReceived = true
+    if (objectId === 0n) {
+      if (!initSegmentReceived) {
+        console.info('[CmafSubscriber] init segment received', { byteLength: payload.byteLength })
+        initSegmentReceived = true
+        appendBuffer(payload)
+      }
+      return
     }
+
+    const now = Date.now()
+    if (lastMediaSegmentTime) {
+      lastSegArrivalInterval = now - lastMediaSegmentTime
+      lastBitrate = payload.byteLength * 8 / (lastSegArrivalInterval / 1000) / 1000
+    }
+    lastMediaSegmentTime = now
 
     appendBuffer(payload)
   })
@@ -215,11 +228,6 @@ function updateStats(): void {
   if (!statsEl) return
 
   const videoElement = document.getElementById('video') as HTMLVideoElement
-  const now = performance.now()
-  const elapsed = (now - lastStatTime) / 1000
-  const bitrate = elapsed > 0 ? ((receivedBytes - lastStatBytes) * 8) / elapsed / 1000 : 0
-  lastStatBytes = receivedBytes
-  lastStatTime = now
 
   let bufferAhead = 0
   if (sourceBuffer?.buffered.length) {
@@ -230,16 +238,13 @@ function updateStats(): void {
   const dropped = quality?.droppedVideoFrames ?? 0
   const total = quality?.totalVideoFrames ?? 0
 
+  const segArrival = lastSegArrivalInterval > 0 ? `${(lastSegArrivalInterval / 1000).toFixed(1)}s` : '-'
   statsEl.textContent =
-    `E2E: ${lastE2eDelay}ms` +
-    ` | Buffer: ${bufferAhead.toFixed(1)}s` +
-    ` | Bitrate: ${bitrate.toFixed(0)} kbps` +
-    ` | Dropped: ${dropped}/${total}`
+    `Delay: GoP 0~${gopSec}s avg ${gopSec / 2}s + Transport ${lastNetworkDelay}ms + Buffer ${bufferAhead.toFixed(1)}s (w/o encode/decode)` +
+    `\nSeg arrival: ${segArrival} | Bitrate: ${lastBitrate.toFixed(0)} kbps | Dropped: ${dropped}/${total}`
 }
 
 function startStats(): void {
-  lastStatBytes = receivedBytes
-  lastStatTime = performance.now()
   if (statsIntervalId !== null) return
   statsIntervalId = setInterval(updateStats, 1000)
 }
@@ -317,7 +322,6 @@ function setupCloseButtonHandler(): void {
     initSegmentReceived = false
     appendQueue.length = 0
     isAppending = false
-    receivedBytes = 0
     sourceBuffer = null
     if (mediaSource && mediaSource.readyState === 'open') {
       mediaSource.endOfStream()
