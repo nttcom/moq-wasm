@@ -64,7 +64,8 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
             expires,
             group_order: self.group_order,
             content_exists,
-            subscribe_parameters: vec![],
+            delivery_timeout: self.delivery_timeout,
+            max_duration: self.max_cache_duration,
         };
         let bytes =
             utils::create_full_message(ControlMessageType::SubscribeOk, subscribe_ok.encode());

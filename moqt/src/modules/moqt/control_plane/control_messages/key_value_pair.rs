@@ -17,7 +17,7 @@ pub struct KeyValuePair {
 }
 
 impl KeyValuePair {
-    pub(crate) fn decode(bytes: &mut BytesMut) -> Option<Self> {
+    pub(crate) fn decode(bytes: &mut impl Buf) -> Option<Self> {
         let key = bytes
             .try_get_varint()
             .log_context("KeyValuePair key")
@@ -76,7 +76,8 @@ mod tests {
                 value: VariantType::Even(10),
             };
 
-            let mut buf = kv_pair.encode();
+            let buf = kv_pair.encode();
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized = KeyValuePair::decode(&mut buf).unwrap();
 
             assert_eq!(kv_pair.key, depacketized.key);
@@ -84,7 +85,6 @@ mod tests {
                 VariantType::Even(v) => assert_eq!(v, 10),
                 _ => panic!("Expected VariantType::Even"),
             }
-            assert!(buf.is_empty());
         }
 
         #[test]
@@ -94,7 +94,8 @@ mod tests {
                 value: VariantType::Odd(Bytes::from(vec![0x01, 0x02, 0x03])),
             };
 
-            let mut buf = kv_pair.encode();
+            let buf = kv_pair.encode();
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized = KeyValuePair::decode(&mut buf).unwrap();
 
             assert_eq!(kv_pair.key, depacketized.key);
@@ -102,7 +103,6 @@ mod tests {
                 VariantType::Odd(v) => assert_eq!(v, vec![0x01, 0x02, 0x03]),
                 _ => panic!("Expected VariantType::Odd"),
             }
-            assert!(buf.is_empty());
         }
 
         #[test]

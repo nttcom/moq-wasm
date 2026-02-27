@@ -1,9 +1,9 @@
-use anyhow::bail;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::modules::extensions::buf_get_ext::BufGetExt;
 use crate::modules::extensions::buf_put_ext::BufPutExt;
 use crate::modules::extensions::result_ext::ResultExt;
+use crate::modules::moqt::data_plane::object::decode_error::DecodeError;
 use crate::modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
 
 //  +======+===============+=============+============+==============+
@@ -102,19 +102,26 @@ impl SubgroupHeaderType {
         self.0
     }
 
-    fn get_subgroup_id_field(&self, buf: &mut BytesMut) -> anyhow::Result<SubgroupId> {
+    fn get_subgroup_id_field(
+        &self,
+        buf: &mut std::io::Cursor<&[u8]>,
+    ) -> Result<SubgroupId, DecodeError> {
         match self.0 {
             0x10 | 0x11 | 0x18 | 0x19 => Ok(SubgroupId::None),
             0x12 | 0x13 | 0x1A | 0x1B => Ok(SubgroupId::FirstObjectIdDelta),
             0x14 | 0x15 | 0x1C | 0x1D => {
                 let subgroup_id = buf
                     .try_get_varint()
-                    .log_context("Subgroup Header Subgroup ID")?;
+                    .log_context("Subgroup Header Subgroup ID")
+                    .map_err(|_| DecodeError::NeedMoreData)?;
                 Ok(SubgroupId::Value(subgroup_id))
             }
             _ => {
                 tracing::error!("Invalid message type: {}", self.0);
-                bail!("Invalid message type: {}", self.0);
+                return Err(DecodeError::Fatal(format!(
+                    "Invalid message type: {}",
+                    self.0
+                )));
             }
         }
     }
@@ -153,26 +160,28 @@ impl SubgroupObject {
         }
     }
 
-    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
-        let length = match buf.try_get_varint().log_context("payload length") {
-            Ok(len) => len as usize,
-            Err(_) => return None,
-        };
-        if length == 0 {
-            let status = buf.try_get_varint().log_context("status code").ok()?;
-            Some(Self::Status {
-                length,
-                code: status,
-            })
-        } else {
-            if buf.len() < length {
-                return None;
-            }
-            let payload = buf.split_to(length);
-            Some(Self::Payload {
-                length,
-                data: payload.freeze(),
-            })
+    pub(crate) fn check_length(cursor: &mut std::io::Cursor<&[u8]>) -> Option<usize> {
+        let length = cursor.try_get_varint().log_context("payload length").ok()?;
+        let length = length as usize;
+        if cursor.remaining() < length {
+            return None;
+        }
+        Some(length)
+    }
+
+    pub(crate) fn decode_status(cursor: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+        let status = cursor.try_get_varint().log_context("status code").ok()?;
+        Some(Self::Status {
+            length: 0,
+            code: status,
+        })
+    }
+
+    pub(crate) fn decode_payload(length: usize, buf: &mut BytesMut) -> Self {
+        let payload = buf.split_to(length);
+        Self::Payload {
+            length,
+            data: payload.freeze(),
         }
     }
 
@@ -224,30 +233,27 @@ impl SubgroupHeader {
         }
     }
 
-    pub(crate) fn decode(mut buf: BytesMut) -> Option<Self> {
-        let message_type = buf
+    pub(crate) fn decode(mut cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self, DecodeError> {
+        let message_type = cursor
             .try_get_varint()
             .log_context("Subgroup Header Message Type")
-            .ok()?;
-        let message_type = SubgroupHeaderType::new(message_type)?;
-        let track_alias = buf
+            .map_err(|_| DecodeError::NeedMoreData)?;
+        let message_type = SubgroupHeaderType::new(message_type)
+            .ok_or_else(|| DecodeError::Fatal("Invalid message type".to_string()))?;
+        let track_alias = cursor
             .try_get_varint()
             .log_context("Subgroup Header Track Alias")
-            .ok()?;
-        let group_id = buf
+            .map_err(|_| DecodeError::NeedMoreData)?;
+        let group_id = cursor
             .try_get_varint()
             .log_context("Subgroup Header Group ID")
-            .ok()?;
-        let subgroup_id = if let Ok(subgroup_id) = message_type.get_subgroup_id_field(&mut buf) {
-            subgroup_id
-        } else {
-            return None;
-        };
-        let publisher_priority = buf
+            .map_err(|_| DecodeError::NeedMoreData)?;
+        let subgroup_id = message_type.get_subgroup_id_field(&mut cursor)?;
+        let publisher_priority = cursor
             .try_get_u8()
             .log_context("Subgroup Header Publisher Priority")
-            .ok()?;
-        Some(Self {
+            .map_err(|_| DecodeError::NeedMoreData)?;
+        Ok(Self {
             message_type,
             track_alias,
             group_id,
@@ -284,13 +290,17 @@ impl SubgroupObjectField {
         self.message_type.has_end_of_group()
     }
 
-    pub(crate) fn decode(message_type: SubgroupHeaderType, mut buf: BytesMut) -> Option<Self> {
-        let object_id_delta = buf
+    pub(crate) fn decode(
+        message_type: SubgroupHeaderType,
+        buf: &mut BytesMut,
+    ) -> Result<Self, DecodeError> {
+        let mut cursor = std::io::Cursor::<&[u8]>::new(&buf);
+        let object_id_delta = cursor
             .try_get_varint()
             .log_context("Subgroup Object ID Delta")
-            .ok()?;
+            .map_err(|_| DecodeError::NeedMoreData)?;
         let extension_headers = if message_type.has_extensions() {
-            ExtensionHeaders::decode(&mut buf)?
+            ExtensionHeaders::decode(&mut cursor).ok_or(DecodeError::NeedMoreData)?
         } else {
             ExtensionHeaders {
                 prior_group_id_gap: vec![],
@@ -298,8 +308,14 @@ impl SubgroupObjectField {
                 immutable_extensions: vec![],
             }
         };
-        let subgroup_object = SubgroupObject::decode(&mut buf)?;
-        Some(Self {
+        let length = SubgroupObject::check_length(&mut cursor).ok_or(DecodeError::NeedMoreData)?;
+        let subgroup_object = if length == 0 {
+            SubgroupObject::decode_status(&mut cursor).ok_or(DecodeError::NeedMoreData)?
+        } else {
+            buf.split_to(cursor.position() as usize);
+            SubgroupObject::decode_payload(length, buf)
+        };
+        Ok(Self {
             message_type,
             object_id_delta,
             extension_headers,
@@ -346,7 +362,8 @@ mod tests {
             );
 
             let buf = header.encode();
-            let depacketized = SubgroupHeader::decode(buf.clone()).unwrap();
+            let mut cursor = std::io::Cursor::<&[u8]>::new(&buf);
+            let depacketized = SubgroupHeader::decode(&mut cursor).unwrap();
 
             assert_eq!(header.message_type, depacketized.message_type);
             assert_eq!(header.track_alias, depacketized.track_alias);
@@ -373,7 +390,8 @@ mod tests {
             );
 
             let buf = header.encode();
-            let depacketized = SubgroupHeader::decode(buf.clone()).unwrap();
+            let mut cursor = std::io::Cursor::<&[u8]>::new(&buf);
+            let depacketized = SubgroupHeader::decode(&mut cursor).unwrap();
 
             assert_eq!(header.message_type, depacketized.message_type);
             assert_eq!(header.track_alias, depacketized.track_alias);
@@ -395,7 +413,8 @@ mod tests {
             let header = SubgroupHeader::new(5, 6, SubgroupId::Value(100), 32, true, true);
 
             let buf = header.encode();
-            let depacketized = SubgroupHeader::decode(buf.clone()).unwrap();
+            let mut cursor = std::io::Cursor::<&[u8]>::new(&buf);
+            let depacketized = SubgroupHeader::decode(&mut cursor).unwrap();
 
             assert_eq!(header.message_type, depacketized.message_type);
             assert_eq!(header.track_alias, depacketized.track_alias);
@@ -430,8 +449,8 @@ mod tests {
                 subgroup_object: SubgroupObject::new_payload(payload.clone()),
             };
 
-            let buf = object_field.encode();
-            let depacketized = SubgroupObjectField::decode(message_type, buf.clone()).unwrap();
+            let mut buf = object_field.encode();
+            let depacketized = SubgroupObjectField::decode(message_type, &mut buf).unwrap();
 
             assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
             assert!(
@@ -462,8 +481,8 @@ mod tests {
                 subgroup_object: SubgroupObject::new_payload(payload.clone()),
             };
 
-            let buf = object_field.encode();
-            let depacketized = SubgroupObjectField::decode(message_type, buf.clone()).unwrap();
+            let mut buf = object_field.encode();
+            let depacketized = SubgroupObjectField::decode(message_type, &mut buf).unwrap();
 
             assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
             assert_eq!(
@@ -510,8 +529,8 @@ mod tests {
                 subgroup_object: SubgroupObject::new_status(3), // EndOfGroup
             };
 
-            let buf = object_field.encode();
-            let depacketized = SubgroupObjectField::decode(message_type, buf.clone()).unwrap();
+            let mut buf = object_field.encode();
+            let depacketized = SubgroupObjectField::decode(message_type, &mut buf).unwrap();
 
             assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
             assert!(

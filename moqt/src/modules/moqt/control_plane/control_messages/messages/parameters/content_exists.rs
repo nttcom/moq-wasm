@@ -9,7 +9,7 @@ pub enum ContentExists {
 }
 
 impl ContentExists {
-    pub(crate) fn decode(bytes: &mut BytesMut) -> Option<Self> {
+    pub(crate) fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let value = bytes.get_u8();
         let content_exists = u8_to_bool(value).ok()?;
         if content_exists {

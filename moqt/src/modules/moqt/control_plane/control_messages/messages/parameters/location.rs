@@ -11,7 +11,7 @@ pub struct Location {
 }
 
 impl Location {
-    pub(crate) fn decode(buf: &mut bytes::BytesMut) -> Option<Self> {
+    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let group_id = buf.try_get_varint().log_context("location group id").ok()?;
         let object_id = buf
             .try_get_varint()
@@ -45,10 +45,11 @@ mod tests {
                 object_id: 5,
             };
 
-            let mut buf = location.encode();
+            let buf = location.encode();
+            let mut cursor = std::io::Cursor::new(&buf[..]);
 
             // depacketize
-            let depacketized_location = Location::decode(&mut buf).unwrap();
+            let depacketized_location = Location::decode(&mut cursor).unwrap();
 
             assert_eq!(location.group_id, depacketized_location.group_id);
             assert_eq!(location.object_id, depacketized_location.object_id);

@@ -84,7 +84,8 @@ impl<T: TransportProtocol> Subscriber<T> {
             group_order: option.group_order,
             forward: option.forward,
             filter_type: option.filter_type,
-            subscribe_parameters: vec![],
+            authorization_tokens: vec![],
+            delivery_timeout: None,
         };
         let bytes = utils::create_full_message(ControlMessageType::Subscribe, subscribe.encode());
         self.session.send_stream.send(&bytes).await?;

@@ -22,7 +22,7 @@ impl ClientSetup {
 }
 
 impl ClientSetup {
-    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
+    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let number_of_supported_versions = buf
             .try_get_varint()
             .log_context("number_of_supported_versions")
@@ -108,6 +108,7 @@ mod test {
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);
+            let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_client_setup = ClientSetup::decode(&mut buf).unwrap();
 
             assert_eq!(depacketized_client_setup.number_of_supported_versions, 1);

@@ -3,15 +3,16 @@ use bytes::{Buf, BufMut, BytesMut};
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::control_messages::{
+        key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::{
-            content_exists::ContentExists, group_order::GroupOrder,
-            version_specific_parameters::VersionSpecificParameter,
+            authorization_token::AuthorizationToken, content_exists::ContentExists,
+            group_order::GroupOrder,
         },
-        moqt_payload::MOQTPayload,
         util,
     },
 };
 
+#[derive(Debug)]
 pub(crate) struct Publish {
     pub(crate) request_id: u64,
     pub(crate) track_namespace_tuple: Vec<String>,
@@ -20,11 +21,13 @@ pub(crate) struct Publish {
     pub(crate) group_order: GroupOrder,
     pub(crate) content_exists: ContentExists,
     pub(crate) forward: bool,
-    pub(crate) parameters: Vec<VersionSpecificParameter>,
+    pub(crate) authorization_tokens: Vec<AuthorizationToken>,
+    pub(crate) delivery_timeout: Option<u64>,
+    pub(crate) max_duration: Option<u64>,
 }
 
 impl Publish {
-    pub(crate) fn decode(buf: &mut bytes::BytesMut) -> Option<Self> {
+    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_namespace_tuple_length = buf
             .try_get_varint()
@@ -51,13 +54,35 @@ impl Publish {
             .ok()?;
         let mut parameters = vec![];
         for _ in 0..number_of_parameters {
-            let version_specific_parameter = VersionSpecificParameter::depacketize(buf).ok()?;
-            if let VersionSpecificParameter::Unknown(code) = version_specific_parameter {
-                tracing::warn!("unknown track request parameter {}", code);
-            } else {
-                parameters.push(version_specific_parameter);
-            }
+            let params = KeyValuePair::decode(buf)?;
+            parameters.push(params);
         }
+        let authorization_tokens = parameters
+            .iter()
+            .filter(|kv_pair| kv_pair.key == 0x03)
+            .filter_map(|kv_pair| match &kv_pair.value {
+                VariantType::Odd(value) => {
+                    let mut value = std::io::Cursor::new(&value[..]);
+                    AuthorizationToken::decode(&mut value)
+                }
+                VariantType::Even(_) => unreachable!(),
+            })
+            .collect();
+        let delivery_timeout =
+            parameters
+                .iter()
+                .find(|kv_pair| kv_pair.key == 0x02)
+                .map(|kv_pair| match kv_pair.value {
+                    VariantType::Odd(_) => unreachable!(),
+                    VariantType::Even(value) => value,
+                });
+        let max_duration = parameters
+            .iter()
+            .find(|kv_pair| kv_pair.key == 0x04)
+            .map(|kv_pair| match kv_pair.value {
+                VariantType::Odd(_) => unreachable!(),
+                VariantType::Even(value) => value,
+            });
         Some(Self {
             request_id,
             track_namespace_tuple,
@@ -66,7 +91,9 @@ impl Publish {
             group_order,
             content_exists,
             forward,
-            parameters,
+            authorization_tokens,
+            delivery_timeout,
+            max_duration,
         })
     }
 
@@ -86,11 +113,34 @@ impl Publish {
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.content_exists.encode());
         payload.put_u8(self.forward as u8);
-        payload.put_varint(self.parameters.len() as u64);
-        // Parameters
-        for param in &self.parameters {
-            param.packetize(&mut payload);
+
+        let mut number_of_parameters = 0;
+        let mut parameters_payload = BytesMut::new();
+        for token in &self.authorization_tokens {
+            let token_payload = token.encode();
+            parameters_payload.unsplit(token_payload);
+            number_of_parameters += 1;
         }
+        if let Some(delivery_timeout) = self.delivery_timeout {
+            let delivery_timeout_payload = KeyValuePair {
+                key: 0x02,
+                value: VariantType::Even(delivery_timeout),
+            }
+            .encode();
+            parameters_payload.unsplit(delivery_timeout_payload);
+            number_of_parameters += 1;
+        }
+        if let Some(max_duration) = self.max_duration {
+            let max_duration_payload = KeyValuePair {
+                key: 0x04,
+                value: VariantType::Even(max_duration),
+            }
+            .encode();
+            parameters_payload.unsplit(max_duration_payload);
+            number_of_parameters += 1;
+        }
+        payload.put_varint(number_of_parameters);
+        payload.unsplit(parameters_payload);
 
         tracing::trace!("Packetized Publish message.");
         payload
@@ -121,10 +171,13 @@ mod tests {
                     },
                 },
                 forward: true,
-                parameters: vec![],
+                authorization_tokens: vec![],
+                delivery_timeout: None,
+                max_duration: None,
             };
 
-            let mut buf = publish_message.encode();
+            let buf = publish_message.encode();
+            let mut buf = std::io::Cursor::new(&buf[..]);
 
             // depacketize
             let depacketized_message = Publish::decode(&mut buf).unwrap();
@@ -148,7 +201,15 @@ mod tests {
                 depacketized_message.content_exists
             );
             assert_eq!(publish_message.forward, depacketized_message.forward);
-            assert_eq!(publish_message.parameters, depacketized_message.parameters);
+            assert!(publish_message.authorization_tokens.is_empty());
+            assert_eq!(
+                publish_message.delivery_timeout,
+                depacketized_message.delivery_timeout
+            );
+            assert_eq!(
+                publish_message.max_duration,
+                depacketized_message.max_duration
+            );
         }
 
         #[test]
@@ -161,10 +222,13 @@ mod tests {
                 group_order: GroupOrder::Descending, // Descending
                 content_exists: ContentExists::False,
                 forward: false,
-                parameters: vec![],
+                authorization_tokens: vec![],
+                delivery_timeout: None,
+                max_duration: None,
             };
 
-            let mut buf = publish_message.encode();
+            let buf = publish_message.encode();
+            let mut buf = std::io::Cursor::new(&buf[..]);
 
             // depacketize
             let depacketized_message = Publish::decode(&mut buf).unwrap();
@@ -188,7 +252,15 @@ mod tests {
                 depacketized_message.content_exists
             );
             assert_eq!(publish_message.forward, depacketized_message.forward);
-            assert!(depacketized_message.parameters.is_empty());
+            assert!(publish_message.authorization_tokens.is_empty());
+            assert_eq!(
+                publish_message.delivery_timeout,
+                depacketized_message.delivery_timeout
+            );
+            assert_eq!(
+                publish_message.max_duration,
+                depacketized_message.max_duration
+            );
         }
 
         #[test]
@@ -201,7 +273,9 @@ mod tests {
                 group_order: GroupOrder::Ascending,
                 content_exists: ContentExists::False,
                 forward: true,
-                parameters: vec![],
+                authorization_tokens: vec![],
+                delivery_timeout: None,
+                max_duration: None,
             };
 
             let buf = publish_message.encode();
