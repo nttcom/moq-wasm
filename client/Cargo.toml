@@ -1,0 +1,14 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+moqt = {path = "../moqt"}
+tokio = { version = "1.45.0", features = ["full", "tracing"] }
+tracing = "0.1.37"
+async-trait = "0.1.74"
+anyhow = { version = "1.0.75", features = ["backtrace"] }
+url = "2.5.7"
+rcgen = "0.14.3"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }

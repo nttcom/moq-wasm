@@ -1,76 +1,38 @@
-use crate::modules::moqt::sessions::session_creator::SessionCreator;
-use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
-use std::net::SocketAddr;
-
 mod modules;
 
-pub use modules::moqt::enums::SessionEvent;
-pub use modules::moqt::enums::{
-    Authorization, DeliveryTimeout, FilterType, GroupOrder, IsContentExist, IsForward,
-    MaxCacheDuration, RequestId, SubscriberPriority, TrackNamespace,
-};
+pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::group_order::GroupOrder;
+pub use modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
+pub use modules::moqt::control_plane::control_messages::messages::parameters::filter_type::FilterType;
+pub use modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
+pub use modules::moqt::control_plane::enums::SessionEvent;
+pub use modules::moqt::control_plane::enums::{DeliveryTimeout, MaxCacheDuration};
+pub use modules::moqt::control_plane::handler::publish_handler::PublishHandler;
+pub use modules::moqt::control_plane::handler::publish_namespace_handler::PublishNamespaceHandler;
+pub use modules::moqt::control_plane::handler::subscribe_handler::SubscribeHandler;
+pub use modules::moqt::control_plane::handler::subscribe_namespace_handler::SubscribeNamespaceHandler;
+pub use modules::moqt::control_plane::options::PublishOption;
+pub use modules::moqt::control_plane::options::SubscribeOption;
+pub use modules::moqt::data_plane::object::datagram_field::DatagramField;
+pub use modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
+pub use modules::moqt::data_plane::object::object_datagram::ObjectDatagram;
+pub use modules::moqt::data_plane::object::subgroup::SubgroupHeader;
+pub use modules::moqt::data_plane::object::subgroup::SubgroupHeaderType;
+pub use modules::moqt::data_plane::object::subgroup::SubgroupId;
+pub use modules::moqt::data_plane::object::subgroup::SubgroupObject;
+pub use modules::moqt::data_plane::object::subgroup::SubgroupObjectField;
+pub use modules::moqt::data_plane::streams::datagram::datagram_receiver::DatagramReceiver;
+pub use modules::moqt::data_plane::streams::datagram::datagram_sender::DatagramSender;
+pub use modules::moqt::data_plane::streams::stream::stream_data_receiver::StreamDataReceiver;
+pub use modules::moqt::data_plane::streams::stream::stream_data_receiver::Subgroup;
+pub use modules::moqt::data_plane::streams::stream::stream_data_sender::StreamDataSender;
+pub use modules::moqt::domains::endpoint::ClientConfig;
+pub use modules::moqt::domains::endpoint::Endpoint;
+pub use modules::moqt::domains::endpoint::ServerConfig;
+pub use modules::moqt::domains::published_resource::PublishedResource;
+pub use modules::moqt::domains::publisher::Publisher;
+pub use modules::moqt::domains::session::Session;
+pub use modules::moqt::domains::subscriber::Subscriber;
+pub use modules::moqt::domains::subscription::DataReceiver;
+pub use modules::moqt::domains::subscription::Subscription;
 pub use modules::moqt::protocol::QUIC;
 pub use modules::moqt::protocol::TransportProtocol;
-pub use modules::moqt::publisher::Publisher;
-pub use modules::moqt::sessions::session::Session;
-pub use modules::moqt::subscriber::Subscriber;
-
-pub struct ServerConfig {
-    pub port: u16,
-    pub cert_path: String,
-    pub key_path: String,
-    pub keep_alive_interval_sec: u64,
-    // log_level: String,
-}
-
-pub struct Endpoint<T: TransportProtocol> {
-    session_creator: SessionCreator<T>,
-}
-
-impl<T: TransportProtocol> Endpoint<T> {
-    pub fn create_client(port_num: u16) -> anyhow::Result<Self> {
-        let client = T::ConnectionCreator::client(port_num)?;
-        let session_creator = SessionCreator {
-            transport_creator: client,
-        };
-        Ok(Self { session_creator })
-    }
-
-    pub fn create_client_with_custom_cert(
-        port_num: u16,
-        custom_cert_path: &str,
-    ) -> anyhow::Result<Self> {
-        let client = T::ConnectionCreator::client_with_custom_cert(port_num, custom_cert_path)?;
-        let session_creator = SessionCreator {
-            transport_creator: client,
-        };
-        Ok(Self { session_creator })
-    }
-
-    pub fn create_server(server_config: ServerConfig) -> anyhow::Result<Self> {
-        let server = T::ConnectionCreator::server(
-            server_config.cert_path,
-            server_config.key_path,
-            server_config.port,
-            server_config.keep_alive_interval_sec,
-        )?;
-        let session_creator = SessionCreator {
-            transport_creator: server,
-        };
-        Ok(Self { session_creator })
-    }
-
-    pub async fn connect(
-        &self,
-        remote_address: SocketAddr,
-        host: &str,
-    ) -> anyhow::Result<Session<T>> {
-        self.session_creator
-            .create_new_connection(remote_address, host)
-            .await
-    }
-
-    pub async fn accept(&mut self) -> anyhow::Result<Session<T>> {
-        self.session_creator.accept_new_connection().await
-    }
-}

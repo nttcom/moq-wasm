@@ -1,21 +1,21 @@
 use std::net::SocketAddr;
 
-use async_trait::async_trait;
 use crate::modules::transport::transport_connection::TransportConnection;
+use async_trait::async_trait;
 
 #[async_trait]
 pub(crate) trait TransportConnectionCreator: Send + Sync + 'static {
     type Connection: TransportConnection;
 
-    fn client(port_num: u16) -> anyhow::Result<Self>
+    fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self>
     where
         Self: Sized;
     fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self>
     where
         Self: Sized;
     fn server(
-        cert_path: String,
-        key_path: String,
+        cert_path: &str,
+        key_path: &str,
         port_num: u16,
         keep_alive_sec: u64,
     ) -> anyhow::Result<Self>

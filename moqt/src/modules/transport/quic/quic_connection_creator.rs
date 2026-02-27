@@ -1,15 +1,21 @@
 use anyhow::Ok;
 use async_trait::async_trait;
-use std::{net::{Ipv6Addr, SocketAddr}, sync::Arc};
+use std::{
+    fs::File,
+    io::BufReader,
+    net::{Ipv6Addr, SocketAddr},
+    sync::Arc,
+};
 
-use quinn::{rustls::{
+use quinn::rustls::{
     self,
-    pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
-}, IdleTimeout};
+    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+};
 use quinn::{self, TransportConfig, VarInt};
 
 use crate::modules::transport::{
-    quic::quic_connection::QUICConnection, transport_connection_creator::TransportConnectionCreator,
+    quic::{quic_connection::QUICConnection, skip_certd_validation::SkipVerification},
+    transport_connection_creator::TransportConnectionCreator,
 };
 
 pub struct QUICConnectionCreator {
@@ -18,13 +24,16 @@ pub struct QUICConnectionCreator {
 
 impl QUICConnectionCreator {
     fn config_builder(
-        cert_path: String,
-        key_path: String,
+        cert_path: &str,
+        key_path: &str,
         keep_alive_sec: u64,
     ) -> anyhow::Result<quinn::ServerConfig> {
-        let cert = vec![CertificateDer::from_pem_file(cert_path).inspect_err(|e| {
-            tracing::error!("Creating certificate failed: {:?}", e.to_string())
-        })?];
+        let cert = rustls_pemfile::certs(&mut BufReader::new(
+            File::open(cert_path)
+                .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?,
+        ))
+        .collect::<Result<Vec<_>, _>>()
+        .inspect_err(|e| tracing::error!("Parsing certificates failed: {:?}", e))?;
         let key = PrivateKeyDer::from_pem_file(key_path)
             .inspect_err(|e| tracing::error!("Creating private key failed: {:?}", e.to_string()))?;
         let mut server_crypto = rustls::ServerConfig::builder()
@@ -51,26 +60,24 @@ impl QUICConnectionCreator {
         transport_config.packet_threshold(5);
         transport_config.stream_receive_window(VarInt::from_u32(1024 * 1024)); // initial_max_stream_data_uniと同義。デフォルトは65,536 バイト (64KB)なので1MBにする
 
+        tracing::warn!("datagram setting: {:?}", transport_config);
+
         let transport_arc = Arc::new(transport_config);
         server_config.transport_config(transport_arc);
 
         Ok(server_config)
     }
 
-    fn create_client(port_num: u16, root_cert: rustls::RootCertStore) -> anyhow::Result<Self> {
+    fn create_client(port_num: u16, mut config: rustls::ClientConfig) -> anyhow::Result<Self> {
         let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
         let mut endpoint = quinn::Endpoint::client(address)?;
 
-        let mut client_crypto = rustls::ClientConfig::builder()
-            .with_root_certificates(root_cert)
-            .with_no_client_auth();
-
         let alpn = &[b"moq-00"];
-        client_crypto.alpn_protocols = alpn.iter().map(|&x| x.into()).collect();
-        client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+        config.alpn_protocols = alpn.iter().map(|&x| x.into()).collect();
+        config.key_log = Arc::new(rustls::KeyLogFile::new());
 
         let client_config = quinn::ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)?,
+            quinn::crypto::rustls::QuicClientConfig::try_from(config)?,
         ));
         endpoint.set_default_client_config(client_config);
 
@@ -83,13 +90,22 @@ impl QUICConnectionCreator {
 impl TransportConnectionCreator for QUICConnectionCreator {
     type Connection = QUICConnection;
 
-    fn client(port_num: u16) -> anyhow::Result<Self> {
+    fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
         let mut roots = rustls::RootCertStore::empty();
         for cert in rustls_native_certs::load_native_certs().unwrap() {
             roots.add(cert).unwrap();
         }
-
-        Self::create_client(port_num, roots)
+        let client_crypto = if verify_certificate {
+            rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth()
+        } else {
+            rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(SkipVerification))
+                .with_no_client_auth()
+        };
+        Self::create_client(port_num, client_crypto)
     }
 
     fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
@@ -98,13 +114,15 @@ impl TransportConnectionCreator for QUICConnectionCreator {
 
         let mut roots = rustls::RootCertStore::empty();
         roots.add(cert).unwrap();
-
-        Self::create_client(port_num, roots)
+        let crypto_config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        Self::create_client(port_num, crypto_config)
     }
 
     fn server(
-        cert_path: String,
-        key_path: String,
+        cert_path: &str,
+        key_path: &str,
         port_num: u16,
         keep_alive_sec: u64,
     ) -> anyhow::Result<Self> {
@@ -132,8 +150,14 @@ impl TransportConnectionCreator for QUICConnectionCreator {
     }
 
     async fn accept_new_transport(&mut self) -> anyhow::Result<Self::Connection> {
-        let incoming = self.endpoint.accept().await.expect("failed to accept");
-        let connection = incoming.await.expect("failed to create connection");
+        let incoming = self
+            .endpoint
+            .accept()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Endpoint is closing"))?;
+        let connection = incoming
+            .await
+            .inspect_err(|e| tracing::error!("failed to create connection: {:?}", e.to_string()))?;
 
         Ok(QUICConnection::new(connection))
     }
