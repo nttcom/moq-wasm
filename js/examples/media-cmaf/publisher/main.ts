@@ -1,16 +1,10 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import type { MOQTClient } from '../../../pkg/moqt_client_wasm'
-import { AUTH_INFO } from '../const'
-import { sendCmafVideoObject } from './sender'
+import { AUTH_INFO, CMAF_FPS, CMAF_KEYFRAME_INTERVAL_FRAMES } from '../const'
 import { getFormElement } from '../utils'
-import { CmafVideoMuxer } from './cmafMuxer'
 import { MediaTransportState } from '../../../utils/media/transportState'
-import { KEYFRAME_INTERVAL } from '../../../utils/media/constants'
-import {
-  MEDIA_VIDEO_PROFILES,
-  MEDIA_CATALOG_TRACK_NAME,
-} from '../catalog'
-import { buildCmafCatalogJson } from '../catalog'
+import { MEDIA_VIDEO_PROFILES, MEDIA_CATALOG_TRACK_NAME, buildCmafCatalogJson } from '../catalog'
+import { Output, NullTarget, Mp4OutputFormat, MediaStreamVideoTrackSource, MediaStreamAudioTrackSource } from 'mediabunny'
 
 let mediaStream: MediaStream | null = null
 const moqtClient = new MoqtClientWrapper()
@@ -29,11 +23,11 @@ function setUpStartGetUserMediaButton() {
   const startGetUserMediaBtn = document.getElementById('startGetUserMediaBtn') as HTMLButtonElement
   startGetUserMediaBtn.addEventListener('click', async () => {
     const constraints = {
-      audio: false, // video only for now
+      audio: true,
       video: {
         width: { exact: 1920 },
-        height: { exact: 1080 },
-      },
+        height: { exact: 1080 }
+      }
     }
     mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
     const video = document.getElementById('video') as HTMLVideoElement
@@ -41,20 +35,19 @@ function setUpStartGetUserMediaButton() {
   })
 }
 
-// CMAF video encoder worker (uses avc format instead of annexb)
-const videoEncoderWorker = new Worker(
-  new URL('./videoEncoderCmaf.ts', import.meta.url),
-  { type: 'module' }
-)
-
-type VideoEncoderWorkerMessage =
-  | {
-      type: 'chunk'
-      chunk: EncodedVideoChunk
-      metadata: EncodedVideoChunkMetadata | undefined
-      captureTimestampMicros?: number
-    }
-  | { type: 'bitrate'; kbps: number }
+async function sendCmafObject(
+  trackAlias: bigint,
+  groupId: bigint,
+  objectId: bigint,
+  segment: Uint8Array,
+  client: MOQTClient
+): Promise<void> {
+  // Prepend 8-byte timestamp (Date.now()) for E2E delay measurement
+  const payload = new Uint8Array(8 + segment.byteLength)
+  new DataView(payload.buffer).setBigUint64(0, BigInt(Date.now()))
+  payload.set(segment, 8)
+  await client.sendSubgroupStreamObject(trackAlias, groupId, 0n, objectId, undefined, payload, undefined)
+}
 
 function parseTrackNamespace(raw: string): string[] {
   return raw
@@ -115,7 +108,6 @@ function sendAnnounceButtonClickHandler(): void {
 function sendSubgroupObjectButtonClickHandler(): void {
   const sendSubgroupObjectBtn = document.getElementById('sendSubgroupObjectBtn') as HTMLButtonElement
   sendSubgroupObjectBtn.addEventListener('click', async () => {
-    console.log('clicked sendSubgroupObjectBtn (CMAF)')
     if (mediaStream == null) {
       console.error('mediaStream is null')
       return
@@ -128,98 +120,101 @@ function sendSubgroupObjectButtonClickHandler(): void {
       return
     }
 
-    // Store init segment — sent as object 0 of each new group
+    const keyFrameIntervalSec = CMAF_KEYFRAME_INTERVAL_FRAMES / CMAF_FPS
+
+    // --- fMP4 fragment state ---
+    // onFtyp/onMoov で init segment (ftyp + moov) を組み立て、
+    // onMoof/onMdat で media segment (moof + mdat) を組み立てて MoQT で送信する。
     let initSegment: Uint8Array | null = null
+    const initParts: Uint8Array[] = []
+    let lastMoof: Uint8Array | null = null
 
-    // Create CMAF muxer with callback that sends via MoQT
-    const cmafMuxer = new CmafVideoMuxer(async (type, segment, isKeyframe) => {
-      // Save init segment for later, don't send it directly
-      if (type === 'init') {
-        initSegment = new Uint8Array(segment)
-        console.info('[CmafPublisher] init segment stored', { byteLength: initSegment.byteLength })
-        return
-      }
+    // --- mediabunny Output (fragmented fMP4) ---
+    const output = new Output({
+      target: new NullTarget(),
+      format: new Mp4OutputFormat({
+        fastStart: 'fragmented',
+        // キーフレームが minimumFragmentDuration より僅かに早く届くと
+        // 2 GoP がまとまってしまうため、余裕を持たせる
+        minimumFragmentDuration: keyFrameIntervalSec - 0.5,
 
-      const form = getFormElement()
-      const trackNamespace = parseTrackNamespace(form['announce-track-namespace'].value)
-      const publisherPriority = Number(form['video-publisher-priority'].value)
-      const trackAliases = getVideoTrackAliases(client, trackNamespace)
-      if (!trackAliases.length) {
-        return
-      }
-
-      // Wait for keyframe to start a new group (groupId == -1n means not started)
-      if (!isKeyframe && transportState.getVideoGroupId() < 0n) {
-        return
-      }
-
-      if (isKeyframe) {
-        transportState.advanceVideoGroup()
-      }
-
-      for (const alias of trackAliases) {
-        if (!transportState.hasVideoHeaderSent(alias, 0)) {
-          await client.sendSubgroupStreamHeaderMessage(
-            alias,
-            transportState.getVideoGroupId(),
-            0n,
-            publisherPriority
-          )
-          transportState.markVideoHeaderSent(alias, 0)
-
-          // Send init segment as object 0
-          if (initSegment) {
-            await sendCmafVideoObject(
-              alias,
-              transportState.getVideoGroupId(),
-              0n,
-              transportState.getVideoObjectId(),
-              initSegment,
-              client
-            )
-            transportState.incrementVideoObject()
+        onFtyp: (data) => {
+          initParts.push(new Uint8Array(data))
+        },
+        onMoov: (data) => {
+          initParts.push(new Uint8Array(data))
+          const totalLen = initParts.reduce((sum, part) => sum + part.byteLength, 0)
+          initSegment = new Uint8Array(totalLen)
+          let offset = 0
+          for (const part of initParts) {
+            initSegment.set(part, offset)
+            offset += part.byteLength
           }
-        }
+          console.info('[CmafPublisher] init segment ready', { byteLength: initSegment.byteLength })
+        },
+        onMoof: (data) => {
+          lastMoof = new Uint8Array(data)
+        },
 
-        await sendCmafVideoObject(
-          alias,
-          transportState.getVideoGroupId(),
-          0n,
-          transportState.getVideoObjectId(),
-          new Uint8Array(segment),
-          client
-        )
-      }
+        // --- MoQT 送信 ---
+        // フラグメント完成時 (moof + mdat) に呼ばれる。
+        // 1 フラグメント = 1 GoP = 1 MoQT Group として送信する。
+        // Group 内の Object 構成: 0 = init segment, 1 = media segment
+        onMdat: async (data) => {
+          if (!lastMoof || !initSegment) {
+            return
+          }
 
-      transportState.incrementVideoObject()
+          const mediaSegment = new Uint8Array(lastMoof.byteLength + data.byteLength)
+          mediaSegment.set(lastMoof, 0)
+          mediaSegment.set(new Uint8Array(data), lastMoof.byteLength)
+
+          const form = getFormElement()
+          const trackNamespace = parseTrackNamespace(form['announce-track-namespace'].value)
+          const publisherPriority = Number(form['video-publisher-priority'].value)
+          const trackAliases = getVideoTrackAliases(client, trackNamespace)
+          if (!trackAliases.length) {
+            return
+          }
+
+          transportState.advanceVideoGroup()
+
+          for (const alias of trackAliases) {
+            await client.sendSubgroupStreamHeaderMessage(alias, transportState.getVideoGroupId(), 0n, publisherPriority)
+            await sendCmafObject(alias, transportState.getVideoGroupId(), 0n, initSegment, client)
+            await sendCmafObject(alias, transportState.getVideoGroupId(), 1n, mediaSegment, client)
+          }
+        },
+      }),
     })
 
-    // Wire up encoder worker output to CMAF muxer
-    videoEncoderWorker.onmessage = async (event: MessageEvent<VideoEncoderWorkerMessage>) => {
-      const data = event.data
-      if (data.type !== 'chunk') {
-        return
-      }
-      const { chunk, metadata } = data
-      console.debug('[CmafPublisher] video chunk', {
-        byteLength: chunk.byteLength,
-        type: chunk.type,
-        timestamp: chunk.timestamp,
-      })
+    // --- メディアソース (gUM → mediabunny) ---
+    const [videoTrack] = mediaStream.getVideoTracks()
+    const videoSource = new MediaStreamVideoTrackSource(videoTrack, {
+      codec: 'avc',
+      bitrate: 4_000_000,
+      latencyMode: 'realtime',
+      keyFrameInterval: keyFrameIntervalSec,
+    })
+    output.addVideoTrack(videoSource, { frameRate: CMAF_FPS })
+    videoSource.errorPromise.catch((error) => {
+      console.error('[CmafPublisher] video source error', error)
+    })
 
-      // Feed to CMAF muxer - the muxer's callback handles sending
-      cmafMuxer.addVideoChunk(chunk, metadata)
+    const [audioTrack] = mediaStream.getAudioTracks()
+    if (audioTrack) {
+      const audioSource = new MediaStreamAudioTrackSource(audioTrack, {
+        codec: 'aac',
+        bitrate: 128_000,
+      })
+      output.addAudioTrack(audioSource)
+      audioSource.errorPromise.catch((error) => {
+        console.error('[CmafPublisher] audio source error', error)
+      })
     }
 
-    // Start encoding
-    const [videoTrack] = mediaStream.getVideoTracks()
-    const videoProcessor = new MediaStreamTrackProcessor({ track: videoTrack })
-    const videoStream = videoProcessor.readable
-    videoEncoderWorker.postMessage({
-      type: 'keyframeInterval',
-      keyframeInterval: KEYFRAME_INTERVAL,
-    })
-    videoEncoderWorker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
+    await output.start()
+    console.info('[CmafPublisher] output started')
   })
 }
 
