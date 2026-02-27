@@ -220,8 +220,6 @@ mod tests {
         #[test]
         fn depacketize_content_exists() {
             let bytes_array = [
-                0,  // Message Length(16)
-                14, // Message Length(16)
                 0,  // Request ID (i)
                 2,  // Track alias (i)
                 1,  // Expires (i)

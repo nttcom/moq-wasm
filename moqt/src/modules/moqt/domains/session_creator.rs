@@ -2,7 +2,6 @@ use std::net::SocketAddr;
 
 use crate::modules::moqt::data_plane::codec::message_decoder::MessageDecoder;
 use crate::modules::moqt::data_plane::streams::stream::stream_receiver::BiStreamReceiver;
-use crate::modules::moqt::data_plane::streams::stream::stream_sender::StreamSender;
 use crate::modules::moqt::domains::session::Session;
 use crate::modules::moqt::domains::session_context_factory::SessionContextFactory;
 use crate::modules::moqt::protocol::TransportProtocol;
@@ -24,11 +23,10 @@ impl<T: TransportProtocol> SessionCreator<T> {
             .create_new_transport(remote_address, host)
             .await?;
         let (send_stream, receive_stream) = transport_conn.open_bi().await?;
-        let moqt_sender = StreamSender::<T>::new(send_stream);
         let mut moqt_receiver = BiStreamReceiver::new(receive_stream, MessageDecoder);
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let inner =
-            SessionContextFactory::client(transport_conn, moqt_sender, &mut moqt_receiver, sender)
+            SessionContextFactory::client(transport_conn, send_stream, &mut moqt_receiver, sender)
                 .await
                 .inspect(|_| tracing::info!("Session is created."))?;
         Ok(Session::<T>::new(moqt_receiver, inner, receiver))
@@ -38,11 +36,10 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let transport_conn = self.transport_creator.accept_new_transport().await?;
         let (send_stream, receive_stream) = transport_conn.accept_bi().await?;
         // 16 means the number of messages can be stored in the channel.
-        let moqt_sender = StreamSender::<T>::new(send_stream);
         let mut moqt_receiver = BiStreamReceiver::new(receive_stream, MessageDecoder);
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let inner =
-            SessionContextFactory::server(transport_conn, moqt_sender, &mut moqt_receiver, sender)
+            SessionContextFactory::server(transport_conn, send_stream, &mut moqt_receiver, sender)
                 .await
                 .inspect(|_| tracing::info!("Session is established."))?;
         Ok(Session::<T>::new(moqt_receiver, inner, receiver))

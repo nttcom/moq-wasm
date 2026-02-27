@@ -12,11 +12,10 @@ use crate::{
                     server_setup::ServerSetup,
                 },
             },
-            utils::add_message_type,
         },
         data_plane::streams::stream::{
-            received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
-            stream_sender::StreamSender,
+            bi_stream_sender::BiStreamSender, received_message::ReceivedMessage,
+            stream_receiver::BiStreamReceiver,
         },
         domains::session_context::SessionContext,
     },
@@ -27,10 +26,11 @@ pub(crate) struct SessionContextFactory;
 impl SessionContextFactory {
     pub(crate) async fn client<T: TransportProtocol>(
         transport_connection: T::Connection,
-        mut send_stream: StreamSender<T>,
+        send_stream: T::SendStream,
         receive_stream: &mut BiStreamReceiver<T>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     ) -> anyhow::Result<SessionContext<T>> {
+        let mut send_stream = BiStreamSender::new(send_stream);
         Self::setup_client(&mut send_stream, receive_stream).await?;
 
         Ok(SessionContext::new(
@@ -43,10 +43,11 @@ impl SessionContextFactory {
 
     pub(crate) async fn server<T: TransportProtocol>(
         transport_connection: T::Connection,
-        mut send_stream: StreamSender<T>,
+        send_stream: T::SendStream,
         receive_stream: &mut BiStreamReceiver<T>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     ) -> anyhow::Result<SessionContext<T>> {
+        let mut send_stream = BiStreamSender::new(send_stream);
         Self::setup_server(&mut send_stream, receive_stream).await?;
 
         Ok(SessionContext::new(
@@ -58,7 +59,7 @@ impl SessionContextFactory {
     }
 
     async fn setup_client<T: TransportProtocol>(
-        send_stream: &mut StreamSender<T>,
+        send_stream: &mut BiStreamSender<T>,
         receive_stream: &mut BiStreamReceiver<T>,
     ) -> anyhow::Result<()> {
         let setup_param = SetupParameter {
@@ -71,9 +72,8 @@ impl SessionContextFactory {
         };
         let payload =
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_param).encode();
-        let bytes = add_message_type(ControlMessageType::ClientSetup, payload);
         send_stream
-            .send(&bytes)
+            .send(ControlMessageType::ClientSetup, payload)
             .await
             .inspect_err(|e| tracing::error!("failed to send. :{}", e.to_string()))?;
         tracing::info!("Sent client setup.");
@@ -101,7 +101,7 @@ impl SessionContextFactory {
     }
 
     async fn setup_server<T: TransportProtocol>(
-        send_stream: &mut StreamSender<T>,
+        send_stream: &mut BiStreamSender<T>,
         receive_stream: &mut BiStreamReceiver<T>,
     ) -> anyhow::Result<()> {
         tracing::info!("Waiting for server setup.");
@@ -134,9 +134,8 @@ impl SessionContextFactory {
             moq_implementation: Some("MOQ-WASM".to_string()),
         };
         let payload = ServerSetup::new(MOQ_TRANSPORT_VERSION, setup_param).encode();
-        let bytes = add_message_type(ControlMessageType::ServerSetup, payload);
         send_stream
-            .send(&bytes)
+            .send(ControlMessageType::ServerSetup, payload)
             .await
             .inspect_err(|e| tracing::error!("failed to send. :{}", e.to_string()))
             .inspect(|_| tracing::debug!("ServerSetup is sent."))
