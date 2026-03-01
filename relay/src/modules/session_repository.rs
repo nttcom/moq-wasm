@@ -63,15 +63,7 @@ impl SessionRepository {
         self.thread_manager.add(session_id, join_handle);
     }
 
-    pub(crate) async fn get_session(&self, session_id: SessionId) -> Option<Arc<dyn Session>> {
-        let sessions = self.sessions.get(&session_id)?;
-        Some(sessions.value().clone())
-    }
-
-    pub(crate) async fn get_subscriber(
-        &self,
-        session_id: SessionId,
-    ) -> Option<Box<dyn Subscriber>> {
+    pub(crate) async fn subscriber(&self, session_id: SessionId) -> Option<Box<dyn Subscriber>> {
         if let Some(session) = self.sessions.get(&session_id) {
             Some(session.value().as_subscriber())
         } else {
@@ -79,7 +71,7 @@ impl SessionRepository {
         }
     }
 
-    pub(crate) async fn get_publisher(&self, session_id: SessionId) -> Option<Box<dyn Publisher>> {
+    pub(crate) async fn publisher(&self, session_id: SessionId) -> Option<Box<dyn Publisher>> {
         if let Some(session) = self.sessions.get(&session_id) {
             Some(session.value().as_publisher())
         } else {

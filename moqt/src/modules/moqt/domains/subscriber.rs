@@ -6,13 +6,12 @@ use crate::{
     DataReceiver, DatagramReceiver, StreamDataReceiver, SubscribeOption, Subscription,
     modules::moqt::{
         control_plane::{
-            enums::ResponseMessage,
-            messages::{
+            control_messages::{
                 control_message_type::ControlMessageType,
-                control_messages::{subscribe::Subscribe, subscribe_namespace::SubscribeNamespace},
+                messages::{subscribe::Subscribe, subscribe_namespace::SubscribeNamespace},
             },
+            enums::ResponseMessage,
             threads::enums::StreamWithObject,
-            utils,
         },
         domains::session_context::SessionContext,
         protocol::TransportProtocol,
@@ -33,12 +32,14 @@ impl<T: TransportProtocol> Subscriber<T> {
             .lock()
             .await
             .insert(request_id, sender);
-        let publish_namespace = SubscribeNamespace::new(request_id, vec_namespace, vec![]);
-        let bytes = utils::create_full_message(
-            ControlMessageType::SubscribeNamespace,
-            publish_namespace.encode(),
-        );
-        self.session.send_stream.send(&bytes).await?;
+        let subscribe_namespace = SubscribeNamespace::new(request_id, vec_namespace, vec![]);
+        self.session
+            .send_stream
+            .send(
+                ControlMessageType::SubscribeNamespace,
+                subscribe_namespace.encode(),
+            )
+            .await?;
         tracing::info!("Subscribe namespace");
         let result = receiver.await;
         if let Err(e) = result {
@@ -84,10 +85,13 @@ impl<T: TransportProtocol> Subscriber<T> {
             group_order: option.group_order,
             forward: option.forward,
             filter_type: option.filter_type,
-            subscribe_parameters: vec![],
+            authorization_tokens: vec![],
+            delivery_timeout: None,
         };
-        let bytes = utils::create_full_message(ControlMessageType::Subscribe, subscribe.encode());
-        self.session.send_stream.send(&bytes).await?;
+        self.session
+            .send_stream
+            .send(ControlMessageType::Subscribe, subscribe.encode())
+            .await?;
         tracing::info!("Subscribe");
         let result = receiver.await;
         if let Err(e) = result {

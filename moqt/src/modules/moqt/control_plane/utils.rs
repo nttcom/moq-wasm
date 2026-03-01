@@ -2,7 +2,7 @@ use bytes::BytesMut;
 
 use crate::modules::{
     extensions::buf_put_ext::BufPutExt,
-    moqt::control_plane::messages::control_message_type::ControlMessageType,
+    moqt::control_plane::control_messages::control_message_type::ControlMessageType,
 };
 
 pub(crate) fn add_message_type(message_type: ControlMessageType, payload: BytesMut) -> BytesMut {

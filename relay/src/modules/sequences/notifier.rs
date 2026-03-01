@@ -18,7 +18,7 @@ impl Notifier {
         session_id: Uuid,
         track_namespace: String,
     ) -> bool {
-        let publisher = self.repository.lock().await.get_publisher(session_id).await;
+        let publisher = self.repository.lock().await.publisher(session_id).await;
         if let Some(publisher) = publisher {
             match publisher
                 .send_publish_namespace(track_namespace.to_string())
@@ -54,7 +54,7 @@ impl Notifier {
         track_name: String,
         track_alias: u64,
     ) -> bool {
-        let publisher = self.repository.lock().await.get_publisher(session_id).await;
+        let publisher = self.repository.lock().await.publisher(session_id).await;
         if let Some(publisher) = publisher {
             match publisher
                 .send_publish(track_namespace.clone(), track_name, track_alias)
@@ -85,13 +85,7 @@ impl Notifier {
         track_namespace: String,
         track_name: String,
     ) -> anyhow::Result<Subscription> {
-        if let Some(subscriber) = self
-            .repository
-            .lock()
-            .await
-            .get_subscriber(session_id)
-            .await
-        {
+        if let Some(subscriber) = self.repository.lock().await.subscriber(session_id).await {
             let option = SubscribeOption {
                 subscriber_priority: 128,
                 group_order: GroupOrder::Ascending,

@@ -3,14 +3,13 @@ use std::sync::Arc;
 use crate::{
     TransportProtocol,
     modules::moqt::{
-        control_plane::messages::{
+        control_plane::control_messages::{
             control_message_type::ControlMessageType,
-            control_messages::{
+            messages::{
                 namespace_ok::NamespaceOk, publish_namespace::PublishNamespace,
                 request_error::RequestError,
             },
         },
-        control_plane::utils,
         domains::session_context::SessionContext,
     },
 };
@@ -40,11 +39,13 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
         let publish_namespace_ok = NamespaceOk {
             request_id: self.request_id,
         };
-        let bytes = utils::create_full_message(
-            ControlMessageType::PublishNamespaceOk,
-            publish_namespace_ok.encode(),
-        );
-        self.session_context.send_stream.send(&bytes).await
+        self.session_context
+            .send_stream
+            .send(
+                ControlMessageType::PublishNamespaceOk,
+                publish_namespace_ok.encode(),
+            )
+            .await
     }
 
     pub async fn error(&self, error_code: u64, reason_phrase: String) -> anyhow::Result<()> {
@@ -54,8 +55,9 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
             error_code,
             reason_phrase,
         };
-        let bytes =
-            utils::create_full_message(ControlMessageType::PublishNamespaceError, err.encode());
-        self.session_context.send_stream.send(&bytes).await
+        self.session_context
+            .send_stream
+            .send(ControlMessageType::PublishNamespaceError, err.encode())
+            .await
     }
 }

@@ -42,7 +42,7 @@ impl Client {
             }
         };
         let track_alias = Arc::new(AtomicU64::new(0));
-        let (publisher, subscriber) = session.create_publisher_subscriber_pair();
+        let (publisher, subscriber) = session.publisher_subscriber_pair();
         let publisher = Arc::new(publisher);
         let subscriber = Arc::new(subscriber);
         let join_handle = Self::create_receiver(

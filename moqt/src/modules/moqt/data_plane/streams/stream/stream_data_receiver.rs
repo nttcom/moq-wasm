@@ -4,7 +4,7 @@ use crate::{
         control_plane::threads::enums::StreamWithObject,
         data_plane::{
             object::subgroup::{SubgroupHeader, SubgroupHeaderType, SubgroupObjectField},
-            streams::stream::stream_receiver::StreamReceiver,
+            streams::stream::stream_receiver::UniStreamReceiver,
         },
     },
 };
@@ -17,7 +17,7 @@ pub enum Subgroup {
 
 #[derive(Debug)]
 pub struct StreamDataReceiver<T: TransportProtocol> {
-    stream_receiver: StreamReceiver<T>,
+    stream_receiver: UniStreamReceiver<T>,
     receiver: tokio::sync::mpsc::UnboundedReceiver<StreamWithObject<T>>,
     pub track_alias: u64,
     first_subgroup_header: Option<SubgroupHeader>,
@@ -27,7 +27,7 @@ pub struct StreamDataReceiver<T: TransportProtocol> {
 impl<T: TransportProtocol> StreamDataReceiver<T> {
     pub(crate) async fn new(
         receiver: tokio::sync::mpsc::UnboundedReceiver<StreamWithObject<T>>,
-        stream: StreamReceiver<T>,
+        stream: UniStreamReceiver<T>,
         subgroup_header: SubgroupHeader,
     ) -> anyhow::Result<Self> {
         let track_alias = subgroup_header.track_alias;
@@ -46,25 +46,26 @@ impl<T: TransportProtocol> StreamDataReceiver<T> {
             return Ok(Subgroup::Header(subgroup_header));
         }
 
-        let data = self.stream_receiver.receive().await;
-        if let Ok(data) = data {
-            let subgroup = SubgroupObjectField::decode(self.subgroup_header_type, data)
-                .ok_or_else(|| anyhow::anyhow!("Failed to decode subgroup object"))?;
-            Ok(Subgroup::Object(subgroup))
-        } else {
-            tracing::debug!("No data received, checking for new stream...");
-            let new_stream = self
-                .receiver
-                .recv()
-                .await
-                .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
-            match new_stream {
-                StreamWithObject::StreamHeader { stream, header } => {
-                    self.stream_receiver = stream;
-                    self.subgroup_header_type = header.message_type;
-                    Ok(Subgroup::Header(header))
+        match self.stream_receiver.receive().await {
+            Some(Ok(subgroup)) => Ok(subgroup),
+            Some(Err(e)) => {
+                tracing::error!("Failed to receive data from stream: {}", e);
+                anyhow::bail!("Failed to receive data from stream")
+            }
+            None => {
+                let new_stream = self
+                    .receiver
+                    .recv()
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
+                match new_stream {
+                    StreamWithObject::StreamHeader { stream, header } => {
+                        self.stream_receiver = stream;
+                        self.subgroup_header_type = header.message_type;
+                        Ok(Subgroup::Header(header))
+                    }
+                    _ => Err(anyhow::anyhow!("Received unexpected stream type")),
                 }
-                _ => Err(anyhow::anyhow!("Received unexpected stream type")),
             }
         }
     }

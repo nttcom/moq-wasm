@@ -3,13 +3,14 @@ use std::sync::Arc;
 use bytes::BytesMut;
 
 use crate::{
-    TransportProtocol,
+    Subgroup, TransportProtocol,
     modules::{
         moqt::{
             control_plane::threads::enums::StreamWithObject,
             data_plane::{
-                object::{object_datagram::ObjectDatagram, subgroup::SubgroupHeader},
-                streams::stream::stream_receiver::StreamReceiver,
+                codec::data_frame_decoder::DataFrameDecoder,
+                object::object_datagram::ObjectDatagram,
+                streams::stream::stream_receiver::UniStreamReceiver,
             },
             domains::session_context::SessionContext,
         },
@@ -39,7 +40,7 @@ impl DatagramReceiveThread {
                         },
                         stream = context.transport_connection.accept_uni() => {
                             if let Ok(stream) = stream {
-                                let stream = StreamReceiver { receive_stream: stream };
+                                let stream = UniStreamReceiver::new(stream, DataFrameDecoder::new());
                                 Self::on_stream_received(&context, stream).await;
                             } else {
                                 tracing::error!("Failed to accept uni stream");
@@ -77,28 +78,30 @@ impl DatagramReceiveThread {
 
     async fn on_stream_received<T: TransportProtocol>(
         context: &Arc<SessionContext<T>>,
-        mut stream: StreamReceiver<T>,
+        mut stream: UniStreamReceiver<T>,
     ) -> bool {
-        let data = match stream.receive().await {
-            Ok(data) => data,
-            Err(e) => {
-                tracing::error!("Failed to receive stream data: {}", e);
+        let subgroup = match stream.receive().await {
+            Some(Ok(subgroup)) => subgroup,
+            _ => {
+                tracing::error!("Stream closed before receiving data");
                 return false;
             }
         };
-        let result = match SubgroupHeader::decode(data) {
-            Some(header) => header,
-            None => {
-                tracing::error!("Failed to depacketize stream header");
+
+        let subgroup_header = match subgroup {
+            Subgroup::Header(header) => header,
+            _ => {
+                tracing::error!("First message in stream is not a subgroup header");
                 return false;
             }
         };
+
         Self::notify(
             context,
-            result.track_alias,
+            subgroup_header.track_alias,
             StreamWithObject::StreamHeader {
                 stream,
-                header: result,
+                header: subgroup_header,
             },
         )
         .await;
