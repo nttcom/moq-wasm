@@ -6,13 +6,12 @@ use crate::{
     DatagramSender, StreamDataSender,
     modules::moqt::{
         control_plane::{
-            enums::ResponseMessage,
-            messages::{
+            control_messages::{
                 control_message_type::ControlMessageType,
-                control_messages::{publish::Publish, publish_namespace::PublishNamespace},
+                messages::{publish::Publish, publish_namespace::PublishNamespace},
             },
+            enums::ResponseMessage,
             options::PublishOption,
-            utils,
         },
         domains::{published_resource::PublishedResource, session_context::SessionContext},
         protocol::TransportProtocol,
@@ -34,11 +33,13 @@ impl<T: TransportProtocol> Publisher<T> {
             .await
             .insert(request_id, sender);
         let publish_namespace = PublishNamespace::new(request_id, vec_namespace, vec![]);
-        let bytes = utils::create_full_message(
-            ControlMessageType::PublishNamespace,
-            publish_namespace.encode(),
-        );
-        self.session.send_stream.send(&bytes).await?;
+        self.session
+            .send_stream
+            .send(
+                ControlMessageType::PublishNamespace,
+                publish_namespace.encode(),
+            )
+            .await?;
         tracing::info!("Publish namespace request id: {}", request_id);
         let result = receiver.await;
         if let Err(e) = result {
@@ -84,10 +85,15 @@ impl<T: TransportProtocol> Publisher<T> {
             group_order: option.group_order,
             content_exists: option.content_exists,
             forward: option.forward,
-            parameters: vec![],
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+            max_duration: None,
         };
-        let bytes = utils::create_full_message(ControlMessageType::Publish, publish.encode());
-        self.session.send_stream.send(&bytes).await?;
+        let bytes = publish.encode();
+        self.session
+            .send_stream
+            .send(ControlMessageType::Publish, bytes)
+            .await?;
         tracing::info!("Publish");
         let result = receiver.await;
         if let Err(e) = result {

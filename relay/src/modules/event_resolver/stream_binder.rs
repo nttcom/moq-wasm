@@ -37,13 +37,13 @@ impl StreamBinder {
             .session_repo
             .lock()
             .await
-            .get_publisher(subscriber_session_id)
+            .publisher(subscriber_session_id)
             .await;
         let subscriber = self
             .session_repo
             .lock()
             .await
-            .get_subscriber(publisher_session_id)
+            .subscriber(publisher_session_id)
             .await;
         if publisher.is_none() || subscriber.is_none() {
             tracing::error!("Publisher or Subscriber session not found.");

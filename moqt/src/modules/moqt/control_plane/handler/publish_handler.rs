@@ -3,14 +3,13 @@ use std::sync::Arc;
 use crate::{
     FilterType, GroupOrder, Subscription, TransportProtocol,
     modules::moqt::{
-        control_plane::messages::{
+        control_plane::control_messages::{
             control_message_type::ControlMessageType,
-            control_messages::{
-                enums::ContentExists, publish::Publish, publish_ok::PublishOk,
+            messages::{
+                parameters::content_exists::ContentExists, publish::Publish, publish_ok::PublishOk,
                 request_error::RequestError,
             },
         },
-        control_plane::utils,
         domains::session_context::SessionContext,
     },
 };
@@ -54,10 +53,12 @@ impl<T: TransportProtocol> PublishHandler<T> {
             subscriber_priority,
             group_order: self.group_order,
             filter_type,
-            parameters: vec![],
+            delivery_timeout: self.delivery_timeout,
         };
-        let bytes = utils::create_full_message(ControlMessageType::PublishOk, publish_ok.encode());
-        self.session_context.send_stream.send(&bytes).await
+        self.session_context
+            .send_stream
+            .send(ControlMessageType::PublishOk, publish_ok.encode())
+            .await
     }
 
     pub async fn error(&self, error_code: u64, reason_phrase: String) -> anyhow::Result<()> {
@@ -67,8 +68,10 @@ impl<T: TransportProtocol> PublishHandler<T> {
             error_code,
             reason_phrase,
         };
-        let bytes = utils::create_full_message(ControlMessageType::PublishError, err.encode());
-        self.session_context.send_stream.send(&bytes).await
+        self.session_context
+            .send_stream
+            .send(ControlMessageType::PublishError, err.encode())
+            .await
     }
 
     pub fn into_subscription(&self, expires: u64) -> Subscription {

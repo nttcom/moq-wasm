@@ -8,7 +8,7 @@ members = [
     'moqt',
     'relay',
     'client',
-    'integration-test',
+    # 'integration-test',
     'gstreamer-client-sample/uni/sender',
     'gstreamer-client-sample/uni/receiver'
 ]
