@@ -56,7 +56,7 @@ impl GStreamerReceiver {
                         );
 
                         match subgroup_object_field.subgroup_object {
-                            moqt::SubgroupObject::Payload(payload) => payload,
+                            moqt::SubgroupObject::Payload { length: _, data } => data,
                             _ => {
                                 tracing::error!("Unsupported subgroup object type");
                                 continue;

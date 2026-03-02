@@ -50,7 +50,7 @@ impl MessageReceiveThread {
                             .await;
                         let published_resource = subscribe_handler.into_publication(0);
                         let stream = session
-                            .create_publisher()
+                            .publisher()
                             .create_stream(&published_resource)
                             .await
                             .expect("failed to create stream");

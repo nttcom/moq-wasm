@@ -31,7 +31,7 @@ impl MOQTClient {
 
     pub(crate) async fn subscribe_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {
         self.session
-            .create_subscriber()
+            .subscriber()
             .subscribe_namespace(track_namespace.to_string())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to subscribe namespace: {}", e))
@@ -43,7 +43,7 @@ impl MOQTClient {
         track_name: &str,
         subscribe_options: moqt::SubscribeOption,
     ) -> anyhow::Result<moqt::DataReceiver<moqt::QUIC>> {
-        let subscriber = self.session.create_subscriber();
+        let subscriber = self.session.subscriber();
         let subscription = subscriber
             .subscribe(
                 track_namespace.to_string(),
