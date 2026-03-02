@@ -65,6 +65,10 @@ impl DataFrameDecoder {
     }
 
     fn decode_object_field(&self, src: &mut BytesMut) -> Result<Option<Subgroup>, std::io::Error> {
+        if src.is_empty() {
+            tracing::info!("need more data.");
+            return Ok(None);
+        }
         let subgroup_object_field =
             match SubgroupObjectField::decode(self.subgroup_header_type.unwrap(), src) {
                 Ok(field) => field,
