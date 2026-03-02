@@ -2,6 +2,7 @@ export type VideoCodecOption = {
   id: string
   label: string
   codec: string
+  maxEncodePixels?: number
 }
 
 export type VideoResolutionOption = {
@@ -17,18 +18,48 @@ export type VideoBitrateOption = {
   bitrate: number
 }
 
+export type VideoHardwareAccelerationOption = {
+  id: string
+  label: string
+  value: HardwareAcceleration
+}
+
 export type VideoEncodingSettings = {
   codec: string
   width: number
   height: number
   bitrate: number
+  framerate: number
+  hardwareAcceleration: HardwareAcceleration
 }
 
 export const VIDEO_CODEC_OPTIONS: VideoCodecOption[] = [
-  { id: 'h264-high40', label: 'H.264 High@4.0 (avc1.640028)', codec: 'avc1.640028' },
+  {
+    id: 'h264-high40',
+    label: 'H.264 High@4.0 (avc1.640028)',
+    codec: 'avc1.640028',
+    maxEncodePixels: 1920 * 1080
+  },
+  // NOTE:
+  // 実測では WebCodecs + H.264 High@5.0 (avc1.640032) + 長いGOP設定で、
+  // VideoEncoder.encodeQueueSize と Capture→EncodeDone が増え、
+  // 低遅延用途で遅延が蓄積するケースがあった（Main Profile では改善）。
   { id: 'h264-high50', label: 'H.264 High@5.0 (avc1.640032)', codec: 'avc1.640032' },
-  { id: 'h264-main40', label: 'H.264 Main@4.0 (avc1.4D4028)', codec: 'avc1.4D4028' },
-  { id: 'h264-baseline31', label: 'H.264 Baseline@3.1 (avc1.42001F)', codec: 'avc1.42001F' },
+  {
+    id: 'h264-main40',
+    label: 'H.264 Main@4.0 (avc1.4D4028)',
+    codec: 'avc1.4D4028',
+    maxEncodePixels: 1920 * 1080
+  },
+  // NOTE:
+  // avc1.42001F は H.264 Baseline@3.1 のため 1080p はエンコード不可。
+  // Catalog の解像度選択肢はこの上限 (720p 相当) に合わせて絞り込む。
+  {
+    id: 'h264-baseline31',
+    label: 'H.264 Baseline@3.1 (avc1.42001F)',
+    codec: 'avc1.42001F',
+    maxEncodePixels: 1280 * 720
+  },
   { id: 'av1-main-8bit-l3', label: 'AV1 Main 8bit (av01.0.08M.08)', codec: 'av01.0.08M.08' },
   { id: 'av1-high-8bit-l4', label: 'AV1 High 8bit (av01.1.08M.08)', codec: 'av01.1.08M.08' },
   { id: 'vp8', label: 'VP8 (vp8)', codec: 'vp8' },
@@ -60,9 +91,16 @@ export const VIDEO_BITRATE_OPTIONS: VideoBitrateOption[] = [
   { id: '5mbps', label: '5 Mbps', bitrate: 5_000_000 }
 ]
 
+export const VIDEO_HARDWARE_ACCELERATION_OPTIONS: VideoHardwareAccelerationOption[] = [
+  { id: 'prefer-hardware', label: 'Prefer hardware', value: 'prefer-hardware' },
+  { id: 'prefer-software', label: 'Prefer software', value: 'prefer-software' }
+]
+
 export const DEFAULT_VIDEO_ENCODING_SETTINGS: VideoEncodingSettings = {
-  codec: VIDEO_CODEC_OPTIONS.find((c) => c.id.startsWith('h264'))?.codec ?? VIDEO_CODEC_OPTIONS[0].codec,
+  codec: VIDEO_CODEC_OPTIONS.find((c) => c.codec === 'avc1.4D4028')?.codec ?? VIDEO_CODEC_OPTIONS[0].codec,
   width: VIDEO_RESOLUTION_OPTIONS.find((r) => r.id === '1080p')?.width ?? VIDEO_RESOLUTION_OPTIONS[0].width,
   height: VIDEO_RESOLUTION_OPTIONS.find((r) => r.id === '1080p')?.height ?? VIDEO_RESOLUTION_OPTIONS[0].height,
-  bitrate: VIDEO_BITRATE_OPTIONS.find((b) => b.id === '1mbps')?.bitrate ?? VIDEO_BITRATE_OPTIONS[0].bitrate
+  bitrate: VIDEO_BITRATE_OPTIONS.find((b) => b.id === '1mbps')?.bitrate ?? VIDEO_BITRATE_OPTIONS[0].bitrate,
+  framerate: 30,
+  hardwareAcceleration: 'prefer-software'
 }

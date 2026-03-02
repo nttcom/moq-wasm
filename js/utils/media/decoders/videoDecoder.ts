@@ -1,130 +1,611 @@
-import { VideoJitterBuffer, type VideoJitterBufferMode } from '../videoJitterBuffer'
+import { VideoJitterBuffer } from '../videoJitterBuffer'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
-import { KEYFRAME_INTERVAL } from '../constants'
 import { createBitrateLogger } from '../bitrate'
 import type { ChunkMetadata } from '../chunk'
-import { latencyMsFromCaptureMicros } from '../clock'
+import { latencyMsFromCaptureMicros, monotonicUnixMicros } from '../clock'
 
 const bitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', kbps })
 })
 
-const KEYFRAME_INTERVAL_BIGINT = BigInt(KEYFRAME_INTERVAL)
-
-const VIDEO_DECODER_CONFIG = {
-  hardwareAcceleration: 'prefer-hardware' as any,
-  scalabilityMode: 'L1T1'
-}
+type VideoDecoderHardwareAcceleration = 'prefer-hardware' | 'prefer-software'
+const DEFAULT_VIDEO_DECODER_HARDWARE_ACCELERATION: VideoDecoderHardwareAcceleration = 'prefer-software'
 
 let videoDecoder: VideoDecoder | undefined
+let currentDecoderHardwareAcceleration: VideoDecoderHardwareAcceleration = DEFAULT_VIDEO_DECODER_HARDWARE_ACCELERATION
 let waitingForKeyFrame = true
 let framesSinceLastKeyFrame: number | null = null
+type LastDecodingObjectInfo = {
+  groupId: string
+  objectId: string
+  chunkType: string
+  codec?: string
+}
+let lastDecodingObject: LastDecodingObjectInfo | null = null
+
+type DecodingPhase = 'submit' | 'output' | 'error'
+
+function postDecodingObject(
+  phase: DecodingPhase,
+  groupId: string,
+  objectId: string,
+  chunkType: string,
+  codec?: string
+): void {
+  self.postMessage({
+    type: 'decodingObject',
+    media: 'video',
+    phase,
+    groupId,
+    objectId,
+    chunkType,
+    codec
+  })
+}
+
 async function initializeVideoDecoder(config: VideoDecoderConfig) {
   function sendVideoFrameMessage(frame: VideoFrame): void {
-    self.postMessage({
-      type: 'frame',
-      frame,
-      width: frame.displayWidth,
-      height: frame.displayHeight
-    })
-    frame.close()
+    enqueueOutputFrame(frame)
   }
 
   const init: VideoDecoderInit = {
     output: sendVideoFrameMessage,
     error: (e: any) => {
+      const last = lastDecodingObject ?? { groupId: '?', objectId: '?', chunkType: '?', codec: undefined }
+      postDecodingObject('error', last.groupId, last.objectId, last.chunkType, last.codec)
       console.warn('[videoDecoder] decoder error', e)
       videoDecoder = undefined
       cachedVideoConfig = null
+      waitingForKeyFrame = true
+      resetPlayoutTiming('error')
     }
   }
+  try {
+    const supported = await VideoDecoder.isConfigSupported(config)
+    if (!supported.supported) {
+      console.error('[videoDecoder] unsupported decoder config', config)
+      self.postMessage({ type: 'configError', media: 'video', reason: 'unsupported', config })
+      return undefined
+    }
+  } catch (error) {
+    console.error('[videoDecoder] failed to check decoder config support', error, config)
+    self.postMessage({ type: 'configError', media: 'video', reason: 'unsupported', config })
+    return undefined
+  }
   const decoder = new VideoDecoder(init)
-  decoder.configure(config)
+  try {
+    decoder.configure(config)
+  } catch (error) {
+    console.error('[videoDecoder] configure failed', error, config)
+    self.postMessage({ type: 'configError', media: 'video', reason: 'configure_failed', config })
+    try {
+      decoder.close()
+    } catch {
+      // ignore close failure on configure error path
+    }
+    return undefined
+  }
   return decoder
 }
 
 type VideoJitterBufferConfig = {
-  mode?: VideoJitterBufferMode
-  minDelayMs?: number
-  maxBufferSize?: number
-  bufferedAheadFrames?: number
+  pacing?: VideoPacingConfigInput
+  decoderHardwareAcceleration?: VideoDecoderHardwareAcceleration
 }
 
 const POP_INTERVAL_MS = 33
+const MISSING_META_WARN_SUPPRESS_AFTER_RESET_MS = 3000
+
+type VideoPacingConfig = {
+  preset: VideoPacingPreset
+  pipeline: VideoPacingPipeline
+  fallbackIntervalMs: number
+  lateThresholdMs: number
+  maxWaitMs: number
+  defaultFrameIntervalUs: number
+  minFrameIntervalUs: number
+  maxFrameIntervalUs: number
+  reportIntervalMs: number
+  targetLatencyMs: number
+  decodedBufferMax: number
+}
+
+type VideoPacingPreset = 'disabled' | 'onvif' | 'call'
+type VideoPacingPipeline = 'buffer-pacing-decode'
+type VideoPacingConfigInput = Partial<VideoPacingConfig>
+
+function createPacingPresetConfig(preset: VideoPacingPreset): VideoPacingConfig {
+  if (preset === 'disabled') {
+    return {
+      ...createPacingPresetConfig('onvif'),
+      preset: 'disabled',
+      pipeline: 'buffer-pacing-decode',
+      targetLatencyMs: 0
+    }
+  }
+  if (preset === 'onvif') {
+    return {
+      preset: 'onvif',
+      pipeline: 'buffer-pacing-decode',
+      fallbackIntervalMs: 33,
+      lateThresholdMs: 120,
+      maxWaitMs: 2000,
+      defaultFrameIntervalUs: 33_333,
+      minFrameIntervalUs: 8_000,
+      maxFrameIntervalUs: 200_000,
+      reportIntervalMs: 500,
+      targetLatencyMs: 250,
+      decodedBufferMax: 36
+    }
+  }
+  return {
+    ...createPacingPresetConfig('onvif'),
+    preset: 'call',
+    pipeline: 'buffer-pacing-decode',
+    targetLatencyMs: 250
+  }
+}
+
+const DEFAULT_PACING_CONFIG: VideoPacingConfig = createPacingPresetConfig('onvif')
+
 type NormalizedJitterConfig = {
-  mode: VideoJitterBufferMode
   minDelayMs: number
-  maxBufferSize: number
-  bufferedAheadFrames: number
 }
 
 const DEFAULT_JITTER_CONFIG: NormalizedJitterConfig = {
-  maxBufferSize: 9000,
-  mode: 'fast',
-  minDelayMs: 250,
-  bufferedAheadFrames: 5
+  minDelayMs: 35
 }
 
 let jitterBuffer = createJitterBuffer()
 let currentJitterConfig: NormalizedJitterConfig = { ...DEFAULT_JITTER_CONFIG }
+let currentPacingConfig: VideoPacingConfig = { ...DEFAULT_PACING_CONFIG }
+let popTimer: number | null = null
+let encodedPacingTimer: number | null = null
+let pendingEncodedEntry: JitterBufferEntryForPacing | null = null
+let pendingEncodedTimer: number | null = null
+let encodedPacingBuffer: JitterBufferEntryForPacing[] = []
+let playoutBaseMediaTs: number | null = null
+let playoutBaseWallMs: number | null = null
+let pacingFrameIntervalUs = DEFAULT_PACING_CONFIG.defaultFrameIntervalUs
+let pacingDelayMs = DEFAULT_JITTER_CONFIG.minDelayMs
+let pacingLastReason: string | null = null
+let pacingLastReportMs = 0
+let decodedFrameBuffer: DecodedFrameEntry[] = []
+let outputPendingMeta: Map<number, OutputMeta[]> = new Map()
+let receivedFrameTimes: Map<string, number> = new Map()
+let lastOutputMetaResetAtMs = Number.NEGATIVE_INFINITY
+
+type OutputMeta = {
+  groupId: bigint
+  objectId: bigint
+  chunkType: string
+  timestampUs: number
+  receivedMs?: number
+  captureTimestampMicros?: number
+}
+
+type DecodedFrameEntry = {
+  groupId: bigint
+  objectId: bigint
+  chunkType: string
+  timestampUs: number
+  frame: VideoFrame
+  decodeDoneMs: number
+  receivedMs: number | null
+  captureTimestampMicros?: number
+}
+
+type JitterBufferEntryForPacing = NonNullable<ReturnType<VideoJitterBuffer['popWithMetadata']>>
 
 function normalizeJitterConfig(config?: VideoJitterBufferConfig): NormalizedJitterConfig {
-  const mode = config?.mode ?? DEFAULT_JITTER_CONFIG.mode
-  const minDelayMs =
-    typeof config?.minDelayMs === 'number' && Number.isFinite(config.minDelayMs) && config.minDelayMs >= 0
-      ? config.minDelayMs
-      : DEFAULT_JITTER_CONFIG.minDelayMs
-  const maxBufferSize =
-    typeof config?.maxBufferSize === 'number' && Number.isFinite(config.maxBufferSize) && config.maxBufferSize > 0
-      ? Math.floor(config.maxBufferSize)
-      : DEFAULT_JITTER_CONFIG.maxBufferSize
-  const bufferedAheadFrames =
-    typeof config?.bufferedAheadFrames === 'number' &&
-    Number.isFinite(config.bufferedAheadFrames) &&
-    config.bufferedAheadFrames > 0
-      ? Math.floor(config.bufferedAheadFrames)
-      : DEFAULT_JITTER_CONFIG.bufferedAheadFrames
-  return { mode, minDelayMs, maxBufferSize, bufferedAheadFrames }
+  void config
+  return { ...DEFAULT_JITTER_CONFIG }
+}
+
+function clampNumber(value: unknown, fallback: number, min: number, max = Number.POSITIVE_INFINITY): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback
+  }
+  return Math.min(max, Math.max(min, value))
+}
+
+function normalizePacingConfig(config?: VideoPacingConfigInput): VideoPacingConfig {
+  const preset: VideoPacingPreset =
+    config?.preset === 'disabled' || config?.preset === 'call' || config?.preset === 'onvif'
+      ? config.preset
+      : currentPacingConfig.preset === 'disabled' ||
+          currentPacingConfig.preset === 'call' ||
+          currentPacingConfig.preset === 'onvif'
+        ? currentPacingConfig.preset
+        : 'onvif'
+  const merged: VideoPacingConfigInput = {
+    ...currentPacingConfig,
+    ...createPacingPresetConfig(preset),
+    ...(config ?? {}),
+    preset
+  }
+
+  const minFrameIntervalUs = Math.round(
+    clampNumber(merged.minFrameIntervalUs, currentPacingConfig.minFrameIntervalUs, 1_000, 1_000_000)
+  )
+  const maxFrameIntervalUs = Math.round(
+    clampNumber(merged.maxFrameIntervalUs, currentPacingConfig.maxFrameIntervalUs, minFrameIntervalUs, 2_000_000)
+  )
+  const targetLatencyMs = clampNumber(merged.targetLatencyMs, currentPacingConfig.targetLatencyMs, 0, 30_000)
+
+  return {
+    preset,
+    pipeline: 'buffer-pacing-decode',
+    fallbackIntervalMs: Math.round(
+      clampNumber(merged.fallbackIntervalMs, currentPacingConfig.fallbackIntervalMs, 1, 1000)
+    ),
+    lateThresholdMs: clampNumber(merged.lateThresholdMs, currentPacingConfig.lateThresholdMs, 0, 10_000),
+    maxWaitMs: clampNumber(merged.maxWaitMs, currentPacingConfig.maxWaitMs, 1, 10_000),
+    defaultFrameIntervalUs: Math.round(
+      clampNumber(
+        merged.defaultFrameIntervalUs,
+        currentPacingConfig.defaultFrameIntervalUs,
+        minFrameIntervalUs,
+        maxFrameIntervalUs
+      )
+    ),
+    minFrameIntervalUs,
+    maxFrameIntervalUs,
+    reportIntervalMs: Math.round(
+      clampNumber(merged.reportIntervalMs, currentPacingConfig.reportIntervalMs, 50, 10_000)
+    ),
+    targetLatencyMs,
+    decodedBufferMax: Math.round(clampNumber(merged.decodedBufferMax, currentPacingConfig.decodedBufferMax, 1, 1000))
+  }
 }
 
 function createJitterBuffer(config?: VideoJitterBufferConfig): VideoJitterBuffer {
-  const merged = normalizeJitterConfig(config)
-  const buffer = new VideoJitterBuffer(merged.maxBufferSize, merged.mode, KEYFRAME_INTERVAL_BIGINT)
-  buffer.setMinDelay(merged.minDelayMs)
-  buffer.setBufferedAheadFrames(merged.bufferedAheadFrames)
-  return buffer
+  void config
+  return new VideoJitterBuffer(9000)
+}
+
+function updatePacingConfig(config?: VideoPacingConfigInput): void {
+  if (!config) {
+    return
+  }
+  currentPacingConfig = normalizePacingConfig(config)
+  pacingFrameIntervalUs = Math.round(
+    clampNumber(
+      pacingFrameIntervalUs,
+      currentPacingConfig.defaultFrameIntervalUs,
+      currentPacingConfig.minFrameIntervalUs,
+      currentPacingConfig.maxFrameIntervalUs
+    )
+  )
 }
 
 function updateJitterBuffer(config: VideoJitterBufferConfig): void {
+  const nextDecoderHardwareAcceleration =
+    config.decoderHardwareAcceleration === 'prefer-software' || config.decoderHardwareAcceleration === 'prefer-hardware'
+      ? config.decoderHardwareAcceleration
+      : currentDecoderHardwareAcceleration
+  const decoderHardwareAccelerationChanged = nextDecoderHardwareAcceleration !== currentDecoderHardwareAcceleration
+  currentDecoderHardwareAcceleration = nextDecoderHardwareAcceleration
   currentJitterConfig = normalizeJitterConfig({ ...currentJitterConfig, ...config })
+  updatePacingConfig(config.pacing)
   jitterBuffer = createJitterBuffer(currentJitterConfig)
+  if (decoderHardwareAccelerationChanged) {
+    if (videoDecoder && videoDecoder.state !== 'closed') {
+      try {
+        videoDecoder.close()
+      } catch {
+        // ignore close failure during decoder config switch
+      }
+    }
+    videoDecoder = undefined
+    cachedVideoConfig = null
+    waitingForKeyFrame = true
+  }
+  pacingDelayMs = currentJitterConfig.minDelayMs
+  resetPlayoutTiming('config')
 }
 
 type CachedVideoConfig = { codec: string; descriptionBase64?: string; avcFormat?: 'annexb' | 'avc' }
 
 let cachedVideoConfig: CachedVideoConfig | null = null
 let catalogCodec: string | null = null
+let catalogFramerate: number | null = null
 let missingCatalogCodecWarned = false
 
-setInterval(() => {
-  const entry = jitterBuffer.popWithMetadata()
-  if (entry) {
-    postJitterBufferActivity('pop')
-    if (entry.isEndOfGroup) {
+function resolvePlayoutDelayMs(): number {
+  return pacingDelayMs
+}
+
+function resetPlayoutTiming(reason: 'config' | 'error' | 'jump'): void {
+  playoutBaseMediaTs = null
+  playoutBaseWallMs = null
+  pacingDelayMs = currentJitterConfig.minDelayMs
+  clearOutputQueue()
+  reportPacingStatus(reason)
+}
+
+function clearOutputQueue(): void {
+  if (encodedPacingTimer !== null) {
+    clearTimeout(encodedPacingTimer)
+    encodedPacingTimer = null
+  }
+  if (pendingEncodedTimer !== null) {
+    clearTimeout(pendingEncodedTimer)
+    pendingEncodedTimer = null
+  }
+  for (const entry of decodedFrameBuffer) {
+    entry.frame.close()
+  }
+  decodedFrameBuffer = []
+  encodedPacingBuffer = []
+  pendingEncodedEntry = null
+  outputPendingMeta.clear()
+  lastOutputMetaResetAtMs = performance.now()
+  receivedFrameTimes.clear()
+  lastDecodingObject = null
+}
+
+function schedulePop(delayMs: number): void {
+  if (popTimer !== null) {
+    clearTimeout(popTimer)
+  }
+  popTimer = setTimeout(pumpJitterBuffer, delayMs)
+}
+
+function getBufferedFrameCount(): number {
+  return decodedFrameBuffer.length + encodedPacingBuffer.length + (pendingEncodedEntry ? 1 : 0)
+}
+
+function resolveCaptureTargetWaitMs(captureTimestampMicros?: number): number | null {
+  if (currentPacingConfig.preset === 'disabled') {
+    return null
+  }
+  if (!(typeof captureTimestampMicros === 'number' && Number.isFinite(captureTimestampMicros))) {
+    return null
+  }
+  if (!(currentPacingConfig.targetLatencyMs > 0)) {
+    return null
+  }
+  const nowWallMs = monotonicUnixMicros() / 1000
+  pacingDelayMs = Math.max(currentJitterConfig.minDelayMs, currentPacingConfig.targetLatencyMs)
+  return captureTimestampMicros / 1000 + pacingDelayMs - nowWallMs
+}
+
+function resolveTimestampTimelineWaitMs(timestampUs: number): number | null {
+  if (!Number.isFinite(timestampUs)) {
+    return null
+  }
+  pacingDelayMs =
+    currentPacingConfig.targetLatencyMs > 0
+      ? Math.max(currentJitterConfig.minDelayMs, currentPacingConfig.targetLatencyMs)
+      : currentJitterConfig.minDelayMs
+
+  const nowMs = performance.now()
+  if (playoutBaseMediaTs === null || playoutBaseWallMs === null || timestampUs < playoutBaseMediaTs) {
+    playoutBaseMediaTs = timestampUs
+    playoutBaseWallMs = nowMs + resolvePlayoutDelayMs()
+  }
+  const renderAtMs = playoutBaseWallMs + (timestampUs - playoutBaseMediaTs) / 1000
+  return renderAtMs - nowMs
+}
+
+function scheduleEncodedPacing(delayMs: number): void {
+  if (encodedPacingTimer !== null) {
+    return
+  }
+  encodedPacingTimer = setTimeout(() => {
+    encodedPacingTimer = null
+    pumpEncodedPacingDecode()
+  }, delayMs)
+}
+
+function enqueueEncodedPacing(entry: JitterBufferEntryForPacing): void {
+  encodedPacingBuffer.push(entry)
+  scheduleEncodedPacing(0)
+}
+
+function pumpEncodedPacingDecode(): void {
+  if (pendingEncodedEntry) {
+    return
+  }
+  const entry = encodedPacingBuffer[0]
+  if (!entry) {
+    return
+  }
+  const waitMs = resolveCaptureTargetWaitMs(entry.captureTimestampMicros)
+  if (typeof waitMs === 'number' && waitMs > 0) {
+    const boundedWaitMs = Math.min(waitMs, currentPacingConfig.maxWaitMs)
+    pendingEncodedEntry = entry
+    pendingEncodedTimer = setTimeout(() => {
+      pendingEncodedTimer = null
+      pendingEncodedEntry = null
+      reportPacingStatus('wait', boundedWaitMs)
+      pumpEncodedPacingDecode()
+    }, boundedWaitMs)
+    return
+  }
+  const lateByMs = typeof waitMs === 'number' && waitMs < 0 ? -waitMs : 0
+  const next = encodedPacingBuffer.shift()
+  if (next) {
+    if (lateByMs > currentPacingConfig.lateThresholdMs) {
+      pacingLastReason = 'late'
+    }
+    decodeBufferedEntryNow(next)
+  }
+  reportPacingStatus('decode', lateByMs)
+  scheduleEncodedPacing(0)
+}
+
+function pumpJitterBuffer(): void {
+  if (decodedFrameBuffer.length >= currentPacingConfig.decodedBufferMax) {
+    schedulePop(POP_INTERVAL_MS)
+    return
+  }
+  const entry = jitterBuffer.popHolding()
+  if (!entry) {
+    schedulePop(POP_INTERVAL_MS)
+    return
+  }
+  postJitterBufferActivity('pop')
+  if (entry.isEndOfGroup) {
+    schedulePop(0)
+    return
+  }
+  handlePacedDecode(entry)
+}
+
+function handlePacedDecode(entry: NonNullable<ReturnType<VideoJitterBuffer['popWithMetadata']>>): void {
+  if (currentPacingConfig.preset !== 'disabled') {
+    enqueueEncodedPacing(entry)
+    schedulePop(0)
+    return
+  }
+  decodeBufferedEntryNow(entry)
+}
+
+function decodeBufferedEntryNow(entry: NonNullable<ReturnType<VideoJitterBuffer['popWithMetadata']>>): void {
+  const decoded = entry.object.cachedChunk
+  if (waitingForKeyFrame && decoded.metadata.type !== 'key') {
+    schedulePop(0)
+    return
+  }
+  const decodeQueueSize = videoDecoder?.decodeQueueSize ?? 0
+  const objectKey = `${entry.groupId.toString()}:${entry.object.objectId.toString()}`
+  registerOutputMeta(decoded.metadata.timestamp, {
+    groupId: entry.groupId,
+    objectId: entry.object.objectId,
+    chunkType: decoded.metadata.type,
+    timestampUs: decoded.metadata.timestamp,
+    receivedMs: receivedFrameTimes.get(objectKey),
+    captureTimestampMicros: entry.captureTimestampMicros
+  })
+  receivedFrameTimes.delete(objectKey)
+  decode(entry.groupId, entry.object, entry.captureTimestampMicros)
+  schedulePop(decodeQueueSize > 12 ? POP_INTERVAL_MS : 0)
+}
+
+function registerOutputMeta(timestampUs: number, meta: OutputMeta): void {
+  const key = Math.round(timestampUs)
+  const list = outputPendingMeta.get(key) ?? []
+  list.push({ ...meta, timestampUs: key })
+  outputPendingMeta.set(key, list)
+}
+
+function dequeueOutputMeta(timestampUs: number): OutputMeta | null {
+  const key = Math.round(timestampUs)
+  const list = outputPendingMeta.get(key)
+  if (!list || list.length === 0) {
+    return null
+  }
+  const meta = list.shift() ?? null
+  if (list.length === 0) {
+    outputPendingMeta.delete(key)
+  } else {
+    outputPendingMeta.set(key, list)
+  }
+  return meta
+}
+
+function enqueueOutputFrame(frame: VideoFrame): void {
+  const timestampUs = Math.round(Number(frame.timestamp))
+  const meta = Number.isFinite(timestampUs) ? dequeueOutputMeta(timestampUs) : null
+  if (!meta) {
+    const nowMs = performance.now()
+    const recentlyReset = nowMs - lastOutputMetaResetAtMs <= MISSING_META_WARN_SUPPRESS_AFTER_RESET_MS
+    if (recentlyReset) {
+      frame.close()
       return
     }
-    decode(entry.groupId, entry.object, entry.captureTimestampMicros)
+    console.warn('[videoDecoder][output] missing meta for decoded frame', {
+      timestampUs: Number.isFinite(timestampUs) ? timestampUs : null,
+      bufferedFrames: getBufferedFrameCount(),
+      targetFrames: resolveTargetFrames()
+    })
+    frame.close()
+    return
   }
-}, POP_INTERVAL_MS)
+  const receivedKey = `${meta.groupId.toString()}:${meta.objectId.toString()}`
+  const receivedMs = typeof meta.receivedMs === 'number' ? meta.receivedMs : receivedFrameTimes.get(receivedKey) ?? null
+  if (receivedFrameTimes.has(receivedKey)) {
+    receivedFrameTimes.delete(receivedKey)
+  }
+  const decodeDoneMs = performance.now()
+  postDecodingObject('output', meta.groupId.toString(), meta.objectId.toString(), meta.chunkType)
+  pushDecodedFrame({
+    groupId: meta.groupId,
+    objectId: meta.objectId,
+    chunkType: meta.chunkType,
+    timestampUs: meta.timestampUs,
+    frame,
+    decodeDoneMs,
+    receivedMs,
+    captureTimestampMicros: meta.captureTimestampMicros
+  })
+  drainDecodedOutput()
+}
 
-type DecoderControlMessage = { type: 'config'; config: VideoJitterBufferConfig } | { type: 'catalog'; codec?: string }
+function pushDecodedFrame(entry: DecodedFrameEntry): void {
+  const insertIndex = decodedFrameBuffer.findIndex(
+    (item) => item.groupId > entry.groupId || (item.groupId === entry.groupId && item.objectId > entry.objectId)
+  )
+  if (insertIndex === -1) {
+    decodedFrameBuffer.push(entry)
+  } else {
+    decodedFrameBuffer.splice(insertIndex, 0, entry)
+  }
+  if (decodedFrameBuffer.length > currentPacingConfig.decodedBufferMax) {
+    const dropped = decodedFrameBuffer.shift()
+    dropped?.frame.close()
+    console.warn('[videoDecoder][output] decoded buffer overflow, dropping frame', {
+      bufferedFrames: getBufferedFrameCount(),
+      targetFrames: resolveTargetFrames(),
+      bufferSize: decodedFrameBuffer.length
+    })
+  }
+}
+
+function drainDecodedOutput(): void {
+  while (decodedFrameBuffer.length > 0) {
+    emitDecodedFrame()
+  }
+}
+
+function emitDecodedFrame(): void {
+  const entry = decodedFrameBuffer.shift()
+  if (!entry) {
+    return
+  }
+  const renderMs = performance.now()
+  const receiveToDecodeMs = entry.receivedMs !== null ? Math.round(entry.decodeDoneMs - entry.receivedMs) : null
+  const receiveToRenderMs = entry.receivedMs !== null ? Math.round(renderMs - entry.receivedMs) : null
+  reportLatency(entry.captureTimestampMicros)
+  self.postMessage({
+    type: 'timing',
+    media: 'video',
+    receiveToDecodeMs,
+    receiveToRenderMs
+  })
+  self.postMessage({
+    type: 'frame',
+    frame: entry.frame,
+    width: entry.frame.displayWidth,
+    height: entry.frame.displayHeight
+  })
+  entry.frame.close()
+}
+
+schedulePop(currentPacingConfig.fallbackIntervalMs)
+
+type DecoderControlMessage =
+  | { type: 'config'; config: VideoJitterBufferConfig }
+  | { type: 'catalog'; codec?: string; framerate?: number }
 type WorkerMessage = SubgroupWorkerMessage | DecoderControlMessage
 
 function isConfigMessage(message: WorkerMessage): message is { type: 'config'; config: VideoJitterBufferConfig } {
   return (message as { type?: string }).type === 'config'
 }
 
-function isCatalogMessage(message: WorkerMessage): message is { type: 'catalog'; codec?: string } {
+function isCatalogMessage(message: WorkerMessage): message is { type: 'catalog'; codec?: string; framerate?: number } {
   return (message as { type?: string }).type === 'catalog'
 }
 
@@ -134,7 +615,7 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
     return
   }
   if (isCatalogMessage(event.data)) {
-    applyCatalogCodec(event.data.codec)
+    applyCatalogInfo(event.data.codec, event.data.framerate)
     return
   }
   const subgroupStreamObject: SubgroupObjectWithLoc = {
@@ -145,6 +626,7 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
     locHeader: event.data.subgroupStreamObject.locHeader
   }
   bitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
+  const receiveKey = `${event.data.groupId.toString()}:${subgroupStreamObject.objectId.toString()}`
 
   const inserted = jitterBuffer.push(
     event.data.groupId,
@@ -154,6 +636,8 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
   )
   if (inserted) {
     postJitterBufferActivity('push')
+    receivedFrameTimes.set(receiveKey, performance.now())
+    schedulePop(0)
   }
 }
 
@@ -164,7 +648,6 @@ async function decode(
 ) {
   const decoded = subgroupStreamObject.cachedChunk
   trackKeyframeInterval(decoded.metadata.type)
-  reportLatency(captureTimestampMicros)
 
   const resolvedConfig = resolveVideoConfig(decoded.metadata)
   if (!resolvedConfig) {
@@ -181,9 +664,13 @@ async function decode(
 
   if (!videoDecoder || videoDecoder.state === 'closed') {
     videoDecoder = await initializeVideoDecoder(desiredConfig)
+    if (!videoDecoder) {
+      return
+    }
     cachedVideoConfig = resolvedConfig
     postDecoderConfig(resolvedConfig, desiredConfig)
     waitingForKeyFrame = true
+    resetPlayoutTiming('config')
     if (decoded.metadata.type !== 'key') {
       return
     }
@@ -194,6 +681,19 @@ async function decode(
   }
 
   try {
+    lastDecodingObject = {
+      groupId: groupId.toString(),
+      objectId: subgroupStreamObject.objectId.toString(),
+      chunkType: decoded.metadata.type,
+      codec: resolvedConfig.codec
+    }
+    postDecodingObject(
+      'submit',
+      groupId.toString(),
+      subgroupStreamObject.objectId.toString(),
+      decoded.metadata.type,
+      resolvedConfig.codec
+    )
     await videoDecoder.decode(encodedVideoChunk)
     if (decoded.metadata.type === 'key') {
       waitingForKeyFrame = false
@@ -201,6 +701,7 @@ async function decode(
   } catch (error) {
     if (isKeyFrameRequiredError(error)) {
       waitingForKeyFrame = true
+      resetPlayoutTiming('error')
       console.warn('[videoDecoder] decode requires key frame; waiting for next key frame', {
         groupId: groupId.toString(),
         objectId: subgroupStreamObject.objectId.toString(),
@@ -210,6 +711,31 @@ async function decode(
     }
     throw error
   }
+}
+
+function reportPacingStatus(action: 'decode' | 'wait' | 'config' | 'error' | 'jump', detailMs?: number) {
+  const nowMs = performance.now()
+  if (nowMs - pacingLastReportMs < currentPacingConfig.reportIntervalMs) {
+    return
+  }
+  pacingLastReportMs = nowMs
+  const bufferedFrames = getBufferedFrameCount()
+  self.postMessage({
+    type: 'pacing',
+    media: 'video',
+    intervalMs: pacingFrameIntervalUs / 1000,
+    effectiveIntervalMs: pacingFrameIntervalUs / 1000,
+    bufferedFrames,
+    decodeQueueSize: videoDecoder?.decodeQueueSize ?? 0,
+    targetFrames: 1,
+    lastReason: pacingLastReason ?? undefined,
+    action,
+    detailMs
+  })
+}
+
+function resolveTargetFrames(): number {
+  return 1
 }
 
 function trackKeyframeInterval(chunkType: string): void {
@@ -262,21 +788,45 @@ function postJitterBufferActivity(event: 'push' | 'pop') {
     type: 'jitterBufferActivity',
     media: 'video',
     event,
-    bufferedFrames: jitterBuffer.getBufferedFrameCount(),
+    bufferedFrames: getBufferedFrameCount(),
     capacityFrames: jitterBuffer.getMaxBufferSize()
   })
 }
 
 function postDecoderConfig(resolvedConfig: CachedVideoConfig, desired: VideoDecoderConfig) {
   const descriptionLength = desired.description instanceof Uint8Array ? desired.description.byteLength : undefined
+  const avcFormat =
+    resolvedConfig.avcFormat ??
+    (desired.avc?.format === 'avc' || desired.avc?.format === 'annexb' ? desired.avc.format : undefined)
+  const hardwareAcceleration =
+    desired.hardwareAcceleration === 'prefer-hardware' ||
+    desired.hardwareAcceleration === 'prefer-software' ||
+    desired.hardwareAcceleration === 'no-preference'
+      ? desired.hardwareAcceleration
+      : undefined
   self.postMessage({
     type: 'decoderConfig',
     codec: resolvedConfig.codec,
-    descriptionLength
+    descriptionLength,
+    avcFormat,
+    hardwareAcceleration,
+    optimizeForLatency: desired.optimizeForLatency
   })
 }
 
-function applyCatalogCodec(codec?: string): void {
+function applyCatalogInfo(codec?: string, framerate?: number): void {
+  if (typeof framerate === 'number' && Number.isFinite(framerate) && framerate > 0) {
+    if (catalogFramerate !== framerate) {
+      catalogFramerate = framerate
+      const intervalUs = Math.round(1_000_000 / framerate)
+      pacingFrameIntervalUs = Math.min(
+        currentPacingConfig.maxFrameIntervalUs,
+        Math.max(currentPacingConfig.minFrameIntervalUs, intervalUs)
+      )
+      pacingLastReason = 'catalog-fps'
+      resetPlayoutTiming('config')
+    }
+  }
   if (!codec) {
     return
   }
@@ -316,18 +866,19 @@ function buildVideoDecoderConfig(resolved: CachedVideoConfig): VideoDecoderConfi
   if (resolved.codec.startsWith('avc')) {
     const description = resolved.descriptionBase64 ? base64ToUint8Array(resolved.descriptionBase64) : undefined
     return {
-      ...VIDEO_DECODER_CONFIG,
       codec: resolved.codec,
       description,
       avc: {
         format: resolved.avcFormat ?? 'avc'
-      }
+      },
+      hardwareAcceleration: currentDecoderHardwareAcceleration as any
     } as any
   }
 
   return {
     codec: resolved.codec,
-    description: resolved.descriptionBase64 ? base64ToUint8Array(resolved.descriptionBase64) : undefined
+    description: resolved.descriptionBase64 ? base64ToUint8Array(resolved.descriptionBase64) : undefined,
+    hardwareAcceleration: currentDecoderHardwareAcceleration as any
   } as VideoDecoderConfig
 }
 

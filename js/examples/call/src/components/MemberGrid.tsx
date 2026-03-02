@@ -1,10 +1,10 @@
 import { LocalMember, RemoteMember } from '../types/member'
 import { RemoteMediaStreams } from '../types/media'
 import { MediaStreamVideo, MediaStreamAudio } from './MediaStreamElements'
-import { ReactNode, useEffect, useRef, useState } from 'react'
-import type { VideoJitterConfig, AudioJitterConfig } from '../types/jitterBuffer'
+import { ReactNode, useEffect, useState } from 'react'
+import { DEFAULT_VIDEO_JITTER_CONFIG, type VideoJitterConfig, type AudioJitterConfig } from '../types/jitterBuffer'
 import { VideoJitterBufferControls, AudioJitterBufferControls } from './JitterBufferControls'
-import { BarChart3, LayoutGrid, Mic, MicOff, Monitor, Settings2, Video, VideoOff } from 'lucide-react'
+import { BarChart3, LayoutGrid, Mic, MicOff, Minus, Monitor, Plus, Settings2, Video, VideoOff } from 'lucide-react'
 import { DeviceSelector } from './DeviceSelector'
 import type { CaptureSettingsState } from '../types/captureConstraints'
 import { GetUserMediaForm } from './GetUserMediaForm'
@@ -14,10 +14,17 @@ import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import type { SidebarStatsSample } from '../types/stats'
 import { MemberStatsCharts } from './MemberStatsCharts'
 import { JitterBufferVisualizer } from './JitterBufferVisualizer'
+import type {
+  VideoCodecOption,
+  VideoHardwareAccelerationOption,
+  VideoResolutionOption,
+  VideoEncodingSettings
+} from '../types/videoEncoding'
+import type { SubscribedCatalogTrack } from '../media/mediaPublisher'
 
 type VideoEncodingOptionSet = {
-  codecOptions: { id: string; label: string; codec: string }[]
-  resolutionOptions: { id: string; label: string; width: number; height: number }[]
+  codecOptions: VideoCodecOption[]
+  resolutionOptions: VideoResolutionOption[]
   bitrateOptions: { id: string; label: string; bitrate: number }[]
 }
 
@@ -28,7 +35,6 @@ type AudioEncodingOptionSet = {
 }
 
 type CatalogTabKey = 'video' | 'screenshare' | 'audio'
-const TRACK_ROW_COMPACT_BREAKPOINT_PX = 440
 
 interface MemberGridProps {
   localMember: LocalMember
@@ -55,11 +61,17 @@ interface MemberGridProps {
   onSelectVideoDevice: (deviceId: string) => void
   onSelectAudioDevice: (deviceId: string) => void
   videoEncodingOptions: VideoEncodingOptionSet
+  videoHardwareAccelerationOptions: VideoHardwareAccelerationOption[]
+  selectedVideoEncoding: VideoEncodingSettings
+  onSelectVideoEncoding: (settings: Partial<VideoEncodingSettings>) => Promise<void>
+  selectedScreenShareEncoding: VideoEncodingSettings
+  onSelectScreenShareEncoding: (settings: Partial<VideoEncodingSettings>) => Promise<void>
   audioEncodingOptions: AudioEncodingOptionSet
   captureSettings: CaptureSettingsState
   onChangeCaptureSettings: (settings: Partial<CaptureSettingsState>) => void
   onApplyCaptureSettings: () => void
   catalogTracks: EditableCallCatalogTrack[]
+  subscribedCatalogTracks: SubscribedCatalogTrack[]
   onAddCatalogTrack: (track: Omit<EditableCallCatalogTrack, 'id'>) => void
   onUpdateCatalogTrack: (id: string, patch: Partial<EditableCallCatalogTrack>) => void
   onRemoveCatalogTrack: (id: string) => void
@@ -68,7 +80,6 @@ interface MemberGridProps {
   catalogLoadingMemberIds: Set<string>
   catalogSubscribedMemberIds: Set<string>
   catalogUnsubscribingTrackKeys: Set<string>
-  onLoadCatalogTracks: (memberId: string) => void
   onSelectCatalogTrack: (memberId: string, role: CatalogSubscribeRole, trackName: string) => void
   onSubscribeVideoTrack: (memberId: string) => void
   onSubscribeScreenshareTrack: (memberId: string) => void
@@ -106,11 +117,17 @@ export function MemberGrid({
   onSelectVideoDevice,
   onSelectAudioDevice,
   videoEncodingOptions,
+  videoHardwareAccelerationOptions,
+  selectedVideoEncoding,
+  onSelectVideoEncoding,
+  selectedScreenShareEncoding,
+  onSelectScreenShareEncoding,
   audioEncodingOptions,
   captureSettings,
   onChangeCaptureSettings,
   onApplyCaptureSettings,
   catalogTracks,
+  subscribedCatalogTracks,
   onAddCatalogTrack,
   onUpdateCatalogTrack,
   onRemoveCatalogTrack,
@@ -119,7 +136,6 @@ export function MemberGrid({
   catalogLoadingMemberIds,
   catalogSubscribedMemberIds,
   catalogUnsubscribingTrackKeys,
-  onLoadCatalogTracks,
   onSelectCatalogTrack,
   onSubscribeVideoTrack,
   onSubscribeScreenshareTrack,
@@ -205,6 +221,9 @@ export function MemberGrid({
             <IconButton ariaLabel="Select devices" onClick={() => setIsDeviceModalOpen(true)} title="Device settings">
               <Settings2 className="h-4 w-4" />
             </IconButton>
+            <IconButton ariaLabel="Show stats" title="Show stats" onClick={() => setStatsModalTarget(localMember.id)}>
+              <BarChart3 className="h-4 w-4" />
+            </IconButton>
             <button
               type="button"
               onClick={() => setIsCatalogModalOpen(true)}
@@ -222,16 +241,10 @@ export function MemberGrid({
         placeholder="Camera disabled"
         secondaryPlaceholder="Screen share disabled"
         details={
-          <>
-            <TrackList
-              title="Published Tracks"
-              items={[
-                { label: 'Chat', enabled: localMember.publishedTracks.chat },
-                { label: 'Video', enabled: localMember.publishedTracks.video },
-                { label: 'Audio', enabled: localMember.publishedTracks.audio }
-              ]}
-            />
-          </>
+          <CatalogsPanel
+            tracks={catalogTracks}
+            subscribedTracks={subscribedCatalogTracks}
+          />
         }
       />
       {isDeviceModalOpen && (
@@ -257,6 +270,45 @@ export function MemberGrid({
               microphoneBusy={microphoneBusy}
               resolutionOptions={videoEncodingOptions.resolutionOptions}
             />
+            <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
+              <div className="text-sm font-semibold text-white">Video encoder hardware acceleration</div>
+              <label className="flex items-center justify-between gap-3 text-sm text-blue-50">
+                <span>Camera</span>
+                <select
+                  value={selectedVideoEncoding.hardwareAcceleration}
+                  onChange={(event) =>
+                    void onSelectVideoEncoding({
+                      hardwareAcceleration: event.target.value as HardwareAcceleration
+                    })
+                  }
+                  className="w-44 rounded-md bg-white/10 px-2 py-1 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-blue-400"
+                >
+                  {videoHardwareAccelerationOptions.map((option) => (
+                    <option key={option.id} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center justify-between gap-3 text-sm text-blue-50">
+                <span>Screen share</span>
+                <select
+                  value={selectedScreenShareEncoding.hardwareAcceleration}
+                  onChange={(event) =>
+                    void onSelectScreenShareEncoding({
+                      hardwareAcceleration: event.target.value as HardwareAcceleration
+                    })
+                  }
+                  className="w-44 rounded-md bg-white/10 px-2 py-1 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-1 focus:ring-blue-400"
+                >
+                  {videoHardwareAccelerationOptions.map((option) => (
+                    <option key={option.id} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </div>
         </DeviceModal>
       )}
@@ -265,6 +317,7 @@ export function MemberGrid({
           <CatalogTrackEditor
             tracks={catalogTracks}
             videoEncodingOptions={videoEncodingOptions}
+            videoHardwareAccelerationOptions={videoHardwareAccelerationOptions}
             audioEncodingOptions={audioEncodingOptions}
             onAddTrack={onAddCatalogTrack}
             onUpdateTrack={onUpdateCatalogTrack}
@@ -272,11 +325,12 @@ export function MemberGrid({
           />
         </DeviceModal>
       )}
-
       {remoteMembers.map((member) => {
         const media = remoteMedia.get(member.id)
         const isVisualizationEnabled = visualizedMemberIds.has(member.id)
+        const videoJitterConfig = videoJitterConfigs.get(member.id) ?? DEFAULT_VIDEO_JITTER_CONFIG
         const remotePrimaryVideoStream = media?.videoStream ?? media?.screenShareStream ?? null
+        const primaryVideoSource: 'camera' | 'screenshare' = media?.videoStream ? 'camera' : 'screenshare'
         const primaryVideoJitterBuffer =
           media?.videoStream && media.videoJitterBuffer ? media.videoJitterBuffer : media?.screenShareJitterBuffer
         const remoteSecondaryVideoStream =
@@ -322,7 +376,66 @@ export function MemberGrid({
             videoStream={remotePrimaryVideoStream}
             videoFooter={
               isVisualizationEnabled ? (
-                <JitterBufferVisualizer videoBuffer={primaryVideoJitterBuffer} audioBuffer={media?.audioJitterBuffer} />
+                <JitterBufferVisualizer
+                  videoBuffer={primaryVideoJitterBuffer}
+                  audioBuffer={media?.audioJitterBuffer}
+                  videoDiagnostics={{
+                    targetLatencyMs: videoJitterConfig?.pacing.targetLatencyMs,
+                    networkLatencyMs:
+                      primaryVideoSource === 'camera'
+                        ? media?.videoLatencyReceiveMs
+                        : media?.screenShareLatencyReceiveMs,
+                    e2eLatencyMs:
+                      primaryVideoSource === 'camera' ? media?.videoLatencyRenderMs : media?.screenShareLatencyRenderMs,
+                    receiveToDecodeMs:
+                      primaryVideoSource === 'camera'
+                        ? media?.videoReceiveToDecodeMs
+                        : media?.screenShareReceiveToDecodeMs,
+                    receiveToRenderMs:
+                      primaryVideoSource === 'camera'
+                        ? media?.videoReceiveToRenderMs
+                        : media?.screenShareReceiveToRenderMs,
+                    pacingPreset: videoJitterConfig?.pacing.preset,
+                    pacingPipeline: videoJitterConfig?.pacing.pipeline,
+                    pacingEffectiveIntervalMs:
+                      primaryVideoSource === 'camera'
+                        ? media?.videoPacingEffectiveIntervalMs
+                        : media?.screenSharePacingEffectiveIntervalMs,
+                    pacingBufferedFrames:
+                      primaryVideoSource === 'camera'
+                        ? media?.videoPacingBufferedFrames
+                        : media?.screenSharePacingBufferedFrames,
+                    pacingTargetFrames:
+                      primaryVideoSource === 'camera'
+                        ? media?.videoPacingTargetFrames
+                        : media?.screenSharePacingTargetFrames,
+                    decodingGroupId:
+                      primaryVideoSource === 'camera' ? media?.videoDecodingGroupId : media?.screenShareDecodingGroupId,
+                    decodingObjectId:
+                      primaryVideoSource === 'camera'
+                        ? media?.videoDecodingObjectId
+                        : media?.screenShareDecodingObjectId,
+                    decoderCodec: primaryVideoSource === 'camera' ? media?.videoCodec : media?.screenShareCodec,
+                    decoderWidth: primaryVideoSource === 'camera' ? media?.videoWidth : media?.screenShareWidth,
+                    decoderHeight: primaryVideoSource === 'camera' ? media?.videoHeight : media?.screenShareHeight,
+                    decoderAvcFormat:
+                      primaryVideoSource === 'camera'
+                        ? media?.videoDecoderAvcFormat
+                        : media?.screenShareDecoderAvcFormat,
+                    decoderDescriptionBytes:
+                      primaryVideoSource === 'camera'
+                        ? media?.videoDecoderDescriptionLength
+                        : media?.screenShareDecoderDescriptionLength,
+                    decoderHardwareAcceleration:
+                      primaryVideoSource === 'camera'
+                        ? media?.videoDecoderHardwareAcceleration
+                        : media?.screenShareDecoderHardwareAcceleration,
+                    decoderOptimizeForLatency:
+                      primaryVideoSource === 'camera'
+                        ? media?.videoDecoderOptimizeForLatency
+                        : media?.screenShareDecoderOptimizeForLatency
+                  }}
+                />
               ) : undefined
             }
             secondaryVideoStream={remoteSecondaryVideoStream}
@@ -350,7 +463,6 @@ export function MemberGrid({
                 isChatSubscribed={member.subscribedTracks.chat.isSubscribed}
                 isChatSubscribing={member.subscribedTracks.chat.isSubscribing}
                 isChatUnsubscribing={catalogUnsubscribingTrackKeys.has(buildTrackActionKey(member.id, 'chat'))}
-                onLoadCatalog={() => onLoadCatalogTracks(member.id)}
                 onSelectTrack={(role, trackName) => onSelectCatalogTrack(member.id, role, trackName)}
                 onSubscribeVideo={() => onSubscribeVideoTrack(member.id)}
                 onSubscribeScreenshare={() => onSubscribeScreenshareTrack(member.id)}
@@ -384,7 +496,7 @@ export function MemberGrid({
       )}
       {statsModalTarget && (
         <DeviceModal
-          title={`Stats (${findMemberName(remoteMembers, statsModalTarget)})`}
+          title={`Stats (${statsModalTarget === localMember.id ? localMember.name : findMemberName(remoteMembers, statsModalTarget)})`}
           onClose={() => setStatsModalTarget(null)}
           size="wide"
         >
@@ -539,6 +651,7 @@ function findMemberName(members: RemoteMember[], id: string): string {
 function CatalogTrackEditor({
   tracks,
   videoEncodingOptions,
+  videoHardwareAccelerationOptions,
   audioEncodingOptions,
   onAddTrack,
   onUpdateTrack,
@@ -546,6 +659,7 @@ function CatalogTrackEditor({
 }: {
   tracks: EditableCallCatalogTrack[]
   videoEncodingOptions: VideoEncodingOptionSet
+  videoHardwareAccelerationOptions: VideoHardwareAccelerationOption[]
   audioEncodingOptions: AudioEncodingOptionSet
   onAddTrack: (track: Omit<EditableCallCatalogTrack, 'id'>) => void
   onUpdateTrack: (id: string, patch: Partial<EditableCallCatalogTrack>) => void
@@ -557,6 +671,8 @@ function CatalogTrackEditor({
   const [activeTab, setActiveTab] = useState<CatalogTabKey>('video')
   const [isAddingTrack, setIsAddingTrack] = useState(false)
   const [addTrackKind, setAddTrackKind] = useState<CatalogTabKey>('video')
+  const [draftConfigError, setDraftConfigError] = useState<string | null>(null)
+  const [isCheckingDraftConfig, setIsCheckingDraftConfig] = useState(false)
   const [videoDraft, setVideoDraft] = useState(() => createVideoTrackDraft(videoEncodingOptions))
   const [screenshareDraft, setScreenshareDraft] = useState(() => createScreenShareTrackDraft(videoEncodingOptions))
   const [audioDraft, setAudioDraft] = useState(() => createAudioTrackDraft(audioEncodingOptions))
@@ -589,8 +705,13 @@ function CatalogTrackEditor({
   const currentTab = tabItems.find((tab) => tab.key === activeTab) ?? tabItems[0]
   const currentDraft =
     addTrackKind === 'video' ? videoDraft : addTrackKind === 'screenshare' ? screenshareDraft : audioDraft
+  const currentVideoResolutionOptions =
+    currentDraft.role === 'video'
+      ? getSupportedVideoResolutionOptions(videoEncodingOptions, currentDraft.codec)
+      : videoEncodingOptions.resolutionOptions
 
   const setCurrentDraft = (patch: Partial<Omit<EditableCallCatalogTrack, 'id'>>) => {
+    setDraftConfigError(null)
     if (addTrackKind === 'video') {
       setVideoDraft((prev) => ({ ...prev, ...patch }))
       return
@@ -602,10 +723,22 @@ function CatalogTrackEditor({
     setAudioDraft((prev) => ({ ...prev, ...patch }))
   }
 
-  const addDraftTrack = () => {
+  const addDraftTrack = async () => {
     const normalizedName = (currentDraft.name || '').trim()
     if (!normalizedName) {
       return
+    }
+    if (currentDraft.role === 'video') {
+      setIsCheckingDraftConfig(true)
+      try {
+        const validation = await validateVideoEncoderCatalogTrackConfig(currentDraft)
+        if (!validation.ok) {
+          setDraftConfigError(validation.message)
+          return
+        }
+      } finally {
+        setIsCheckingDraftConfig(false)
+      }
     }
     onAddTrack({
       ...currentDraft,
@@ -624,6 +757,7 @@ function CatalogTrackEditor({
   }
 
   const openTrackSetup = () => {
+    setDraftConfigError(null)
     setAddTrackKind(activeTab)
     setIsAddingTrack(true)
   }
@@ -706,7 +840,18 @@ function CatalogTrackEditor({
                     onChange={(event) => {
                       const option = videoEncodingOptions.codecOptions.find((entry) => entry.id === event.target.value)
                       if (option) {
-                        setCurrentDraft({ codec: option.codec })
+                        const nextResolution = pickSupportedVideoResolutionOption(
+                          videoEncodingOptions,
+                          option.codec,
+                          currentDraft.width,
+                          currentDraft.height,
+                          '1080p'
+                        )
+                        setCurrentDraft({
+                          codec: option.codec,
+                          width: nextResolution?.width ?? currentDraft.width,
+                          height: nextResolution?.height ?? currentDraft.height
+                        })
                       }
                     }}
                   >
@@ -721,17 +866,19 @@ function CatalogTrackEditor({
                   <span>Resolution Preset</span>
                   <select
                     className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findVideoResolutionOptionId(videoEncodingOptions, currentDraft.width, currentDraft.height)}
+                    value={findVideoResolutionOptionIdFromList(
+                      currentVideoResolutionOptions,
+                      currentDraft.width,
+                      currentDraft.height
+                    )}
                     onChange={(event) => {
-                      const option = videoEncodingOptions.resolutionOptions.find(
-                        (entry) => entry.id === event.target.value
-                      )
+                      const option = currentVideoResolutionOptions.find((entry) => entry.id === event.target.value)
                       if (option) {
                         setCurrentDraft({ width: option.width, height: option.height })
                       }
                     }}
                   >
-                    {videoEncodingOptions.resolutionOptions.map((option) => (
+                    {currentVideoResolutionOptions.map((option) => (
                       <option key={option.id} value={option.id} className="bg-slate-900 text-white">
                         {option.label}
                       </option>
@@ -754,6 +901,40 @@ function CatalogTrackEditor({
                   >
                     {videoEncodingOptions.bitrateOptions.map((option) => (
                       <option key={option.id} value={option.id} className="bg-slate-900 text-white">
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
+                  <span>Framerate (fps)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={120}
+                    step={1}
+                    value={normalizeTrackFramerate(currentDraft)}
+                    onChange={(event) =>
+                      setCurrentDraft({
+                        framerate: toPositiveInteger(event.target.value, 30)
+                      })
+                    }
+                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-blue-100">
+                  <span>Hardware Acceleration</span>
+                  <select
+                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+                    value={currentDraft.hardwareAcceleration ?? 'prefer-software'}
+                    onChange={(event) =>
+                      setCurrentDraft({
+                        hardwareAcceleration: event.target.value as HardwareAcceleration
+                      })
+                    }
+                  >
+                    {videoHardwareAccelerationOptions.map((option) => (
+                      <option key={option.id} value={option.value} className="bg-slate-900 text-white">
                         {option.label}
                       </option>
                     ))}
@@ -888,13 +1069,19 @@ function CatalogTrackEditor({
             )}
           </div>
 
+          {draftConfigError ? (
+            <div className="rounded border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+              {draftConfigError}
+            </div>
+          ) : null}
           <div className="flex justify-start gap-2">
             <button
               type="button"
               className="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
-              onClick={addDraftTrack}
+              onClick={() => void addDraftTrack()}
+              disabled={isCheckingDraftConfig}
             >
-              Add to Catalog
+              {isCheckingDraftConfig ? 'Checking...' : 'Add to Catalog'}
             </button>
             <button
               type="button"
@@ -1017,7 +1204,7 @@ function findVideoCodecOptionId(options: VideoEncodingOptionSet, codec: string |
 
 function createVideoTrackDraft(options: VideoEncodingOptionSet): Omit<EditableCallCatalogTrack, 'id'> {
   const codec = options.codecOptions[0]?.codec ?? 'avc1.42E01E'
-  const resolution = options.resolutionOptions[0]
+  const resolution = pickSupportedVideoResolutionOption(options, codec, undefined, undefined, '1080p')
   const bitrate = options.bitrateOptions[0]?.bitrate ?? 800_000
   return {
     name: `camera_${Date.now()}`,
@@ -1027,6 +1214,8 @@ function createVideoTrackDraft(options: VideoEncodingOptionSet): Omit<EditableCa
     width: resolution?.width ?? 1280,
     height: resolution?.height ?? 720,
     bitrate,
+    framerate: 30,
+    hardwareAcceleration: 'prefer-software',
     keyframeInterval: DEFAULT_VIDEO_KEYFRAME_INTERVAL,
     samplerate: undefined,
     channelConfig: undefined,
@@ -1038,7 +1227,7 @@ function createVideoTrackDraft(options: VideoEncodingOptionSet): Omit<EditableCa
 
 function createScreenShareTrackDraft(options: VideoEncodingOptionSet): Omit<EditableCallCatalogTrack, 'id'> {
   const codec = options.codecOptions[0]?.codec ?? 'av01.0.08M.08'
-  const resolution = options.resolutionOptions[0]
+  const resolution = pickSupportedVideoResolutionOption(options, codec, undefined, undefined, '1080p')
   const bitrate = options.bitrateOptions[0]?.bitrate ?? 1_000_000
   return {
     name: `screenshare_${Date.now()}`,
@@ -1048,6 +1237,8 @@ function createScreenShareTrackDraft(options: VideoEncodingOptionSet): Omit<Edit
     width: resolution?.width ?? 1920,
     height: resolution?.height ?? 1080,
     bitrate,
+    framerate: 30,
+    hardwareAcceleration: 'prefer-software',
     keyframeInterval: DEFAULT_VIDEO_KEYFRAME_INTERVAL,
     samplerate: undefined,
     channelConfig: undefined,
@@ -1069,6 +1260,8 @@ function createAudioTrackDraft(options: AudioEncodingOptionSet): Omit<EditableCa
     bitrate,
     width: undefined,
     height: undefined,
+    framerate: undefined,
+    hardwareAcceleration: undefined,
     keyframeInterval: undefined,
     samplerate: 48_000,
     channelConfig: channelConfigForChannels(channels),
@@ -1083,11 +1276,64 @@ function findVideoResolutionOptionId(
   width: number | undefined,
   height: number | undefined
 ): string {
-  return (
-    options.resolutionOptions.find((entry) => entry.width === width && entry.height === height)?.id ??
-    options.resolutionOptions[0]?.id ??
-    ''
+  return findVideoResolutionOptionIdFromList(options.resolutionOptions, width, height)
+}
+
+function findVideoResolutionOptionIdFromList(
+  options: Array<Pick<VideoResolutionOption, 'id' | 'width' | 'height'>>,
+  width: number | undefined,
+  height: number | undefined
+): string {
+  return options.find((entry) => entry.width === width && entry.height === height)?.id ?? options[0]?.id ?? ''
+}
+
+function getVideoCodecOptionByCodec(
+  options: VideoEncodingOptionSet,
+  codec: string | undefined
+): VideoCodecOption | undefined {
+  return options.codecOptions.find((entry) => entry.codec === codec)
+}
+
+function isResolutionSupportedByCodec(
+  codecOption: VideoCodecOption | undefined,
+  resolution: Pick<VideoResolutionOption, 'width' | 'height'>
+): boolean {
+  if (!codecOption?.maxEncodePixels) {
+    return true
+  }
+  return resolution.width * resolution.height <= codecOption.maxEncodePixels
+}
+
+function getSupportedVideoResolutionOptions(
+  options: VideoEncodingOptionSet,
+  codec: string | undefined
+): VideoResolutionOption[] {
+  const codecOption = getVideoCodecOptionByCodec(options, codec)
+  const filtered = options.resolutionOptions.filter((resolution) =>
+    isResolutionSupportedByCodec(codecOption, resolution)
   )
+  return filtered.length > 0 ? filtered : options.resolutionOptions
+}
+
+function pickSupportedVideoResolutionOption(
+  options: VideoEncodingOptionSet,
+  codec: string | undefined,
+  width: number | undefined,
+  height: number | undefined,
+  preferredId?: string
+): VideoResolutionOption | undefined {
+  const supported = getSupportedVideoResolutionOptions(options, codec)
+  const exact = supported.find((entry) => entry.width === width && entry.height === height)
+  if (exact) {
+    return exact
+  }
+  if (preferredId) {
+    const preferred = supported.find((entry) => entry.id === preferredId)
+    if (preferred) {
+      return preferred
+    }
+  }
+  return supported[0]
 }
 
 function findVideoBitrateOptionId(options: VideoEncodingOptionSet, bitrate: number | undefined): string {
@@ -1127,6 +1373,10 @@ function normalizeTrackKeyframeInterval(track: Pick<CallCatalogTrack, 'keyframeI
   return toPositiveInteger(track.keyframeInterval, DEFAULT_VIDEO_KEYFRAME_INTERVAL)
 }
 
+function normalizeTrackFramerate(track: Pick<CallCatalogTrack, 'framerate'>): number {
+  return toPositiveInteger(track.framerate, 30)
+}
+
 function resolveAudioStreamUpdateMode(track: Pick<CallCatalogTrack, 'audioStreamUpdateMode'>): 'single' | 'interval' {
   return track.audioStreamUpdateMode === 'single' ? 'single' : DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode
 }
@@ -1162,7 +1412,6 @@ function RemoteCatalogSubscribePanel({
   isChatSubscribed,
   isChatSubscribing,
   isChatUnsubscribing,
-  onLoadCatalog,
   onSelectTrack,
   onSubscribeVideo,
   onSubscribeScreenshare,
@@ -1189,7 +1438,6 @@ function RemoteCatalogSubscribePanel({
   isChatSubscribed: boolean
   isChatSubscribing: boolean
   isChatUnsubscribing: boolean
-  onLoadCatalog: () => void
   onSelectTrack: (role: CatalogSubscribeRole, trackName: string) => void
   onSubscribeVideo: () => void
   onSubscribeScreenshare: () => void
@@ -1265,23 +1513,18 @@ function RemoteCatalogSubscribePanel({
       onUnsubscribe: onUnsubscribeChat
     }
   ]
-  const catalogButtonLabel = isLoading ? 'Loading...' : 'Catalog Subscribe'
-
+  const visibleTrackRows = trackRows.filter(
+    (row) => row.tracks.length > 0 || row.subscribed || row.subscribing || row.unsubscribing
+  )
   return (
     <div className="space-y-2 rounded-md border border-white/10 bg-white/5 p-3">
-      <div className="flex justify-start">
-        <button
-          type="button"
-          disabled={hasCatalog || isLoading}
-          onClick={onLoadCatalog}
-          className={`rounded px-3 py-1 text-xs font-semibold text-white transition ${
-            hasCatalog ? 'bg-slate-500/70' : 'bg-blue-600 hover:bg-blue-700'
-          } ${isLoading ? 'cursor-wait opacity-70' : ''} ${hasCatalog ? 'cursor-not-allowed opacity-70' : ''}`}
-        >
-          {catalogButtonLabel}
-        </button>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold text-blue-100">Catalogs</span>
+        <span className="text-[11px] text-blue-300">
+          {isLoading ? 'Loading...' : hasCatalog ? 'Subscribed' : 'Waiting...'}
+        </span>
       </div>
-      {trackRows.map((row) => {
+      {visibleTrackRows.map((row) => {
         const busy = row.subscribing || row.unsubscribing
         const canSubscribe = hasCatalog && Boolean(row.selectedTrack) && !row.subscribed && !busy
         const canUnsubscribe = hasCatalog && row.subscribed && !busy
@@ -1337,40 +1580,13 @@ function TrackSubscribeRow({
   onSubscribe: () => void
   onUnsubscribe: () => void
 }) {
-  const layoutContainerRef = useRef<HTMLDivElement | null>(null)
-  const [isCompactLayout, setIsCompactLayout] = useState(false)
-
-  useEffect(() => {
-    const container = layoutContainerRef.current
-    if (!container || typeof ResizeObserver === 'undefined') {
-      return
-    }
-
-    const updateLayout = (width: number) => {
-      setIsCompactLayout(width < TRACK_ROW_COMPACT_BREAKPOINT_PX)
-    }
-
-    updateLayout(container.getBoundingClientRect().width)
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0]
-      if (entry) {
-        updateLayout(entry.contentRect.width)
-      }
-    })
-    observer.observe(container)
-    return () => observer.disconnect()
-  }, [])
-
   return (
     <div className="space-y-1 rounded-md border border-white/10 bg-white/[0.03] p-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-blue-100">{title}</span>
         <span className="text-[11px] text-blue-300">{statusText}</span>
       </div>
-      <div
-        ref={layoutContainerRef}
-        className={isCompactLayout ? 'space-y-2' : 'grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2'}
-      >
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
         <select
           value={selected}
           disabled={disabled}
@@ -1393,21 +1609,27 @@ function TrackSubscribeRow({
           type="button"
           disabled={!canSubscribe}
           onClick={onSubscribe}
-          className={`${isCompactLayout ? 'w-full' : ''} rounded px-3 py-1 text-xs font-semibold text-white transition ${
+          aria-label={subscribeLabel}
+          title={subscribeLabel}
+          className={`inline-flex h-8 w-8 items-center justify-center rounded text-white transition ${
             canSubscribe ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-500/70'
           } ${busy ? 'cursor-wait opacity-70' : ''} ${!canSubscribe ? 'cursor-not-allowed opacity-70' : ''}`}
         >
-          {subscribeLabel}
+          <Plus className="h-4 w-4" />
+          <span className="sr-only">{subscribeLabel}</span>
         </button>
         <button
           type="button"
           disabled={!canUnsubscribe}
           onClick={onUnsubscribe}
-          className={`${isCompactLayout ? 'w-full' : ''} rounded px-3 py-1 text-xs font-semibold text-white transition ${
+          aria-label={unsubscribeLabel}
+          title={unsubscribeLabel}
+          className={`inline-flex h-8 w-8 items-center justify-center rounded text-white transition ${
             canUnsubscribe ? 'bg-amber-600 hover:bg-amber-700' : 'bg-slate-500/70'
           } ${busy ? 'cursor-wait opacity-70' : ''} ${!canUnsubscribe ? 'cursor-not-allowed opacity-70' : ''}`}
         >
-          {unsubscribeLabel}
+          <Minus className="h-4 w-4" />
+          <span className="sr-only">{unsubscribeLabel}</span>
         </button>
       </div>
     </div>
@@ -1455,6 +1677,15 @@ function buildCatalogTrackMetadataEntries(
   if (track.role === 'video' && typeof track.width === 'number' && typeof track.height === 'number') {
     entries.push({ key: 'resolution', label: 'Resolution', value: `${track.width}x${track.height}` })
   }
+  if (track.role === 'video' && typeof track.framerate === 'number') {
+    entries.push({ key: 'framerate', label: 'Framerate', value: `${Math.round(track.framerate)}fps` })
+  }
+  if (track.role === 'video' && typeof track.codec === 'string' && track.codec.startsWith('avc')) {
+    entries.push({ key: 'h264-format', label: 'H264 Format', value: 'annexb' })
+  }
+  if (track.role === 'video' && track.hardwareAcceleration) {
+    entries.push({ key: 'hardware-accel', label: 'HW Accel', value: track.hardwareAcceleration })
+  }
   if (track.role === 'video') {
     entries.push({
       key: 'keyframe-interval',
@@ -1491,17 +1722,148 @@ function formatTrackBitrateForDisplay(bitrate: number): string {
   return `${Math.round(bitrate / 1000)}kbps`
 }
 
-function TrackList({ title, items }: { title: string; items: { label: string; enabled: boolean }[] }) {
+async function validateVideoEncoderCatalogTrackConfig(
+  track: Pick<CallCatalogTrack, 'codec' | 'width' | 'height' | 'bitrate' | 'framerate' | 'hardwareAcceleration'>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (typeof VideoEncoder === 'undefined') {
+    return { ok: false, message: 'VideoEncoder is not available in this browser.' }
+  }
+  if (!track.codec || !track.width || !track.height || !track.bitrate) {
+    return { ok: false, message: 'Codec / resolution / bitrate must be set for video tracks.' }
+  }
+  const config: VideoEncoderConfig = {
+    codec: track.codec,
+    avc: track.codec.startsWith('avc') ? ({ format: 'annexb' } as VideoEncoderConfig['avc']) : undefined,
+    width: Math.floor(track.width),
+    height: Math.floor(track.height),
+    bitrate: Math.floor(track.bitrate),
+    framerate: Math.max(1, Math.min(120, Math.floor(track.framerate ?? 30))),
+    hardwareAcceleration: track.hardwareAcceleration ?? 'prefer-software',
+    scalabilityMode: 'L1T1',
+    latencyMode: 'realtime'
+  }
+  try {
+    const supported = await VideoEncoder.isConfigSupported(config)
+    if (!supported.supported) {
+      return { ok: false, message: `VideoEncoder config unsupported: ${track.codec}` }
+    }
+  } catch (error) {
+    console.error('[call][catalog] VideoEncoder.isConfigSupported failed', error, config)
+    return { ok: false, message: 'Failed to check VideoEncoder config support.' }
+  }
+  let encoder: VideoEncoder | undefined
+  try {
+    encoder = new VideoEncoder({
+      output: (chunk) => {
+        // No actual frames are encoded during configure check.
+        void chunk
+      },
+      error: (error) => {
+        console.error('[call][catalog] VideoEncoder error during configure check', error, config)
+      }
+    })
+    encoder.configure(config)
+    return { ok: true }
+  } catch (error) {
+    console.error('[call][catalog] VideoEncoder.configure failed', error, config)
+    return { ok: false, message: `VideoEncoder.configure failed: ${track.codec}` }
+  } finally {
+    try {
+      encoder?.close()
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function CatalogsPanel({
+  tracks,
+  subscribedTracks,
+}: {
+  tracks: EditableCallCatalogTrack[]
+  subscribedTracks: SubscribedCatalogTrack[]
+}) {
+  const subscribedByName = new Map(subscribedTracks.map((track) => [track.name, track]))
+
+  const sortTracks = (left: CallCatalogTrack, right: CallCatalogTrack) => {
+    if (left.role !== right.role) {
+      return left.role.localeCompare(right.role)
+    }
+    return (left.label || left.name).localeCompare(right.label || right.name)
+  }
+
+  const activeTracks = [...subscribedTracks].sort(sortTracks)
+
   return (
-    <div>
-      <span className="font-medium text-blue-200">{title}:</span>
-      <ul className="mt-1 space-y-1">
-        {items.map((item) => (
-          <li key={item.label}>
-            {item.label}: {item.enabled ? 'Enabled' : 'Disabled'}
-          </li>
-        ))}
-      </ul>
+    <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
+      <div className="text-sm font-semibold text-blue-100">Catalogs</div>
+      <TrackSettingsTiles
+        title="Subscribed"
+        tracks={activeTracks}
+        getSubscriberCount={(trackName) => subscribedByName.get(trackName)?.subscriberCount ?? 0}
+        emptyText="No active subscribers"
+      />
     </div>
   )
+}
+
+function TrackSettingsTiles({
+  title,
+  tracks,
+  getSubscriberCount,
+  emptyText
+}: {
+  title: string
+  tracks: CallCatalogTrack[]
+  getSubscriberCount: (trackName: string) => number
+  emptyText: string
+}) {
+  return (
+    <div className="space-y-2 text-[10px] text-blue-100/90">
+      <div className="text-[10px] font-medium text-blue-200/90">{title}</div>
+      {tracks.length ? (
+        <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+          {tracks.map((track) => (
+            <TrackSettingTile
+              key={track.name}
+              title={`${track.label || track.name} (${formatTrackRoleLabel(track.role)})`}
+              rows={[
+                ['Track', track.name],
+                ['Subscribers', `${getSubscriberCount(track.name)}`],
+                ...buildCatalogTrackMetadataEntries(track).map<[string, string]>((entry) => [entry.label, entry.value])
+              ]}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-blue-200">{emptyText}</div>
+      )}
+    </div>
+  )
+}
+
+function TrackSettingTile({ title, rows }: { title: string; rows: [string, string][] }) {
+  return (
+    <div className="rounded border border-white/10 bg-white/[0.03] p-2 text-[10px] text-blue-100/90">
+      <div className="mb-2 text-[10px] font-medium text-blue-200/90">{title}</div>
+      <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+        {rows.map(([label, value]) => (
+          <div key={`${title}-${label}`} className="flex items-center justify-between gap-2 rounded bg-white/[0.03] px-2 py-1">
+            <span className="text-blue-200/90">{label}</span>
+            <span className="font-mono text-white/95">{value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function formatTrackRoleLabel(role: CallCatalogTrack['role']): string {
+  if (role === 'video') {
+    return 'Video'
+  }
+  if (role === 'audio') {
+    return 'Audio'
+  }
+  return 'Chat'
 }

@@ -30,7 +30,8 @@ export default defineConfig({
         publisher: resolve(__dirname, 'examples/media/publisher/index.html'),
         subscriber: resolve(__dirname, 'examples/media/subscriber/index.html'),
         onvif: resolve(__dirname, 'examples/onvif/index.html'),
-        call: resolve(__dirname, 'examples/call/index.html')
+        call: resolve(__dirname, 'examples/call/index.html'),
+        webcodecs: resolve(__dirname, 'examples/webcodecs/index.html')
       }
     }
   }

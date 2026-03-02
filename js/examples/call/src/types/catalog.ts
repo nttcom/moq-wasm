@@ -10,6 +10,8 @@ export interface CallCatalogTrack {
   bitrate?: number
   width?: number
   height?: number
+  framerate?: number
+  hardwareAcceleration?: HardwareAcceleration
   keyframeInterval?: number
   samplerate?: number
   channelConfig?: string

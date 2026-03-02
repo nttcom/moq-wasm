@@ -34,7 +34,6 @@ function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoC
   // 最初のチャンクでtimestampのoffsetを保存
   if (timestampOffset === null) {
     timestampOffset = chunk.timestamp
-    console.info('[videoEncoder] Set timestamp offset:', timestampOffset)
   }
 
   // timestampを0起点に調整したチャンクを作成
@@ -49,7 +48,15 @@ function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoC
   })
 
   const captureTimestampMicros = takeCaptureTimestampMicros(chunk.timestamp)
-  self.postMessage({ type: 'chunk', chunk: adjustedChunk, metadata, captureTimestampMicros })
+  const encodeDoneTimestampMicros = monotonicUnixMicros()
+  self.postMessage({
+    type: 'chunk',
+    chunk: adjustedChunk,
+    metadata,
+    captureTimestampMicros,
+    encodeDoneTimestampMicros,
+    encodeQueueSize: videoEncoder?.encodeQueueSize ?? 0
+  })
 }
 
 async function initializeVideoEncoder() {
@@ -63,10 +70,12 @@ async function initializeVideoEncoder() {
   try {
     const supported = await VideoEncoder.isConfigSupported(config)
     if (!supported.supported) {
+      console.error('[videoEncoder] unsupported encoder config', config)
       self.postMessage({ type: 'configError', reason: 'unsupported', config })
       return undefined
     }
   } catch (e) {
+    console.error('[videoEncoder] failed to check encoder config support', e, config)
     self.postMessage({ type: 'configError', reason: 'unsupported', config })
     return undefined
   }
@@ -78,7 +87,6 @@ async function initializeVideoEncoder() {
     self.postMessage({ type: 'configError', reason: 'unsupported', config })
     return undefined
   }
-  console.info('[videoEncoder] initialized', config)
   return encoder
 }
 
@@ -112,8 +120,8 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     }
 
     // Too many frames in flight, encoder is overwhelmed. let's drop this frame.
-    if (videoEncoder.encodeQueueSize > 10) {
-      console.error('videoEncoder.encodeQueueSize > 10', videoEncoder.encodeQueueSize)
+    if (videoEncoder.encodeQueueSize > 5) {
+      console.error('videoEncoder.encodeQueueSize > 5', videoEncoder.encodeQueueSize)
       videoFrame.close()
       continue
     }
@@ -152,7 +160,6 @@ function takeCaptureTimestampMicros(timestamp: number): number | undefined {
 }
 
 self.onmessage = async (event) => {
-  console.debug('videoEncoder worker received message', event.data)
   if (event.data.type === 'keyframeInterval') {
     keyframeInterval = event.data.keyframeInterval
   } else if (event.data.type === 'encoderConfig') {
@@ -161,7 +168,6 @@ self.onmessage = async (event) => {
     if (videoEncoder && videoEncoder.state !== 'closed') {
       try {
         videoEncoder.configure(newConfig)
-        console.info('[videoEncoder] reconfigured', newConfig)
       } catch (e) {
         console.error('[videoEncoder] reconfigure failed', e)
         self.postMessage({ type: 'configError', reason: 'reconfigure_failed', config: newConfig })
@@ -182,6 +188,8 @@ function buildConfigFromMessage(config: {
   width: number
   height: number
   bitrate: number
+  framerate?: number
+  hardwareAcceleration?: HardwareAcceleration
 }): VideoEncoderConfig {
   return {
     codec: config.codec,
@@ -189,7 +197,11 @@ function buildConfigFromMessage(config: {
     width: config.width,
     height: config.height,
     bitrate: config.bitrate,
-    framerate: 30,
+    framerate:
+      typeof config.framerate === 'number' && Number.isFinite(config.framerate) && config.framerate > 0
+        ? Math.min(120, Math.max(1, Math.round(config.framerate)))
+        : 30,
+    hardwareAcceleration: config.hardwareAcceleration ?? 'prefer-hardware',
     scalabilityMode: 'L1T1',
     latencyMode: 'realtime' as any
   }
@@ -197,9 +209,11 @@ function buildConfigFromMessage(config: {
 
 function buildDefaultConfig(): VideoEncoderConfig {
   return buildConfigFromMessage({
-    codec: 'avc1.640032',
+    codec: 'avc1.640028',
     width: 1280,
     height: 720,
-    bitrate: 1_000_000
+    bitrate: 1_000_000,
+    framerate: 30,
+    hardwareAcceleration: 'prefer-hardware'
   })
 }

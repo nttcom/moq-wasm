@@ -1,10 +1,9 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { SubgroupStreamObjectMessage } from '../../../../pkg/moqt_client_wasm'
-import type { VideoJitterBufferMode } from '../../../../utils/media/videoJitterBuffer'
 import type { AudioJitterBufferMode } from '../../../../utils/media/audioJitterBuffer'
 import {
-  DEFAULT_VIDEO_JITTER_CONFIG,
   DEFAULT_AUDIO_JITTER_CONFIG,
+  DEFAULT_VIDEO_JITTER_CONFIG,
   normalizeVideoJitterConfig,
   normalizeAudioJitterConfig,
   type VideoJitterConfig,
@@ -30,6 +29,39 @@ interface MediaSubscriberHandlers {
   onRemoteAudioBitrate?: (userId: string, mbps: number) => void
   onRemoteVideoReceiveLatency?: (userId: string, ms: number, source: RemoteVideoSource) => void
   onRemoteVideoRenderingLatency?: (userId: string, ms: number, source: RemoteVideoSource) => void
+  onRemoteVideoTiming?: (
+    userId: string,
+    timing: {
+      receiveToDecodeMs: number | null
+      receiveToRenderMs: number | null
+    },
+    source: RemoteVideoSource
+  ) => void
+  onRemoteVideoDecodingObject?: (
+    userId: string,
+    decoding: {
+      phase: 'submit' | 'output' | 'error'
+      groupId: string
+      objectId: string
+      chunkType: string
+      codec?: string
+    },
+    source: RemoteVideoSource
+  ) => void
+  onRemoteVideoPacing?: (
+    userId: string,
+    pacing: {
+      intervalMs: number
+      effectiveIntervalMs: number
+      bufferedFrames: number
+      decodeQueueSize: number
+      targetFrames: number
+      lastReason?: string
+      action?: string
+      detailMs?: number
+    },
+    source: RemoteVideoSource
+  ) => void
   onRemoteAudioReceiveLatency?: (userId: string, ms: number) => void
   onRemoteAudioRenderingLatency?: (userId: string, ms: number) => void
   onRemoteAudioPlaybackQueue?: (userId: string, queuedMs: number) => void
@@ -41,7 +73,15 @@ interface MediaSubscriberHandlers {
   onRemoteAudioJitterBufferActivity?: (userId: string, activity: JitterBufferActivity) => void
   onRemoteVideoConfig?: (
     userId: string,
-    config: { codec: string; width?: number; height?: number },
+    config: {
+      codec: string
+      width?: number
+      height?: number
+      descriptionLength?: number
+      avcFormat?: 'annexb' | 'avc'
+      hardwareAcceleration?: HardwareAcceleration
+      optimizeForLatency?: boolean
+    },
     source: RemoteVideoSource
   ) => void
 }
@@ -98,15 +138,61 @@ export class MediaSubscriber {
         | { type: 'receiveLatency'; media: 'video'; ms: number }
         | { type: 'renderingLatency'; media: 'video'; ms: number }
         | {
+            type: 'timing'
+            media: 'video'
+            receiveToDecodeMs: number | null
+            receiveToRenderMs: number | null
+          }
+        | {
+            type: 'decodingObject'
+            media: 'video'
+            phase: 'submit' | 'output' | 'error'
+            groupId: string
+            objectId: string
+            chunkType: string
+            codec?: string
+          }
+        | {
+            type: 'pacing'
+            media: 'video'
+            intervalMs: number
+            effectiveIntervalMs: number
+            bufferedFrames: number
+            decodeQueueSize: number
+            targetFrames: number
+            lastReason?: string
+            action?: string
+            detailMs?: number
+          }
+        | {
             type: 'jitterBufferActivity'
             media: 'video'
             event: JitterBufferEvent
             bufferedFrames: number
             capacityFrames: number
           }
-        | { type: 'decoderConfig'; codec: string; width?: number; height?: number }
+        | {
+            type: 'decoderConfig'
+            codec: string
+            width?: number
+            height?: number
+            descriptionLength?: number
+            avcFormat?: 'annexb' | 'avc'
+            hardwareAcceleration?: HardwareAcceleration
+            optimizeForLatency?: boolean
+          }
+        | { type: 'configError'; media: 'video'; reason: string; config: VideoDecoderConfig }
       if (data.type === 'bitrate') {
         this.handlers.onRemoteVideoBitrate?.(userId, data.kbps, source)
+        return
+      }
+      if (data.type === 'configError') {
+        console.error('[call][videoDecoder] config error', {
+          userId,
+          source,
+          reason: data.reason,
+          config: data.config
+        })
         return
       }
       if (data.type === 'keyframeInterval') {
@@ -119,6 +205,35 @@ export class MediaSubscriber {
       }
       if (data.type === 'renderingLatency') {
         this.handlers.onRemoteVideoRenderingLatency?.(userId, data.ms, source)
+        return
+      }
+      if (data.type === 'timing') {
+        this.handlers.onRemoteVideoTiming?.(
+          userId,
+          {
+            receiveToDecodeMs: data.receiveToDecodeMs,
+            receiveToRenderMs: data.receiveToRenderMs
+          },
+          source
+        )
+        return
+      }
+      if (data.type === 'decodingObject') {
+        this.handlers.onRemoteVideoDecodingObject?.(
+          userId,
+          {
+            phase: data.phase,
+            groupId: data.groupId,
+            objectId: data.objectId,
+            chunkType: data.chunkType,
+            codec: data.codec
+          },
+          source
+        )
+        return
+      }
+      if (data.type === 'pacing') {
+        this.handlers.onRemoteVideoPacing?.(userId, data, source)
         return
       }
       if (data.type === 'jitterBufferActivity') {
@@ -141,7 +256,11 @@ export class MediaSubscriber {
           {
             codec: data.codec,
             width: data.width ?? lastSize?.width,
-            height: data.height ?? lastSize?.height
+            height: data.height ?? lastSize?.height,
+            descriptionLength: data.descriptionLength,
+            avcFormat: data.avcFormat,
+            hardwareAcceleration: data.hardwareAcceleration,
+            optimizeForLatency: data.optimizeForLatency
           },
           source
         )
@@ -178,10 +297,11 @@ export class MediaSubscriber {
     if (codec) {
       worker.postMessage({ type: 'catalog', codec })
     }
-    const config = this.videoJitterConfigByUserId.get(userId)
-    if (config) {
-      worker.postMessage({ type: 'config', config })
+    const config = this.videoJitterConfigByUserId.get(userId) ?? DEFAULT_VIDEO_JITTER_CONFIG
+    if (!this.videoJitterConfigByUserId.has(userId)) {
+      this.videoJitterConfigByUserId.set(userId, config)
     }
+    worker.postMessage({ type: 'config', config })
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
       this.forwardToWorker(worker, groupId, message)
@@ -337,9 +457,7 @@ export class MediaSubscriber {
   }
 
   private sanitizeConfig(config: VideoJitterConfig): VideoJitterConfig {
-    const normalized = normalizeVideoJitterConfig(config)
-    const mode: VideoJitterBufferMode = normalized.mode ?? DEFAULT_VIDEO_JITTER_CONFIG.mode
-    return { ...normalized, mode }
+    return normalizeVideoJitterConfig(config)
   }
 
   private sanitizeAudioConfig(config: AudioJitterConfig): AudioJitterConfig {

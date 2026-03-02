@@ -159,6 +159,13 @@ impl MOQTClient {
             .set_unsubscribe_callback(callback)
     }
 
+    #[wasm_bindgen(js_name = onIncomingUnsubscribe)]
+    pub fn set_incoming_unsubscribe_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .set_incoming_unsubscribe_callback(callback)
+    }
+
     #[wasm_bindgen(js_name = onSubscribeResponse)]
     pub fn set_subscribe_response_callback(&mut self, callback: js_sys::Function) {
         self.callbacks
@@ -1355,6 +1362,28 @@ async fn control_message_handler(
                         }
                     }
                 }
+                ControlMessageType::UnSubscribe => {
+                    let unsubscribe_message = Unsubscribe::depacketize(&mut payload_buf)?;
+                    log(
+                        std::format!("recv: unsubscribe_message: {:#x?}", unsubscribe_message)
+                            .as_str(),
+                    );
+
+                    subscription_node
+                        .borrow_mut()
+                        .cancel_publishing_subscription(unsubscribe_message.subscribe_id());
+
+                    if let Some(callback) = callbacks.borrow().incoming_unsubscribe_callback() {
+                        callback
+                            .call1(
+                                &JsValue::null(),
+                                &JsValue::from(js_sys::BigInt::from(
+                                    unsubscribe_message.subscribe_id(),
+                                )),
+                            )
+                            .unwrap();
+                    }
+                }
                 ControlMessageType::SubscribeOk => {
                     let subscribe_ok_message = SubscribeOk::depacketize(&mut payload_buf)?;
                     log(
@@ -1910,6 +1939,23 @@ impl SubscriptionNode {
         }
     }
 
+    fn cancel_publishing_subscription(&mut self, subscribe_id: u64) {
+        let track_alias = if let Some(producer) = &mut self.producer {
+            let track_alias = producer
+                .get_subscription(subscribe_id)
+                .ok()
+                .and_then(|subscription| subscription.map(|s| s.get_track_alias()));
+            let _ = producer.delete_subscription(subscribe_id);
+            track_alias
+        } else {
+            None
+        };
+
+        if let Some(alias) = track_alias {
+            self.reset_subgroup_state(alias);
+        }
+    }
+
     fn mark_subscription_success(&mut self, subscribe_id: u64) {
         if let Some(consumer) = &mut self.consumer {
             let _ = consumer.set_subscription_success(subscribe_id);
@@ -2075,6 +2121,7 @@ struct MOQTCallbacks {
     subscribe_response_callback: Option<js_sys::Function>,
     subscribe_announces_response_callback: Option<js_sys::Function>,
     unsubscribe_callback: Option<js_sys::Function>,
+    incoming_unsubscribe_callback: Option<js_sys::Function>,
     datagram_object_callback: Option<js_sys::Function>,
     datagram_object_status_callback: Option<js_sys::Function>,
     subgroup_stream_header_callback: Option<js_sys::Function>,
@@ -2093,6 +2140,7 @@ impl MOQTCallbacks {
             subscribe_response_callback: None,
             subscribe_announces_response_callback: None,
             unsubscribe_callback: None,
+            incoming_unsubscribe_callback: None,
             datagram_object_callback: None,
             datagram_object_status_callback: None,
             subgroup_stream_header_callback: None,
@@ -2155,6 +2203,14 @@ impl MOQTCallbacks {
 
     pub fn unsubscribe_callback(&self) -> Option<js_sys::Function> {
         self.unsubscribe_callback.clone()
+    }
+
+    pub fn set_incoming_unsubscribe_callback(&mut self, callback: js_sys::Function) {
+        self.incoming_unsubscribe_callback = Some(callback);
+    }
+
+    pub fn incoming_unsubscribe_callback(&self) -> Option<js_sys::Function> {
+        self.incoming_unsubscribe_callback.clone()
     }
 
     pub fn datagram_object_callback(&self) -> Option<js_sys::Function> {

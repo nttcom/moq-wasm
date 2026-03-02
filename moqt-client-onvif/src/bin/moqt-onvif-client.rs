@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose, Engine as _};
+use bytes::BytesMut;
 use clap::Parser;
 use media_streaming_format::{
     Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole,
@@ -12,15 +13,17 @@ use moqt_client_rust::{
     datagram_io::DatagramEvent, loc::loc_header_to_extension_headers, publisher::MoqtPublisher,
 };
 use moqt_core::messages::{
-    control_messages::subscribe::FilterType, data_streams::object_status::ObjectStatus,
+    control_messages::subscribe::FilterType,
+    data_streams::{object_status::ObjectStatus, subgroup_stream, DataStreams},
 };
 use packages::loc::{CaptureTimestamp, LocHeader, LocHeaderExtension, VideoConfig};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use wtransport::stream::SendStream;
 
@@ -128,10 +131,16 @@ async fn main() -> Result<()> {
     let catalog_track = args.catalog_track.clone();
     let expected_tracks = build_expected_tracks(&catalog_track, &profile_tracks);
 
+    let wt_connect_started = Instant::now();
     let mut publisher =
         MoqtPublisher::connect_with_options(&args.moqt_url, args.insecure_skip_tls_verify)
             .await
             .context("connect moqt publisher")?;
+    log::info!(
+        "WebTransport connected: url={} elapsed_ms={}",
+        args.moqt_url,
+        wt_connect_started.elapsed().as_millis()
+    );
     publisher
         .setup(vec![MOQ_DRAFT_10], args.max_subscribe_id)
         .await
@@ -295,8 +304,9 @@ async fn send_video_packet(
     if let Some(dump_state) = dump_state.as_mut() {
         dump_state.maybe_write(&packet)?;
     }
+    let mut pending_group_close: Option<PendingGroupClose> = None;
     if packet.is_keyframe {
-        state
+        pending_group_close = state
             .start_group(publisher, track_alias, publisher_priority)
             .await
             .context("send subgroup header")?;
@@ -308,17 +318,10 @@ async fn send_video_packet(
     let loc_header = build_loc_header(&packet);
     let extension_headers =
         loc_header_to_extension_headers(&loc_header).context("build loc header extensions")?;
-    let payload = packet.data;
+    let payload = serialize_chunk_payload(&packet)?;
     let Some(stream) = state.stream.as_mut() else {
         return Ok(());
     };
-    log::info!(
-        "MoQ send video packet group_id={} object_id={} timestamp_us={} keyframe={}",
-        state.group_id,
-        state.object_id,
-        packet.timestamp_us,
-        packet.is_keyframe
-    );
     publisher
         .write_subgroup_object(
             stream,
@@ -332,8 +335,68 @@ async fn send_video_packet(
         )
         .await
         .context("send subgroup object")?;
+    let total_delay_us = now_micros().saturating_sub(packet.ingest_wallclock_micros);
+    log::info!(
+        "MoQ send video packet group_id={} object_id={} timestamp_us={} total_delay_ms={} keyframe={}",
+        state.group_id,
+        state.object_id,
+        packet.timestamp_us,
+        total_delay_us / 1_000,
+        packet.is_keyframe
+    );
+    if let Some(last_ts) = state.last_timestamp_us {
+        let delta = packet.timestamp_us.saturating_sub(last_ts);
+        if delta >= 200_000 {
+            log::warn!(
+                "MoQ send video timestamp gap: group_id={} object_id={} delta_us={}",
+                state.group_id,
+                state.object_id,
+                delta
+            );
+        }
+    }
+    state.last_timestamp_us = Some(packet.timestamp_us);
     state.object_id += 1;
+    if let Some(pending) = pending_group_close {
+        spawn_pending_group_close(pending);
+    }
     Ok(())
+}
+
+#[derive(Serialize)]
+struct ChunkMetadata<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    timestamp: u64,
+    duration: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    codec: Option<&'a str>,
+    #[serde(rename = "descriptionBase64", skip_serializing_if = "Option::is_none")]
+    description_base64: Option<&'a str>,
+    #[serde(rename = "avcFormat", skip_serializing_if = "Option::is_none")]
+    avc_format: Option<&'a str>,
+}
+
+fn serialize_chunk_payload(packet: &EncodedPacket) -> Result<Vec<u8>> {
+    let avc_format = match packet.avc_format.as_deref() {
+        Some("avcc") => Some("avc"),
+        Some("annexb") => Some("annexb"),
+        other => other,
+    };
+    let metadata = ChunkMetadata {
+        kind: if packet.is_keyframe { "key" } else { "delta" },
+        timestamp: packet.timestamp_us,
+        duration: packet.duration_us,
+        codec: packet.codec.as_deref(),
+        description_base64: packet.description_base64.as_deref(),
+        avc_format,
+    };
+    let meta_bytes = serde_json::to_vec(&metadata).context("serialize chunk metadata")?;
+    let mut payload = Vec::with_capacity(4 + meta_bytes.len() + packet.data.len());
+    payload.extend_from_slice(&(meta_bytes.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&meta_bytes);
+    payload.extend_from_slice(&packet.data);
+    Ok(payload)
 }
 
 async fn send_catalog(
@@ -537,7 +600,7 @@ impl CommandPayload {
 fn build_loc_header(packet: &EncodedPacket) -> LocHeader {
     let mut extensions = Vec::with_capacity(2);
     extensions.push(LocHeaderExtension::CaptureTimestamp(CaptureTimestamp {
-        micros_since_unix_epoch: now_micros(),
+        micros_since_unix_epoch: packet.ingest_wallclock_micros,
     }));
     if packet.is_keyframe {
         if let Some(description) = packet.description_base64.as_deref() {
@@ -560,39 +623,25 @@ struct VideoStreamState {
     object_id: u64,
     started: bool,
     stream: Option<SendStream>,
+    last_timestamp_us: Option<u64>,
+}
+
+struct PendingGroupClose {
+    track_alias: u64,
+    group_id: u64,
+    end_object_id: u64,
+    stream: SendStream,
 }
 
 impl VideoStreamState {
-    async fn close_current_group(
-        &mut self,
-        publisher: &MoqtPublisher,
-        track_alias: u64,
-    ) -> Result<()> {
-        let Some(mut stream) = self.stream.take() else {
-            return Ok(());
-        };
-        let end_object_id = self.object_id;
-        publisher
-            .write_subgroup_object(
-                &mut stream,
-                track_alias,
-                self.group_id,
-                SUBGROUP_ID,
-                end_object_id,
-                Vec::new(),
-                Some(ObjectStatus::EndOfGroup),
-                &[],
-            )
-            .await
-            .context("send end of group object")?;
-        stream.finish().await.context("finish subgroup stream")?;
-        log::info!(
-            "MoQ send end of group group_id={} object_id={} track_alias={}",
-            self.group_id,
-            end_object_id,
-            track_alias
-        );
-        Ok(())
+    fn take_pending_group_close(&mut self, track_alias: u64) -> Option<PendingGroupClose> {
+        let stream = self.stream.take()?;
+        Some(PendingGroupClose {
+            track_alias,
+            group_id: self.group_id,
+            end_object_id: self.object_id,
+            stream,
+        })
     }
 
     async fn start_group(
@@ -600,11 +649,10 @@ impl VideoStreamState {
         publisher: &MoqtPublisher,
         track_alias: u64,
         publisher_priority: u8,
-    ) -> Result<()> {
+    ) -> Result<Option<PendingGroupClose>> {
+        let mut pending_close = None;
         if self.started {
-            self.close_current_group(publisher, track_alias)
-                .await
-                .context("close previous subgroup stream")?;
+            pending_close = self.take_pending_group_close(track_alias);
             self.group_id += 1;
         }
         self.object_id = 0;
@@ -620,8 +668,53 @@ impl VideoStreamState {
             .await?;
         self.stream = Some(stream);
         self.started = true;
-        Ok(())
+        Ok(pending_close)
     }
+}
+
+fn spawn_pending_group_close(pending: PendingGroupClose) {
+    tokio::spawn(async move {
+        let PendingGroupClose {
+            track_alias,
+            group_id,
+            end_object_id,
+            mut stream,
+        } = pending;
+        let close_result = async {
+            let object = subgroup_stream::Object::new(
+                end_object_id,
+                Vec::new(),
+                Some(ObjectStatus::EndOfGroup),
+                Vec::new(),
+            )?;
+            let mut buf = BytesMut::new();
+            object.packetize(&mut buf);
+            stream.write_all(&buf).await.context("write end of group")?;
+            stream.flush().await.context("flush end of group")?;
+            stream.finish().await.context("finish subgroup stream")?;
+            Result::<()>::Ok(())
+        }
+        .await;
+        match close_result {
+            Ok(()) => {
+                log::info!(
+                    "MoQ close g={} end_o={} alias={}",
+                    group_id,
+                    end_object_id,
+                    track_alias
+                );
+            }
+            Err(err) => {
+                log::warn!(
+                    "MoQ close failed g={} end_o={} alias={} err={}",
+                    group_id,
+                    end_object_id,
+                    track_alias,
+                    err
+                );
+            }
+        }
+    });
 }
 
 #[derive(Clone)]
@@ -631,6 +724,7 @@ struct ProfileTrack {
     rtsp_url: String,
     name: Option<String>,
     resolution: Option<(u32, u32)>,
+    framerate: Option<f64>,
 }
 
 async fn fetch_profile_tracks(
@@ -655,16 +749,21 @@ async fn fetch_profile_tracks(
         };
         let rtsp_url = apply_rtsp_credentials(&uri, target);
         let resolution = profile.video_resolution;
+        let framerate = profile.video_framerate;
         let resolution_label = resolution
             .map(|(width, height)| format!("{width}x{height}"))
             .unwrap_or_else(|| "-".to_string());
+        let framerate_label = framerate
+            .map(|value| format!("{value:.2}"))
+            .unwrap_or_else(|| "-".to_string());
         let name_label = profile.name.clone().unwrap_or_else(|| "-".to_string());
         log::info!(
-            "MoQ video track mapped: track={} profile_token={} name={} resolution={} rtsp={}",
+            "MoQ video track mapped: track={} profile_token={} name={} resolution={} framerate={} rtsp={}",
             track_name,
             profile.token,
             name_label,
             resolution_label,
+            framerate_label,
             redact_rtsp_url(&rtsp_url)
         );
         tracks.push(ProfileTrack {
@@ -673,6 +772,7 @@ async fn fetch_profile_tracks(
             rtsp_url,
             name: profile.name,
             resolution,
+            framerate,
         });
     }
     if tracks.is_empty() {
@@ -840,7 +940,7 @@ fn build_catalog_tracks(
                 spatial_id: None,
                 codec,
                 mime_type: None,
-                framerate: None,
+                framerate: profile.framerate,
                 timescale: None,
                 bitrate: None,
                 width: profile.resolution.map(|(width, _)| width),

@@ -1,5 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { MediaPublisher } from './mediaPublisher'
+import { MediaPublisher, type SubscribedCatalogTrack } from './mediaPublisher'
 import { MediaSubscriber } from './mediaSubscriber'
 import type { VideoJitterConfig, AudioJitterConfig } from '../types/jitterBuffer'
 import type { VideoEncodingSettings } from '../types/videoEncoding'
@@ -15,6 +15,23 @@ export interface MediaHandlers {
   onLocalAudioStream?: (stream: MediaStream | null) => void
   onLocalVideoBitrate?: (mbps: number) => void
   onLocalAudioBitrate?: (mbps: number) => void
+  onLocalVideoSendTiming?: (
+    timing: {
+      captureToEncodeDoneMs: number | null
+      encodeQueueSize: number
+      queueWaitMs: number
+      sendActiveMs: number
+      objectSendMs: number
+      serializeMs: number
+      endOfGroupMs: number
+      queueDepth: number
+      objectBytes: number
+      objectCount: number
+      aliasCount: number
+      keyframe: boolean
+    } | null,
+    source: 'camera' | 'screenshare'
+  ) => void
   onRemoteVideoStream?: (userId: string, stream: MediaStream, source: 'camera' | 'screenshare') => void
   onRemoteAudioStream?: (userId: string, stream: MediaStream) => void
   onRemoteAudioStreamClosed?: (userId: string) => void
@@ -23,6 +40,39 @@ export interface MediaHandlers {
   onRemoteAudioBitrate?: (userId: string, mbps: number) => void
   onRemoteVideoReceiveLatency?: (userId: string, ms: number, source: 'camera' | 'screenshare') => void
   onRemoteVideoRenderingLatency?: (userId: string, ms: number, source: 'camera' | 'screenshare') => void
+  onRemoteVideoTiming?: (
+    userId: string,
+    timing: {
+      receiveToDecodeMs: number | null
+      receiveToRenderMs: number | null
+    },
+    source: 'camera' | 'screenshare'
+  ) => void
+  onRemoteVideoDecodingObject?: (
+    userId: string,
+    decoding: {
+      phase: 'submit' | 'output' | 'error'
+      groupId: string
+      objectId: string
+      chunkType: string
+      codec?: string
+    },
+    source: 'camera' | 'screenshare'
+  ) => void
+  onRemoteVideoPacing?: (
+    userId: string,
+    pacing: {
+      intervalMs: number
+      effectiveIntervalMs: number
+      bufferedFrames: number
+      decodeQueueSize: number
+      targetFrames: number
+      lastReason?: string
+      action?: string
+      detailMs?: number
+    },
+    source: 'camera' | 'screenshare'
+  ) => void
   onRemoteAudioReceiveLatency?: (userId: string, ms: number) => void
   onRemoteAudioRenderingLatency?: (userId: string, ms: number) => void
   onRemoteAudioPlaybackQueue?: (userId: string, queuedMs: number) => void
@@ -37,7 +87,15 @@ export interface MediaHandlers {
   ) => void
   onRemoteVideoConfig?: (
     userId: string,
-    config: { codec: string; width?: number; height?: number },
+    config: {
+      codec: string
+      width?: number
+      height?: number
+      descriptionLength?: number
+      avcFormat?: 'annexb' | 'avc'
+      hardwareAcceleration?: HardwareAcceleration
+      optimizeForLatency?: boolean
+    },
     source: 'camera' | 'screenshare'
   ) => void
   onVideoEncodeError?: (message: string) => void
@@ -63,6 +121,7 @@ export class CallMediaController {
       onLocalAudioStream: (stream) => this.handlers.onLocalAudioStream?.(stream),
       onEncodedVideoBitrate: (mbps) => this.handlers.onLocalVideoBitrate?.(mbps),
       onEncodedAudioBitrate: (mbps) => this.handlers.onLocalAudioBitrate?.(mbps),
+      onLocalVideoSendTiming: (timing, source) => this.handlers.onLocalVideoSendTiming?.(timing, source),
       onVideoEncodeError: (message) => this.handlers.onVideoEncodeError?.(message),
       onAudioEncodeError: (message) => this.handlers.onAudioEncodeError?.(message),
       onAudioEncodingAdjusted: (settings) => this.handlers.onAudioEncodingAdjusted?.(settings),
@@ -81,6 +140,10 @@ export class CallMediaController {
         this.handlers.onRemoteVideoReceiveLatency?.(userId, ms, source),
       onRemoteVideoRenderingLatency: (userId, ms, source) =>
         this.handlers.onRemoteVideoRenderingLatency?.(userId, ms, source),
+      onRemoteVideoTiming: (userId, timing, source) => this.handlers.onRemoteVideoTiming?.(userId, timing, source),
+      onRemoteVideoDecodingObject: (userId, decoding, source) =>
+        this.handlers.onRemoteVideoDecodingObject?.(userId, decoding, source),
+      onRemoteVideoPacing: (userId, pacing, source) => this.handlers.onRemoteVideoPacing?.(userId, pacing, source),
       onRemoteAudioReceiveLatency: (userId, ms) => this.handlers.onRemoteAudioReceiveLatency?.(userId, ms),
       onRemoteAudioRenderingLatency: (userId, ms) => this.handlers.onRemoteAudioRenderingLatency?.(userId, ms),
       onRemoteAudioPlaybackQueue: (userId, queuedMs) => this.handlers.onRemoteAudioPlaybackQueue?.(userId, queuedMs),
@@ -125,6 +188,14 @@ export class CallMediaController {
       } catch (err) {
         console.error('Failed to kick media pipeline for new subscriber', err)
       }
+    })
+
+    client.setOnIncomingUnsubscribeHandler((subscribeId) => {
+      this.publisher.handleIncomingUnsubscribe(subscribeId)
+    })
+
+    client.setOnSubscribeDoneHandler((message) => {
+      this.publisher.handleSubscribeDone(message.subscribeId)
     })
   }
 
@@ -186,6 +257,10 @@ export class CallMediaController {
 
   getCatalogTracks(): CallCatalogTrack[] {
     return this.publisher.getCatalogTracks()
+  }
+
+  getSubscribedCatalogTracks(): SubscribedCatalogTrack[] {
+    return this.publisher.getSubscribedCatalogTracks()
   }
 
   async setCatalogTracks(tracks: CallCatalogTrack[]): Promise<void> {

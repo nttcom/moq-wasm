@@ -10,8 +10,78 @@ const videoDecoderWorker = new Worker(new URL('../../utils/media/decoders/videoD
 type VideoDecoderWorkerMessage =
   | { type: 'frame'; frame: VideoFrame }
   | { type: 'bitrate'; kbps: number }
+  | { type: 'configError'; media: 'video'; reason: string; config: VideoDecoderConfig }
   | { type: 'receiveLatency'; media: 'video'; ms: number }
   | { type: 'renderingLatency'; media: 'video'; ms: number }
+  | {
+      type: 'timing'
+      media: 'video'
+      receiveToDecodeMs: number | null
+      receiveToRenderMs: number | null
+    }
+  | {
+      type: 'jitterBufferActivity'
+      media: 'video'
+      event: 'push' | 'pop'
+      bufferedFrames: number
+      capacityFrames: number
+    }
+  | {
+      type: 'pacing'
+      media: 'video'
+      intervalMs: number
+      effectiveIntervalMs: number
+      bufferedFrames: number
+      targetFrames: number
+      lastReason?: string
+      action?: string
+      detailMs?: number
+    }
+
+type JitterBufferSnapshot = {
+  bufferedFrames: number
+  capacityFrames: number
+  lastEvent: 'push' | 'pop'
+  sequence: number
+}
+
+type VideoPacingConfigInput = {
+  preset?: VideoPacingPreset
+  pipeline?: VideoPacingPipeline
+  fallbackIntervalMs?: number
+  lateThresholdMs?: number
+  maxWaitMs?: number
+  reportIntervalMs?: number
+  targetLatencyMs?: number
+}
+
+type VideoPacingPreset = 'disabled' | 'onvif' | 'call'
+type VideoPacingPipeline = 'buffer-pacing-decode'
+
+type VideoDecoderRuntimeConfig = {
+  pacing: VideoPacingConfigInput
+}
+
+type StatsSnapshot = {
+  bitrateKbps: number | null
+  receiveLatencyMs: number | null
+  renderingLatencyMs: number | null
+  receiveToDecodeMs: number | null
+  receiveToRenderMs: number | null
+  pacingEffectiveIntervalMs: number | null
+  bufferedFrames: number | null
+  targetFrames: number | null
+}
+
+type StatsSample = StatsSnapshot & { tsMs: number }
+
+type StatsChartConfig = {
+  key: string
+  title: string
+  unit: string
+  color: string
+  accessor: (sample: StatsSample) => number | null
+}
 
 type CommandKind = 'absolute' | 'relative' | 'continuous' | 'stop' | 'center'
 
@@ -95,6 +165,102 @@ const DEFAULT_VALUES: Record<FieldKey, number> = {
   speed: 1
 }
 
+const JITTER_VISIBLE_BLOCKS = 30
+const JITTER_HIGHLIGHT_MS = 220
+function createVideoPacingPresetConfig(preset: VideoPacingPreset): VideoPacingConfigInput {
+  if (preset === 'disabled') {
+    return {
+      ...createVideoPacingPresetConfig('onvif'),
+      preset: 'disabled',
+      pipeline: 'buffer-pacing-decode',
+      targetLatencyMs: 0
+    }
+  }
+  if (preset === 'onvif') {
+    return {
+      preset: 'onvif',
+      pipeline: 'buffer-pacing-decode',
+      fallbackIntervalMs: 33,
+      lateThresholdMs: 120,
+      maxWaitMs: 2000,
+      reportIntervalMs: 500,
+      targetLatencyMs: 250
+    }
+  }
+  return {
+    ...createVideoPacingPresetConfig('onvif'),
+    preset: 'call',
+    pipeline: 'buffer-pacing-decode',
+    targetLatencyMs: 250,
+    maxWaitMs: 1000,
+    lateThresholdMs: 500
+  }
+}
+const DEFAULT_VIDEO_PACING_CONFIG: VideoPacingConfigInput = createVideoPacingPresetConfig('onvif')
+const DEFAULT_VIDEO_DECODER_CONFIG: VideoDecoderRuntimeConfig = {
+  pacing: { ...DEFAULT_VIDEO_PACING_CONFIG }
+}
+const STATS_SAMPLE_INTERVAL_MS = 250
+const STATS_MAX_SAMPLES = 240
+const STATS_CHARTS: StatsChartConfig[] = [
+  {
+    key: 'bitrate',
+    title: 'Video Bitrate',
+    unit: 'kbps',
+    color: '#6fe6ff',
+    accessor: (sample) => sample.bitrateKbps
+  },
+  {
+    key: 'receive-latency',
+    title: 'Receive Latency',
+    unit: 'ms',
+    color: '#77f0b8',
+    accessor: (sample) => sample.receiveLatencyMs
+  },
+  {
+    key: 'receive-to-render',
+    title: 'Receive To Render',
+    unit: 'ms',
+    color: '#ffd66f',
+    accessor: (sample) => sample.receiveToRenderMs
+  },
+  {
+    key: 'receive-to-decode',
+    title: 'Receive To Decode',
+    unit: 'ms',
+    color: '#ff9fb3',
+    accessor: (sample) => sample.receiveToDecodeMs
+  },
+  {
+    key: 'buffered-frames',
+    title: 'Buffered Frames',
+    unit: 'frames',
+    color: '#9ac6ff',
+    accessor: (sample) => sample.bufferedFrames
+  }
+]
+
+function cloneVideoDecoderConfig(config: VideoDecoderRuntimeConfig): VideoDecoderRuntimeConfig {
+  return {
+    ...config,
+    pacing: { ...config.pacing }
+  }
+}
+
+function createEmptyStatsSnapshot(): StatsSnapshot {
+  return {
+    bitrateKbps: null,
+    receiveLatencyMs: null,
+    renderingLatencyMs: null,
+    receiveToDecodeMs: null,
+    receiveToRenderMs: null,
+    pacingEffectiveIntervalMs: null,
+    bufferedFrames: null,
+    targetFrames: null
+  }
+}
+
+let currentVideoDecoderConfig: VideoDecoderRuntimeConfig = cloneVideoDecoderConfig(DEFAULT_VIDEO_DECODER_CONFIG)
 let videoWorkerInitialized = false
 let commandTrackAlias: bigint | null = null
 let commandObjectId = 0n
@@ -102,6 +268,239 @@ let catalogTrackAlias: bigint | null = null
 let catalogTracks: CatalogTrack[] = []
 let videoSubscribed = false
 let selectedVideoTrack: string | null = null
+let jitterSnapshot: JitterBufferSnapshot | null = null
+let jitterHighlightTimer: number | null = null
+let latestStats: StatsSnapshot = createEmptyStatsSnapshot()
+let statsSamples: StatsSample[] = []
+let lastStatsSampleMs = 0
+
+const jitterVisualizer = document.getElementById('jitter-visualizer')
+const jitterMeta = document.getElementById('jitter-meta')
+const pacingMeta = document.getElementById('pacing-meta')
+const timingMeta = document.getElementById('timing-meta')
+const pacingPresetInput = document.getElementById('video-pacing-preset') as HTMLSelectElement | null
+const statsBtn = document.getElementById('stats-btn') as HTMLButtonElement | null
+const statsModal = document.getElementById('stats-modal')
+const statsCloseBtn = document.getElementById('stats-close-btn') as HTMLButtonElement | null
+const statsSummary = document.getElementById('stats-summary')
+const statsCharts = document.getElementById('stats-charts')
+const jitterBlocks: HTMLElement[] = []
+
+if (pacingPresetInput) {
+  pacingPresetInput.value = currentVideoDecoderConfig.pacing.preset ?? 'onvif'
+}
+
+if (jitterVisualizer) {
+  jitterVisualizer.innerHTML = ''
+  for (let i = 0; i < JITTER_VISIBLE_BLOCKS; i += 1) {
+    const block = document.createElement('span')
+    block.className = 'jitter-block'
+    jitterVisualizer.appendChild(block)
+    jitterBlocks.push(block)
+  }
+}
+
+function isStatsModalOpen(): boolean {
+  return Boolean(statsModal?.classList.contains('open'))
+}
+
+function openStatsModal(): void {
+  if (!statsModal) return
+  statsModal.classList.add('open')
+  statsModal.setAttribute('aria-hidden', 'false')
+  renderStatsViewer()
+}
+
+function closeStatsModal(): void {
+  if (!statsModal) return
+  statsModal.classList.remove('open')
+  statsModal.setAttribute('aria-hidden', 'true')
+}
+
+function formatStatsNumber(value: number | null, digits = 0): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '-'
+  }
+  return value.toFixed(digits).replace(/\.?0+$/, '')
+}
+
+function pushStatsSample(force = false): void {
+  const nowMs = performance.now()
+  if (!force && nowMs - lastStatsSampleMs < STATS_SAMPLE_INTERVAL_MS) {
+    return
+  }
+  lastStatsSampleMs = nowMs
+  statsSamples.push({
+    tsMs: nowMs,
+    ...latestStats
+  })
+  if (statsSamples.length > STATS_MAX_SAMPLES) {
+    statsSamples = statsSamples.slice(-STATS_MAX_SAMPLES)
+  }
+  if (isStatsModalOpen()) {
+    renderStatsViewer()
+  }
+}
+
+function applyStatsPatch(patch: Partial<StatsSnapshot>, forceSample = false): void {
+  latestStats = { ...latestStats, ...patch }
+  pushStatsSample(forceSample)
+}
+
+function resetStatsSamples(): void {
+  latestStats = createEmptyStatsSnapshot()
+  statsSamples = []
+  lastStatsSampleMs = 0
+  pushStatsSample(true)
+}
+
+function createSummaryItem(label: string, value: string): HTMLElement {
+  const item = document.createElement('div')
+  item.className = 'stats-summary-item'
+  const key = document.createElement('div')
+  key.className = 'stats-summary-label'
+  key.textContent = label
+  const val = document.createElement('div')
+  val.className = 'stats-summary-value'
+  val.textContent = value
+  item.append(key, val)
+  return item
+}
+
+function renderStatsSummary(): void {
+  if (!statsSummary) {
+    return
+  }
+  statsSummary.innerHTML = ''
+  const latest = latestStats
+  const bufferedLabel =
+    typeof latest.bufferedFrames === 'number' && Number.isFinite(latest.bufferedFrames)
+      ? `${Math.round(latest.bufferedFrames)} / ${formatStatsNumber(latest.targetFrames)}`
+      : '-'
+  const items: Array<{ label: string; value: string }> = [
+    { label: 'Bitrate', value: `${formatStatsNumber(latest.bitrateKbps)} kbps` },
+    { label: 'Receive Latency', value: `${formatStatsNumber(latest.receiveLatencyMs)} ms` },
+    { label: 'Receive To Decode', value: `${formatStatsNumber(latest.receiveToDecodeMs)} ms` },
+    { label: 'Receive To Render', value: `${formatStatsNumber(latest.receiveToRenderMs)} ms` },
+    { label: 'Pacing Interval', value: `${formatStatsNumber(latest.pacingEffectiveIntervalMs, 1)} ms` },
+    { label: 'Buffered / Target', value: bufferedLabel }
+  ]
+  for (const item of items) {
+    statsSummary.appendChild(createSummaryItem(item.label, item.value))
+  }
+}
+
+function buildLinePath(
+  series: Array<number | null>,
+  width: number,
+  height: number,
+  minY: number,
+  maxY: number
+): string {
+  const range = Math.max(1e-6, maxY - minY)
+  const maxIndex = Math.max(1, series.length - 1)
+  let path = ''
+  let penDown = false
+  for (let i = 0; i < series.length; i += 1) {
+    const value = series[i]
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      penDown = false
+      continue
+    }
+    const x = (i / maxIndex) * width
+    const y = height - ((value - minY) / range) * height
+    if (!penDown) {
+      path += `M ${x.toFixed(2)} ${y.toFixed(2)} `
+      penDown = true
+    } else {
+      path += `L ${x.toFixed(2)} ${y.toFixed(2)} `
+    }
+  }
+  return path.trim()
+}
+
+function renderStatsCharts(): void {
+  if (!statsCharts) {
+    return
+  }
+  statsCharts.innerHTML = ''
+  if (statsSamples.length < 2) {
+    const empty = document.createElement('div')
+    empty.className = 'stats-empty'
+    empty.textContent = 'No stats yet'
+    statsCharts.appendChild(empty)
+    return
+  }
+
+  const samples = statsSamples.slice(-120)
+  for (const chart of STATS_CHARTS) {
+    const series = samples.map((sample) => chart.accessor(sample))
+    const valid = series.filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+    const card = document.createElement('div')
+    card.className = 'stats-chart-card'
+    const head = document.createElement('div')
+    head.className = 'stats-chart-head'
+    const title = document.createElement('div')
+    title.className = 'stats-chart-title'
+    title.textContent = chart.title
+    const value = document.createElement('div')
+    value.className = 'stats-chart-value'
+    value.textContent = `${formatStatsNumber(valid[valid.length - 1] ?? null, chart.unit === 'ms' ? 1 : 0)} ${chart.unit}`
+    head.append(title, value)
+    card.appendChild(head)
+
+    if (valid.length < 2) {
+      const empty = document.createElement('div')
+      empty.className = 'stats-empty'
+      empty.textContent = 'Waiting for samples'
+      card.appendChild(empty)
+      statsCharts.appendChild(card)
+      continue
+    }
+
+    const minRaw = Math.min(...valid)
+    const maxRaw = Math.max(...valid)
+    const margin = Math.max(1, (maxRaw - minRaw) * 0.08)
+    const minY = Math.max(0, minRaw - margin)
+    const maxY = maxRaw + margin
+    const width = 320
+    const height = 120
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
+    svg.setAttribute('class', 'stats-chart-svg')
+    for (let i = 0; i <= 4; i += 1) {
+      const y = (i / 4) * height
+      const guide = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+      guide.setAttribute('x1', '0')
+      guide.setAttribute('y1', y.toFixed(2))
+      guide.setAttribute('x2', width.toString())
+      guide.setAttribute('y2', y.toFixed(2))
+      guide.setAttribute('stroke', 'rgba(255,255,255,0.10)')
+      guide.setAttribute('stroke-width', '1')
+      svg.appendChild(guide)
+    }
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    path.setAttribute('d', buildLinePath(series, width, height, minY, maxY))
+    path.setAttribute('fill', 'none')
+    path.setAttribute('stroke', chart.color)
+    path.setAttribute('stroke-width', '2')
+    path.setAttribute('stroke-linejoin', 'round')
+    path.setAttribute('stroke-linecap', 'round')
+    svg.appendChild(path)
+    card.appendChild(svg)
+
+    const meta = document.createElement('div')
+    meta.className = 'stats-chart-meta'
+    meta.textContent = `min ${formatStatsNumber(minRaw, 1)} / max ${formatStatsNumber(maxRaw, 1)} ${chart.unit}`
+    card.appendChild(meta)
+    statsCharts.appendChild(card)
+  }
+}
+
+function renderStatsViewer(): void {
+  renderStatsSummary()
+  renderStatsCharts()
+}
 
 function setupVideoDecoderWorker(): void {
   if (videoWorkerInitialized) return
@@ -113,18 +512,74 @@ function setupVideoDecoderWorker(): void {
   const videoElement = document.getElementById('video') as HTMLVideoElement | null
   if (videoElement) {
     videoElement.srcObject = videoStream
+    void videoElement.play().catch((error) => {
+      console.warn('[onvif][video] play failed', error)
+    })
   }
+  videoDecoderWorker.postMessage({ type: 'config', config: currentVideoDecoderConfig })
 
   videoDecoderWorker.onmessage = async (event: MessageEvent<VideoDecoderWorkerMessage>) => {
+    if (event.data.type === 'bitrate') {
+      applyStatsPatch({ bitrateKbps: event.data.kbps })
+      return
+    }
+    if (event.data.type === 'configError') {
+      console.error('[onvif][videoDecoder] config error', {
+        reason: event.data.reason,
+        config: event.data.config
+      })
+      return
+    }
+    if (event.data.type === 'receiveLatency') {
+      applyStatsPatch({ receiveLatencyMs: event.data.ms })
+      return
+    }
+    if (event.data.type === 'renderingLatency') {
+      applyStatsPatch({ renderingLatencyMs: event.data.ms })
+      return
+    }
+    if (event.data.type === 'jitterBufferActivity') {
+      updateJitterSnapshot({
+        bufferedFrames: event.data.bufferedFrames,
+        capacityFrames: event.data.capacityFrames,
+        lastEvent: event.data.event
+      })
+      applyStatsPatch({ bufferedFrames: event.data.bufferedFrames })
+      return
+    }
+    if (event.data.type === 'pacing') {
+      updatePacingMeta(event.data)
+      applyStatsPatch({
+        pacingEffectiveIntervalMs: event.data.effectiveIntervalMs,
+        bufferedFrames: event.data.bufferedFrames,
+        targetFrames: event.data.targetFrames
+      })
+      return
+    }
+    if (event.data.type === 'timing') {
+      updateTimingMeta(event.data)
+      applyStatsPatch({
+        receiveToDecodeMs: event.data.receiveToDecodeMs,
+        receiveToRenderMs: event.data.receiveToRenderMs
+      })
+      return
+    }
     if (event.data.type !== 'frame') {
+      return
+    }
+    const writerDesiredSize = videoWriter.desiredSize
+    if (typeof writerDesiredSize === 'number' && writerDesiredSize <= 0) {
+      console.warn('[onvif][writer] drop frame due to backpressure', {
+        desiredSize: writerDesiredSize,
+        width: event.data.frame.displayWidth,
+        height: event.data.frame.displayHeight
+      })
+      event.data.frame.close()
       return
     }
     await videoWriter.ready
     await videoWriter.write(event.data.frame)
     event.data.frame.close()
-    if (videoElement) {
-      await videoElement.play()
-    }
   }
 }
 
@@ -176,6 +631,92 @@ function updateSelectedVideoTrackLabel(track: string | null): void {
   element.textContent = track ?? '-'
 }
 
+function updateJitterSnapshot(update: { bufferedFrames: number; capacityFrames: number; lastEvent: 'push' | 'pop' }) {
+  const sequence = (jitterSnapshot?.sequence ?? 0) + 1
+  jitterSnapshot = {
+    bufferedFrames: update.bufferedFrames,
+    capacityFrames: update.capacityFrames,
+    lastEvent: update.lastEvent,
+    sequence
+  }
+  renderJitterVisualizer(jitterSnapshot)
+}
+
+function renderJitterVisualizer(snapshot: JitterBufferSnapshot | null): void {
+  if (!jitterBlocks.length) {
+    return
+  }
+  const bufferedFrames = snapshot ? Math.max(0, Math.floor(snapshot.bufferedFrames)) : 0
+  const filledBlocks = Math.min(JITTER_VISIBLE_BLOCKS, bufferedFrames)
+  const firstFilledIndex = JITTER_VISIBLE_BLOCKS - filledBlocks
+
+  for (let i = 0; i < jitterBlocks.length; i += 1) {
+    const block = jitterBlocks[i]
+    block.classList.toggle('filled', i >= firstFilledIndex)
+    block.classList.remove('highlight-push', 'highlight-pop')
+  }
+
+  if (snapshot) {
+    if (snapshot.lastEvent === 'push' && filledBlocks > 0) {
+      jitterBlocks[firstFilledIndex]?.classList.add('highlight-push')
+    }
+    if (snapshot.lastEvent === 'pop' && firstFilledIndex > 0) {
+      jitterBlocks[firstFilledIndex - 1]?.classList.add('highlight-pop')
+    }
+    if (jitterMeta) {
+      jitterMeta.textContent = `buffered ${Math.round(snapshot.bufferedFrames)} frames`
+    }
+    if (jitterHighlightTimer !== null) {
+      window.clearTimeout(jitterHighlightTimer)
+    }
+    jitterHighlightTimer = window.setTimeout(() => {
+      jitterBlocks.forEach((block) => {
+        block.classList.remove('highlight-push', 'highlight-pop')
+      })
+    }, JITTER_HIGHLIGHT_MS)
+  } else if (jitterMeta) {
+    jitterMeta.textContent = 'buffered 0 frames'
+  }
+}
+
+function updatePacingMeta(data: {
+  intervalMs: number
+  effectiveIntervalMs: number
+  bufferedFrames: number
+  targetFrames: number
+  lastReason?: string
+  detailMs?: number
+}): void {
+  if (!pacingMeta) {
+    return
+  }
+  const intervalText = Number.isFinite(data.intervalMs) ? data.intervalMs.toFixed(1) : '-'
+  const effectiveIntervalText = Number.isFinite(data.effectiveIntervalMs) ? data.effectiveIntervalMs.toFixed(1) : '-'
+  const bufferText = Number.isFinite(data.bufferedFrames) ? Math.round(data.bufferedFrames) : '-'
+  const targetText = Number.isFinite(data.targetFrames) ? Math.round(data.targetFrames) : '-'
+  const reason = data.lastReason ?? '-'
+  const detail =
+    typeof data.detailMs === 'number' && Number.isFinite(data.detailMs) ? `, detail ${Math.round(data.detailMs)}ms` : ''
+  pacingMeta.textContent =
+    `pacing: interval ${intervalText}ms (eff ${effectiveIntervalText}ms)\n` +
+    `buffer ${bufferText}/${targetText}, reason ${reason}${detail}`
+}
+
+function updateTimingMeta(data: { receiveToDecodeMs: number | null; receiveToRenderMs: number | null }): void {
+  if (!timingMeta) {
+    return
+  }
+  const receiveToDecodeText =
+    typeof data.receiveToDecodeMs === 'number' && Number.isFinite(data.receiveToDecodeMs)
+      ? `${Math.round(data.receiveToDecodeMs)}ms`
+      : '-'
+  const receiveToRenderText =
+    typeof data.receiveToRenderMs === 'number' && Number.isFinite(data.receiveToRenderMs)
+      ? `${Math.round(data.receiveToRenderMs)}ms`
+      : '-'
+  timingMeta.textContent = `receiveToDecode ${receiveToDecodeText} / receiveToRender ${receiveToRenderText}`
+}
+
 function ensureClient(): MOQTClient {
   const client = moqtClient.getRawClient()
   if (!client) {
@@ -199,6 +740,29 @@ function parseBigInt(value: string): bigint {
   }
 }
 
+function applyVideoDecoderSettings(): void {
+  const selectedPreset: VideoPacingPreset =
+    pacingPresetInput?.value === 'disabled' ||
+    pacingPresetInput?.value === 'call' ||
+    pacingPresetInput?.value === 'onvif'
+      ? pacingPresetInput.value
+      : 'onvif'
+  let pacingConfig: VideoPacingConfigInput = createVideoPacingPresetConfig(selectedPreset)
+  pacingConfig.pipeline = 'buffer-pacing-decode'
+  if (pacingPresetInput) {
+    pacingPresetInput.value = selectedPreset
+  }
+
+  currentVideoDecoderConfig = {
+    ...currentVideoDecoderConfig,
+    pacing: { ...pacingConfig }
+  }
+
+  if (videoWorkerInitialized) {
+    videoDecoderWorker.postMessage({ type: 'config', config: currentVideoDecoderConfig })
+  }
+}
+
 function applySelectedVideoTrack(track: string): void {
   selectedVideoTrack = track
   updateSelectedVideoTrackLabel(track)
@@ -208,8 +772,8 @@ function applySelectedVideoTrack(track: string): void {
 function notifyDecoderFromCatalog(trackName: string | null): void {
   if (!trackName) return
   const track = catalogTracks.find((entry) => entry.name === trackName)
-  if (!track?.codec) return
-  videoDecoderWorker.postMessage({ type: 'catalog', codec: track.codec })
+  if (!track?.codec && typeof track?.framerate !== 'number') return
+  videoDecoderWorker.postMessage({ type: 'catalog', codec: track.codec, framerate: track.framerate })
 }
 
 function appendMeta(container: HTMLElement, label: string, value?: string): void {
@@ -528,6 +1092,7 @@ async function connect(): Promise<void> {
   videoSubscribed = false
   catalogTrackAlias = null
   selectedVideoTrack = null
+  resetStatsSamples()
   renderCatalogList()
   updateCatalogAlias(catalogTrackAlias)
   updateSelectedVideoTrackLabel(selectedVideoTrack)
@@ -569,6 +1134,7 @@ async function disconnect(): Promise<void> {
   videoSubscribed = false
   selectedVideoTrack = null
   moqtClient.clearSubgroupObjectHandlers()
+  resetStatsSamples()
   updateCommandAlias(commandTrackAlias)
   updateCatalogAlias(catalogTrackAlias)
   renderCatalogList()
@@ -616,12 +1182,27 @@ settingsBtn?.addEventListener('click', () => {
   openSettingsModal()
 })
 
+statsBtn?.addEventListener('click', () => {
+  openStatsModal()
+})
+
 settingsCloseBtn?.addEventListener('click', () => {
   closeSettingsModal()
 })
 
+statsCloseBtn?.addEventListener('click', () => {
+  closeStatsModal()
+})
+
 settingsSaveBtn?.addEventListener('click', () => {
-  closeSettingsModal()
+  try {
+    applyVideoDecoderSettings()
+    closeSettingsModal()
+    updateStatus('settings saved', true)
+  } catch (error) {
+    console.error('[onvif][settings] failed to apply settings', error)
+    updateStatus('settings invalid', false)
+  }
 })
 
 settingsModal?.addEventListener('click', (event) => {
@@ -630,7 +1211,17 @@ settingsModal?.addEventListener('click', (event) => {
   }
 })
 
+statsModal?.addEventListener('click', (event) => {
+  if (event.target === statsModal) {
+    closeStatsModal()
+  }
+})
+
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && statsModal?.classList.contains('open')) {
+    closeStatsModal()
+    return
+  }
   if (event.key === 'Escape' && settingsModal?.classList.contains('open')) {
     closeSettingsModal()
   }
@@ -639,3 +1230,4 @@ document.addEventListener('keydown', (event) => {
 buildCommandUI()
 setupUrlPresets()
 renderCatalogList()
+resetStatsSamples()

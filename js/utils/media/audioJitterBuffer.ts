@@ -53,15 +53,6 @@ export class AudioJitterBuffer {
           objectId,
           payloadLength: object.objectPayloadLength
         })
-      } else {
-        const hasCaptureTimestamp = extensions.some((ext) => ext.type === 'captureTimestamp')
-        console.debug('[AudioJitterBuffer] Using LOC header fallback', {
-          groupId,
-          objectId,
-          payloadLength: object.objectPayloadLength,
-          locExtensionCount: extensions.length,
-          hasCaptureTimestamp
-        })
       }
     }
     const parsed = parsedFromMetadata ?? buildChunkFromLoc(object)
