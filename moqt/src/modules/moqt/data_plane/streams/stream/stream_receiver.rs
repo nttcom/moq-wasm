@@ -19,7 +19,8 @@ pub struct StreamReceiver<T: TransportProtocol, const U: usize, D: Decoder> {
 impl<T: TransportProtocol, const U: usize, D: Decoder> StreamReceiver<T, U, D> {
     pub(crate) fn new(receive_stream: T::ReceiveStream, decoder: D) -> Self {
         let inner = Reader::<T, U>::new(receive_stream);
-        let framed_read = FramedRead::new(inner, decoder);
+        // let framed_read = FramedRead::new(inner, decoder);
+        let framed_read = FramedRead::with_capacity(inner, decoder, U);
         Self { framed_read }
     }
 
