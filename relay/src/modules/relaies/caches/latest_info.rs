@@ -4,23 +4,23 @@ use crate::modules::core::data_object::DataObject;
 
 pub(crate) struct LatestInfo {
     pub(crate) group_id: u64,
-    latest_object: tokio::sync::watch::Sender<Option<Arc<DataObject>>>,
+    latest_object: tokio::sync::broadcast::Sender<Arc<DataObject>>,
 }
 
 impl LatestInfo {
     pub(crate) fn new() -> Self {
-        let (sender, _receiver) = tokio::sync::watch::channel(None);
+        let (sender, _receiver) = tokio::sync::broadcast::channel(128);
         Self {
             group_id: 0,
             latest_object: sender,
         }
     }
 
-    pub(crate) fn get_receiver(&self) -> tokio::sync::watch::Receiver<Option<Arc<DataObject>>> {
+    pub(crate) fn get_receiver(&self) -> tokio::sync::broadcast::Receiver<Arc<DataObject>> {
         self.latest_object.subscribe()
     }
 
     pub(crate) fn set_latest_object(&self, object: Arc<DataObject>) {
-        let _ = self.latest_object.send(Some(object));
+        let _ = self.latest_object.send(object);
     }
 }
