@@ -30,7 +30,7 @@ impl Cache for CacheMap {
         self.latest_info.read().unwrap().group_id
     }
 
-    fn get_latest_receiver(&self) -> tokio::sync::watch::Receiver<Option<Arc<DataObject>>> {
+    fn get_latest_receiver(&self) -> tokio::sync::broadcast::Receiver<Arc<DataObject>> {
         self.latest_info.read().unwrap().get_receiver()
     }
 

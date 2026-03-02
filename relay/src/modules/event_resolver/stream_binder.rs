@@ -79,13 +79,13 @@ impl StreamBinder {
                 relay_properties: prop,
             };
             let track_alias = receiver.get_track_alias();
-            relay.add_object_receiver(receiver);
             relay.add_object_sender(
                 track_alias,
                 sender,
                 published_resources.group_order(),
                 published_resources.filter_type(),
             );
+            relay.add_object_receiver(receiver);
             relay_manager.relay_map.insert(track_alias, relay);
         };
         self.stream_runner.add_task(Box::pin(task)).await;
