@@ -29,6 +29,34 @@ type StatsSnapshot = {
   localMemberId: string
   localVideoBitrate: number | null
   localAudioBitrate: number | null
+  localCameraVideoSendTiming: {
+    captureToEncodeDoneMs: number | null
+    encodeQueueSize: number
+    queueWaitMs: number
+    sendActiveMs: number
+    objectSendMs: number
+    serializeMs: number
+    endOfGroupMs: number
+    queueDepth: number
+    objectBytes: number
+    objectCount: number
+    aliasCount: number
+    keyframe: boolean
+  } | null
+  localScreenShareVideoSendTiming: {
+    captureToEncodeDoneMs: number | null
+    encodeQueueSize: number
+    queueWaitMs: number
+    sendActiveMs: number
+    objectSendMs: number
+    serializeMs: number
+    endOfGroupMs: number
+    queueDepth: number
+    objectBytes: number
+    objectCount: number
+    aliasCount: number
+    keyframe: boolean
+  } | null
   remoteMembers: RemoteMember[]
   remoteMedia: Map<string, RemoteMediaStreams>
 }
@@ -58,6 +86,8 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     localScreenShareStream,
     localAudioBitrate,
     localVideoBitrate,
+    localCameraVideoSendTiming,
+    localScreenShareVideoSendTiming,
     remoteMedia,
     toggleCamera,
     toggleScreenShare,
@@ -69,6 +99,11 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     videoCodecOptions,
     videoResolutionOptions,
     videoBitrateOptions,
+    videoHardwareAccelerationOptions,
+    selectedVideoEncoding,
+    selectVideoEncoding,
+    selectedScreenShareEncoding,
+    selectScreenShareEncoding,
     audioCodecOptions,
     audioBitrateOptions,
     audioChannelOptions,
@@ -82,6 +117,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     updateCaptureSettings,
     applyCaptureSettings,
     catalogTracks,
+    subscribedCatalogTracks,
     addCatalogTrack,
     updateCatalogTrack,
     removeCatalogTrack
@@ -91,6 +127,8 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     localMemberId: session.localMember.id,
     localVideoBitrate,
     localAudioBitrate,
+    localCameraVideoSendTiming,
+    localScreenShareVideoSendTiming,
     remoteMembers: [],
     remoteMedia
   })
@@ -161,10 +199,20 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
       localMemberId: room.localMember.id,
       localVideoBitrate,
       localAudioBitrate,
+      localCameraVideoSendTiming,
+      localScreenShareVideoSendTiming,
       remoteMembers: Array.from(room.remoteMembers.values()),
       remoteMedia
     }
-  }, [localAudioBitrate, localVideoBitrate, remoteMedia, room.localMember.id, room.remoteMembers])
+  }, [
+    localAudioBitrate,
+    localVideoBitrate,
+    localCameraVideoSendTiming,
+    localScreenShareVideoSendTiming,
+    remoteMedia,
+    room.localMember.id,
+    room.remoteMembers
+  ])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -175,7 +223,40 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
         const localSample: SidebarStatsSample = {
           timestamp: sampledAt,
           videoBitrateKbps: snapshot.localVideoBitrate,
-          audioBitrateKbps: snapshot.localAudioBitrate
+          audioBitrateKbps: snapshot.localAudioBitrate,
+          localCameraCaptureToEncodeDoneMs: snapshot.localCameraVideoSendTiming?.captureToEncodeDoneMs ?? null,
+          localCameraEncodeQueueSize: snapshot.localCameraVideoSendTiming?.encodeQueueSize ?? null,
+          localCameraSendQueueWaitMs: snapshot.localCameraVideoSendTiming?.queueWaitMs ?? null,
+          localCameraSendActiveMs: snapshot.localCameraVideoSendTiming?.sendActiveMs ?? null,
+          localCameraSendObjectMs: snapshot.localCameraVideoSendTiming?.objectSendMs ?? null,
+          localCameraSendSerializeMs: snapshot.localCameraVideoSendTiming?.serializeMs ?? null,
+          localCameraSendEndOfGroupMs: snapshot.localCameraVideoSendTiming?.endOfGroupMs ?? null,
+          localCameraSendQueueDepth: snapshot.localCameraVideoSendTiming?.queueDepth ?? null,
+          localCameraSendObjectBytes: snapshot.localCameraVideoSendTiming?.objectBytes ?? null,
+          localCameraSendObjectCount: snapshot.localCameraVideoSendTiming?.objectCount ?? null,
+          localCameraSendAliasCount: snapshot.localCameraVideoSendTiming?.aliasCount ?? null,
+          localCameraSendKeyframe: snapshot.localCameraVideoSendTiming
+            ? snapshot.localCameraVideoSendTiming.keyframe
+              ? 1
+              : 0
+            : null,
+          localScreenShareCaptureToEncodeDoneMs:
+            snapshot.localScreenShareVideoSendTiming?.captureToEncodeDoneMs ?? null,
+          localScreenShareEncodeQueueSize: snapshot.localScreenShareVideoSendTiming?.encodeQueueSize ?? null,
+          localScreenShareSendQueueWaitMs: snapshot.localScreenShareVideoSendTiming?.queueWaitMs ?? null,
+          localScreenShareSendActiveMs: snapshot.localScreenShareVideoSendTiming?.sendActiveMs ?? null,
+          localScreenShareSendObjectMs: snapshot.localScreenShareVideoSendTiming?.objectSendMs ?? null,
+          localScreenShareSendSerializeMs: snapshot.localScreenShareVideoSendTiming?.serializeMs ?? null,
+          localScreenShareSendEndOfGroupMs: snapshot.localScreenShareVideoSendTiming?.endOfGroupMs ?? null,
+          localScreenShareSendQueueDepth: snapshot.localScreenShareVideoSendTiming?.queueDepth ?? null,
+          localScreenShareSendObjectBytes: snapshot.localScreenShareVideoSendTiming?.objectBytes ?? null,
+          localScreenShareSendObjectCount: snapshot.localScreenShareVideoSendTiming?.objectCount ?? null,
+          localScreenShareSendAliasCount: snapshot.localScreenShareVideoSendTiming?.aliasCount ?? null,
+          localScreenShareSendKeyframe: snapshot.localScreenShareVideoSendTiming
+            ? snapshot.localScreenShareVideoSendTiming.keyframe
+              ? 1
+              : 0
+            : null
         }
         next.set(snapshot.localMemberId, appendStatsSample(prev.get(snapshot.localMemberId), localSample))
         for (const remoteMember of snapshot.remoteMembers) {
@@ -193,6 +274,24 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
             videoRenderLatencyMs: media?.videoLatencyRenderMs,
             screenShareRenderLatencyMs: media?.screenShareLatencyRenderMs,
             audioRenderLatencyMs: media?.audioLatencyRenderMs,
+            videoReceiveToDecodeMs: media?.videoReceiveToDecodeMs,
+            videoReceiveToRenderMs: media?.videoReceiveToRenderMs,
+            videoDecodeQueueAtReceive: media?.videoDecodeQueueAtReceive,
+            videoDecodeQueueAtSubmit: media?.videoDecodeQueueAtSubmit,
+            videoDecodeQueueAtOutput: media?.videoDecodeQueueAtOutput,
+            screenShareReceiveToDecodeMs: media?.screenShareReceiveToDecodeMs,
+            screenShareReceiveToRenderMs: media?.screenShareReceiveToRenderMs,
+            screenShareDecodeQueueAtReceive: media?.screenShareDecodeQueueAtReceive,
+            screenShareDecodeQueueAtSubmit: media?.screenShareDecodeQueueAtSubmit,
+            screenShareDecodeQueueAtOutput: media?.screenShareDecodeQueueAtOutput,
+            videoPacingEffectiveIntervalMs: media?.videoPacingEffectiveIntervalMs,
+            videoPacingBufferedFrames: media?.videoPacingBufferedFrames,
+            videoDecodeQueueSize: media?.videoDecodeQueueSize,
+            videoPacingTargetFrames: media?.videoPacingTargetFrames,
+            screenSharePacingEffectiveIntervalMs: media?.screenSharePacingEffectiveIntervalMs,
+            screenSharePacingBufferedFrames: media?.screenSharePacingBufferedFrames,
+            screenShareDecodeQueueSize: media?.screenShareDecodeQueueSize,
+            screenSharePacingTargetFrames: media?.screenSharePacingTargetFrames,
             audioPlaybackQueueMs: media?.audioPlaybackQueueMs,
             videoRenderingRateFps: media?.videoRenderingRateFps,
             screenShareRenderingRateFps: media?.screenShareRenderingRateFps,
@@ -314,6 +413,15 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     }
   }
 
+  useEffect(() => {
+    for (const memberId of room.remoteMembers.keys()) {
+      if (catalogLoadingMemberIds.has(memberId) || catalogSubscribedMemberIds.has(memberId)) {
+        continue
+      }
+      void handleLoadCatalogTracks(memberId)
+    }
+  }, [catalogLoadingMemberIds, catalogSubscribedMemberIds, room.remoteMembers])
+
   const handleSelectCatalogTrack = (memberId: string, role: CatalogSubscribeRole, trackName: string) => {
     setRemoteCatalogSelections((prev) => {
       const next = new Map(prev)
@@ -333,7 +441,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     if (!trackName) {
       return
     }
-    const trackCodec =
+    const selectedTrack =
       role === 'audio' || role === 'video' || role === 'screenshare'
         ? remoteCatalogTracks.get(memberId)?.find((track) => {
             if (track.name !== trackName) {
@@ -343,8 +451,21 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
               return track.role === 'audio'
             }
             return track.role === 'video'
-          })?.codec
+          })
         : undefined
+    if ((role === 'video' || role === 'screenshare') && selectedTrack) {
+      const validation = await validateVideoDecoderCatalogTrackConfig(selectedTrack)
+      if (!validation.ok) {
+        console.error(`[call][subscribe] blocked unsupported decoder config for ${memberId}/${trackName}`, {
+          role,
+          reason: validation.message,
+          track: selectedTrack
+        })
+        window.alert(`Subscribe blocked: ${validation.message}`)
+        return
+      }
+    }
+    const trackCodec = role === 'audio' || role === 'video' || role === 'screenshare' ? selectedTrack?.codec : undefined
     const trackState = getSubscriptionStateByRole(member, role)
     const subscribeId = trackState.subscribeId
     const trackKey = buildTrackActionKey(memberId, role)
@@ -431,6 +552,34 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     }
   }
 
+  useEffect(() => {
+    for (const member of room.remoteMembers.values()) {
+      const chatState = member.subscribedTracks.chat
+      const chatTrackKey = buildTrackActionKey(member.id, 'chat')
+      if (
+        chatState.isSubscribed ||
+        chatState.isSubscribing ||
+        catalogUnsubscribingTrackKeys.has(chatTrackKey) ||
+        typeof chatState.subscribeId !== 'bigint'
+      ) {
+        continue
+      }
+      const trackNamespace = getTrackNamespace(member)
+      if (!trackNamespace) {
+        continue
+      }
+      const selected = remoteCatalogSelections.get(member.id)
+      const catalogChatTrackName = remoteCatalogTracks
+        .get(member.id)
+        ?.find((track) => track.role === 'chat')
+        ?.name
+      const chatTrackName = selected?.chat ?? catalogChatTrackName ?? 'chat'
+      void subscribeCatalogTrack(member, member.id, trackNamespace, 'chat', chatTrackName).catch((error) => {
+        console.error(`Failed to auto-subscribe chat track for ${member.id}:`, error)
+      })
+    }
+  }, [catalogUnsubscribingTrackKeys, remoteCatalogSelections, remoteCatalogTracks, room.remoteMembers])
+
   const handleToggleCamera = async () => {
     const enabled = await toggleCamera()
     session.localMember.publishedTracks.video = enabled || screenShareEnabled
@@ -508,6 +657,11 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
               resolutionOptions: videoResolutionOptions,
               bitrateOptions: videoBitrateOptions
             }}
+            videoHardwareAccelerationOptions={videoHardwareAccelerationOptions}
+            selectedVideoEncoding={selectedVideoEncoding}
+            onSelectVideoEncoding={selectVideoEncoding}
+            selectedScreenShareEncoding={selectedScreenShareEncoding}
+            onSelectScreenShareEncoding={selectScreenShareEncoding}
             audioEncodingOptions={{
               codecOptions: audioCodecOptions,
               bitrateOptions: audioBitrateOptions,
@@ -517,6 +671,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
             onChangeCaptureSettings={updateCaptureSettings}
             onApplyCaptureSettings={applyCaptureSettings}
             catalogTracks={catalogTracks}
+            subscribedCatalogTracks={subscribedCatalogTracks}
             onAddCatalogTrack={addCatalogTrack}
             onUpdateCatalogTrack={updateCatalogTrack}
             onRemoveCatalogTrack={removeCatalogTrack}
@@ -525,7 +680,6 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
             catalogLoadingMemberIds={catalogLoadingMemberIds}
             catalogSubscribedMemberIds={catalogSubscribedMemberIds}
             catalogUnsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
-            onLoadCatalogTracks={handleLoadCatalogTracks}
             onSelectCatalogTrack={handleSelectCatalogTrack}
             onSubscribeVideoTrack={(memberId) => handleSubscribeCatalogTrack(memberId, 'video')}
             onSubscribeScreenshareTrack={(memberId) => handleSubscribeCatalogTrack(memberId, 'screenshare')}
@@ -678,4 +832,55 @@ function getSubscriptionStateByRole(member: RemoteMember, role: CatalogSubscribe
     return member.subscribedTracks.chat
   }
   return member.subscribedTracks.audio
+}
+
+async function validateVideoDecoderCatalogTrackConfig(
+  track: Pick<CallCatalogTrack, 'codec' | 'width' | 'height'>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (typeof VideoDecoder === 'undefined') {
+    return { ok: false, message: 'VideoDecoder is not available in this browser.' }
+  }
+  if (!track.codec) {
+    return { ok: false, message: 'Track codec is missing in catalog.' }
+  }
+  const config: VideoDecoderConfig = track.codec.startsWith('avc')
+    ? ({
+        codec: track.codec,
+        hardwareAcceleration: 'prefer-software',
+        avc: { format: 'avc' }
+      } as VideoDecoderConfig)
+    : ({ codec: track.codec } as VideoDecoderConfig)
+  if (typeof track.width === 'number' && track.width > 0) {
+    ;(config as any).codedWidth = Math.floor(track.width)
+  }
+  if (typeof track.height === 'number' && track.height > 0) {
+    ;(config as any).codedHeight = Math.floor(track.height)
+  }
+  try {
+    const supported = await VideoDecoder.isConfigSupported(config)
+    if (!supported.supported) {
+      return { ok: false, message: `VideoDecoder config unsupported: ${track.codec}` }
+    }
+  } catch (error) {
+    console.error('[call][subscribe] VideoDecoder.isConfigSupported failed', error, config)
+    return { ok: false, message: 'Failed to check VideoDecoder config support.' }
+  }
+  let decoder: VideoDecoder | undefined
+  try {
+    decoder = new VideoDecoder({
+      output: (frame) => frame.close(),
+      error: (error) => console.error('[call][subscribe] VideoDecoder error during configure check', error, config)
+    })
+    decoder.configure(config)
+    return { ok: true }
+  } catch (error) {
+    console.error('[call][subscribe] VideoDecoder.configure failed', error, config)
+    return { ok: false, message: `VideoDecoder.configure failed: ${track.codec}` }
+  } finally {
+    try {
+      decoder?.close()
+    } catch {
+      // ignore
+    }
+  }
 }

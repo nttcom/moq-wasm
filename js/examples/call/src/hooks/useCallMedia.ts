@@ -13,6 +13,7 @@ import {
   DEFAULT_VIDEO_ENCODING_SETTINGS,
   VIDEO_BITRATE_OPTIONS,
   VIDEO_CODEC_OPTIONS,
+  VIDEO_HARDWARE_ACCELERATION_OPTIONS,
   VIDEO_RESOLUTION_OPTIONS,
   type VideoEncodingSettings
 } from '../types/videoEncoding'
@@ -29,12 +30,17 @@ import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import {
   appendCatalogTracks,
   createCatalogTrackId,
+  getAudioCatalogTrackNames,
   getAudioCatalogTracks,
+  getCameraCatalogTrackNames,
   getCameraCatalogTracks,
+  getScreenShareCatalogTrackNames,
   getScreenShareCatalogTracks,
+  removeCatalogTracksByNames,
   toCatalogTracks,
   toEditableCatalogTracks
 } from '../media/callCatalog'
+import type { SubscribedCatalogTrack } from '../media/mediaPublisher'
 
 interface UseCallMediaResult {
   cameraEnabled: boolean
@@ -47,6 +53,8 @@ interface UseCallMediaResult {
   localAudioStream: MediaStream | null
   localVideoBitrate: number | null
   localAudioBitrate: number | null
+  localCameraVideoSendTiming: LocalVideoSendTiming | null
+  localScreenShareVideoSendTiming: LocalVideoSendTiming | null
   remoteMedia: Map<string, RemoteMediaStreams>
   toggleCamera: () => Promise<boolean>
   toggleScreenShare: () => Promise<boolean>
@@ -58,6 +66,7 @@ interface UseCallMediaResult {
   videoCodecOptions: typeof VIDEO_CODEC_OPTIONS
   videoResolutionOptions: typeof VIDEO_RESOLUTION_OPTIONS
   videoBitrateOptions: typeof VIDEO_BITRATE_OPTIONS
+  videoHardwareAccelerationOptions: typeof VIDEO_HARDWARE_ACCELERATION_OPTIONS
   selectedVideoEncoding: VideoEncodingSettings
   selectVideoEncoding: (settings: Partial<VideoEncodingSettings>) => Promise<void>
   selectedScreenShareEncoding: VideoEncodingSettings
@@ -79,36 +88,58 @@ interface UseCallMediaResult {
   updateCaptureSettings: (settings: Partial<CaptureSettingsState>) => void
   applyCaptureSettings: () => Promise<void>
   catalogTracks: EditableCallCatalogTrack[]
+  subscribedCatalogTracks: SubscribedCatalogTrack[]
   addCatalogTrack: (track: Omit<EditableCallCatalogTrack, 'id'>) => void
   updateCatalogTrack: (id: string, patch: Partial<EditableCallCatalogTrack>) => void
   removeCatalogTrack: (id: string) => void
+}
+
+type LocalVideoSendTiming = {
+  captureToEncodeDoneMs: number | null
+  encodeQueueSize: number
+  queueWaitMs: number
+  sendActiveMs: number
+  objectSendMs: number
+  serializeMs: number
+  endOfGroupMs: number
+  queueDepth: number
+  objectBytes: number
+  objectCount: number
+  aliasCount: number
+  keyframe: boolean
 }
 
 const DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS: VideoEncodingSettings = {
   codec: VIDEO_CODEC_OPTIONS.find((c) => c.id.startsWith('av1'))?.codec ?? VIDEO_CODEC_OPTIONS[3].codec,
   width: 1920,
   height: 1080,
-  bitrate: VIDEO_BITRATE_OPTIONS.find((b) => b.id === '1mbps')?.bitrate ?? VIDEO_BITRATE_OPTIONS[2].bitrate
+  bitrate: VIDEO_BITRATE_OPTIONS.find((b) => b.id === '1mbps')?.bitrate ?? VIDEO_BITRATE_OPTIONS[2].bitrate,
+  framerate: 30,
+  hardwareAcceleration: 'prefer-software'
 }
 
 type CatalogPresetSource = 'camera' | 'screenshare' | 'audio'
 type CatalogPreset = {
   label: string
   append: () => ReturnType<typeof getCameraCatalogTracks>
+  names: () => string[]
 }
 
 const CATALOG_PRESETS: Record<CatalogPresetSource, CatalogPreset> = {
   camera: {
     label: 'camera',
-    append: getCameraCatalogTracks
+    append: getCameraCatalogTracks,
+    names: getCameraCatalogTrackNames
   },
   screenshare: {
     label: 'screenshare',
-    append: getScreenShareCatalogTracks
+    append: getScreenShareCatalogTracks,
+    names: getScreenShareCatalogTrackNames
   },
   audio: {
     label: 'audio',
-    append: getAudioCatalogTracks
+    append: getAudioCatalogTracks,
+    names: getAudioCatalogTrackNames
   }
 }
 
@@ -132,6 +163,10 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
   const [localAudioStream, setLocalAudioStream] = useState<MediaStream | null>(null)
   const [localVideoBitrate, setLocalVideoBitrate] = useState<number | null>(null)
   const [localAudioBitrate, setLocalAudioBitrate] = useState<number | null>(null)
+  const [localCameraVideoSendTiming, setLocalCameraVideoSendTiming] = useState<LocalVideoSendTiming | null>(null)
+  const [localScreenShareVideoSendTiming, setLocalScreenShareVideoSendTiming] = useState<LocalVideoSendTiming | null>(
+    null
+  )
   const [remoteMedia, setRemoteMedia] = useState<Map<string, RemoteMediaStreams>>(new Map())
   const [videoJitterConfigs, setVideoJitterConfigs] = useState<Map<string, VideoJitterConfig>>(new Map())
   const [audioJitterConfigs, setAudioJitterConfigs] = useState<Map<string, AudioJitterConfig>>(new Map())
@@ -161,6 +196,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     autoGainControl: true
   })
   const [catalogTracks, setCatalogTracks] = useState<EditableCallCatalogTrack[]>([])
+  const [subscribedCatalogTracks, setSubscribedCatalogTracks] = useState<SubscribedCatalogTrack[]>([])
   const videoRenderingRateStateRef = useRef<Map<string, RenderingRateState>>(new Map())
   const audioRenderingRateStateRef = useRef<Map<string, RenderingRateState>>(new Map())
 
@@ -186,6 +222,8 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setLocalVideoStream(null)
       setLocalScreenShareStream(null)
       setLocalAudioStream(null)
+      setLocalCameraVideoSendTiming(null)
+      setLocalScreenShareVideoSendTiming(null)
       setRemoteMedia(new Map())
       setCameraEnabled(false)
       setMicrophoneEnabled(false)
@@ -195,6 +233,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setVideoEncoderError(null)
       setAudioEncoderError(null)
       setCatalogTracks([])
+      setSubscribedCatalogTracks([])
       videoRenderingRateStateRef.current.clear()
       audioRenderingRateStateRef.current.clear()
       return
@@ -202,6 +241,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
 
     const controller = session.getMediaController()
     const initialCatalogTracks = toEditableCatalogTracks(controller.getCatalogTracks())
+    setSubscribedCatalogTracks(controller.getSubscribedCatalogTracks())
     setCatalogTracks(initialCatalogTracks)
     const initialVideoEncoding = deriveCameraEncodingFromCatalogTracks(
       initialCatalogTracks,
@@ -275,6 +315,13 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
         }),
       onLocalVideoBitrate: (kbps) => setLocalVideoBitrate(kbps),
       onLocalAudioBitrate: (kbps) => setLocalAudioBitrate(kbps),
+      onLocalVideoSendTiming: (timing, source) => {
+        if (source === 'screenshare') {
+          setLocalScreenShareVideoSendTiming(timing)
+          return
+        }
+        setLocalCameraVideoSendTiming(timing)
+      },
       onRemoteVideoBitrate: (userId, kbps, source) =>
         setRemoteMedia((prev) => {
           const updated = new Map(prev)
@@ -338,6 +385,73 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
             ...current,
             videoLatencyRenderMs: ms,
             videoRenderingRateFps: renderingRate
+          })
+          return updated
+        }),
+      onRemoteVideoTiming: (userId, timing, source) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId) ?? {}
+          if (source === 'screenshare') {
+            updated.set(userId, {
+              ...current,
+              screenShareReceiveToDecodeMs: timing.receiveToDecodeMs,
+              screenShareReceiveToRenderMs: timing.receiveToRenderMs
+            })
+            return updated
+          }
+          updated.set(userId, {
+            ...current,
+            videoReceiveToDecodeMs: timing.receiveToDecodeMs,
+            videoReceiveToRenderMs: timing.receiveToRenderMs
+          })
+          return updated
+        }),
+      onRemoteVideoDecodingObject: (userId, decoding, source) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId) ?? {}
+          if (source === 'screenshare') {
+            updated.set(userId, {
+              ...current,
+              screenShareDecodingGroupId: decoding.groupId,
+              screenShareDecodingObjectId: decoding.objectId,
+              screenShareDecodingChunkType: decoding.chunkType,
+              screenShareDecodingPhase: decoding.phase
+            })
+            return updated
+          }
+          updated.set(userId, {
+            ...current,
+            videoDecodingGroupId: decoding.groupId,
+            videoDecodingObjectId: decoding.objectId,
+            videoDecodingChunkType: decoding.chunkType,
+            videoDecodingPhase: decoding.phase
+          })
+          return updated
+        }),
+      onRemoteVideoPacing: (userId, pacing, source) =>
+        setRemoteMedia((prev) => {
+          const updated = new Map(prev)
+          const current = updated.get(userId) ?? {}
+          if (source === 'screenshare') {
+            updated.set(userId, {
+              ...current,
+              screenSharePacingIntervalMs: pacing.intervalMs,
+              screenSharePacingEffectiveIntervalMs: pacing.effectiveIntervalMs,
+              screenSharePacingBufferedFrames: pacing.bufferedFrames,
+              screenShareDecodeQueueSize: pacing.decodeQueueSize,
+              screenSharePacingTargetFrames: pacing.targetFrames
+            })
+            return updated
+          }
+          updated.set(userId, {
+            ...current,
+            videoPacingIntervalMs: pacing.intervalMs,
+            videoPacingEffectiveIntervalMs: pacing.effectiveIntervalMs,
+            videoPacingBufferedFrames: pacing.bufferedFrames,
+            videoDecodeQueueSize: pacing.decodeQueueSize,
+            videoPacingTargetFrames: pacing.targetFrames
           })
           return updated
         }),
@@ -418,17 +532,30 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
           if (source === 'screenshare') {
             updated.set(userId, {
               ...current,
-              screenShareCodec: config.codec,
-              screenShareWidth: config.width,
-              screenShareHeight: config.height
+              screenShareCodec: config.codec ?? current.screenShareCodec,
+              screenShareWidth: config.width ?? current.screenShareWidth,
+              screenShareHeight: config.height ?? current.screenShareHeight,
+              screenShareDecoderDescriptionLength:
+                config.descriptionLength ?? current.screenShareDecoderDescriptionLength,
+              screenShareDecoderAvcFormat: config.avcFormat ?? current.screenShareDecoderAvcFormat,
+              screenShareDecoderHardwareAcceleration:
+                config.hardwareAcceleration ?? current.screenShareDecoderHardwareAcceleration,
+              screenShareDecoderOptimizeForLatency:
+                config.optimizeForLatency ?? current.screenShareDecoderOptimizeForLatency
             })
             return updated
           }
           updated.set(userId, {
             ...current,
-            videoCodec: config.codec,
-            videoWidth: config.width,
-            videoHeight: config.height
+            videoCodec: config.codec ?? current.videoCodec,
+            videoWidth: config.width ?? current.videoWidth,
+            videoHeight: config.height ?? current.videoHeight,
+            videoDecoderDescriptionLength: config.descriptionLength ?? current.videoDecoderDescriptionLength,
+            videoDecoderAvcFormat: config.avcFormat ?? current.videoDecoderAvcFormat,
+            videoDecoderHardwareAcceleration:
+              config.hardwareAcceleration ?? current.videoDecoderHardwareAcceleration,
+            videoDecoderOptimizeForLatency:
+              config.optimizeForLatency ?? current.videoDecoderOptimizeForLatency
           })
           return updated
         }),
@@ -443,6 +570,8 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setRemoteMedia(new Map())
       setLocalVideoBitrate(null)
       setLocalAudioBitrate(null)
+      setLocalCameraVideoSendTiming(null)
+      setLocalScreenShareVideoSendTiming(null)
       setLocalVideoStream(null)
       setLocalScreenShareStream(null)
       setLocalAudioStream(null)
@@ -451,9 +580,26 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
       setMicrophoneEnabled(session.localMember.publishedTracks.audio)
       setVideoJitterConfigs(new Map())
       setAudioJitterConfigs(new Map())
+      setSubscribedCatalogTracks([])
       videoRenderingRateStateRef.current.clear()
       audioRenderingRateStateRef.current.clear()
     }
+  }, [session])
+
+  useEffect(() => {
+    if (!session) {
+      setSubscribedCatalogTracks([])
+      return
+    }
+    const controller = session.getMediaController()
+    const syncSubscribedCatalogTracks = () => {
+      const nextTracks = controller.getSubscribedCatalogTracks()
+      setSubscribedCatalogTracks((prev) => (isSameSubscribedCatalogTracks(prev, nextTracks) ? prev : nextTracks))
+    }
+
+    syncSubscribedCatalogTracks()
+    const timerId = window.setInterval(syncSubscribedCatalogTracks, 500)
+    return () => window.clearInterval(timerId)
   }, [session])
 
   useEffect(() => {
@@ -562,6 +708,14 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     [updateCatalogTracks]
   )
 
+  const removeCatalogPresetTracks = useCallback(
+    (source: CatalogPresetSource) => {
+      const preset = CATALOG_PRESETS[source]
+      updateCatalogTracks((prev) => removeCatalogTracksByNames(prev, preset.names()), `remove ${preset.label} catalog tracks`)
+    },
+    [updateCatalogTracks]
+  )
+
   const toggleCamera = useCallback(async () => {
     if (!session || cameraBusy) {
       return cameraEnabled
@@ -579,6 +733,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
         ensureCatalogPresetTracks('camera')
       } else {
         await controller.stopCamera()
+        removeCatalogPresetTracks('camera')
       }
       setCameraEnabled(nextState)
       return nextState
@@ -595,6 +750,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     captureSettings.height,
     captureSettings.width,
     ensureCatalogPresetTracks,
+    removeCatalogPresetTracks,
     session,
     selectedVideoDeviceId
   ])
@@ -612,6 +768,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
         ensureCatalogPresetTracks('screenshare')
       } else {
         await controller.stopScreenShare()
+        removeCatalogPresetTracks('screenshare')
       }
       setScreenShareEnabled(nextState)
       return nextState
@@ -621,7 +778,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     } finally {
       setCameraBusy(false)
     }
-  }, [cameraBusy, ensureCatalogPresetTracks, screenShareEnabled, session])
+  }, [cameraBusy, ensureCatalogPresetTracks, removeCatalogPresetTracks, screenShareEnabled, session])
 
   const toggleMicrophone = useCallback(async () => {
     if (!session || microphoneBusy) {
@@ -640,6 +797,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
         ensureCatalogPresetTracks('audio')
       } else {
         await controller.stopMicrophone()
+        removeCatalogPresetTracks('audio')
       }
       setMicrophoneEnabled(nextState)
       return nextState
@@ -654,6 +812,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     captureSettings.echoCancellation,
     captureSettings.noiseSuppression,
     ensureCatalogPresetTracks,
+    removeCatalogPresetTracks,
     microphoneBusy,
     microphoneEnabled,
     selectedAudioDeviceId,
@@ -841,6 +1000,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
         setCameraEnabled(true)
       } else if (cameraEnabled) {
         await controller.stopCamera()
+        removeCatalogPresetTracks('camera')
         setCameraEnabled(false)
       }
 
@@ -858,6 +1018,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
         setMicrophoneEnabled(true)
       } else if (microphoneEnabled) {
         await controller.stopMicrophone()
+        removeCatalogPresetTracks('audio')
         setMicrophoneEnabled(false)
       }
     } catch (err) {
@@ -875,6 +1036,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     captureSettings.noiseSuppression,
     captureSettings.videoEnabled,
     ensureCatalogPresetTracks,
+    removeCatalogPresetTracks,
     microphoneEnabled,
     selectedAudioEncoding,
     selectedAudioDeviceId,
@@ -918,6 +1080,8 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     localAudioStream,
     localVideoBitrate,
     localAudioBitrate,
+    localCameraVideoSendTiming,
+    localScreenShareVideoSendTiming,
     remoteMedia,
     toggleCamera,
     toggleScreenShare,
@@ -929,6 +1093,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     videoCodecOptions: VIDEO_CODEC_OPTIONS,
     videoResolutionOptions: VIDEO_RESOLUTION_OPTIONS,
     videoBitrateOptions: VIDEO_BITRATE_OPTIONS,
+    videoHardwareAccelerationOptions: VIDEO_HARDWARE_ACCELERATION_OPTIONS,
     selectedVideoEncoding,
     selectVideoEncoding,
     selectedScreenShareEncoding,
@@ -950,10 +1115,45 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     updateCaptureSettings,
     applyCaptureSettings,
     catalogTracks,
+    subscribedCatalogTracks,
     addCatalogTrack,
     updateCatalogTrack,
     removeCatalogTrack
   }
+}
+
+function isSameSubscribedCatalogTracks(
+  left: SubscribedCatalogTrack[],
+  right: SubscribedCatalogTrack[]
+): boolean {
+  if (left.length !== right.length) {
+    return false
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const l = left[index]
+    const r = right[index]
+    if (
+      l.name !== r.name ||
+      l.subscriberCount !== r.subscriberCount ||
+      l.label !== r.label ||
+      l.role !== r.role ||
+      l.codec !== r.codec ||
+      l.bitrate !== r.bitrate ||
+      l.width !== r.width ||
+      l.height !== r.height ||
+      l.framerate !== r.framerate ||
+      l.hardwareAcceleration !== r.hardwareAcceleration ||
+      l.keyframeInterval !== r.keyframeInterval ||
+      l.samplerate !== r.samplerate ||
+      l.channelConfig !== r.channelConfig ||
+      l.audioStreamUpdateMode !== r.audioStreamUpdateMode ||
+      l.audioStreamUpdateIntervalSeconds !== r.audioStreamUpdateIntervalSeconds ||
+      l.isLive !== r.isLive
+    ) {
+      return false
+    }
+  }
+  return true
 }
 
 function buildVideoRenderingRateKey(userId: string, source: 'camera' | 'screenshare'): string {
@@ -1037,7 +1237,10 @@ function deriveVideoEncodingFromCatalogTracks(
     codec: normalizeNonEmptyString(videoTrack.codec) ?? fallback.codec,
     width: normalizePositiveNumber(videoTrack.width) ?? fallback.width,
     height: normalizePositiveNumber(videoTrack.height) ?? fallback.height,
-    bitrate: normalizePositiveNumber(videoTrack.bitrate) ?? fallback.bitrate
+    bitrate: normalizePositiveNumber(videoTrack.bitrate) ?? fallback.bitrate,
+    framerate: normalizePositiveNumber(videoTrack.framerate) ?? fallback.framerate,
+    hardwareAcceleration:
+      normalizeHardwareAcceleration(videoTrack.hardwareAcceleration) ?? fallback.hardwareAcceleration
   }
 }
 
@@ -1076,6 +1279,10 @@ function normalizeNonEmptyString(value: string | undefined): string | undefined 
   }
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : undefined
+}
+
+function normalizeHardwareAcceleration(value: HardwareAcceleration | undefined): HardwareAcceleration | undefined {
+  return value === 'prefer-hardware' || value === 'prefer-software' || value === 'no-preference' ? value : undefined
 }
 
 function parseAudioChannels(channelConfig: string | undefined): number | undefined {

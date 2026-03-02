@@ -22,17 +22,47 @@ export interface RemoteMediaStreams {
   audioRenderingRateFps?: number
   videoLatencyRenderMs?: number
   videoLatencyReceiveMs?: number
+  videoReceiveToDecodeMs?: number | null
+  videoReceiveToRenderMs?: number | null
+  videoPacingIntervalMs?: number
+  videoPacingEffectiveIntervalMs?: number
+  videoPacingBufferedFrames?: number
+  videoDecodeQueueSize?: number
+  videoPacingTargetFrames?: number
+  videoDecodingGroupId?: string
+  videoDecodingObjectId?: string
+  videoDecodingChunkType?: string
+  videoDecodingPhase?: 'submit' | 'output' | 'error'
   screenShareLatencyRenderMs?: number
   screenShareLatencyReceiveMs?: number
+  screenShareReceiveToDecodeMs?: number | null
+  screenShareReceiveToRenderMs?: number | null
+  screenSharePacingIntervalMs?: number
+  screenSharePacingEffectiveIntervalMs?: number
+  screenSharePacingBufferedFrames?: number
+  screenShareDecodeQueueSize?: number
+  screenSharePacingTargetFrames?: number
+  screenShareDecodingGroupId?: string
+  screenShareDecodingObjectId?: string
+  screenShareDecodingChunkType?: string
+  screenShareDecodingPhase?: 'submit' | 'output' | 'error'
   audioLatencyRenderMs?: number
   audioLatencyReceiveMs?: number
   audioPlaybackQueueMs?: number
   videoCodec?: string
   videoWidth?: number
   videoHeight?: number
+  videoDecoderDescriptionLength?: number
+  videoDecoderAvcFormat?: 'annexb' | 'avc'
+  videoDecoderHardwareAcceleration?: HardwareAcceleration
+  videoDecoderOptimizeForLatency?: boolean
   screenShareCodec?: string
   screenShareWidth?: number
   screenShareHeight?: number
+  screenShareDecoderDescriptionLength?: number
+  screenShareDecoderAvcFormat?: 'annexb' | 'avc'
+  screenShareDecoderHardwareAcceleration?: HardwareAcceleration
+  screenShareDecoderOptimizeForLatency?: boolean
   videoJitterBuffer?: JitterBufferSnapshot
   screenShareJitterBuffer?: JitterBufferSnapshot
   audioJitterBuffer?: JitterBufferSnapshot

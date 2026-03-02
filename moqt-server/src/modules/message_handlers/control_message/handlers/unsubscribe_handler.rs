@@ -73,6 +73,9 @@ pub(crate) async fn unsubscribe_handler(
                 unsubscribe_message,
             )
             .await?;
+        pubsub_relation_manager_repository
+            .delete_upstream_subscription(upstream_session_id, upstream_subscribe_id)
+            .await?;
     }
 
     tracing::trace!("unsubscribe_handler complete.");

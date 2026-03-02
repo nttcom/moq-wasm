@@ -12,14 +12,38 @@ type BufferRowProps = {
   filledClass: string
 }
 
+type VideoDiagnostics = {
+  targetLatencyMs?: number
+  networkLatencyMs?: number
+  e2eLatencyMs?: number
+  receiveToDecodeMs?: number | null
+  receiveToRenderMs?: number | null
+  pacingPreset?: string
+  pacingPipeline?: string
+  pacingEffectiveIntervalMs?: number
+  pacingBufferedFrames?: number
+  pacingTargetFrames?: number
+  decodingGroupId?: string
+  decodingObjectId?: string
+  decoderCodec?: string
+  decoderWidth?: number
+  decoderHeight?: number
+  decoderAvcFormat?: 'annexb' | 'avc'
+  decoderDescriptionBytes?: number
+  decoderHardwareAcceleration?: HardwareAcceleration
+  decoderOptimizeForLatency?: boolean
+}
+
 export function JitterBufferVisualizer({
   videoBuffer,
-  audioBuffer
+  audioBuffer,
+  videoDiagnostics
 }: {
   videoBuffer?: JitterBufferSnapshot
   audioBuffer?: JitterBufferSnapshot
+  videoDiagnostics?: VideoDiagnostics
 }) {
-  if (!videoBuffer && !audioBuffer) {
+  if (!videoBuffer && !audioBuffer && !videoDiagnostics) {
     return null
   }
 
@@ -37,6 +61,7 @@ export function JitterBufferVisualizer({
         snapshot={audioBuffer}
         filledClass="bg-emerald-400/85"
       />
+      {videoDiagnostics ? <VideoDiagnosticsPanel diagnostics={videoDiagnostics} /> : null}
     </div>
   )
 }
@@ -98,4 +123,146 @@ function calculateFilledBlocks(snapshot: JitterBufferSnapshot | undefined, visib
   }
   const bufferedFrames = Math.max(0, Math.floor(snapshot.bufferedFrames))
   return Math.min(visibleCapacity, bufferedFrames)
+}
+
+function VideoDiagnosticsPanel({ diagnostics }: { diagnostics: VideoDiagnostics }) {
+  const [activeTab, setActiveTab] = useState<'performance' | 'settings'>('performance')
+  const decodeToRenderMs =
+    typeof diagnostics.receiveToRenderMs === 'number' &&
+    Number.isFinite(diagnostics.receiveToRenderMs) &&
+    typeof diagnostics.receiveToDecodeMs === 'number' &&
+    Number.isFinite(diagnostics.receiveToDecodeMs)
+      ? Math.max(0, diagnostics.receiveToRenderMs - diagnostics.receiveToDecodeMs)
+      : undefined
+
+  const performanceItems = [
+    {
+      label: 'Target latency',
+      value: formatMs(diagnostics.targetLatencyMs)
+    },
+    {
+      label: 'E2E Latency',
+      value: formatMs(diagnostics.e2eLatencyMs)
+    },
+    {
+      label: 'NW latency',
+      value: formatMs(diagnostics.networkLatencyMs)
+    },
+    {
+      label: 'Recv→Decode',
+      value: formatMs(diagnostics.receiveToDecodeMs)
+    },
+    {
+      label: 'Decode→Render',
+      value: formatMs(decodeToRenderMs)
+    },
+    {
+      label: 'Pacing interval',
+      value: formatMs(diagnostics.pacingEffectiveIntervalMs)
+    },
+    {
+      label: 'Pacing buffer',
+      value:
+        typeof diagnostics.pacingBufferedFrames === 'number' || typeof diagnostics.pacingTargetFrames === 'number'
+          ? `${formatNum(diagnostics.pacingBufferedFrames)} / ${formatNum(diagnostics.pacingTargetFrames)} frames`
+          : '-'
+    },
+    {
+      label: 'Pacing mode',
+      value:
+        diagnostics.pacingPreset || diagnostics.pacingPipeline
+          ? `${diagnostics.pacingPreset ?? '-'} / ${diagnostics.pacingPipeline ?? '-'}`
+          : '-'
+    },
+    {
+      label: 'Decoding group',
+      value: diagnostics.decodingGroupId ?? '-'
+    },
+    {
+      label: 'Decoding object',
+      value: diagnostics.decodingObjectId ?? '-'
+    }
+  ]
+
+  const settingsItems = [
+    {
+      label: 'Codec',
+      value: diagnostics.decoderCodec ?? '-'
+    },
+    {
+      label: 'Resolution',
+      value:
+        typeof diagnostics.decoderWidth === 'number' && typeof diagnostics.decoderHeight === 'number'
+          ? `${Math.round(diagnostics.decoderWidth)}x${Math.round(diagnostics.decoderHeight)}`
+          : '-'
+    },
+    {
+      label: 'H264 format',
+      value: diagnostics.decoderAvcFormat ?? '-'
+    },
+    {
+      label: 'Description bytes',
+      value: formatNum(diagnostics.decoderDescriptionBytes)
+    },
+    {
+      label: 'HW Accel',
+      value: diagnostics.decoderHardwareAcceleration ?? '-'
+    },
+    {
+      label: 'Optimize latency',
+      value:
+        typeof diagnostics.decoderOptimizeForLatency === 'boolean'
+          ? diagnostics.decoderOptimizeForLatency
+            ? 'true'
+            : 'false'
+          : '-'
+    }
+  ]
+
+  return (
+    <div className="space-y-2 pt-1 text-[10px] text-blue-100/90">
+      <div className="inline-flex rounded-md border border-white/10 bg-white/[0.03] p-0.5">
+        <button
+          type="button"
+          className={`rounded px-2 py-1 text-[10px] font-medium transition ${
+            activeTab === 'performance' ? 'bg-blue-500/80 text-white' : 'text-blue-200 hover:bg-white/10'
+          }`}
+          onClick={() => setActiveTab('performance')}
+        >
+          Performance
+        </button>
+        <button
+          type="button"
+          className={`rounded px-2 py-1 text-[10px] font-medium transition ${
+            activeTab === 'settings' ? 'bg-blue-500/80 text-white' : 'text-blue-200 hover:bg-white/10'
+          }`}
+          onClick={() => setActiveTab('settings')}
+        >
+          Settings
+        </button>
+      </div>
+      <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+        {(activeTab === 'performance' ? performanceItems : settingsItems).map((item) => (
+          <div key={item.label} className="flex items-center justify-between gap-2 rounded bg-white/[0.03] px-2 py-1">
+            <span className="text-blue-200/90">{item.label}</span>
+            <span className="font-mono text-white/95">{item.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function formatMs(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '-'
+  }
+  return `${Math.round(value)} ms`
+}
+
+function formatNum(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '-'
+  }
+  return `${Math.round(value)}`
 }

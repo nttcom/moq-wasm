@@ -8,6 +8,7 @@ import init, {
   SubscribeAnnouncesOkMessage,
   SubscribeAnnouncesErrorMessage,
   SubscribeOkMessage,
+  SubscribeDoneMessage,
   SubscribeErrorMessage,
   SubgroupState,
   SubgroupStreamObjectMessage
@@ -21,7 +22,9 @@ import {
 type SetupResolver = ((value: void) => void) | null
 type AnnounceHandler = ((announce: AnnounceMessage) => void) | null
 type SubscribeResponseHandler = ((response: SubscribeOkMessage | SubscribeErrorMessage) => void) | null
+type SubscribeDoneHandler = ((message: SubscribeDoneMessage) => void) | null
 type ConnectionClosedHandler = (() => void) | null
+type IncomingUnsubscribeHandler = ((subscribeId: bigint) => void) | null
 
 export interface ConnectOptions {
   sendSetup?: boolean
@@ -44,8 +47,10 @@ export class MoqtClientWrapper {
   private serverSetupResolve: SetupResolver = null
   private onAnnounceHandler: AnnounceHandler = null
   private onSubscribeResponseHandler: SubscribeResponseHandler = null
+  private onSubscribeDoneHandler: SubscribeDoneHandler = null
   private onConnectionClosedHandler: ConnectionClosedHandler = null
   private incomingSubscribeHandler: IncomingSubscribeHandler | null = null
+  private incomingUnsubscribeHandler: IncomingUnsubscribeHandler = null
   private onServerSetupHandler: ((setup: ServerSetupMessage) => void) | null = null
   private readonly subscriptionState: SubscriptionStateStore
 
@@ -58,10 +63,16 @@ export class MoqtClientWrapper {
       return
     }
 
+    let wtConnectStartedAtMs: number | null = null
     try {
       await init()
       this.client = new MOQTClient(url)
+      wtConnectStartedAtMs = performance.now()
       await this.client.start()
+      console.info('[moqt][wt] connected', {
+        url,
+        elapsedMs: Math.round((performance.now() - wtConnectStartedAtMs) * 100) / 100
+      })
       this.setupCallbacks()
 
       if (options.sendSetup === false) {
@@ -79,6 +90,12 @@ export class MoqtClientWrapper {
       await receiveServerSetup
     } catch (error) {
       this.cleanupClient()
+      if (wtConnectStartedAtMs !== null) {
+        console.error('[moqt][wt] connect failed', {
+          url,
+          elapsedMs: Math.round((performance.now() - wtConnectStartedAtMs) * 100) / 100
+        })
+      }
       console.error('Failed to connect MoQT client:', error)
       throw error
     }
@@ -128,8 +145,16 @@ export class MoqtClientWrapper {
     this.onSubscribeResponseHandler = handler
   }
 
+  setOnSubscribeDoneHandler(handler: ((message: SubscribeDoneMessage) => void) | null): void {
+    this.onSubscribeDoneHandler = handler
+  }
+
   setOnIncomingSubscribeHandler(handler: IncomingSubscribeHandler | null): void {
     this.incomingSubscribeHandler = handler
+  }
+
+  setOnIncomingUnsubscribeHandler(handler: IncomingUnsubscribeHandler): void {
+    this.incomingUnsubscribeHandler = handler
   }
 
   setOnSubgroupObjectHandler(trackAlias: bigint, handler: SubgroupObjectHandler): void {
@@ -245,6 +270,14 @@ export class MoqtClientWrapper {
 
     this.client.onSubscribeResponse((response: SubscribeOkMessage | SubscribeErrorMessage) => {
       this.onSubscribeResponseHandler?.(response)
+    })
+
+    this.client.onUnsubscribe((message: SubscribeDoneMessage) => {
+      this.onSubscribeDoneHandler?.(message)
+    })
+
+    this.client.onIncomingUnsubscribe((subscribeId: bigint) => {
+      this.incomingUnsubscribeHandler?.(subscribeId)
     })
 
     this.client.onSubscribeAnnouncesResponse(

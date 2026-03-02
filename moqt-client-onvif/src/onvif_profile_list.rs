@@ -9,6 +9,7 @@ pub struct ProfileSummary {
     pub video_encoder: Option<String>,
     pub ptz_config: Option<String>,
     pub video_resolution: Option<(u32, u32)>,
+    pub video_framerate: Option<f64>,
 }
 
 pub async fn fetch(onvif: &OnvifClient) -> Result<Vec<ProfileSummary>> {
@@ -68,6 +69,16 @@ fn extract_profiles(body: &str) -> Result<Vec<ProfileSummary>> {
                 let height = height.trim().parse::<u32>().ok()?;
                 Some((width, height))
             });
+        let video_framerate = profile
+            .descendants()
+            .find(|node| node.has_tag_name("VideoEncoderConfiguration"))
+            .and_then(|encoder| {
+                encoder
+                    .descendants()
+                    .find(|n| n.has_tag_name("FrameRateLimit") || n.has_tag_name("FrameRate"))
+                    .and_then(|node| node.text())
+                    .and_then(|text| text.trim().parse::<f64>().ok())
+            });
         profiles.push(ProfileSummary {
             token,
             name: find_text("Name"),
@@ -75,6 +86,7 @@ fn extract_profiles(body: &str) -> Result<Vec<ProfileSummary>> {
             video_encoder: find_token("VideoEncoderConfiguration"),
             ptz_config: find_token("PTZConfiguration"),
             video_resolution,
+            video_framerate,
         });
     }
     if profiles.is_empty() {
@@ -94,15 +106,20 @@ fn log_profiles(profiles: &[ProfileSummary]) {
             .video_resolution
             .map(|(width, height)| format!("{width}x{height}"))
             .unwrap_or_else(|| "-".to_string());
+        let framerate = profile
+            .video_framerate
+            .map(|value| format!("{value:.2}"))
+            .unwrap_or_else(|| "-".to_string());
         log::info!(
-            "  [{}] token={} name={} video_source={} video_encoder={} ptz_config={} resolution={}",
+            "  [{}] token={} name={} video_source={} video_encoder={} ptz_config={} resolution={} framerate={}",
             index,
             profile.token,
             name,
             video_source,
             video_encoder,
             ptz_config,
-            resolution
+            resolution,
+            framerate
         );
     }
 }

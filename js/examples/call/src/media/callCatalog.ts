@@ -8,40 +8,37 @@ import {
   type EditableCallCatalogTrack
 } from '../types/catalog'
 
-const DEFAULT_CALL_CATALOG_TRACKS: CallCatalogTrack[] = []
+const CAMERA_PROFILES = [
+  { id: 'base', label: 'Base', codec: 'avc1.42001F', maxEncodePixels: 1280 * 720 },
+  { id: 'main', label: 'Main', codec: 'avc1.4D4028', maxEncodePixels: Number.POSITIVE_INFINITY },
+  { id: 'high', label: 'High', codec: 'avc1.640028', maxEncodePixels: Number.POSITIVE_INFINITY }
+] as const
 
-const CAMERA_CATALOG_TRACKS: CallCatalogTrack[] = [
-  {
-    name: 'camera_1080p',
-    label: 'Camera 1080p',
-    role: 'video',
-    codec: 'avc1.640032',
-    width: 1920,
-    height: 1080,
-    bitrate: 1_000_000,
-    isLive: true
-  },
-  {
-    name: 'camera_720p',
-    label: 'Camera 720p',
-    role: 'video',
-    codec: 'avc1.640032',
-    width: 1280,
-    height: 720,
-    bitrate: 500_000,
-    isLive: true
-  },
-  {
-    name: 'camera_480p',
-    label: 'Camera 480p',
-    role: 'video',
-    codec: 'avc1.640032',
-    width: 854,
-    height: 480,
-    bitrate: 200_000,
-    isLive: true
-  }
-]
+const CAMERA_RESOLUTIONS = [
+  { id: '1080p', label: '1080p', width: 1920, height: 1080, bitrate: 1_000_000 },
+  { id: '720p', label: '720p', width: 1280, height: 720, bitrate: 500_000 },
+  { id: '480p', label: '480p', width: 854, height: 480, bitrate: 200_000 }
+] as const
+
+const CAMERA_CATALOG_TRACKS: CallCatalogTrack[] = CAMERA_PROFILES.flatMap((profile) =>
+  CAMERA_RESOLUTIONS.filter((resolution) => resolution.width * resolution.height <= profile.maxEncodePixels).map(
+    (resolution) => ({
+      name: `camera_${profile.id}_${resolution.id}`,
+      label: `Camera ${profile.label} ${resolution.label}`,
+      role: 'video' as const,
+      codec: profile.codec,
+      width: resolution.width,
+      height: resolution.height,
+      bitrate: resolution.bitrate,
+      framerate: 30,
+      hardwareAcceleration: 'prefer-software',
+      keyframeInterval: DEFAULT_VIDEO_KEYFRAME_INTERVAL,
+      isLive: true
+    })
+  )
+)
+
+const DEFAULT_CALL_CATALOG_TRACKS: CallCatalogTrack[] = []
 
 const SCREENSHARE_CATALOG_TRACKS: CallCatalogTrack[] = [
   {
@@ -52,6 +49,8 @@ const SCREENSHARE_CATALOG_TRACKS: CallCatalogTrack[] = [
     width: 1920,
     height: 1080,
     bitrate: 2_000_000,
+    framerate: 30,
+    hardwareAcceleration: 'prefer-software',
     isLive: true
   },
   {
@@ -62,6 +61,8 @@ const SCREENSHARE_CATALOG_TRACKS: CallCatalogTrack[] = [
     width: 1280,
     height: 720,
     bitrate: 1_200_000,
+    framerate: 30,
+    hardwareAcceleration: 'prefer-software',
     isLive: true
   },
   {
@@ -72,6 +73,8 @@ const SCREENSHARE_CATALOG_TRACKS: CallCatalogTrack[] = [
     width: 854,
     height: 480,
     bitrate: 700_000,
+    framerate: 30,
+    hardwareAcceleration: 'prefer-software',
     isLive: true
   }
 ]
@@ -127,6 +130,8 @@ type MsfTrack = {
   bitrate?: number
   width?: number
   height?: number
+  framerate?: number
+  hardwareAcceleration?: HardwareAcceleration
   samplerate?: number
   channelConfig?: string
 }
@@ -167,6 +172,8 @@ export function buildCallCatalogJson(trackNamespace: string[], tracks: CallCatal
     bitrate: track.bitrate,
     width: track.width,
     height: track.height,
+    framerate: track.framerate,
+    hardwareAcceleration: track.hardwareAcceleration,
     samplerate: track.samplerate,
     channelConfig: track.channelConfig
   }))
@@ -201,7 +208,7 @@ export function parseCallCatalogTracks(payload: string): CallCatalogTrack[] {
 
 export function extractCallCatalogTracks(catalog: unknown): CallCatalogTrack[] {
   const tracks = Array.isArray((catalog as { tracks?: unknown[] } | undefined)?.tracks)
-    ? ((catalog as { tracks: unknown[] }).tracks ?? [])
+    ? (catalog as { tracks: unknown[] }).tracks ?? []
     : []
   return tracks.reduce<CallCatalogTrack[]>((acc, rawTrack) => {
     if (!isObject(rawTrack)) {
@@ -223,6 +230,8 @@ export function extractCallCatalogTracks(catalog: unknown): CallCatalogTrack[] {
       bitrate: asNumber(rawTrack.bitrate),
       width: asNumber(rawTrack.width),
       height: asNumber(rawTrack.height),
+      framerate: asNumber(rawTrack.framerate),
+      hardwareAcceleration: asHardwareAcceleration(rawTrack.hardwareAcceleration),
       samplerate: asNumber(rawTrack.samplerate),
       channelConfig: asString(rawTrack.channelConfig),
       isLive: asBoolean(rawTrack.isLive)
@@ -317,6 +326,8 @@ export function createEmptyEditableCatalogTrack(role: CatalogTrackRole): Editabl
       bitrate: undefined,
       width: undefined,
       height: undefined,
+      framerate: undefined,
+      hardwareAcceleration: undefined,
       keyframeInterval: undefined,
       samplerate: undefined,
       channelConfig: undefined,
@@ -334,6 +345,8 @@ export function createEmptyEditableCatalogTrack(role: CatalogTrackRole): Editabl
     bitrate: role === 'video' ? 800_000 : 64_000,
     width: role === 'video' ? 1280 : undefined,
     height: role === 'video' ? 720 : undefined,
+    framerate: role === 'video' ? 30 : undefined,
+    hardwareAcceleration: role === 'video' ? 'prefer-software' : undefined,
     keyframeInterval: role === 'video' ? DEFAULT_VIDEO_KEYFRAME_INTERVAL : undefined,
     samplerate: role === 'audio' ? 48_000 : undefined,
     channelConfig: role === 'audio' ? 'mono' : undefined,
@@ -354,6 +367,8 @@ export function createEmptyEditableScreenShareCatalogTrack(): EditableCallCatalo
     bitrate: 1_200_000,
     width: 1280,
     height: 720,
+    framerate: 30,
+    hardwareAcceleration: 'prefer-software',
     keyframeInterval: DEFAULT_VIDEO_KEYFRAME_INTERVAL,
     samplerate: undefined,
     channelConfig: undefined,
@@ -381,18 +396,18 @@ function sanitizeTrack(track: EditableCallCatalogTrack): CallCatalogTrack | null
     bitrate: toPositiveNumber(track.bitrate),
     width: track.role === 'video' ? toPositiveNumber(track.width) : undefined,
     height: track.role === 'video' ? toPositiveNumber(track.height) : undefined,
+    framerate: track.role === 'video' ? toPositiveNumber(track.framerate) : undefined,
+    hardwareAcceleration: track.role === 'video' ? asHardwareAcceleration(track.hardwareAcceleration) : undefined,
     keyframeInterval:
-      track.role === 'video'
-        ? (toPositiveNumber(track.keyframeInterval) ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL)
-        : undefined,
+      track.role === 'video' ? toPositiveNumber(track.keyframeInterval) ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL : undefined,
     samplerate: track.role === 'audio' ? toPositiveNumber(track.samplerate) : undefined,
     channelConfig: track.role === 'audio' ? track.channelConfig?.trim() || undefined : undefined,
     audioStreamUpdateMode:
       track.role === 'audio' ? normalizeAudioStreamUpdateMode(track.audioStreamUpdateMode) : undefined,
     audioStreamUpdateIntervalSeconds:
       track.role === 'audio'
-        ? (toPositiveNumber(track.audioStreamUpdateIntervalSeconds) ??
-          DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds)
+        ? toPositiveNumber(track.audioStreamUpdateIntervalSeconds) ??
+          DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
         : undefined,
     isLive: track.isLive ?? true
   }
@@ -429,6 +444,13 @@ function asNumber(value: unknown): number | undefined {
 
 function asBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined
+}
+
+function asHardwareAcceleration(value: unknown): HardwareAcceleration | undefined {
+  if (value === 'prefer-hardware' || value === 'prefer-software' || value === 'no-preference') {
+    return value
+  }
+  return undefined
 }
 
 function toPositiveNumber(value: number | undefined): number | undefined {

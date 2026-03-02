@@ -7,6 +7,7 @@ use ffmpeg_next::codec::Id;
 use ffmpeg_next::ffi::av_sdp_create;
 use std::ffi::CStr;
 use std::sync::mpsc::Sender;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender as TokioSender;
 
 pub fn run(target: Target, tx: Sender<Frame>, err_tx: Sender<String>) {
@@ -16,7 +17,7 @@ pub fn run(target: Target, tx: Sender<Frame>, err_tx: Sender<String>) {
     }
     let url = target.rtsp_url();
     let mut opts = ffmpeg::Dictionary::new();
-    opts.set("rtsp_transport", "tcp");
+    apply_rtsp_low_latency_options(&mut opts);
     let mut input = match ffmpeg::format::input_with_dictionary(&url, opts) {
         Ok(input) => input,
         Err(err) => {
@@ -104,7 +105,7 @@ pub fn run_encoded_url(
         return;
     }
     let mut opts = ffmpeg::Dictionary::new();
-    opts.set("rtsp_transport", "tcp");
+    apply_rtsp_low_latency_options(&mut opts);
     let mut input = match ffmpeg::format::input_with_dictionary(&url, opts) {
         Ok(input) => input,
         Err(err) => {
@@ -136,6 +137,8 @@ pub fn run_encoded_url(
     };
     let stream_index = stream.index();
     let time_base = stream.time_base();
+    let default_interval_us = default_frame_interval_us(&stream);
+    let mut timestamp_corrector = TimestampCorrector::new(default_interval_us);
     let fallback_codec_label = (!codec_label.is_empty()).then_some(codec_label);
     let mut codec_label = None;
     let mut avcc_state = if payload_format == PayloadFormat::Avcc {
@@ -154,10 +157,13 @@ pub fn run_encoded_url(
         annexb.as_ref().map(AvccConfig::from)
     };
     let mut format_logged = false;
+    let mut last_timestamp_source: Option<TimestampSource> = None;
+    let mut timestamp_presence = TimestampPresence::default();
     for (stream, packet) in input.packets() {
         if stream.index() != stream_index {
             continue;
         }
+        let ingest_wallclock_micros = now_micros();
         let is_keyframe = packet.is_key();
         let payload = match build_payload(&packet, is_keyframe, payload_format, annexb.as_ref()) {
             Ok(Some(payload)) => payload,
@@ -192,24 +198,14 @@ pub fn run_encoded_url(
         ) {
             let label = slice_type_label(slice_type);
             let timestamp_us = packet_timestamp_us(&packet, time_base);
-            if label == "B" {
-                log::info!(
-                    "RTSP slice_type=B detected: ts_us={} keyframe={} raw={} format={}",
-                    timestamp_us,
-                    is_keyframe,
-                    slice_type,
-                    payload_format.label()
-                );
-            } else {
-                log::debug!(
-                    "RTSP slice_type={} raw={} ts_us={} keyframe={} format={}",
-                    label,
-                    slice_type,
-                    timestamp_us,
-                    is_keyframe,
-                    payload_format.label()
-                );
-            }
+            log::debug!(
+                "RTSP slice_type={} raw={} ts_us={} keyframe={} format={}",
+                label,
+                slice_type,
+                timestamp_us,
+                is_keyframe,
+                payload_format.label()
+            );
         }
         if payload_format == PayloadFormat::AnnexB && !is_annexb(&payload) {
             log::warn!(
@@ -217,6 +213,32 @@ pub fn run_encoded_url(
                 payload.len(),
                 is_keyframe
             );
+        }
+        let pts = packet.pts();
+        let dts = packet.dts();
+        if !timestamp_presence.logged {
+            log::debug!(
+                "RTSP timestamps initial: pts_raw={:?} dts_raw={:?} time_base={}/{}",
+                pts,
+                dts,
+                time_base.numerator(),
+                time_base.denominator()
+            );
+            timestamp_presence.logged = true;
+        }
+        if pts.is_some() && !timestamp_presence.seen_pts {
+            log::debug!(
+                "RTSP timestamp available: PTS (us={:?})",
+                pts.and_then(|value| to_microseconds(value, time_base))
+            );
+            timestamp_presence.seen_pts = true;
+        }
+        if dts.is_some() && !timestamp_presence.seen_dts {
+            log::debug!(
+                "RTSP timestamp available: DTS (us={:?})",
+                dts.and_then(|value| to_microseconds(value, time_base))
+            );
+            timestamp_presence.seen_dts = true;
         }
         if payload_format == PayloadFormat::AnnexB {
             if let Some(state) = avcc_state.as_mut() {
@@ -262,6 +284,21 @@ pub fn run_encoded_url(
         } else {
             TimestampSource::FallbackZero
         };
+        if last_timestamp_source != Some(timestamp_source) {
+            if timestamp_source == TimestampSource::Pts {
+                log::debug!("RTSP timestamp source: PTS");
+            } else {
+                log::info!("RTSP timestamp source fallback: {:?}", timestamp_source);
+            }
+            last_timestamp_source = Some(timestamp_source);
+        }
+        let raw_timestamp_us = packet_timestamp_us(&packet, time_base);
+        let duration_us = if packet.duration() > 0 {
+            to_microseconds(packet.duration(), time_base)
+        } else {
+            None
+        };
+        let timestamp_us = timestamp_corrector.correct(raw_timestamp_us, duration_us);
         let encoded = build_encoded_packet(EncodedPacketArgs {
             payload,
             packet: &packet,
@@ -271,6 +308,9 @@ pub fn run_encoded_url(
             description_base64,
             avc_format: Some(avc_format),
             timestamp_source,
+            timestamp_us,
+            ingest_wallclock_micros,
+            duration_us,
         });
         if tx.blocking_send(encoded).is_err() {
             return;
@@ -326,27 +366,35 @@ struct EncodedPacketArgs<'a> {
     description_base64: Option<String>,
     avc_format: Option<String>,
     timestamp_source: TimestampSource,
+    timestamp_us: u64,
+    ingest_wallclock_micros: u64,
+    duration_us: Option<u64>,
 }
 
 fn build_encoded_packet(args: EncodedPacketArgs<'_>) -> EncodedPacket {
-    let timestamp_us = packet_timestamp_us(args.packet, args.time_base);
+    let pts_us = args
+        .packet
+        .pts()
+        .and_then(|value| to_microseconds(value, args.time_base));
+    let dts_us = args
+        .packet
+        .dts()
+        .and_then(|value| to_microseconds(value, args.time_base));
     log_timestamp_choice(
         args.packet,
         args.time_base,
-        timestamp_us,
+        args.timestamp_us,
         args.timestamp_source,
         args.is_keyframe,
     );
-    let duration_us = if args.packet.duration() > 0 {
-        to_microseconds(args.packet.duration(), args.time_base)
-    } else {
-        None
-    };
     EncodedPacket {
         data: args.payload,
         is_keyframe: args.is_keyframe,
-        timestamp_us,
-        duration_us,
+        timestamp_us: args.timestamp_us,
+        ingest_wallclock_micros: args.ingest_wallclock_micros,
+        pts_us,
+        dts_us,
+        duration_us: args.duration_us,
         codec: args.codec_label,
         description_base64: args.description_base64,
         avc_format: args.avc_format,
@@ -392,15 +440,145 @@ fn log_timestamp_choice(
     let _ = is_keyframe;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TimestampSource {
     Pts,
     Dts,
     FallbackZero,
 }
 
+#[derive(Default)]
+struct TimestampPresence {
+    logged: bool,
+    seen_pts: bool,
+    seen_dts: bool,
+}
+
+struct TimestampCorrector {
+    last_raw: Option<u64>,
+    last_corrected: Option<u64>,
+    interval_us: u64,
+    offset_us: i64,
+    correction_log_count: u64,
+}
+
+impl TimestampCorrector {
+    fn new(interval_us: u64) -> Self {
+        let interval_us = if interval_us == 0 {
+            DEFAULT_FRAME_INTERVAL_US
+        } else {
+            interval_us
+        };
+        Self {
+            last_raw: None,
+            last_corrected: None,
+            interval_us,
+            offset_us: 0,
+            correction_log_count: 0,
+        }
+    }
+
+    fn correct(&mut self, raw_us: u64, duration_us: Option<u64>) -> u64 {
+        if let Some(duration_us) = duration_us {
+            if duration_us >= MIN_INTERVAL_US && duration_us <= MAX_INTERVAL_US {
+                self.interval_us = duration_us;
+            }
+        } else if let Some(last_raw) = self.last_raw {
+            if raw_us > last_raw {
+                let diff = raw_us - last_raw;
+                if diff >= MIN_INTERVAL_US && diff <= MAX_INTERVAL_US {
+                    self.interval_us = (self.interval_us * 3 + diff) / 4;
+                }
+            }
+        }
+
+        let interval = self.interval_us.max(1);
+        let min_step = (interval / 2).max(1);
+        let max_step = interval.saturating_mul(MAX_STEP_MULTIPLIER);
+
+        let Some(last_corrected) = self.last_corrected else {
+            self.last_raw = Some(raw_us);
+            self.last_corrected = Some(raw_us);
+            return raw_us;
+        };
+
+        let candidate = raw_us as i64 + self.offset_us;
+        let min_allowed = last_corrected.saturating_add(min_step);
+        let max_allowed = last_corrected.saturating_add(max_step);
+
+        let corrected = if candidate < min_allowed as i64 || candidate > max_allowed as i64 {
+            let expected = last_corrected.saturating_add(interval);
+            self.offset_us = expected as i64 - raw_us as i64;
+            self.correction_log_count = self.correction_log_count.saturating_add(1);
+            if self.correction_log_count <= 5 || self.correction_log_count % 100 == 0 {
+                log::debug!(
+                    "RTSP timestamp corrected: count={} raw_us={} corrected_us={} interval_us={} last_corrected_us={} offset_us={}",
+                    self.correction_log_count,
+                    raw_us,
+                    expected,
+                    interval,
+                    last_corrected,
+                    self.offset_us
+                );
+            }
+            expected
+        } else {
+            candidate as u64
+        };
+
+        self.last_raw = Some(raw_us);
+        self.last_corrected = Some(corrected);
+        corrected
+    }
+}
+
+const DEFAULT_FRAME_INTERVAL_US: u64 = 66_666;
+const MIN_INTERVAL_US: u64 = 5_000;
+const MAX_INTERVAL_US: u64 = 200_000;
+const MAX_STEP_MULTIPLIER: u64 = 5;
+
+fn default_frame_interval_us(stream: &ffmpeg::Stream<'_>) -> u64 {
+    let avg = stream.avg_frame_rate();
+    if let Some(interval) = interval_from_rate(avg) {
+        return interval;
+    }
+    let rate = stream.rate();
+    if let Some(interval) = interval_from_rate(rate) {
+        return interval;
+    }
+    DEFAULT_FRAME_INTERVAL_US
+}
+
+fn interval_from_rate(rate: ffmpeg::Rational) -> Option<u64> {
+    let num = rate.numerator() as i128;
+    let den = rate.denominator() as i128;
+    if num <= 0 || den <= 0 {
+        return None;
+    }
+    let interval = 1_000_000i128 * den / num;
+    if interval <= 0 {
+        return None;
+    }
+    Some(interval as u64)
+}
+
 fn send_error(err_tx: &Sender<String>, message: String) {
     let _ = err_tx.send(message);
+}
+
+fn apply_rtsp_low_latency_options(opts: &mut ffmpeg::Dictionary<'_>) {
+    opts.set("rtsp_transport", "tcp");
+    opts.set("fflags", "nobuffer");
+    opts.set("flags", "low_delay");
+    opts.set("max_delay", "0");
+    opts.set("reorder_queue_size", "0");
+}
+
+fn now_micros() -> u64 {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    duration.as_micros() as u64
 }
 
 fn log_sdp(input: &ffmpeg::format::context::Input) {

@@ -28,8 +28,7 @@
       body {
         margin: 0;
         font-family: 'Space Grotesk', sans-serif;
-        background:
-          radial-gradient(1200px 600px at 15% 20%, #1b2a3a, transparent 60%),
+        background: radial-gradient(1200px 600px at 15% 20%, #1b2a3a, transparent 60%),
           radial-gradient(1000px 600px at 80% 10%, #2c1c2a, transparent 55%),
           linear-gradient(160deg, var(--bg), var(--bg-2));
         color: var(--text);
@@ -294,6 +293,10 @@
         gap: 16px;
       }
 
+      .modal-content-wide {
+        width: min(1100px, 100%);
+      }
+
       .modal-header {
         display: flex;
         align-items: center;
@@ -310,6 +313,180 @@
       .muted {
         color: var(--muted);
         font-size: 13px;
+      }
+
+      .jitter-panel {
+        margin-top: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        padding: 14px;
+        background: rgba(5, 8, 20, 0.5);
+      }
+
+      .jitter-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .jitter-title {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(160, 220, 255, 0.9);
+      }
+
+      .jitter-controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .jitter-controls label {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 12px;
+        color: rgba(227, 235, 255, 0.8);
+      }
+
+      .jitter-controls select,
+      .jitter-controls input {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        padding: 6px 10px;
+        color: #f5f7ff;
+        font-size: 13px;
+        outline: none;
+      }
+
+      .jitter-controls select:focus,
+      .jitter-controls input:focus {
+        border-color: rgba(120, 200, 255, 0.7);
+        box-shadow: 0 0 0 2px rgba(120, 200, 255, 0.2);
+      }
+
+      .jitter-visualizer {
+        display: grid;
+        grid-template-columns: repeat(30, minmax(6px, 1fr));
+        gap: 3px;
+        align-items: center;
+      }
+
+      .jitter-block {
+        height: 8px;
+        border-radius: 3px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.08);
+        transition:
+          transform 0.12s ease,
+          box-shadow 0.12s ease,
+          background 0.12s ease;
+      }
+
+      .jitter-block.filled {
+        background: rgba(70, 220, 255, 0.85);
+        border-color: rgba(70, 220, 255, 0.45);
+      }
+
+      .jitter-block.highlight-push {
+        box-shadow: 0 0 0 2px rgba(65, 210, 135, 0.6);
+      }
+
+      .jitter-block.highlight-pop {
+        box-shadow: 0 0 0 2px rgba(255, 120, 120, 0.6);
+      }
+
+      .jitter-meta {
+        margin-top: 8px;
+        font-size: 12px;
+        color: rgba(220, 230, 255, 0.7);
+      }
+
+      #pacing-meta {
+        white-space: pre-line;
+      }
+
+      .stats-summary {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 10px;
+      }
+
+      .stats-summary-item {
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 10px 12px;
+        background: rgba(5, 8, 20, 0.35);
+      }
+
+      .stats-summary-label {
+        font-size: 11px;
+        color: rgba(200, 214, 255, 0.75);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      .stats-summary-value {
+        margin-top: 4px;
+        font-size: 18px;
+        font-weight: 700;
+        color: #f3f7ff;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 12px;
+      }
+
+      .stats-chart-card {
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 14px;
+        padding: 12px;
+        background: rgba(3, 8, 16, 0.45);
+        display: grid;
+        gap: 8px;
+      }
+
+      .stats-chart-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .stats-chart-title {
+        font-size: 13px;
+        color: rgba(210, 230, 255, 0.9);
+      }
+
+      .stats-chart-value {
+        font-size: 12px;
+        color: rgba(180, 225, 255, 0.95);
+      }
+
+      .stats-chart-meta {
+        font-size: 11px;
+        color: rgba(180, 190, 210, 0.9);
+      }
+
+      .stats-chart-svg {
+        width: 100%;
+        height: 130px;
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.22);
+      }
+
+      .stats-empty {
+        padding: 22px 8px;
+        text-align: center;
+        font-size: 12px;
+        color: rgba(180, 190, 210, 0.9);
       }
 
       @media (max-width: 720px) {
@@ -377,9 +554,19 @@
               <div class="command-title">Live Video</div>
               <div class="muted">MoQ subgroup stream decoded locally</div>
             </div>
+            <button id="stats-btn" class="secondary" type="button">Stats</button>
           </div>
           <div class="video-frame">
             <video id="video" playsinline muted autoplay></video>
+          </div>
+          <div class="jitter-panel">
+            <div class="jitter-header">
+              <div class="jitter-title">Jitter Buffer</div>
+              <div class="muted" id="timing-meta">receiveToDecode -ms / receiveToRender -ms</div>
+            </div>
+            <div id="jitter-visualizer" class="jitter-visualizer" aria-label="Video jitter buffer visualization"></div>
+            <div class="jitter-meta" id="jitter-meta">buffered 0 frames</div>
+            <div class="jitter-meta" id="pacing-meta">pacing: delay 0ms / interval 0ms</div>
           </div>
         </div>
       </section>
@@ -460,9 +647,32 @@
           Catalog Track Alias
           <input id="catalog-track-alias" type="number" value="1" />
         </label>
+        <label>
+          Video Pacing Preset
+          <select id="video-pacing-preset">
+            <option value="disabled">disabled</option>
+            <option value="onvif">onvif</option>
+            <option value="call">call</option>
+          </select>
+        </label>
+        <div class="muted">Video Pacing Pipeline: buffer-pacing-decode (fixed)</div>
         <div class="modal-actions">
           <button id="settings-save-btn" type="button">Save</button>
         </div>
+      </div>
+    </div>
+
+    <div id="stats-modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="modal-content modal-content-wide">
+        <div class="modal-header">
+          <div>
+            <div class="command-title">Stats Viewer</div>
+            <div class="muted">Realtime decode / render / pacing metrics</div>
+          </div>
+          <button id="stats-close-btn" class="secondary" type="button">Close</button>
+        </div>
+        <div id="stats-summary" class="stats-summary"></div>
+        <div id="stats-charts" class="stats-grid"></div>
       </div>
     </div>
 

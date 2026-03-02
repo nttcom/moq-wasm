@@ -17,7 +17,6 @@ const audioBitrateLogger = createBitrateLogger((kbps) => {
 
 function sendAudioChunkMessage(chunk: EncodedAudioChunk, metadata: EncodedAudioChunkMetadata | undefined) {
   audioBitrateLogger.addBytes(chunk.byteLength)
-  console.debug('sendAudioChunkMessage', chunk, metadata)
 
   // 最初のチャンクでtimestampのoffsetを保存
   if (timestampOffset === null) {
