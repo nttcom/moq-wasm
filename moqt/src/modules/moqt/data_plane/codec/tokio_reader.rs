@@ -25,7 +25,8 @@ impl<T: TransportProtocol, const N: usize> AsyncRead for Reader<T, N> {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         let mut bytes_mut = BytesMut::with_capacity(N);
-        bytes_mut.resize(N, 0);
+        let capacity = buf.remaining().min(N);
+        bytes_mut.resize(capacity, 0);
         // TODO: handle the case where the received message is larger than the buffer size.
         Pin::new(&mut self.receive_stream)
             .poll_read(cx, &mut bytes_mut)
