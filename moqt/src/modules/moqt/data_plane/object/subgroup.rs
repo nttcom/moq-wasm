@@ -164,8 +164,14 @@ impl SubgroupObject {
         let length = cursor.try_get_varint().log_context("payload length").ok()?;
         let length = length as usize;
         if cursor.remaining() < length {
+            tracing::debug!(
+                "Payload length expected:{}, actual: {}",
+                length,
+                cursor.remaining()
+            );
             return None;
         }
+        tracing::debug!("Payload Length is {}", length);
         Some(length)
     }
 
