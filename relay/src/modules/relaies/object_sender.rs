@@ -30,12 +30,11 @@ impl ObjectSender {
     pub(crate) async fn send_latest_object(
         &self,
         sender: &mut dyn DataSender,
-        receiver: &mut tokio::sync::watch::Receiver<Option<Arc<DataObject>>>,
+        receiver: &mut tokio::sync::broadcast::Receiver<Arc<DataObject>>,
     ) {
-        let object = receiver.changed().await;
-        if object.is_ok() {
-            let data_object = receiver.borrow().as_ref().unwrap().clone();
-            match sender.send_object((*data_object).clone()).await {
+        let object = receiver.recv().await;
+        if let Ok(object) = object {
+            match sender.send_object((*object).clone()).await {
                 Ok(_) => {
                     tracing::debug!("Latest object sent successfully");
                 }
