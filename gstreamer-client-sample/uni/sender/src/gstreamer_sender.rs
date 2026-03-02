@@ -19,6 +19,8 @@ impl GStreamerSender {
     pub(crate) async fn new(data_sender: tokio::sync::mpsc::Sender<SendData>) -> Self {
         gstreamer::init().unwrap();
         let pipeline_str = "videotestsrc ! videoconvert ! x264enc key-int-max=30 ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream ! appsink name=sink";
+        // if you stream video file you want, comment out below and designate absolute path.
+        // let pipeline_str = "filesrc location=path/to/something.mp4 ! decodebin ! videoconvert ! x264enc key-int-max=30 ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream ! appsink name=sink";
         let pipeline = gstreamer::parse::launch(pipeline_str).unwrap();
         let pipeline = pipeline.downcast::<gstreamer::Bin>().unwrap();
         let appsink = pipeline
