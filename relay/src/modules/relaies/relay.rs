@@ -20,7 +20,7 @@ impl Relay {
         self.relay_properties.joinset.spawn(async move {
             tracing::info!("add object receiver");
             while let Ok(data_object) = data_receiver.receive_object().await {
-                tracing::info!("receive object");
+                tracing::info!("receive object: {:#?}", data_object);
                 let queue = queue.get_mut(&track_alias);
                 if queue.is_none() {
                     tracing::error!("Track alias {} not found in object queue", track_alias);
