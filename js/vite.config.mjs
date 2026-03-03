@@ -29,6 +29,9 @@ export default defineConfig({
         media: resolve(__dirname, 'examples/media/index.html'),
         publisher: resolve(__dirname, 'examples/media/publisher/index.html'),
         subscriber: resolve(__dirname, 'examples/media/subscriber/index.html'),
+        'media-cmaf': resolve(__dirname, 'examples/media-cmaf/index.html'),
+        'media-cmaf-publisher': resolve(__dirname, 'examples/media-cmaf/publisher/index.html'),
+        'media-cmaf-subscriber': resolve(__dirname, 'examples/media-cmaf/subscriber/index.html'),
         onvif: resolve(__dirname, 'examples/onvif/index.html'),
         call: resolve(__dirname, 'examples/call/index.html'),
         webcodecs: resolve(__dirname, 'examples/webcodecs/index.html')

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MOQT CMAF Publisher</title>
+    <link rel="stylesheet" href="../../media/media.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div>
+          <span class="pill">CMAF Publisher</span>
+          <h1>MoQT CMAF Publisher</h1>
+          <p>Publish video and audio as fMP4 segments (moof+mdat per GoP) over MoQT.</p>
+        </div>
+      </header>
+      <div id="app">
+        <form name="form" id="form" class="control-grid">
+          <section class="card stack full">
+            <h2>Console</h2>
+            <p class="hint">info / warn / error を表示します。</p>
+            <div id="logPanel"></div>
+          </section>
+          <section class="card stack">
+            <h2>Connection</h2>
+            <label for="url">URL:</label>
+            <input type="url" name="url" id="url" value="https://moqt.research.skyway.io:4433" />
+            <div id="urlPresets" class="preset-bar">
+              Preset:
+              <button type="button" data-url="https://moqt.research.skyway.io:4433">
+                https://moqt.research.skyway.io:4433
+              </button>
+              <button type="button" data-url="https://127.0.0.1:4433">https://127.0.0.1:4433</button>
+            </div>
+            <script>
+              ;(function () {
+                const preset = document.getElementById('urlPresets')
+                const input = document.getElementById('url')
+                if (!preset || !input) return
+                preset.addEventListener('click', (event) => {
+                  const target = event.target
+                  if (!(target instanceof HTMLButtonElement)) return
+                  const value = target.getAttribute('data-url')
+                  if (!value) return
+                  input.value = value
+                })
+              })()
+            </script>
+            <div class="button-row">
+              <button type="button" id="connectBtn">Connect</button>
+              <button type="button" id="closeBtn">Close</button>
+            </div>
+          </section>
+
+          <section class="card stack">
+            <h3>CLIENT_SETUP</h3>
+            <label>Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
+            <div class="button-row action-row">
+              <button type="button" id="sendSetupBtn" class="compact-button">Send</button>
+            </div>
+          </section>
+
+          <section class="card stack">
+            <h3>ANNOUNCE</h3>
+            <label
+              >Track Namespace:
+              <input type="text" name="announce-track-namespace" id="announce-track-namespace" value="video_audio" />
+            </label>
+            <script>
+              ;(function () {
+                function pad(n) {
+                  return n < 10 ? '0' + n : n
+                }
+                const now = new Date()
+                const yyyy = now.getFullYear()
+                const mm = pad(now.getMonth() + 1)
+                const dd = pad(now.getDate())
+                const HH = pad(now.getHours())
+                const MM = pad(now.getMinutes())
+                const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+                const input = document.getElementById('announce-track-namespace')
+                if (input) input.value = value
+              })()
+            </script>
+            <div class="button-row action-row">
+              <button type="button" id="sendAnnounceBtn">Send</button>
+            </div>
+          </section>
+
+          <section class="card stack full">
+            <h3>OBJECT (Video + Audio)</h3>
+            <p class="hint">
+              Published tracks: catalog, video_720p, audio_aac
+              (CMAF packaging — 1 GoP = 1 moof+mdat segment)
+            </p>
+            <div class="field-row">
+              <label
+                >Video Publisher Priority: <input type="text" name="video-publisher-priority" id="" value="0" />
+              </label>
+              <label>Keyframe Interval:
+                <select name="keyframe-interval">
+                  <option value="0.5">0.5s</option>
+                  <option value="1" selected>1s</option>
+                  <option value="2">2s</option>
+                </select>
+              </label>
+            </div>
+            <div class="button-row">
+              <button type="button" id="startGetUserMediaBtn">getUserMedia</button>
+            </div>
+            <div>
+              <button type="button" id="sendSubgroupObjectBtn">Send</button>
+            </div>
+          </section>
+
+          <section class="card stack full">
+            <h2>Preview</h2>
+            <video id="video" autoplay muted inline></video>
+          </section>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      ;(function () {
+        const panel = document.getElementById('logPanel')
+        if (!panel) return
+        const levels = ['log', 'info', 'warn', 'error']
+        const original = {}
+        const maxEntries = 200
+
+        function append(level, args) {
+          const entry = document.createElement('div')
+          const classLevel = level === 'log' ? 'info' : level
+          entry.className = `log-entry log-${classLevel}`
+          const label = document.createElement('strong')
+          label.textContent = classLevel.toUpperCase()
+          entry.appendChild(label)
+          const text = document.createElement('span')
+          text.textContent = ' ' + args.map(formatArg).join(' ')
+          entry.appendChild(text)
+          panel.appendChild(entry)
+          while (panel.childNodes.length > maxEntries) {
+            panel.removeChild(panel.firstChild)
+          }
+          panel.scrollTop = panel.scrollHeight
+        }
+
+        function formatArg(arg) {
+          if (typeof arg === 'string') return arg
+          if (arg instanceof Error) return arg.message
+          try {
+            return JSON.stringify(arg)
+          } catch (_e) {
+            return String(arg)
+          }
+        }
+
+        for (const level of levels) {
+          original[level] = console[level].bind(console)
+          console[level] = (...args) => {
+            original[level](...args)
+            append(level, args)
+          }
+        }
+      })()
+    </script>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
