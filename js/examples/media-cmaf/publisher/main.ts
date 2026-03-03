@@ -227,7 +227,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
 		const [videoTrack] = mediaStream.getVideoTracks()
 		const videoSource = new MediaStreamVideoTrackSource(videoTrack, {
 			codec: 'avc',
-			bitrate: 2_000_000,
+			bitrate: 500_000,
 			latencyMode: 'realtime',
 			keyFrameInterval: keyFrameIntervalSec,
 		})
