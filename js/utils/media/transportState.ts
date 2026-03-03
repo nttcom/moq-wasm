@@ -33,7 +33,7 @@ export class MediaTransportState {
   }
 
   private readonly audio: TrackCounters = {
-    groupId: 0n,
+    groupId: -1n,
     objectId: 0n,
     subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
   }
