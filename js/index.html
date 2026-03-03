@@ -3,16 +3,235 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Examples</title>
+    <title>MoQT Examples Hub</title>
+    <style>
+      :root {
+        --bg-top: #0b1020;
+        --bg-bottom: #111a34;
+        --surface: rgba(18, 29, 56, 0.72);
+        --surface-border: rgba(151, 184, 255, 0.22);
+        --text-main: #ebf1ff;
+        --text-sub: #b7c6ea;
+        --accent: #7cc7ff;
+        --accent-strong: #4f9fff;
+        --shadow: 0 30px 60px rgba(0, 0, 0, 0.35);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: 'Avenir Next', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+        color: var(--text-main);
+        background:
+          radial-gradient(80rem 45rem at -10% -20%, #1d2c62 0%, rgba(29, 44, 98, 0) 60%),
+          radial-gradient(70rem 40rem at 110% -30%, #1f4c7d 0%, rgba(31, 76, 125, 0) 60%),
+          linear-gradient(160deg, var(--bg-top) 10%, var(--bg-bottom) 90%);
+      }
+
+      .page {
+        width: min(1120px, calc(100% - 2rem));
+        margin: 2.5rem auto 3rem;
+      }
+
+      .hero {
+        padding: 2rem 2rem 2.3rem;
+        border: 1px solid var(--surface-border);
+        border-radius: 1.4rem;
+        background: linear-gradient(145deg, rgba(26, 41, 77, 0.82), rgba(13, 22, 44, 0.8));
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(8px);
+        animation: fade-up 420ms ease-out both;
+      }
+
+      .kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.35rem 0.75rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #dff2ff;
+        background: rgba(124, 199, 255, 0.16);
+        border: 1px solid rgba(124, 199, 255, 0.38);
+      }
+
+      h1 {
+        margin: 1rem 0 0.65rem;
+        font-size: clamp(1.8rem, 4.4vw, 2.8rem);
+        line-height: 1.1;
+        letter-spacing: 0.01em;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 70ch;
+        color: var(--text-sub);
+        line-height: 1.7;
+      }
+
+      .grid {
+        margin-top: 1.3rem;
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+
+      .card {
+        display: flex;
+        flex-direction: column;
+        gap: 0.72rem;
+        padding: 1rem 1rem 1.08rem;
+        border-radius: 1rem;
+        text-decoration: none;
+        color: var(--text-main);
+        background: var(--surface);
+        border: 1px solid var(--surface-border);
+        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.26);
+        transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+        animation: fade-up 420ms ease-out both;
+      }
+
+      .grid .card:nth-child(2) {
+        animation-delay: 50ms;
+      }
+      .grid .card:nth-child(3) {
+        animation-delay: 100ms;
+      }
+      .grid .card:nth-child(4) {
+        animation-delay: 150ms;
+      }
+      .grid .card:nth-child(5) {
+        animation-delay: 200ms;
+      }
+
+      .card:hover {
+        transform: translateY(-4px);
+        border-color: rgba(124, 199, 255, 0.58);
+        box-shadow: 0 24px 38px rgba(0, 0, 0, 0.34);
+      }
+
+      .card:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .card h2 {
+        margin: 0;
+        font-size: 1.08rem;
+        line-height: 1.3;
+      }
+
+      .tag {
+        width: fit-content;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #d9eeff;
+        background: rgba(79, 159, 255, 0.19);
+        border: 1px solid rgba(79, 159, 255, 0.45);
+        border-radius: 999px;
+        padding: 0.28rem 0.62rem;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--text-sub);
+        font-size: 0.93rem;
+        line-height: 1.6;
+      }
+
+      .card .arrow {
+        margin-top: auto;
+        color: var(--accent-strong);
+        font-size: 0.83rem;
+        font-weight: 700;
+      }
+
+      .note {
+        margin-top: 1rem;
+        color: #9db2dd;
+        font-size: 0.82rem;
+      }
+
+      @keyframes fade-up {
+        from {
+          opacity: 0;
+          transform: translateY(12px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 640px) {
+        .page {
+          width: min(1120px, calc(100% - 1rem));
+          margin-top: 1rem;
+        }
+        .hero {
+          padding: 1.25rem 1rem 1.3rem;
+          border-radius: 1rem;
+        }
+        .grid {
+          gap: 0.7rem;
+        }
+      }
+    </style>
   </head>
   <body>
-    <h1>Examples</h1>
-    <div>
-      <a href="examples/message/index.html">Message</a>
-      <a href="examples/media/index.html">Media</a>
-      <a href="examples/onvif/index.html">ONVIF</a>
-      <a href="examples/call/index.html">Call</a>
-      <a href="examples/webcodecs/index.html">WebCodecs</a>
-    </div>
+    <main class="page">
+      <section class="hero">
+        <span class="kicker">MoQT Playground</span>
+        <h1>Examples Hub</h1>
+        <p>
+          MoQ / WebTransport / WebCodecs を使ったサンプル群への入口です。<br />
+          目的別に「シグナリング検証」「送受信デバッグ」「ONVIF連携」「通話アプリ」「単体 WebCodecs テスト」を選べます。
+        </p>
+      </section>
+
+      <section class="grid" aria-label="Examples navigation">
+        <a class="card" href="examples/message/index.html">
+          <span class="tag">Protocol</span>
+          <h2>Message</h2>
+          <p>Setup / Announce / Subscribe など、MoQT 制御メッセージを手動で試す低レイヤ検証ページ。</p>
+          <span class="arrow">Open Example</span>
+        </a>
+        <a class="card" href="examples/media/index.html">
+          <span class="tag">Transport</span>
+          <h2>Media</h2>
+          <p>Publisher / Subscriber を分けて、Media over MoQ の送受信と挙動を個別に確認。</p>
+          <span class="arrow">Open Example</span>
+        </a>
+        <a class="card" href="examples/onvif/index.html">
+          <span class="tag">ONVIF</span>
+          <h2>ONVIF Viewer</h2>
+          <p>ONVIF 制御と映像視聴を統合。カメラ制御系と RTSP 由来映像の遅延観測に向いています。</p>
+          <span class="arrow">Open Example</span>
+        </a>
+        <a class="card" href="examples/call/index.html">
+          <span class="tag">Application</span>
+          <h2>Call</h2>
+          <p>Catalog / Subscribe 運用や jitter/pacing のチューニングを含む、実運用寄りの通話 UI。</p>
+          <span class="arrow">Open Example</span>
+        </a>
+        <a class="card" href="examples/webcodecs/index.html">
+          <span class="tag">Codec Lab</span>
+          <h2>WebCodecs Loopback</h2>
+          <p>1タブで Encoder/Decoder の設定相性を比較し、MoQ を介さず純粋なコーデック特性を確認。</p>
+          <span class="arrow">Open Example</span>
+        </a>
+      </section>
+
+      <p class="note">Tip: 低遅延検証では、まず WebCodecs → Media → Call の順で切り分けると原因特定が速くなります。</p>
+    </main>
   </body>
 </html>
