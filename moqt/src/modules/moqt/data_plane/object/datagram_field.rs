@@ -31,6 +31,11 @@ use crate::modules::{
     moqt::data_plane::object::{extension_headers::ExtensionHeaders, object_status::ObjectStatus},
 };
 
+pub enum ObjectDatagramPayload {
+    Payload(Bytes),
+    Status(ObjectStatus),
+}
+
 #[repr(u64)]
 pub(crate) enum DatagramTypeValue {
     Payload0x00 = 0x00,
@@ -133,6 +138,24 @@ impl DatagramField {
             | Self::Status0x20 { object_id, .. }
             | Self::Status0x21 { object_id, .. } => Some(*object_id),
             _ => None,
+        }
+    }
+
+    pub fn payload(&self) -> ObjectDatagramPayload {
+        match self {
+            Self::Payload0x00 { payload, .. }
+            | Self::Payload0x01 { payload, .. }
+            | Self::Payload0x02WithEndOfGroup { payload, .. }
+            | Self::Payload0x03WithEndOfGroup { payload, .. }
+            | Self::Payload0x04 { payload, .. }
+            | Self::Payload0x05 { payload, .. }
+            | Self::Payload0x06WithEndOfGroup { payload, .. }
+            | Self::Payload0x07WithEndOfGroup { payload, .. } => {
+                ObjectDatagramPayload::Payload(payload.clone())
+            }
+            Self::Status0x20 { status, .. } | Self::Status0x21 { status, .. } => {
+                ObjectDatagramPayload::Status(*status)
+            }
         }
     }
 

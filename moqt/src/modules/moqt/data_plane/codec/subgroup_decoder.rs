@@ -7,11 +7,11 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub(crate) struct DataFrameDecoder {
+pub(crate) struct SubgroupDecoder {
     subgroup_header_type: Option<SubgroupHeaderType>,
 }
 
-impl Decoder for DataFrameDecoder {
+impl Decoder for SubgroupDecoder {
     type Item = Subgroup;
     // TODO: define a proper error type.
     type Error = std::io::Error;
@@ -29,7 +29,7 @@ impl Decoder for DataFrameDecoder {
     }
 }
 
-impl DataFrameDecoder {
+impl SubgroupDecoder {
     pub(crate) fn new() -> Self {
         Self {
             subgroup_header_type: None,
