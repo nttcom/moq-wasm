@@ -474,15 +474,17 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
       await session.subscribe(subscribeId, subscribeId, trackNamespace, trackName, undefined, role, trackCodec)
     } catch (error) {
       console.error(`Failed to subscribe ${role} track for ${memberId}:`, error)
-      setRoom((currentRoom) => updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => {
-        if (track.subscribeId !== subscribeId) {
-          return track
-        }
-        return {
-          ...track,
-          isSubscribing: false
-        }
-      }))
+      setRoom((currentRoom) =>
+        updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => {
+          if (track.subscribeId !== subscribeId) {
+            return track
+          }
+          return {
+            ...track,
+            isSubscribing: false
+          }
+        })
+      )
     }
   }
 
@@ -777,22 +779,11 @@ function updateMemberSubscriptionStateByRole(
     ...member,
     subscribedTracks: {
       ...member.subscribedTracks,
-      video:
-        role === 'video'
-          ? updater(member.subscribedTracks.video)
-          : member.subscribedTracks.video,
+      video: role === 'video' ? updater(member.subscribedTracks.video) : member.subscribedTracks.video,
       screenshare:
-        role === 'screenshare'
-          ? updater(member.subscribedTracks.screenshare)
-          : member.subscribedTracks.screenshare,
-      audio:
-        role === 'audio'
-          ? updater(member.subscribedTracks.audio)
-          : member.subscribedTracks.audio,
-      chat:
-        role === 'chat'
-          ? updater(member.subscribedTracks.chat)
-          : member.subscribedTracks.chat
+        role === 'screenshare' ? updater(member.subscribedTracks.screenshare) : member.subscribedTracks.screenshare,
+      audio: role === 'audio' ? updater(member.subscribedTracks.audio) : member.subscribedTracks.audio,
+      chat: role === 'chat' ? updater(member.subscribedTracks.chat) : member.subscribedTracks.chat
     }
   }
 
