@@ -12,7 +12,7 @@
         <div>
           <span class="pill">Subscriber</span>
           <h1>MoQT CMAF Subscriber</h1>
-          <p>Subscribe to CMAF-packaged video over MoQT and play back via MSE.</p>
+          <p>Subscribe to CMAF-packaged video and audio over MoQT and play back via MSE.</p>
         </div>
       </header>
       <div id="app">
@@ -107,8 +107,12 @@
                   <label>Video Subscribe ID: <input type="text" name="video-subscribe-id" value="1" /></label>
                   <label>Video Track Alias: <input type="text" name="video-track-alias" value="1" /></label>
                 </div>
+                <div class="field-row">
+                  <label>Audio Subscribe ID: <input type="text" name="audio-subscribe-id" value="2" /></label>
+                  <label>Audio Track Alias: <input type="text" name="audio-track-alias" value="2" /></label>
+                </div>
                 <div class="button-row action-row">
-                  <button type="button" id="sendSubscribeBtn">Subscribe Selected Track</button>
+                  <button type="button" id="sendSubscribeBtn">Subscribe Video + Audio</button>
                 </div>
               </section>
             </div>
@@ -117,9 +121,19 @@
           <section class="card stack full">
             <h2>Playback</h2>
             <div class="media-grid">
-              <video id="video" muted autoplay controls></video>
+              <video id="video" muted controls></video>
             </div>
-            <div id="stats" class="hint" style="font-family: monospace; white-space: pre"></div>
+          </section>
+
+          <section class="card stack full">
+            <h2>Overhead</h2>
+            <div style="display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px 16px; font-family: monospace; font-size: 14px;">
+              <span></span><span><strong>Video</strong></span><span><strong>Audio</strong></span>
+              <span>init</span><span id="oh-video-init">-</span><span id="oh-audio-init">-</span>
+              <span>moof</span><span id="oh-video-moof">-</span><span id="oh-audio-moof">-</span>
+              <span>mdat</span><span id="oh-video-mdat">-</span><span id="oh-audio-mdat">-</span>
+              <span>overhead</span><span id="oh-video-pct">-</span><span id="oh-audio-pct">-</span>
+            </div>
           </section>
         </form>
       </div>

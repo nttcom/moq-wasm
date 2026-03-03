@@ -12,7 +12,7 @@
         <div>
           <span class="pill">CMAF Publisher</span>
           <h1>MoQT CMAF Publisher</h1>
-          <p>Publish video as full CMAF chunks (moof+mdat) over MoQT.</p>
+          <p>Publish video and audio as fMP4 segments (moof+mdat per GoP) over MoQT.</p>
         </div>
       </header>
       <div id="app">
@@ -89,14 +89,21 @@
           </section>
 
           <section class="card stack full">
-            <h3>OBJECT (Video Only)</h3>
+            <h3>OBJECT (Video + Audio)</h3>
             <p class="hint">
-              Published tracks: catalog, video_1080p
+              Published tracks: catalog, video_720p, audio_aac
               (CMAF packaging — 1 GoP = 1 moof+mdat segment)
             </p>
             <div class="field-row">
               <label
                 >Video Publisher Priority: <input type="text" name="video-publisher-priority" id="" value="0" />
+              </label>
+              <label>Keyframe Interval:
+                <select name="keyframe-interval">
+                  <option value="0.5">0.5s</option>
+                  <option value="1" selected>1s</option>
+                  <option value="2">2s</option>
+                </select>
               </label>
             </div>
             <div class="button-row">
