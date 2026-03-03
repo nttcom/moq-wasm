@@ -157,22 +157,22 @@ export function buildRemoteMember({
         chat: {
           isSubscribing: existingMember.subscribedTracks.chat.isSubscribing,
           isSubscribed: existingMember.subscribedTracks.chat.isSubscribed,
-          subscribeId: chatSubscribeId
+          subscribeId: existingMember.subscribedTracks.chat.subscribeId
         },
         audio: {
           isSubscribing: existingMember.subscribedTracks.audio.isSubscribing,
           isSubscribed: existingMember.subscribedTracks.audio.isSubscribed,
-          subscribeId: audioSubscribeId
+          subscribeId: existingMember.subscribedTracks.audio.subscribeId
         },
         video: {
           isSubscribing: existingMember.subscribedTracks.video.isSubscribing,
           isSubscribed: existingMember.subscribedTracks.video.isSubscribed,
-          subscribeId: videoSubscribeId
+          subscribeId: existingMember.subscribedTracks.video.subscribeId
         },
         screenshare: {
           isSubscribing: existingMember.subscribedTracks.screenshare.isSubscribing,
           isSubscribed: existingMember.subscribedTracks.screenshare.isSubscribed,
-          subscribeId: screenshareSubscribeId
+          subscribeId: existingMember.subscribedTracks.screenshare.subscribeId
         }
       }
     }
