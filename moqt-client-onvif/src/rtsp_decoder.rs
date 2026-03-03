@@ -480,13 +480,13 @@ impl TimestampCorrector {
 
     fn correct(&mut self, raw_us: u64, duration_us: Option<u64>) -> u64 {
         if let Some(duration_us) = duration_us {
-            if duration_us >= MIN_INTERVAL_US && duration_us <= MAX_INTERVAL_US {
+            if (MIN_INTERVAL_US..=MAX_INTERVAL_US).contains(&duration_us) {
                 self.interval_us = duration_us;
             }
         } else if let Some(last_raw) = self.last_raw {
             if raw_us > last_raw {
                 let diff = raw_us - last_raw;
-                if diff >= MIN_INTERVAL_US && diff <= MAX_INTERVAL_US {
+                if (MIN_INTERVAL_US..=MAX_INTERVAL_US).contains(&diff) {
                     self.interval_us = (self.interval_us * 3 + diff) / 4;
                 }
             }
@@ -510,7 +510,7 @@ impl TimestampCorrector {
             let expected = last_corrected.saturating_add(interval);
             self.offset_us = expected as i64 - raw_us as i64;
             self.correction_log_count = self.correction_log_count.saturating_add(1);
-            if self.correction_log_count <= 5 || self.correction_log_count % 100 == 0 {
+            if self.correction_log_count <= 5 || self.correction_log_count.is_multiple_of(100) {
                 log::debug!(
                     "RTSP timestamp corrected: count={} raw_us={} corrected_us={} interval_us={} last_corrected_us={} offset_us={}",
                     self.correction_log_count,

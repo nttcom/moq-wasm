@@ -969,7 +969,7 @@ export class MediaPublisher {
 
     const decoderConfig = metadata?.decoderConfig as { codec?: string; avc?: { format?: 'annexb' | 'avc' } } | undefined
     const avcFormat = context.config.codec.startsWith('avc')
-      ? (decoderConfig?.avc?.format as 'annexb' | 'avc' | undefined) ?? 'annexb'
+      ? ((decoderConfig?.avc?.format as 'annexb' | 'avc' | undefined) ?? 'annexb')
       : undefined
     const codec = decoderConfig?.codec ?? context.config.codec
     const serializeStartedAtMs = performance.now()
