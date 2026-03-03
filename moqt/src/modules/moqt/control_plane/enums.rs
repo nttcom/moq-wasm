@@ -1,0 +1,49 @@
+use crate::{
+    TransportProtocol,
+    modules::moqt::control_plane::{
+        control_messages::messages::{publish_ok::PublishOk, subscribe_ok::SubscribeOk},
+        handler::{
+            publish_handler::PublishHandler, publish_namespace_handler::PublishNamespaceHandler,
+            subscribe_handler::SubscribeHandler,
+            subscribe_namespace_handler::SubscribeNamespaceHandler,
+        },
+    },
+};
+
+// message aliases
+pub type RequestId = u64;
+
+pub(crate) type ErrorCode = u64;
+pub(crate) type ErrorPhrase = String;
+
+// parameters aliases
+// appear in
+// CLIENT_SETUP, SERVER_SETUP, PUBLISH, SUBSCRIBE, SUBSCRIBE_UPDATE,
+// SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE, TRACK_STATUS or FETCH
+pub type Authorization = String;
+// TRACK_STATUS, TRACK_STATUS_OK, PUBLISH, PUBLISH_OK, SUBSCRIBE,
+// SUBSCRIBE_OK, or SUBSCRIBE_UDPATE message.
+pub type DeliveryTimeout = u64;
+// PUBLISH, SUBSCRIBE_OK, FETCH_OK or TRACK_STATUS_OK
+pub type MaxCacheDuration = u64;
+
+#[derive(Clone, Debug)]
+pub enum SessionEvent<T: TransportProtocol> {
+    PublishNamespace(PublishNamespaceHandler<T>),
+    SubscribeNameSpace(SubscribeNamespaceHandler<T>),
+    Publish(PublishHandler<T>),
+    Subscribe(SubscribeHandler<T>),
+    ProtocolViolation(),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResponseMessage {
+    SubscribeNameSpaceOk(RequestId),
+    SubscribeNameSpaceError(RequestId, ErrorCode, ErrorPhrase),
+    PublishNamespaceOk(RequestId),
+    PublishNamespaceError(RequestId, ErrorCode, ErrorPhrase),
+    PublishOk(PublishOk),
+    PublishError(RequestId, ErrorCode, ErrorPhrase),
+    SubscribeOk(SubscribeOk),
+    SubscribeError(RequestId, ErrorCode, ErrorPhrase),
+}
