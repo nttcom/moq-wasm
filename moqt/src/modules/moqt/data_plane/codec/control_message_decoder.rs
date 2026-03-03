@@ -19,9 +19,9 @@ use crate::modules::{
     },
 };
 
-pub(crate) struct MessageDecoder;
+pub(crate) struct ControlMessageDecoder;
 
-impl Decoder for MessageDecoder {
+impl Decoder for ControlMessageDecoder {
     type Item = ReceivedMessage;
     // TODO: define a proper error type.
     type Error = std::io::Error;
@@ -49,7 +49,7 @@ impl Decoder for MessageDecoder {
     }
 }
 
-impl MessageDecoder {
+impl ControlMessageDecoder {
     fn get_message_type(
         &self,
         src: &mut Cursor<&[u8]>,

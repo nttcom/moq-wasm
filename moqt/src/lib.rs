@@ -13,6 +13,7 @@ pub use modules::moqt::control_plane::handler::subscribe_namespace_handler::Subs
 pub use modules::moqt::control_plane::options::PublishOption;
 pub use modules::moqt::control_plane::options::SubscribeOption;
 pub use modules::moqt::data_plane::object::datagram_field::DatagramField;
+pub use modules::moqt::data_plane::object::datagram_field::ObjectDatagramPayload;
 pub use modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
 pub use modules::moqt::data_plane::object::object_datagram::ObjectDatagram;
 pub use modules::moqt::data_plane::object::subgroup::SubgroupHeader;

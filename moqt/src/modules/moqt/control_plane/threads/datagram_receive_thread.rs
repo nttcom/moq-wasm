@@ -8,7 +8,7 @@ use crate::{
         moqt::{
             control_plane::threads::enums::StreamWithObject,
             data_plane::{
-                codec::data_frame_decoder::DataFrameDecoder,
+                codec::subgroup_decoder::SubgroupDecoder,
                 object::object_datagram::ObjectDatagram,
                 streams::stream::stream_receiver::UniStreamReceiver,
             },
@@ -40,7 +40,7 @@ impl DatagramReceiveThread {
                         },
                         stream = context.transport_connection.accept_uni() => {
                             if let Ok(stream) = stream {
-                                let stream = UniStreamReceiver::new(stream, DataFrameDecoder::new());
+                                let stream = UniStreamReceiver::new(stream, SubgroupDecoder::new());
                                 Self::on_stream_received(&context, stream).await;
                             } else {
                                 tracing::error!("Failed to accept uni stream");
