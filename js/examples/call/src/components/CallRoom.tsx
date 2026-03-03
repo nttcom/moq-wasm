@@ -569,10 +569,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
         continue
       }
       const selected = remoteCatalogSelections.get(member.id)
-      const catalogChatTrackName = remoteCatalogTracks
-        .get(member.id)
-        ?.find((track) => track.role === 'chat')
-        ?.name
+      const catalogChatTrackName = remoteCatalogTracks.get(member.id)?.find((track) => track.role === 'chat')?.name
       const chatTrackName = selected?.chat ?? catalogChatTrackName ?? 'chat'
       void subscribeCatalogTrack(member, member.id, trackNamespace, 'chat', chatTrackName).catch((error) => {
         console.error(`Failed to auto-subscribe chat track for ${member.id}:`, error)

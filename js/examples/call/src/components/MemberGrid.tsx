@@ -240,12 +240,7 @@ export function MemberGrid({
         muted
         placeholder="Camera disabled"
         secondaryPlaceholder="Screen share disabled"
-        details={
-          <CatalogsPanel
-            tracks={catalogTracks}
-            subscribedTracks={subscribedCatalogTracks}
-          />
-        }
+        details={<CatalogsPanel tracks={catalogTracks} subscribedTracks={subscribedCatalogTracks} />}
       />
       {isDeviceModalOpen && (
         <DeviceModal title="Select Devices" onClose={() => setIsDeviceModalOpen(false)}>
@@ -1778,7 +1773,7 @@ async function validateVideoEncoderCatalogTrackConfig(
 
 function CatalogsPanel({
   tracks,
-  subscribedTracks,
+  subscribedTracks
 }: {
   tracks: EditableCallCatalogTrack[]
   subscribedTracks: SubscribedCatalogTrack[]
@@ -1836,7 +1831,9 @@ function TrackSettingsTiles({
           ))}
         </div>
       ) : (
-        <div className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-blue-200">{emptyText}</div>
+        <div className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-blue-200">
+          {emptyText}
+        </div>
       )}
     </div>
   )
@@ -1848,7 +1845,10 @@ function TrackSettingTile({ title, rows }: { title: string; rows: [string, strin
       <div className="mb-2 text-[10px] font-medium text-blue-200/90">{title}</div>
       <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
         {rows.map(([label, value]) => (
-          <div key={`${title}-${label}`} className="flex items-center justify-between gap-2 rounded bg-white/[0.03] px-2 py-1">
+          <div
+            key={`${title}-${label}`}
+            className="flex items-center justify-between gap-2 rounded bg-white/[0.03] px-2 py-1"
+          >
             <span className="text-blue-200/90">{label}</span>
             <span className="font-mono text-white/95">{value}</span>
           </div>

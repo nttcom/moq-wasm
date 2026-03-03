@@ -552,10 +552,8 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
             videoHeight: config.height ?? current.videoHeight,
             videoDecoderDescriptionLength: config.descriptionLength ?? current.videoDecoderDescriptionLength,
             videoDecoderAvcFormat: config.avcFormat ?? current.videoDecoderAvcFormat,
-            videoDecoderHardwareAcceleration:
-              config.hardwareAcceleration ?? current.videoDecoderHardwareAcceleration,
-            videoDecoderOptimizeForLatency:
-              config.optimizeForLatency ?? current.videoDecoderOptimizeForLatency
+            videoDecoderHardwareAcceleration: config.hardwareAcceleration ?? current.videoDecoderHardwareAcceleration,
+            videoDecoderOptimizeForLatency: config.optimizeForLatency ?? current.videoDecoderOptimizeForLatency
           })
           return updated
         }),
@@ -711,7 +709,10 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
   const removeCatalogPresetTracks = useCallback(
     (source: CatalogPresetSource) => {
       const preset = CATALOG_PRESETS[source]
-      updateCatalogTracks((prev) => removeCatalogTracksByNames(prev, preset.names()), `remove ${preset.label} catalog tracks`)
+      updateCatalogTracks(
+        (prev) => removeCatalogTracksByNames(prev, preset.names()),
+        `remove ${preset.label} catalog tracks`
+      )
     },
     [updateCatalogTracks]
   )
@@ -913,11 +914,13 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
 
   const selectVideoEncoding = useCallback(
     async (settings: Partial<VideoEncodingSettings>) => {
-      const next = {
+      const next: VideoEncodingSettings = {
         codec: settings.codec ?? selectedVideoEncoding.codec,
         width: settings.width ?? selectedVideoEncoding.width,
         height: settings.height ?? selectedVideoEncoding.height,
-        bitrate: settings.bitrate ?? selectedVideoEncoding.bitrate
+        bitrate: settings.bitrate ?? selectedVideoEncoding.bitrate,
+        framerate: settings.framerate ?? selectedVideoEncoding.framerate,
+        hardwareAcceleration: settings.hardwareAcceleration ?? selectedVideoEncoding.hardwareAcceleration
       }
       setSelectedVideoEncoding(next)
       setVideoEncoderError(null)
@@ -935,11 +938,13 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
 
   const selectScreenShareEncoding = useCallback(
     async (settings: Partial<VideoEncodingSettings>) => {
-      const next = {
+      const next: VideoEncodingSettings = {
         codec: settings.codec ?? selectedScreenShareEncoding.codec,
         width: settings.width ?? selectedScreenShareEncoding.width,
         height: settings.height ?? selectedScreenShareEncoding.height,
-        bitrate: settings.bitrate ?? selectedScreenShareEncoding.bitrate
+        bitrate: settings.bitrate ?? selectedScreenShareEncoding.bitrate,
+        framerate: settings.framerate ?? selectedScreenShareEncoding.framerate,
+        hardwareAcceleration: settings.hardwareAcceleration ?? selectedScreenShareEncoding.hardwareAcceleration
       }
       setSelectedScreenShareEncoding(next)
       setVideoEncoderError(null)
@@ -1122,10 +1127,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
   }
 }
 
-function isSameSubscribedCatalogTracks(
-  left: SubscribedCatalogTrack[],
-  right: SubscribedCatalogTrack[]
-): boolean {
+function isSameSubscribedCatalogTracks(left: SubscribedCatalogTrack[], right: SubscribedCatalogTrack[]): boolean {
   if (left.length !== right.length) {
     return false
   }

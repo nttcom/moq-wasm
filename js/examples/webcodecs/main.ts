@@ -303,7 +303,7 @@ function buildDecoderConfigFromCodec(
   }
   if (resolvedCodec.startsWith('avc')) {
     const format =
-      base.avcFormatMode === 'auto' ? encoderCfg.avc?.format ?? 'annexb' : (base.avcFormatMode as 'annexb' | 'avc')
+      base.avcFormatMode === 'auto' ? (encoderCfg.avc?.format ?? 'annexb') : (base.avcFormatMode as 'annexb' | 'avc')
     ;(config as any).avc = { format }
   }
   return config

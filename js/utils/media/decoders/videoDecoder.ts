@@ -525,7 +525,8 @@ function enqueueOutputFrame(frame: VideoFrame): void {
     return
   }
   const receivedKey = `${meta.groupId.toString()}:${meta.objectId.toString()}`
-  const receivedMs = typeof meta.receivedMs === 'number' ? meta.receivedMs : receivedFrameTimes.get(receivedKey) ?? null
+  const receivedMs =
+    typeof meta.receivedMs === 'number' ? meta.receivedMs : (receivedFrameTimes.get(receivedKey) ?? null)
   if (receivedFrameTimes.has(receivedKey)) {
     receivedFrameTimes.delete(receivedKey)
   }
