@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebCodecs Loopback Test</title>
+    <style>
+      :root {
+        --bg: #0b1320;
+        --panel: #111b2d;
+        --panel-2: #17243b;
+        --text: #e7edf7;
+        --muted: #9fb0cb;
+        --line: #2a3a58;
+        --accent: #44c0a8;
+        --warn: #efb04f;
+        --danger: #ff7d7d;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        color: var(--text);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+        background: radial-gradient(900px 500px at 10% -10%, rgba(68, 192, 168, 0.12), transparent 60%),
+          radial-gradient(1000px 600px at 100% -20%, rgba(84, 116, 255, 0.1), transparent 60%), var(--bg);
+      }
+      .page {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 24px;
+        display: grid;
+        gap: 16px;
+      }
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+      }
+      .hero h1 {
+        margin: 0 0 6px;
+        font-size: 1.7rem;
+      }
+      .hero p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .pill {
+        display: inline-flex;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(68, 192, 168, 0.15);
+        color: #86f0db;
+        border: 1px solid rgba(68, 192, 168, 0.35);
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 420px minmax(0, 1fr);
+        gap: 16px;
+      }
+      .card {
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)), var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px;
+      }
+      .card h2 {
+        margin: 0 0 12px;
+        font-size: 0.95rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .stack {
+        display: grid;
+        gap: 12px;
+      }
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 0.86rem;
+        color: var(--muted);
+      }
+      select,
+      input[type='number'],
+      input[type='checkbox'] {
+        font: inherit;
+      }
+      select,
+      input[type='number'] {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--text);
+        padding: 8px 10px;
+      }
+      input[type='checkbox'] {
+        accent-color: var(--accent);
+      }
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 38px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        padding: 8px 10px;
+        color: var(--text);
+      }
+      .buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      button {
+        border: 1px solid transparent;
+        background: #22486d;
+        color: #fff;
+        border-radius: 999px;
+        padding: 8px 12px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button:hover {
+        filter: brightness(1.08);
+      }
+      button.secondary {
+        background: var(--panel-2);
+        border-color: var(--line);
+        color: var(--text);
+      }
+      button.warn {
+        background: #6e4f1f;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .status-line {
+        font-size: 0.84rem;
+        color: var(--muted);
+      }
+      .status-line strong {
+        color: var(--text);
+      }
+      .video-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .video-panel {
+        display: grid;
+        gap: 8px;
+      }
+      .video-panel h3 {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+      video {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        background: #05080e;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        -o-object-fit: contain;
+           object-fit: contain;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .stat {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+        background: rgba(255, 255, 255, 0.01);
+      }
+      .stat .k {
+        color: var(--muted);
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .stat .v {
+        margin-top: 4px;
+        font-size: 1rem;
+        font-weight: 700;
+      }
+      .log {
+        width: 100%;
+        min-height: 220px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #09101c;
+        color: #d7e2f5;
+        padding: 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.78rem;
+        line-height: 1.4;
+        resize: vertical;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .warn-text {
+        color: var(--warn);
+      }
+      .danger-text {
+        color: var(--danger);
+      }
+      @media (max-width: 1024px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .video-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+    <script type="module" crossorigin src="/moq-wasm/assets/webcodecs-BJEvDOht.js"></script>
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/modulepreload-polyfill-B5Qt9EMX.js">
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/videoEncoding-B9Q00dri.js">
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div>
+          <div class="pill">WebCodecs</div>
+          <h1>Encoder / Decoder Loopback Test</h1>
+          <p>1タブ内で camera → WebCodecs Encoder → WebCodecs Decoder の loopback を実行して設定差を確認します。</p>
+        </div>
+      </header>
+
+      <div class="layout">
+        <section class="card stack">
+          <div>
+            <h2>Encoder Config</h2>
+            <div class="stack">
+              <label>
+                Codec
+                <select id="codecSelect"></select>
+              </label>
+              <div class="grid-2">
+                <label>
+                  Resolution
+                  <select id="resolutionSelect"></select>
+                </label>
+                <label>
+                  Bitrate
+                  <select id="bitrateSelect"></select>
+                </label>
+              </div>
+              <div class="grid-3">
+                <label>
+                  Framerate
+                  <input id="framerateInput" type="number" min="1" max="120" step="1" />
+                </label>
+                <label>
+                  Keyframe interval (frames)
+                  <input id="keyframeIntervalInput" type="number" min="1" max="3000" step="1" />
+                </label>
+                <label>
+                  Encoder HW accel
+                  <select id="encoderHwaSelect"></select>
+                </label>
+              </div>
+              <div class="check">
+                <input id="encoderRealtimeCheckbox" type="checkbox" checked />
+                <label for="encoderRealtimeCheckbox" style="display: inline; color: inherit"
+                  >Encoder latencyMode = realtime</label
+                >
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h2>Decoder Config</h2>
+            <div class="stack">
+              <div class="grid-2">
+                <label>
+                  Decoder HW accel
+                  <select id="decoderHwaSelect">
+                    <option value="prefer-hardware">prefer-hardware</option>
+                    <option value="prefer-software">prefer-software</option>
+                  </select>
+                </label>
+                <label>
+                  H.264 format
+                  <select id="decoderAvcFormatSelect">
+                    <option value="auto">auto (metadata)</option>
+                    <option value="annexb">annexb</option>
+                    <option value="avc">avc</option>
+                  </select>
+                </label>
+              </div>
+              <div class="check">
+                <input id="decoderOptimizeLatencyCheckbox" type="checkbox" checked />
+                <label for="decoderOptimizeLatencyCheckbox" style="display: inline; color: inherit">
+                  Decoder optimizeForLatency = true
+                </label>
+              </div>
+              <div class="status-line">
+                `VideoDecoder` に `latencyMode: 'realtime'` はありません。代わりに `optimizeForLatency` を切替します。
+              </div>
+            </div>
+          </div>
+
+          <div class="buttons">
+            <button id="checkSupportBtn" class="secondary">Config Check</button>
+            <button id="startBtn">Start Loopback</button>
+            <button id="stopBtn" class="warn" disabled>Stop</button>
+            <button id="clearLogBtn" class="secondary">Clear Log</button>
+          </div>
+          <div id="statusText" class="status-line"><strong>Status:</strong> idle</div>
+          <div id="supportText" class="status-line"></div>
+        </section>
+
+        <section class="card stack">
+          <div class="video-grid">
+            <div class="video-panel">
+              <h3>Camera Preview</h3>
+              <video id="sourceVideo" autoplay playsinline muted></video>
+            </div>
+            <div class="video-panel">
+              <h3>Decoded Preview</h3>
+              <video id="decodedVideo" autoplay playsinline muted></video>
+            </div>
+          </div>
+
+          <div class="stats" id="statsGrid"></div>
+
+          <div>
+            <h2>Log</h2>
+            <textarea id="logArea" class="log" readonly></textarea>
+          </div>
+        </section>
+      </div>
+    </div>
+
+  </body>
+</html>
