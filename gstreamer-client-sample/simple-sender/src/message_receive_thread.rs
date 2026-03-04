@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
+use crate::StreamType;
+
 pub(crate) struct MessageReceiveThread;
 
 impl MessageReceiveThread {
     pub(crate) fn start(
         session: Arc<moqt::Session<moqt::QUIC>>,
-        sender: tokio::sync::mpsc::Sender<moqt::StreamDataSender<moqt::QUIC>>,
+        sender: tokio::sync::mpsc::Sender<StreamType>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::spawn(async move {
             loop {
@@ -49,9 +51,7 @@ impl MessageReceiveThread {
                             .ok(0, 1000000, moqt::ContentExists::False)
                             .await;
                         let published_resource = subscribe_handler.into_publication(0);
-                        let stream = session
-                            .publisher()
-                            .create_stream(&published_resource)
+                        let stream = Self::stream(session.clone(), &published_resource)
                             .await
                             .expect("failed to create stream");
                         let _ = sender.send(stream).await;
@@ -62,5 +62,19 @@ impl MessageReceiveThread {
                 };
             }
         })
+    }
+
+    async fn stream(
+        session: Arc<moqt::Session<moqt::QUIC>>,
+        published_resource: &moqt::PublishedResource,
+    ) -> anyhow::Result<StreamType> {
+        #[cfg(not(feature = "use_datagram"))]
+        {
+            session.publisher().create_stream(published_resource).await
+        }
+        #[cfg(feature = "use_datagram")]
+        {
+            Ok(session.publisher().create_datagram(published_resource))
+        }
     }
 }

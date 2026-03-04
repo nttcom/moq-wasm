@@ -7,6 +7,14 @@ mod media_send_thread;
 mod message_receive_thread;
 mod moqt_client;
 
+// `use_datagram` フラグが **指定されていない** 時（＝デフォルト）
+#[cfg(not(feature = "use_datagram"))]
+type StreamType = moqt::StreamDataSender<moqt::QUIC>;
+
+// `use_datagram` フラグが **指定されている** 時
+#[cfg(feature = "use_datagram")]
+type StreamType = moqt::DatagramSender<moqt::QUIC>;
+
 fn main() {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
@@ -18,7 +26,7 @@ fn main() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
         let (stream_sender, mut stream_receiver) =
-            tokio::sync::mpsc::channel::<moqt::StreamDataSender<moqt::QUIC>>(100);
+            tokio::sync::mpsc::channel::<StreamType>(100);
         let (data_sender, data_receiver) =
             tokio::sync::mpsc::channel::<gstreamer_sender::SendData>(100);
 
