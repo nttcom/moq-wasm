@@ -21,11 +21,15 @@ pub struct ExtensionHeaders {
 impl ExtensionHeaders {
     pub fn decode(cursor: &mut impl Buf) -> Option<Self> {
         let mut kv_pairs = Vec::new();
-        let number_of_parameters = cursor
+        let byte_length = cursor
             .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
-        for _ in 0..number_of_parameters {
+            .log_context("extension headers length")
+            .ok()? as usize;
+        if cursor.remaining() < byte_length {
+            return None;
+        }
+        let end_remaining = cursor.remaining() - byte_length;
+        while cursor.remaining() > end_remaining {
             let key_value_pair = KeyValuePair::decode(cursor)?;
             kv_pairs.push(key_value_pair);
         }
@@ -62,24 +66,23 @@ impl ExtensionHeaders {
     }
 
     pub fn encode(&self) -> bytes::BytesMut {
-        let mut buf = bytes::BytesMut::new();
-        let total_parameters = self.prior_group_id_gap.len()
-            + self.prior_object_id_gap.len()
-            + self.immutable_extensions.len();
-        buf.put_varint(total_parameters as u64);
+        let mut kv_buf = bytes::BytesMut::new();
         for gap in &self.prior_group_id_gap {
-            buf.put_varint(ExtensionHeaderType::PriorGroupIdGap as u64);
-            buf.put_varint(*gap);
+            kv_buf.put_varint(ExtensionHeaderType::PriorGroupIdGap as u64);
+            kv_buf.put_varint(*gap);
         }
         for gap in &self.prior_object_id_gap {
-            buf.put_varint(ExtensionHeaderType::PriorObjectIdGap as u64);
-            buf.put_varint(*gap);
+            kv_buf.put_varint(ExtensionHeaderType::PriorObjectIdGap as u64);
+            kv_buf.put_varint(*gap);
         }
         for ext in &self.immutable_extensions {
-            buf.put_varint(ExtensionHeaderType::ImmutableExtensions as u64);
-            buf.put_varint(ext.len() as u64);
-            buf.extend_from_slice(ext);
+            kv_buf.put_varint(ExtensionHeaderType::ImmutableExtensions as u64);
+            kv_buf.put_varint(ext.len() as u64);
+            kv_buf.extend_from_slice(ext);
         }
+        let mut buf = bytes::BytesMut::new();
+        buf.put_varint(kv_buf.len() as u64);
+        buf.unsplit(kv_buf);
         buf
     }
 }
