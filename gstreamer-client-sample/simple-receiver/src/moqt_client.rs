@@ -1,5 +1,7 @@
 use std::{net::ToSocketAddrs, str::FromStr, sync::Arc};
 
+use moqt::ClientConfig;
+
 use crate::message_receive_thread::MessageReceiveThread;
 
 pub(crate) struct MOQTClient {
@@ -13,7 +15,11 @@ impl MOQTClient {
         sender: tokio::sync::mpsc::Sender<String>,
     ) -> anyhow::Result<Self> {
         let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client_with_custom_cert(0, cert_path)?;
-        let url = url::Url::from_str("moqt://localhost:4434")?; // ここも変更
+        let url = url::Url::from_str("moqt://localhost:4434")?;
+        // let mut config = ClientConfig::default();
+        // config.verify_certificate = false;
+        // let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&config)?;
+        // let url = url::Url::from_str("moqt://moqt.research.skyway.io:4434")?;
         let host = url.host_str().unwrap();
         let remote_address = (host, url.port().unwrap_or(4433))
             .to_socket_addrs()?

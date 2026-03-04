@@ -9,6 +9,6 @@ members = [
     'relay',
     'client',
     # 'integration-test',
-    'gstreamer-client-sample/uni/sender',
-    'gstreamer-client-sample/uni/receiver'
+    'gstreamer-client-sample/simple-sender',
+    'gstreamer-client-sample/simple-receiver'
 ]

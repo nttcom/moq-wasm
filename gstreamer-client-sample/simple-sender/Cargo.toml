@@ -1,10 +1,14 @@
 [package]
-name = "gstreamer-uni-sender"
+name = "simple-sender"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# default = ["use_datagram"]
+use_datagram = []
+
 [dependencies]
-moqt = {path = "../../../moqt"}
+moqt = {path = "../../moqt"}
 tokio = { version = "1.45.0", features = ["full", "tracing"] }
 tracing = "0.1.37"
 async-trait = "0.1.74"

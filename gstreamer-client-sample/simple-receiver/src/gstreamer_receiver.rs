@@ -30,12 +30,16 @@ impl GStreamerReceiver {
         appsrc: gstreamer_app::AppSrc,
         data_receiver: moqt::DataReceiver<moqt::QUIC>,
     ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-        let mut data_receiver = match data_receiver {
-            moqt::DataReceiver::Stream(stream) => stream,
-            // moqt::DataReceiver::Datagram(datagram) => datagram,
-            _ => anyhow::bail!("Unsupported data receiver type"),
-        };
+        match data_receiver {
+            moqt::DataReceiver::Stream(stream) => Self::handle_stream(stream, appsrc),
+            moqt::DataReceiver::Datagram(datagram) => Self::handle_datagram(datagram, appsrc),
+        }
+    }
 
+    fn handle_stream(
+        mut data_receiver: moqt::StreamDataReceiver<moqt::QUIC>,
+        appsrc: gstreamer_app::AppSrc,
+    ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         let join_handle = tokio::spawn(async move {
             let mut group_id = 0;
             while let Ok(object) = data_receiver.receive().await {
@@ -62,6 +66,45 @@ impl GStreamerReceiver {
                                 continue;
                             }
                         }
+                    }
+                };
+
+                let mut buffer = gstreamer::Buffer::with_size(bytes.len()).unwrap();
+                {
+                    let buffer_ref = buffer.get_mut().unwrap();
+                    let mut map = buffer_ref.map_writable().unwrap();
+                    map.copy_from_slice(&bytes);
+                }
+                let result = appsrc.push_buffer(buffer);
+                tracing::info!(
+                    "Pushed buffer for group_id: {} with result: {:?}",
+                    group_id,
+                    result
+                );
+            }
+            let _ = appsrc.end_of_stream();
+        });
+        Ok(join_handle)
+    }
+
+    fn handle_datagram(
+        mut data_receiver: moqt::DatagramReceiver<moqt::QUIC>,
+        appsrc: gstreamer_app::AppSrc,
+    ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+        let join_handle = tokio::spawn(async move {
+            while let Ok(object) = data_receiver.receive().await {
+                let field = object.field;
+                let group_id = object.group_id;
+                let bytes = match field.payload() {
+                    moqt::ObjectDatagramPayload::Payload(data) => data,
+                    moqt::ObjectDatagramPayload::Status(status) => {
+                        tracing::info!(
+                            "Received status: group_id={}, object_id={}, status={:?}",
+                            group_id,
+                            field.object_id().unwrap(),
+                            status
+                        );
+                        continue;
                     }
                 };
 
