@@ -2,7 +2,7 @@ use std::{net::ToSocketAddrs, str::FromStr, sync::Arc};
 
 use moqt::ClientConfig;
 
-use crate::message_receive_thread::MessageReceiveThread;
+use crate::{MOQTEvent, message_receive_thread::MessageReceiveThread};
 
 pub(crate) struct MOQTClient {
     session: Arc<moqt::Session<moqt::QUIC>>,
@@ -12,11 +12,14 @@ pub(crate) struct MOQTClient {
 impl MOQTClient {
     pub(crate) async fn new(
         cert_path: &str,
-        sender: tokio::sync::mpsc::Sender<String>,
+        event_sender: tokio::sync::mpsc::Sender<MOQTEvent>,
     ) -> anyhow::Result<Self> {
         // let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client_with_custom_cert(0, cert_path)?;
         // let url = url::Url::from_str("moqt://localhost:4434")?;
-        let mut config = ClientConfig::default();
+        let mut config = ClientConfig {
+            port: 0,
+            verify_certificate: false,
+        };
         config.verify_certificate = false;
         let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&config)?;
         let url = url::Url::from_str("moqt://moqt.research.skyway.io:4434")?;
@@ -27,7 +30,8 @@ impl MOQTClient {
             .unwrap();
         let session = endpoint.connect(remote_address, host).await?;
         let session = Arc::new(session);
-        let message_receive_thread = MessageReceiveThread::start(Arc::clone(&session), sender);
+        let message_receive_thread =
+            MessageReceiveThread::start(Arc::clone(&session), event_sender);
 
         Ok(Self {
             session,

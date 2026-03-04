@@ -10,5 +10,6 @@ members = [
     'client',
     # 'integration-test',
     'gstreamer-client-sample/simple-sender',
-    'gstreamer-client-sample/simple-receiver'
+    'gstreamer-client-sample/simple-receiver',
+    'gstreamer-client-sample/call-application'
 ]
