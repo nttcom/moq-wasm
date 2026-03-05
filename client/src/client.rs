@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::bail;
-use moqt::{DatagramField, Endpoint, TransportProtocol, Session, SubscribeOption};
+use moqt::{DatagramField, Endpoint, Session, SubscribeOption, TransportProtocol};
 
 use crate::stream_runner::StreamTaskRunner;
 
