@@ -7,9 +7,9 @@ use std::{
     },
 };
 
-use anyhow::bail;
-use moqt::{DatagramField, Endpoint, TransportProtocol, Session, SubscribeOption};
 use crate::stream_runner::StreamTaskRunner;
+use anyhow::bail;
+use moqt::{DatagramField, Endpoint, Session, SubscribeOption, TransportProtocol};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub struct Client<T: TransportProtocol> {
@@ -22,7 +22,12 @@ pub struct Client<T: TransportProtocol> {
 }
 
 impl<T: TransportProtocol> Client<T> {
-    pub async fn new(cert_path: String, port: u16, label: String, notification_sender: Option<UnboundedSender<String>>) -> anyhow::Result<Self> {
+    pub async fn new(
+        cert_path: String,
+        port: u16,
+        label: String,
+        notification_sender: Option<UnboundedSender<String>>,
+    ) -> anyhow::Result<Self> {
         let endpoint = Endpoint::<T>::create_client_with_custom_cert(0, &cert_path)?;
         let url_str = format!("moqt://localhost:{}", port);
         let url = url::Url::from_str(&url_str)?;
@@ -42,7 +47,12 @@ impl<T: TransportProtocol> Client<T> {
         };
         let track_alias = Arc::new(AtomicU64::new(0));
         let (publisher, subscriber) = session.create_publisher_subscriber_pair();
-        let join_handle = Self::create_receiver(label.clone(), session, track_alias.clone(), notification_sender);
+        let join_handle = Self::create_receiver(
+            label.clone(),
+            session,
+            track_alias.clone(),
+            notification_sender,
+        );
 
         Ok(Self {
             label,
@@ -54,7 +64,8 @@ impl<T: TransportProtocol> Client<T> {
         })
     }
 
-    pub fn create_receiver( // pub(crate) -> pub
+    pub fn create_receiver(
+        // pub(crate) -> pub
         label: String,
         session: Session<T>,
         track_alias: Arc<AtomicU64>,
@@ -78,7 +89,10 @@ impl<T: TransportProtocol> Client<T> {
                                 &publish_namespace_handler.track_namespace
                             );
                             if let Some(sender) = &notification_sender {
-                                if sender.send(publish_namespace_handler.track_namespace.clone()).is_err() {
+                                if sender
+                                    .send(publish_namespace_handler.track_namespace.clone())
+                                    .is_err()
+                                {
                                     tracing::error!("Failed to send notification");
                                 }
                             }
@@ -123,7 +137,8 @@ impl<T: TransportProtocol> Client<T> {
             .unwrap()
     }
 
-    pub async fn publish_namespace(&self, track_namespace: String) -> anyhow::Result<()> { // pub(crate) -> pub
+    pub async fn publish_namespace(&self, track_namespace: String) -> anyhow::Result<()> {
+        // pub(crate) -> pub
         let result = self.publisher.publish_namespace(track_namespace).await;
         if result.is_err() {
             tracing::info!("{}: publish namespace error", self.label);
@@ -134,7 +149,8 @@ impl<T: TransportProtocol> Client<T> {
         Ok(())
     }
 
-    pub async fn subscribe_namespace(&self, track_namespace_prefix: String) -> anyhow::Result<()> { // pub(crate) -> pub
+    pub async fn subscribe_namespace(&self, track_namespace_prefix: String) -> anyhow::Result<()> {
+        // pub(crate) -> pub
         let result = self
             .subscriber
             .subscribe_namespace(track_namespace_prefix)
@@ -148,7 +164,8 @@ impl<T: TransportProtocol> Client<T> {
         Ok(())
     }
 
-    pub async fn publish(&self, track_namespace: String, track_name: String) { // pub(crate) -> pub
+    pub async fn publish(&self, track_namespace: String, track_name: String) {
+        // pub(crate) -> pub
         let option = moqt::PublishOption::default();
         let pub_result = self
             .publisher
@@ -229,7 +246,8 @@ impl<T: TransportProtocol> Client<T> {
         runner.add_task(Box::pin(task)).await;
     }
 
-    pub async fn active_subscribe( // pub(crate) -> pub
+    pub async fn active_subscribe(
+        // pub(crate) -> pub
         &self,
         label: String,
         track_namespace: String,

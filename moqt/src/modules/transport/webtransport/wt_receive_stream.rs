@@ -9,6 +9,7 @@ use crate::modules::transport::{
 };
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct WtReceiveStream {
     pub(crate) stable_id: usize,
     pub(crate) stream_id: u64,

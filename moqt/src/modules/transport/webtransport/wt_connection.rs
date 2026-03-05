@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
-use crate::modules::transport::transport_connection::TransportConnection;
 use super::wt_receive_stream::WtReceiveStream;
 use super::wt_send_stream::WtSendStream;
+use crate::modules::transport::transport_connection::TransportConnection;
 
 #[derive(Debug)]
 pub struct WtConnection {
