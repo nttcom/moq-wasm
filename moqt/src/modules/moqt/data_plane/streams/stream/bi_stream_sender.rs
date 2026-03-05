@@ -34,6 +34,7 @@ impl<T: TransportProtocol> BiStreamSender<T> {
         stream_sender.send(&message_bytes).await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn close(&self) -> anyhow::Result<()> {
         let mut stream_sender = self.stream_sender.lock().await;
         stream_sender.close().await

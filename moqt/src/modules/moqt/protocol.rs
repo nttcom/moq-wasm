@@ -5,14 +5,14 @@ use crate::modules::transport::{
         quic_connection::QUICConnection, quic_connection_creator::QUICConnectionCreator,
         quic_receive_stream::QUICReceiveStream, quic_send_stream::QUICSendStream,
     },
-    webtransport::{
-        wt_connection::WtConnection, wt_connection_creator::WtConnectionCreator,
-        wt_receive_stream::WtReceiveStream, wt_send_stream::WtSendStream,
-    },
     transport_connection::TransportConnection,
     transport_connection_creator::TransportConnectionCreator,
     transport_receive_stream::TransportReceiveStream,
     transport_send_stream::TransportSendStream,
+    webtransport::{
+        wt_connection::WtConnection, wt_connection_creator::WtConnectionCreator,
+        wt_receive_stream::WtReceiveStream, wt_send_stream::WtSendStream,
+    },
 };
 
 // Prevent `TransportConnectionCreator` from public

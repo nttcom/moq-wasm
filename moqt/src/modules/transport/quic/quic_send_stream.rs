@@ -5,6 +5,7 @@ use quinn::{self};
 use crate::modules::transport::transport_send_stream::TransportSendStream;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct QUICSendStream {
     pub(crate) stable_id: usize,
     pub(crate) stream_id: u64,

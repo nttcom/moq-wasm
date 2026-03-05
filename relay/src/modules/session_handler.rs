@@ -3,9 +3,7 @@ use std::sync::Arc;
 use moqt::{Endpoint, TransportProtocol};
 use uuid::Uuid;
 
-use crate::modules::{
-    enums::MOQTMessageReceived, session_repository::SessionRepository,
-};
+use crate::modules::{enums::MOQTMessageReceived, session_repository::SessionRepository};
 
 pub struct SessionHandler {
     join_handle: tokio::task::JoinHandle<()>,

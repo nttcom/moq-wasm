@@ -117,7 +117,10 @@ mod integration_test {
 
         // Client BがPublishNamespace通知を受け取ったことをアサート
         let received_namespace = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
-        assert!(received_namespace.is_ok(), "Did not receive notification in time");
+        assert!(
+            received_namespace.is_ok(),
+            "Did not receive notification in time"
+        );
         assert_eq!(
             received_namespace.unwrap().unwrap(),
             "room/member".to_string()
@@ -196,7 +199,10 @@ mod integration_test {
 
         // Client BがPublishNamespace通知を受け取ったことをアサート
         let received_namespace = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
-        assert!(received_namespace.is_ok(), "Did not receive notification in time");
+        assert!(
+            received_namespace.is_ok(),
+            "Did not receive notification in time"
+        );
         assert_eq!(
             received_namespace.unwrap().unwrap(),
             "room/member".to_string()
