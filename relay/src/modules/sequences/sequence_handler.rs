@@ -258,7 +258,7 @@ impl SequenceHandler {
                     .ok(
                         subscription.track_alias(),
                         subscription.expires(),
-                        ContentExists::False,
+                        subscription.content_exists(),
                     )
                     .await
                     .is_ok()
