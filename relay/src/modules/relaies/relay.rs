@@ -70,6 +70,10 @@ impl Relay {
             loop {
                 match filter_type {
                     FilterType::LatestGroup => {
+                        if let Some(ref mut recv) = receiver {
+                            let _ = recv.recv().await;
+                        }
+                        start_group_id = cache.get_latest_group_id();
                         object_sender
                             .send_latest_group(datagram_sender.as_mut(), &cache, start_group_id)
                             .await;
