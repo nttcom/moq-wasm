@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use uuid::Uuid;
-
 use crate::modules::{
     core::handler::publish::PublishHandler,
     enums::FilterType,
     sequences::{notifier::Notifier, tables::table::Table},
+    types::SessionId,
 };
 
 pub(crate) struct Publish;
@@ -13,7 +12,7 @@ pub(crate) struct Publish;
 impl Publish {
     pub(crate) async fn handle(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         table: &dyn Table,
         notifier: &Notifier,
         handler: Box<dyn PublishHandler>,
@@ -47,7 +46,7 @@ impl Publish {
         // any subscriber that has interests in the namespace
         // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
 
-        // Convert DashMap<Namespace, DashSet<Uuid>> to DashMap<Uuid, DashSet<Namespace>>
+        // Convert DashMap<Namespace, DashSet<SessionId>> to DashMap<SessionId, DashSet<Namespace>>
         let combined = table.get_namespace_subscribers(&track_namespace);
         tracing::debug!("The namespace are subscribed by: {:?}", combined);
         for session_id in combined {
@@ -69,7 +68,7 @@ impl Publish {
 
     async fn register_if_response_succeeded(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         table: &dyn Table,
         handler: Box<dyn PublishHandler>,
     ) {

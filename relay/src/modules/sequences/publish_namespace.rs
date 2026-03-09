@@ -1,8 +1,7 @@
-use uuid::Uuid;
-
 use crate::modules::{
     core::handler::publish_namespace::PublishNamespaceHandler,
     sequences::{notifier::Notifier, tables::table::Table},
+    types::SessionId,
 };
 
 pub(crate) struct PublishNamespace;
@@ -10,7 +9,7 @@ pub(crate) struct PublishNamespace;
 impl PublishNamespace {
     pub(crate) async fn handle(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         table: &dyn Table,
         notifier: &Notifier,
         handler: &dyn PublishNamespaceHandler,
@@ -24,7 +23,7 @@ impl PublishNamespace {
         // any subscriber that has interests in the namespace
         // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
 
-        // Convert DashMap<Namespace, DashSet<Uuid>> to DashMap<Uuid, DashSet<Namespace>>
+        // Convert DashMap<Namespace, DashSet<SessionId>> to DashMap<SessionId, DashSet<Namespace>>
         self.notify_to_subscribers(&track_namespace, table, notifier)
             .await;
 
@@ -34,7 +33,7 @@ impl PublishNamespace {
 
     async fn register(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         table: &dyn Table,
         handler: &dyn PublishNamespaceHandler,
     ) -> Option<String> {

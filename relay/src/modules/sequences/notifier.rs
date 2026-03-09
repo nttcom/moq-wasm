@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use uuid::Uuid;
-
 use crate::modules::{
     core::{handler::publish::SubscribeOption, subscription::Subscription},
     enums::{FilterType, GroupOrder},
     session_repository::SessionRepository,
+    types::SessionId,
 };
 
 pub(crate) struct Notifier {
@@ -15,7 +14,7 @@ pub(crate) struct Notifier {
 impl Notifier {
     pub(crate) async fn publish_namespace(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         track_namespace: String,
     ) -> bool {
         let publisher = self.repository.lock().await.publisher(session_id).await;
@@ -49,7 +48,7 @@ impl Notifier {
 
     pub(crate) async fn publish(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         track_namespace: String,
         track_name: String,
         track_alias: u64,
@@ -81,7 +80,7 @@ impl Notifier {
 
     pub(crate) async fn subscribe(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         track_namespace: String,
         track_name: String,
     ) -> anyhow::Result<Subscription> {

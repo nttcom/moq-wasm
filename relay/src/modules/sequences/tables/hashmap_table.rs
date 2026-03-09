@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use dashmap::{DashMap, DashSet};
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
 use crate::modules::{
     core::handler::publish::PublishHandler,
@@ -21,7 +20,7 @@ pub(crate) struct HashMapTable {
      */
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, SessionId>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashSet<SessionId>>,
-    pub(crate) published_handlers: RwLock<Vec<(Uuid, Arc<dyn PublishHandler>)>>,
+    pub(crate) published_handlers: RwLock<Vec<(SessionId, Arc<dyn PublishHandler>)>>,
 }
 
 #[async_trait::async_trait]
@@ -34,7 +33,7 @@ impl Table for HashMapTable {
         }
     }
 
-    fn register_publish_namespace(&self, session_id: Uuid, track_namespace: String) -> bool {
+    fn register_publish_namespace(&self, session_id: SessionId, track_namespace: String) -> bool {
         if self
             .publisher_namespaces
             .get_mut(&track_namespace)
@@ -53,7 +52,7 @@ impl Table for HashMapTable {
         }
     }
 
-    fn register_subscribe_namespace(&self, session_id: Uuid, track_namespace_prefix: String) {
+    fn register_subscribe_namespace(&self, session_id: SessionId, track_namespace_prefix: String) {
         if let Some(dash_set) = self.subscriber_namespaces.get_mut(&track_namespace_prefix) {
             tracing::info!(
                 "The namespace prefix '{}' is registered for namespace subscription.",
@@ -72,7 +71,7 @@ impl Table for HashMapTable {
         }
     }
 
-    async fn register_publish(&self, session_id: Uuid, handler: Arc<dyn PublishHandler>) {
+    async fn register_publish(&self, session_id: SessionId, handler: Arc<dyn PublishHandler>) {
         self.published_handlers
             .write()
             .await
@@ -122,7 +121,7 @@ impl Table for HashMapTable {
         filtered
     }
 
-    fn get_publish_namespace(&self, track_namespace: &str) -> Option<Uuid> {
+    fn get_publish_namespace(&self, track_namespace: &str) -> Option<SessionId> {
         let result = self.publisher_namespaces.get(track_namespace)?;
         Some(*result)
     }
@@ -131,7 +130,7 @@ impl Table for HashMapTable {
         &self,
         track_namespace: &str,
         track_name: &str,
-    ) -> Option<(Uuid, Arc<dyn PublishHandler>)> {
+    ) -> Option<(SessionId, Arc<dyn PublishHandler>)> {
         let handlers = self.published_handlers.read().await;
         if let Some((session_id, handler)) = handlers
             .iter()

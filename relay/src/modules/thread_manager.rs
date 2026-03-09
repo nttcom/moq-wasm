@@ -1,8 +1,9 @@
 use dashmap::DashMap;
-use uuid::Uuid;
+
+use crate::modules::types::SessionId;
 
 pub(crate) struct ThreadManager {
-    join_handles_map: DashMap<Uuid, tokio::task::JoinHandle<()>>,
+    join_handles_map: DashMap<SessionId, tokio::task::JoinHandle<()>>,
 }
 
 impl ThreadManager {
@@ -11,12 +12,12 @@ impl ThreadManager {
         Self { join_handles_map }
     }
 
-    pub(crate) fn add(&mut self, uuid: Uuid, join_handle: tokio::task::JoinHandle<()>) {
-        self.join_handles_map.insert(uuid, join_handle);
+    pub(crate) fn add(&mut self, session_id: SessionId, join_handle: tokio::task::JoinHandle<()>) {
+        self.join_handles_map.insert(session_id, join_handle);
     }
 
-    pub(crate) fn remove(&mut self, uuid: &Uuid) {
-        if let Some(join_handle) = self.join_handles_map.remove(uuid) {
+    pub(crate) fn remove(&mut self, session_id: &SessionId) {
+        if let Some(join_handle) = self.join_handles_map.remove(session_id) {
             join_handle.1.abort();
         }
     }

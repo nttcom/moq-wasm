@@ -1,10 +1,9 @@
-use uuid::Uuid;
-
 use crate::modules::{
     core::handler::{publish::PublishHandler, subscribe::SubscribeHandler},
     enums::ContentExists,
     event_resolver::stream_binder::StreamBinder,
     sequences::{notifier::Notifier, tables::table::Table},
+    types::SessionId,
 };
 
 pub(crate) struct Subscribe;
@@ -12,7 +11,7 @@ pub(crate) struct Subscribe;
 impl Subscribe {
     pub(crate) async fn handle(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         table: &dyn Table,
         notifier: &Notifier,
         stream_handler: &mut StreamBinder,
@@ -55,8 +54,8 @@ impl Subscribe {
 
     async fn subscribe_active_publish(
         &self,
-        session_id: Uuid,
-        pub_session_id: Uuid,
+        session_id: SessionId,
+        pub_session_id: SessionId,
         pub_handler: &dyn PublishHandler,
         handler: &dyn SubscribeHandler,
         stream_handler: &mut StreamBinder,
@@ -96,8 +95,8 @@ impl Subscribe {
     #[allow(warnings)]
     async fn relay_subscribe(
         &self,
-        session_id: Uuid,
-        pub_session_id: Uuid,
+        session_id: SessionId,
+        pub_session_id: SessionId,
         track_namespace: &str,
         track_name: &str,
         notifier: &Notifier,
