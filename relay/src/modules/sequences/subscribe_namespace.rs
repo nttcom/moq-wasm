@@ -1,8 +1,7 @@
-use uuid::Uuid;
-
 use crate::modules::{
     core::handler::subscribe_namespace::SubscribeNamespaceHandler,
     sequences::{notifier::Notifier, tables::table::Table},
+    types::SessionId,
 };
 
 pub(crate) struct SubscribeNameSpace;
@@ -10,7 +9,7 @@ pub(crate) struct SubscribeNameSpace;
 impl SubscribeNameSpace {
     pub(crate) async fn handle(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         table: &dyn Table,
         notifier: &Notifier,
         handler: &dyn SubscribeNamespaceHandler,
@@ -25,7 +24,7 @@ impl SubscribeNameSpace {
 
     async fn register(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         table: &dyn Table,
         handler: &dyn SubscribeNamespaceHandler,
     ) -> String {
@@ -40,7 +39,7 @@ impl SubscribeNameSpace {
 
     async fn broadcast_to_subscribers(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         track_namespace_prefix: &str,
         notifier: &Notifier,
         table: &dyn Table,

@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use uuid::Uuid;
-
 use crate::modules::{
     core::{published_resource::PublishedResource, subscription::Subscription},
     event_resolver::stream_runner::StreamTaskRunner,
     relaies::{relay::Relay, relay_manager::RelayManager, relay_properties::RelayProperties},
     session_repository::SessionRepository,
+    types::SessionId,
 };
 
 pub(crate) struct StreamBinder {
@@ -26,9 +25,9 @@ impl StreamBinder {
 
     pub(crate) async fn bind_by_subscribe(
         &self,
-        subscriber_session_id: Uuid,
+        subscriber_session_id: SessionId,
         subscription: Subscription,
-        publisher_session_id: Uuid,
+        publisher_session_id: SessionId,
         published_resources: PublishedResource,
     ) {
         tracing::info!("bind by subscribe");
