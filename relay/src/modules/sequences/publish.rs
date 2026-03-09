@@ -18,7 +18,7 @@ impl Publish {
         handler: Box<dyn PublishHandler>,
     ) {
         tracing::info!("SequenceHandler::publish: {}", session_id);
-        self.broadcast_to_subscribers(notifier, table, handler.as_ref())
+        self.broadcast_to_subscribers(session_id, notifier, table, handler.as_ref())
             .await;
         self.register_if_response_succeeded(session_id, table, handler)
             .await;
@@ -27,6 +27,7 @@ impl Publish {
 
     async fn broadcast_to_subscribers(
         &self,
+        publisher_session_id: SessionId,
         notifier: &Notifier,
         table: &dyn Table,
         handler: &dyn PublishHandler,
@@ -49,19 +50,28 @@ impl Publish {
         // Convert DashMap<Namespace, DashSet<SessionId>> to DashMap<SessionId, DashSet<Namespace>>
         let combined = table.get_namespace_subscribers(&track_namespace);
         tracing::debug!("The namespace are subscribed by: {:?}", combined);
-        for session_id in combined {
-            if notifier
+        for subscriber_session_id in combined {
+            if let Some(subscriber_track_alias) = notifier
                 .publish(
-                    session_id,
+                    subscriber_session_id,
                     track_namespace.clone(),
                     track_name.clone(),
-                    track_alias,
                 )
                 .await
             {
-                tracing::info!("Sent publish '{}' to {}", track_namespace, session_id);
+                table.register_track_alias_link(
+                    publisher_session_id,
+                    track_alias,
+                    subscriber_session_id,
+                    subscriber_track_alias,
+                );
+                tracing::info!(
+                    "Sent publish '{}' to {}",
+                    track_namespace,
+                    subscriber_session_id
+                );
             } else {
-                tracing::warn!("Failed to send publish: {}", session_id);
+                tracing::warn!("Failed to send publish: {}", subscriber_session_id);
             }
         }
     }

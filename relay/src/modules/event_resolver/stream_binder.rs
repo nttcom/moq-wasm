@@ -5,7 +5,7 @@ use crate::modules::{
     event_resolver::stream_runner::StreamTaskRunner,
     relaies::{relay::Relay, relay_manager::RelayManager, relay_properties::RelayProperties},
     session_repository::SessionRepository,
-    types::SessionId,
+    types::{SessionId, compose_session_track_key},
 };
 
 pub(crate) struct StreamBinder {
@@ -78,14 +78,16 @@ impl StreamBinder {
                 relay_properties: prop,
             };
             let track_alias = receiver.get_track_alias();
+            let track_key = compose_session_track_key(publisher_session_id, track_alias);
             relay.add_object_sender(
+                publisher_session_id,
                 track_alias,
                 sender,
                 published_resources.group_order(),
                 published_resources.filter_type(),
             );
-            relay.add_object_receiver(receiver);
-            relay_manager.relay_map.insert(track_alias, relay);
+            relay.add_object_receiver(publisher_session_id, receiver);
+            relay_manager.relay_map.insert(track_key, relay);
         };
         self.stream_runner.add_task(Box::pin(task)).await;
     }

@@ -13,6 +13,10 @@ impl PublishedResource {
         &self.published_resource
     }
 
+    pub(crate) fn track_alias(&self) -> u64 {
+        self.published_resource.track_alias
+    }
+
     pub(crate) fn group_order(&self) -> GroupOrder {
         GroupOrder::from(self.published_resource.group_order)
     }

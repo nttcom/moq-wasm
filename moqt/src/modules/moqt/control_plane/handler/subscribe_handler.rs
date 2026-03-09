@@ -51,10 +51,10 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
 
     pub async fn ok(
         &self,
-        track_alias: u64,
         expires: u64,
         content_exists: ContentExists,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<u64> {
+        let track_alias = self.session_context.get_track_alias();
         let subscribe_ok = SubscribeOk {
             request_id: self.request_id,
             track_alias,
@@ -67,7 +67,8 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         self.session_context
             .send_stream
             .send(ControlMessageType::SubscribeOk, subscribe_ok.encode())
-            .await
+            .await?;
+        Ok(track_alias)
     }
 
     pub async fn error(&self, error_code: u64, reason_phrase: String) -> anyhow::Result<()> {

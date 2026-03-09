@@ -12,7 +12,6 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         &self,
         track_namespace: String,
         track_name: String,
-        track_alias: u64,
     ) -> anyhow::Result<PublishedResource>;
     async fn new_stream(
         &self,
@@ -31,10 +30,8 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         &self,
         track_namespace: String,
         track_name: String,
-        track_alias: u64,
     ) -> anyhow::Result<PublishedResource> {
-        let mut option = moqt::PublishOption::default();
-        option.track_alias = track_alias;
+        let option = moqt::PublishOption::default();
         let result = self.publish(track_namespace, track_name, option).await?;
         Ok(PublishedResource::from(result))
     }
