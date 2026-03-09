@@ -32,6 +32,7 @@ impl Subscribe {
                 pub_session_id,
                 pub_handler.as_ref(),
                 handler.as_ref(),
+                table,
                 stream_handler,
             )
             .await;
@@ -42,6 +43,7 @@ impl Subscribe {
                 track_namespace,
                 track_name,
                 notifier,
+                table,
                 stream_handler,
                 handler.as_ref(),
             )
@@ -58,6 +60,7 @@ impl Subscribe {
         pub_session_id: SessionId,
         pub_handler: &dyn PublishHandler,
         handler: &dyn SubscribeHandler,
+        table: &dyn Table,
         stream_handler: &mut StreamBinder,
     ) {
         tracing::info!(
@@ -67,24 +70,24 @@ impl Subscribe {
             pub_handler.track_alias()
         );
         let subscription = pub_handler.into_subscription(0);
-
-        if handler
-            .ok(
-                subscription.track_alias(),
-                subscription.expires(),
-                subscription.content_exists(),
-            )
+        let publisher_track_alias = subscription.track_alias();
+        if let Ok(subscriber_track_alias) = handler
+            .ok(subscription.expires(), subscription.content_exists())
             .await
-            .is_ok()
         {
+            table.register_track_alias_link(
+                pub_session_id,
+                publisher_track_alias,
+                session_id,
+                subscriber_track_alias,
+            );
             tracing::info!("send `SUBSCRIBE_OK` ok");
-            let track_alias = subscription.track_alias();
             let _ = stream_handler
                 .bind_by_subscribe(
                     session_id,
                     subscription,
                     pub_session_id,
-                    handler.into_publication(track_alias),
+                    handler.into_publication(subscriber_track_alias),
                 )
                 .await;
         } else {
@@ -100,6 +103,7 @@ impl Subscribe {
         track_namespace: &str,
         track_name: &str,
         notifier: &Notifier,
+        table: &dyn Table,
         stream_handler: &mut StreamBinder,
         handler: &dyn SubscribeHandler,
     ) {
@@ -111,17 +115,19 @@ impl Subscribe {
             )
             .await
         {
+            let publisher_track_alias = subscription.track_alias();
             tracing::info!("send `SUBSCRIBE_OK` ok");
-            if handler
-                .ok(
-                    subscription.track_alias(),
-                    subscription.expires(),
-                    ContentExists::False,
-                )
+            if let Ok(subscriber_track_alias) = handler
+                .ok(subscription.expires(), ContentExists::False)
                 .await
-                .is_ok()
             {
-                let pub_resource = handler.into_publication(subscription.track_alias());
+                table.register_track_alias_link(
+                    pub_session_id,
+                    publisher_track_alias,
+                    session_id,
+                    subscriber_track_alias,
+                );
+                let pub_resource = handler.into_publication(subscriber_track_alias);
                 stream_handler
                     .bind_by_subscribe(session_id, subscription, pub_session_id, pub_resource)
                     .await;

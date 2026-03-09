@@ -21,6 +21,7 @@ pub(crate) struct HashMapTable {
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, SessionId>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashSet<SessionId>>,
     pub(crate) published_handlers: RwLock<Vec<(SessionId, Arc<dyn PublishHandler>)>>,
+    pub(crate) track_alias_links: DashMap<(SessionId, u64, SessionId), u64>,
 }
 
 #[async_trait::async_trait]
@@ -30,6 +31,7 @@ impl Table for HashMapTable {
             publisher_namespaces: DashMap::new(),
             subscriber_namespaces: DashMap::new(),
             published_handlers: RwLock::new(Vec::new()),
+            track_alias_links: DashMap::new(),
         }
     }
 
@@ -140,5 +142,33 @@ impl Table for HashMapTable {
         } else {
             None
         }
+    }
+
+    fn register_track_alias_link(
+        &self,
+        publisher_session_id: SessionId,
+        publisher_track_alias: u64,
+        subscriber_session_id: SessionId,
+        subscriber_track_alias: u64,
+    ) {
+        self.track_alias_links.insert(
+            (
+                publisher_session_id,
+                publisher_track_alias,
+                subscriber_session_id,
+            ),
+            subscriber_track_alias,
+        );
+    }
+
+    fn find_subscriber_track_alias(
+        &self,
+        publisher_session_id: SessionId,
+        publisher_track_alias: u64,
+        subscriber_session_id: SessionId,
+    ) -> Option<u64> {
+        self.track_alias_links
+            .get(&(publisher_session_id, publisher_track_alias, subscriber_session_id))
+            .map(|value| *value)
     }
 }

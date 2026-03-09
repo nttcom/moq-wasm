@@ -113,7 +113,7 @@ impl Client {
                             tracing::info!("Received: {} Subscribe", label);
                             let track_alias = track_alias.load(Ordering::SeqCst);
                             let _ = subscribe_handler
-                                .ok(track_alias, 1000000, moqt::ContentExists::False)
+                                .ok(1000000, moqt::ContentExists::False)
                                 .await;
                             let publication = subscribe_handler.into_publication(track_alias);
                             Self::create_stream(label.clone(), &publisher, publication, &runner)

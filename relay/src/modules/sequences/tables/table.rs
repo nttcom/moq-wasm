@@ -23,4 +23,17 @@ pub(crate) trait Table: Send + Sync + 'static + Debug {
         track_namespace: &str,
         track_name: &str,
     ) -> Option<(SessionId, Arc<dyn PublishHandler>)>;
+    fn register_track_alias_link(
+        &self,
+        publisher_session_id: SessionId,
+        publisher_track_alias: u64,
+        subscriber_session_id: SessionId,
+        subscriber_track_alias: u64,
+    );
+    fn find_subscriber_track_alias(
+        &self,
+        publisher_session_id: SessionId,
+        publisher_track_alias: u64,
+        subscriber_session_id: SessionId,
+    ) -> Option<u64>;
 }

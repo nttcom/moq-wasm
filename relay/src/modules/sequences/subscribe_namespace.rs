@@ -46,15 +46,11 @@ impl SubscribeNameSpace {
     ) {
         let filtered = table.get_subscribers(track_namespace_prefix).await;
         for (track_namespace, publish_values) in filtered {
-            if let (Some(track_name), Some(track_alias)) = publish_values {
+            if let (Some(track_name), Some(_track_alias)) = publish_values {
                 if notifier
-                    .publish(
-                        session_id,
-                        track_namespace.clone(),
-                        track_name.clone(),
-                        track_alias,
-                    )
+                    .publish(session_id, track_namespace.clone(), track_name.clone())
                     .await
+                    .is_some()
                 {
                     tracing::info!("Sent publish '{}' to {}", track_namespace, session_id)
                 } else {

@@ -51,30 +51,29 @@ impl Notifier {
         session_id: SessionId,
         track_namespace: String,
         track_name: String,
-        track_alias: u64,
-    ) -> bool {
+    ) -> Option<u64> {
         let publisher = self.repository.lock().await.publisher(session_id).await;
         if let Some(publisher) = publisher {
             match publisher
-                .send_publish(track_namespace.clone(), track_name, track_alias)
+                .send_publish(track_namespace.clone(), track_name)
                 .await
             {
-                Ok(_) => {
+                Ok(published_resource) => {
                     tracing::info!(
                         "Sent publish namespace '{}' to {}",
                         track_namespace,
                         session_id
                     );
-                    true
+                    Some(published_resource.track_alias())
                 }
                 Err(_) => {
                     tracing::error!("Failed to send publish namespace");
-                    false
+                    None
                 }
             }
         } else {
             tracing::error!("No publisher");
-            false
+            None
         }
     }
 
