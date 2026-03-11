@@ -19,7 +19,7 @@ impl Location {
         }
     }
 
-    pub(crate) fn into_moqt(&self) -> moqt::Location {
+    pub(crate) fn as_moqt(&self) -> moqt::Location {
         moqt::Location {
             group_id: self.group_id,
             object_id: self.object_id,
@@ -52,18 +52,18 @@ impl FilterType {
         }
     }
 
-    pub(crate) fn into_moqt(&self) -> moqt::FilterType {
+    pub(crate) fn as_moqt(&self) -> moqt::FilterType {
         match self {
             FilterType::LatestGroup => moqt::FilterType::LatestGroup,
             FilterType::LatestObject => moqt::FilterType::LatestObject,
             FilterType::AbsoluteStart { location } => moqt::FilterType::AbsoluteStart {
-                location: location.into_moqt(),
+                location: location.as_moqt(),
             },
             FilterType::AbsoluteRange {
                 location,
                 end_group,
             } => moqt::FilterType::AbsoluteRange {
-                location: location.into_moqt(),
+                location: location.as_moqt(),
                 end_group: *end_group,
             },
         }
@@ -86,7 +86,7 @@ impl GroupOrder {
         }
     }
 
-    pub(crate) fn into_moqt(&self) -> moqt::GroupOrder {
+    pub(crate) fn as_moqt(&self) -> moqt::GroupOrder {
         match self {
             Self::Publisher => moqt::GroupOrder::Publisher,
             Self::Ascending => moqt::GroupOrder::Ascending,
@@ -110,11 +110,11 @@ impl ContentExists {
         }
     }
 
-    pub(crate) fn into_moqt(&self) -> moqt::ContentExists {
+    pub(crate) fn as_moqt(&self) -> moqt::ContentExists {
         match self {
             ContentExists::False => moqt::ContentExists::False,
             ContentExists::True { location } => moqt::ContentExists::True {
-                location: location.into_moqt(),
+                location: location.as_moqt(),
             },
         }
     }

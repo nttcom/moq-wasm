@@ -10,7 +10,7 @@ use crate::modules::core::{
 
 #[async_trait]
 pub(crate) trait Subscriber: 'static + Send + Sync {
-    async fn send_subscribe_namespace(&self, namespaces: String) -> anyhow::Result<()>;
+    async fn _send_subscribe_namespace(&self, namespaces: String) -> anyhow::Result<()>;
     async fn send_subscribe(
         &self,
         track_namespace: String,
@@ -25,7 +25,7 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
 
 #[async_trait]
 impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
-    async fn send_subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
+    async fn _send_subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         self.subscribe_namespace(namespace).await
     }
 
@@ -37,9 +37,9 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
     ) -> anyhow::Result<Subscription> {
         let option = moqt::SubscribeOption {
             subscriber_priority: option.subscriber_priority,
-            group_order: option.group_order.into_moqt(),
+            group_order: option.group_order.as_moqt(),
             forward: option.forward,
-            filter_type: option.filter_type.into_moqt(),
+            filter_type: option.filter_type.as_moqt(),
         };
         let subscription = self.subscribe(track_namespace, track_name, option).await?;
         Ok(Subscription::from(subscription))

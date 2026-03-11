@@ -1,7 +1,16 @@
 use std::sync::Arc;
 
 use crate::modules::{
-    enums::MOQTMessageReceived, sequences::sequence_handler::SequenceHandler,
+    enums::MOQTMessageReceived,
+    event_resolver::stream_binder::StreamBinder,
+    sequences::{
+        notifier::Notifier,
+        publish::Publish,
+        publish_namespace::PublishNamespace,
+        subscribe::Subscribe,
+        subscribe_namespace::SubscribeNameSpace,
+        tables::{hashmap_table::HashMapTable, table::Table},
+    },
     session_repository::SessionRepository,
 };
 
@@ -27,25 +36,41 @@ impl EventHandler {
         tokio::task::Builder::new()
             .name("Session Event Watcher")
             .spawn(async move {
-                let mut sequense_handler = SequenceHandler::new(repo);
+                let mut stream_handler = StreamBinder::new(repo.clone());
+                let notifier = Notifier { repository: repo };
+                let table = Box::new(HashMapTable::new());
                 loop {
                     if let Some(event) = receiver.recv().await {
                         match event {
                             MOQTMessageReceived::PublishNameSpace(session_id, handler) => {
-                                sequense_handler
-                                    .publish_namespace(session_id, handler)
-                                    .await
+                                let publish_ns = PublishNamespace {};
+                                publish_ns
+                                    .handle(session_id, table.as_ref(), &notifier, handler.as_ref())
+                                    .await;
                             }
                             MOQTMessageReceived::SubscribeNameSpace(session_id, handler) => {
-                                sequense_handler
-                                    .subscribe_namespace(session_id, handler)
+                                let subscribe_ns = SubscribeNameSpace {};
+                                subscribe_ns
+                                    .handle(session_id, table.as_ref(), &notifier, handler.as_ref())
                                     .await;
                             }
                             MOQTMessageReceived::Publish(session_id, handler) => {
-                                sequense_handler.publish(session_id, handler).await
+                                let publish = Publish {};
+                                publish
+                                    .handle(session_id, table.as_ref(), &notifier, handler)
+                                    .await;
                             }
                             MOQTMessageReceived::Subscribe(session_id, handler) => {
-                                sequense_handler.subscribe(session_id, handler).await
+                                let subscribe = Subscribe {};
+                                subscribe
+                                    .handle(
+                                        session_id,
+                                        table.as_ref(),
+                                        &notifier,
+                                        &mut stream_handler,
+                                        handler,
+                                    )
+                                    .await;
                             }
                             MOQTMessageReceived::ProtocolViolation() => todo!(),
                         }

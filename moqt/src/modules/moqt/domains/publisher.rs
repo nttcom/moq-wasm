@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::bail;
 
@@ -22,7 +23,13 @@ pub struct Publisher<T: TransportProtocol> {
     pub(crate) session: Arc<SessionContext<T>>,
 }
 
+static NEXT_TRACK_ALIAS: AtomicU64 = AtomicU64::new(0);
+
 impl<T: TransportProtocol> Publisher<T> {
+    fn next_track_alias() -> u64 {
+        NEXT_TRACK_ALIAS.fetch_add(1, Ordering::SeqCst)
+    }
+
     pub async fn publish_namespace(&self, namespace: String) -> anyhow::Result<()> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -69,6 +76,8 @@ impl<T: TransportProtocol> Publisher<T> {
         track_name: String,
         option: PublishOption,
     ) -> anyhow::Result<PublishedResource> {
+        let track_alias = Self::next_track_alias();
+        tracing::debug!("track alias: {}", track_alias);
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -81,7 +90,7 @@ impl<T: TransportProtocol> Publisher<T> {
             request_id,
             track_namespace_tuple: vec_namespace,
             track_name: track_name.clone(),
-            track_alias: option.track_alias,
+            track_alias,
             group_order: option.group_order,
             content_exists: option.content_exists,
             forward: option.forward,
@@ -109,7 +118,7 @@ impl<T: TransportProtocol> Publisher<T> {
                     Ok(PublishedResource::new(
                         track_namespace,
                         track_name,
-                        option.track_alias,
+                        track_alias,
                         message,
                     ))
                 }

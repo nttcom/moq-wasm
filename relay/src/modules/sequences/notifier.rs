@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use uuid::Uuid;
-
 use crate::modules::{
     core::{handler::publish::SubscribeOption, subscription::Subscription},
     enums::{FilterType, GroupOrder},
     session_repository::SessionRepository,
+    types::SessionId,
 };
 
 pub(crate) struct Notifier {
@@ -15,7 +14,7 @@ pub(crate) struct Notifier {
 impl Notifier {
     pub(crate) async fn publish_namespace(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         track_namespace: String,
     ) -> bool {
         let publisher = self.repository.lock().await.publisher(session_id).await;
@@ -49,39 +48,38 @@ impl Notifier {
 
     pub(crate) async fn publish(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         track_namespace: String,
         track_name: String,
-        track_alias: u64,
-    ) -> bool {
+    ) -> Option<u64> {
         let publisher = self.repository.lock().await.publisher(session_id).await;
         if let Some(publisher) = publisher {
             match publisher
-                .send_publish(track_namespace.clone(), track_name, track_alias)
+                .send_publish(track_namespace.clone(), track_name)
                 .await
             {
-                Ok(_) => {
+                Ok(published_resource) => {
                     tracing::info!(
                         "Sent publish namespace '{}' to {}",
                         track_namespace,
                         session_id
                     );
-                    true
+                    Some(published_resource.track_alias())
                 }
                 Err(_) => {
                     tracing::error!("Failed to send publish namespace");
-                    false
+                    None
                 }
             }
         } else {
             tracing::error!("No publisher");
-            false
+            None
         }
     }
 
     pub(crate) async fn subscribe(
         &self,
-        session_id: Uuid,
+        session_id: SessionId,
         track_namespace: String,
         track_name: String,
     ) -> anyhow::Result<Subscription> {

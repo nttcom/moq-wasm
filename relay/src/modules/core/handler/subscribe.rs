@@ -9,21 +9,16 @@ use crate::modules::{
 pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     fn track_namespace(&self) -> &str;
     fn track_name(&self) -> &str;
-    fn subscriber_priority(&self) -> u8;
-    fn group_order(&self) -> GroupOrder;
-    fn forward(&self) -> bool;
-    fn filter_type(&self) -> FilterType;
-    fn authorization_token(&self) -> Option<String>;
-    fn max_cache_duration(&self) -> Option<u64>;
-    fn delivery_timeout(&self) -> Option<u64>;
-    async fn ok(
-        &self,
-        track_alias: u64,
-        expires: u64,
-        content_exists: ContentExists,
-    ) -> anyhow::Result<()>;
+    fn _subscriber_priority(&self) -> u8;
+    fn _group_order(&self) -> GroupOrder;
+    fn _forward(&self) -> bool;
+    fn _filter_type(&self) -> FilterType;
+    fn _authorization_token(&self) -> Option<String>;
+    fn _max_cache_duration(&self) -> Option<u64>;
+    fn _delivery_timeout(&self) -> Option<u64>;
+    async fn ok(&self, expires: u64, content_exists: ContentExists) -> anyhow::Result<u64>;
     async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
-    fn into_publication(&self, track_alias: u64) -> PublishedResource;
+    fn convert_into_publication(&self, track_alias: u64) -> PublishedResource;
 }
 
 #[async_trait]
@@ -34,43 +29,37 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
     fn track_name(&self) -> &str {
         &self.track_name
     }
-    fn subscriber_priority(&self) -> u8 {
+    fn _subscriber_priority(&self) -> u8 {
         self.subscriber_priority
     }
-    fn group_order(&self) -> GroupOrder {
+    fn _group_order(&self) -> GroupOrder {
         GroupOrder::from(self.group_order)
     }
-    fn forward(&self) -> bool {
+    fn _forward(&self) -> bool {
         self.forward
     }
-    fn filter_type(&self) -> FilterType {
+    fn _filter_type(&self) -> FilterType {
         FilterType::from(self.filter_type)
     }
-    fn authorization_token(&self) -> Option<String> {
+    fn _authorization_token(&self) -> Option<String> {
         self.authorization_token.clone()
     }
-    fn max_cache_duration(&self) -> Option<u64> {
+    fn _max_cache_duration(&self) -> Option<u64> {
         self.max_cache_duration
     }
-    fn delivery_timeout(&self) -> Option<u64> {
+    fn _delivery_timeout(&self) -> Option<u64> {
         self.delivery_timeout
     }
 
-    async fn ok(
-        &self,
-        track_alias: u64,
-        expires: u64,
-        content_exists: ContentExists,
-    ) -> anyhow::Result<()> {
-        self.ok(track_alias, expires, content_exists.into_moqt())
-            .await
+    async fn ok(&self, expires: u64, content_exists: ContentExists) -> anyhow::Result<u64> {
+        self.ok(expires, content_exists.as_moqt()).await
     }
 
     async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()> {
         self.error(code, reason_phrase).await
     }
 
-    fn into_publication(&self, track_alias: u64) -> PublishedResource {
+    fn convert_into_publication(&self, track_alias: u64) -> PublishedResource {
         PublishedResource::from(self.into_publication(track_alias))
     }
 }

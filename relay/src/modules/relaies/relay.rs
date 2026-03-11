@@ -6,6 +6,7 @@ use crate::modules::{
     relaies::{
         caches::cache_map::CacheMap, object_sender::ObjectSender, relay_properties::RelayProperties,
     },
+    types::{SessionId, compose_session_track_key},
 };
 
 pub(crate) struct Relay {
@@ -13,17 +14,22 @@ pub(crate) struct Relay {
 }
 
 impl Relay {
-    pub(crate) fn add_object_receiver(&mut self, mut data_receiver: Box<dyn DataReceiver>) {
+    pub(crate) fn add_object_receiver(
+        &mut self,
+        session_id: SessionId,
+        mut data_receiver: Box<dyn DataReceiver>,
+    ) {
         let track_alias = data_receiver.get_track_alias();
-        self.initialize_if_needed(track_alias);
+        let track_key = compose_session_track_key(session_id, track_alias);
+        self.initialize_if_needed(track_key);
         let queue = self.relay_properties.object_queue.clone();
         self.relay_properties.joinset.spawn(async move {
             tracing::info!("add object receiver");
             while let Ok(data_object) = data_receiver.receive_object().await {
                 tracing::info!("receive object: {:#?}", data_object);
-                let queue = queue.get_mut(&track_alias);
+                let queue = queue.get_mut(&track_key);
                 if queue.is_none() {
-                    tracing::error!("Track alias {} not found in object queue", track_alias);
+                    tracing::error!("Track key {} not found in object queue", track_key);
                     break;
                 }
                 queue.unwrap().set_latest_object(data_object).await;
@@ -33,16 +39,18 @@ impl Relay {
 
     pub(crate) fn add_object_sender(
         &mut self,
+        session_id: SessionId,
         track_alias: u64,
         mut datagram_sender: Box<dyn DataSender>,
         group_order: GroupOrder,
         filter_type: FilterType,
     ) {
-        self.initialize_if_needed(track_alias);
+        let track_key = compose_session_track_key(session_id, track_alias);
+        self.initialize_if_needed(track_key);
         let cache = self
             .relay_properties
             .object_queue
-            .get(&track_alias)
+            .get(&track_key)
             .unwrap()
             .clone();
         self.relay_properties.joinset.spawn(async move {
@@ -117,10 +125,10 @@ impl Relay {
         });
     }
 
-    fn initialize_if_needed(&mut self, track_alias: u64) {
+    fn initialize_if_needed(&mut self, track_key: u128) {
         self.relay_properties
             .object_queue
-            .entry(track_alias)
+            .entry(track_key)
             .or_insert_with(|| Arc::new(CacheMap::new()));
     }
 }

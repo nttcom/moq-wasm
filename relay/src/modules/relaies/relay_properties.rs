@@ -5,7 +5,7 @@ use dashmap::DashMap;
 use crate::modules::relaies::caches::cache::Cache;
 
 pub(crate) struct RelayProperties {
-    pub(crate) object_queue: DashMap<u64, Arc<dyn Cache>>,
+    pub(crate) object_queue: DashMap<u128, Arc<dyn Cache>>,
     pub(crate) joinset: tokio::task::JoinSet<()>,
 }
 
