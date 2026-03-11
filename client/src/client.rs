@@ -12,6 +12,12 @@ use moqt::{DatagramField, Endpoint, QUIC, Session, SubscribeOption};
 
 use crate::stream_runner::StreamTaskRunner;
 
+// Dead code is used for testing publish and datagram functionalities,
+// which are not used in the current test cases but may be used in future test cases.
+// Therefore, we will keep the dead code for now.
+// We can remove the dead code when we have implemented the test cases that use these functionalities.
+
+#[allow(dead_code)]
 pub struct Client {
     // pub(crate) -> pub
     label: String,
@@ -155,6 +161,7 @@ impl Client {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn publish(&self, track_namespace: String, track_name: String) {
         // pub(crate) -> pub
         let option = moqt::PublishOption::default();
@@ -265,6 +272,7 @@ impl Client {
         runner.add_task(Box::pin(task)).await;
     }
 
+    #[allow(dead_code)]
     async fn create_datagram(
         label: String,
         publisher: &moqt::Publisher<moqt::QUIC>,

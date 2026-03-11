@@ -69,7 +69,7 @@ impl Subscribe {
             pub_handler.track_name(),
             pub_handler.track_alias()
         );
-        let subscription = pub_handler.into_subscription(0);
+        let subscription = pub_handler.convert_into_subscription(0);
         let publisher_track_alias = subscription.track_alias();
         if let Ok(subscriber_track_alias) = handler
             .ok(subscription.expires(), subscription.content_exists())
@@ -87,7 +87,7 @@ impl Subscribe {
                     session_id,
                     subscription,
                     pub_session_id,
-                    handler.into_publication(subscriber_track_alias),
+                    handler.convert_into_publication(subscriber_track_alias),
                 )
                 .await;
         } else {
@@ -127,7 +127,7 @@ impl Subscribe {
                     session_id,
                     subscriber_track_alias,
                 );
-                let pub_resource = handler.into_publication(subscriber_track_alias);
+                let pub_resource = handler.convert_into_publication(subscriber_track_alias);
                 stream_handler
                     .bind_by_subscribe(session_id, subscription, pub_session_id, pub_resource)
                     .await;
