@@ -168,7 +168,11 @@ impl Table for HashMapTable {
         subscriber_session_id: SessionId,
     ) -> Option<u64> {
         self.track_alias_links
-            .get(&(publisher_session_id, publisher_track_alias, subscriber_session_id))
+            .get(&(
+                publisher_session_id,
+                publisher_track_alias,
+                subscriber_session_id,
+            ))
             .map(|value| *value)
     }
 }

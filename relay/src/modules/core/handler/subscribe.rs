@@ -16,11 +16,7 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     fn authorization_token(&self) -> Option<String>;
     fn max_cache_duration(&self) -> Option<u64>;
     fn delivery_timeout(&self) -> Option<u64>;
-    async fn ok(
-        &self,
-        expires: u64,
-        content_exists: ContentExists,
-    ) -> anyhow::Result<u64>;
+    async fn ok(&self, expires: u64, content_exists: ContentExists) -> anyhow::Result<u64>;
     async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
     fn into_publication(&self, track_alias: u64) -> PublishedResource;
 }
@@ -55,11 +51,7 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
         self.delivery_timeout
     }
 
-    async fn ok(
-        &self,
-        expires: u64,
-        content_exists: ContentExists,
-    ) -> anyhow::Result<u64> {
+    async fn ok(&self, expires: u64, content_exists: ContentExists) -> anyhow::Result<u64> {
         self.ok(expires, content_exists.into_moqt()).await
     }
 

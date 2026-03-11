@@ -2,9 +2,7 @@ use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
-        messages::parameters::{
-            content_exists::ContentExists, group_order::GroupOrder,
-        },
+        messages::parameters::{content_exists::ContentExists, group_order::GroupOrder},
     },
 };
 use bytes::{Buf, BufMut, BytesMut};
@@ -108,9 +106,7 @@ mod tests {
     mod success {
         use crate::modules::moqt::control_plane::control_messages::messages::{
             parameters::{
-                content_exists::ContentExists,
-                group_order::GroupOrder,
-                location::Location,
+                content_exists::ContentExists, group_order::GroupOrder, location::Location,
             },
             subscribe_ok::SubscribeOk,
         };
@@ -220,14 +216,14 @@ mod tests {
         #[test]
         fn depacketize_content_exists() {
             let bytes_array = [
-                0,  // Request ID (i)
-                2,  // Track alias (i)
-                1,  // Expires (i)
-                1,  // Group Order (8)
-                1,  // Content Exists (f)
-                0,  // Largest Group ID (i)
-                5,  // Largest Object ID (i)
-                0,  // Track Request Parameters (..): Number of Parameters
+                0, // Request ID (i)
+                2, // Track alias (i)
+                1, // Expires (i)
+                1, // Group Order (8)
+                1, // Content Exists (f)
+                0, // Largest Group ID (i)
+                5, // Largest Object ID (i)
+                0, // Track Request Parameters (..): Number of Parameters
             ];
             let mut buf = BytesMut::with_capacity(bytes_array.len());
             buf.extend_from_slice(&bytes_array);

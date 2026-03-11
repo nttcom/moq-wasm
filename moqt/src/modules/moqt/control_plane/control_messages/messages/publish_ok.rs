@@ -29,8 +29,7 @@ impl PublishOk {
             .log_context("group order")
             .ok()?;
         let filter_type = FilterType::decode(buf)?;
-        let delivery_timeout =
-            buf.try_get_varint().log_context("delivery timeout").ok();
+        let delivery_timeout = buf.try_get_varint().log_context("delivery timeout").ok();
 
         Some(Self {
             request_id,

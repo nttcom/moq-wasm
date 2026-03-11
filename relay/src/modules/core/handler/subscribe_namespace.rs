@@ -12,7 +12,7 @@ impl<T: moqt::TransportProtocol> SubscribeNamespaceHandler for moqt::SubscribeNa
     fn track_namespace_prefix(&self) -> &str {
         &self.track_namespace_prefix
     }
-    
+
     async fn ok(&self) -> anyhow::Result<()> {
         self.ok().await
     }

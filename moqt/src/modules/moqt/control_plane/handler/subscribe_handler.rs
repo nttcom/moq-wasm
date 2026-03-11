@@ -49,11 +49,7 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         }
     }
 
-    pub async fn ok(
-        &self,
-        expires: u64,
-        content_exists: ContentExists,
-    ) -> anyhow::Result<u64> {
+    pub async fn ok(&self, expires: u64, content_exists: ContentExists) -> anyhow::Result<u64> {
         let track_alias = self.session_context.get_track_alias();
         let subscribe_ok = SubscribeOk {
             request_id: self.request_id,
