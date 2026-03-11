@@ -19,6 +19,7 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) transport_connection: T::Connection,
     pub(crate) send_stream: BiStreamSender<T>,
     request_id: AtomicU64,
+    track_alias: AtomicU64,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     pub(crate) sender_map:
         tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
@@ -37,6 +38,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             transport_connection,
             send_stream,
             request_id,
+            track_alias: AtomicU64::new(0),
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
             notification_map: tokio::sync::RwLock::new(HashMap::new()),
@@ -48,6 +50,12 @@ impl<T: TransportProtocol> SessionContext<T> {
         tracing::debug!("request_id: {}", id);
         self.request_id.fetch_add(2, Ordering::SeqCst);
         id
+    }
+
+    pub(crate) fn get_track_alias(&self) -> u64 {
+        let track_alias = self.track_alias.fetch_add(1, Ordering::SeqCst);
+        tracing::debug!("track_alias: {}", track_alias);
+        track_alias
     }
 }
 

@@ -19,7 +19,7 @@ impl Subscription {
     pub(crate) fn expires(&self) -> u64 {
         self.subscription.expires
     }
-    pub(crate) fn group_order(&self) -> GroupOrder {
+    pub(crate) fn _group_order(&self) -> GroupOrder {
         GroupOrder::from(self.subscription.group_order)
     }
     pub(crate) fn content_exists(&self) -> ContentExists {

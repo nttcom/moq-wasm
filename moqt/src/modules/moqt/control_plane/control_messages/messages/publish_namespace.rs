@@ -136,9 +136,9 @@ mod tests {
             #[test]
             fn with_parameter() {
                 let bytes_array = [
-                    0,  // request id(u64)
-                    2,  // Track Namespace(tuple): Number of elements
-                    4,  // Track Namespace(b): Length
+                    0, // request id(u64)
+                    2, // Track Namespace(tuple): Number of elements
+                    4, // Track Namespace(b): Length
                     116, 101, 115, 116, // Track Namespace(b): Value("test")
                     4,   // Track Namespace(b): Length
                     116, 101, 115, 116, // Track Namespace(b): Value("test")
@@ -160,9 +160,9 @@ mod tests {
             #[test]
             fn without_parameter() {
                 let bytes_array = [
-                    0,  // request id(u64)
-                    2,  // Track Namespace(tuple): Number of elements
-                    4,  // Track Namespace(b): Length
+                    0, // request id(u64)
+                    2, // Track Namespace(tuple): Number of elements
+                    4, // Track Namespace(b): Length
                     116, 101, 115, 116, // Track Namespace(b): Value("test")
                     4,   // Track Namespace(b): Length
                     116, 101, 115, 116, // Track Namespace(b): Value("test")

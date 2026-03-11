@@ -12,6 +12,12 @@ use moqt::{DatagramField, Endpoint, QUIC, Session, SubscribeOption};
 
 use crate::stream_runner::StreamTaskRunner;
 
+// Dead code is used for testing publish and datagram functionalities,
+// which are not used in the current test cases but may be used in future test cases.
+// Therefore, we will keep the dead code for now.
+// We can remove the dead code when we have implemented the test cases that use these functionalities.
+
+#[allow(dead_code)]
 pub struct Client {
     // pub(crate) -> pub
     label: String,
@@ -113,7 +119,7 @@ impl Client {
                             tracing::info!("Received: {} Subscribe", label);
                             let track_alias = track_alias.load(Ordering::SeqCst);
                             let _ = subscribe_handler
-                                .ok(track_alias, 1000000, moqt::ContentExists::False)
+                                .ok(1000000, moqt::ContentExists::False)
                                 .await;
                             let publication = subscribe_handler.into_publication(track_alias);
                             Self::create_stream(label.clone(), &publisher, publication, &runner)
@@ -155,6 +161,7 @@ impl Client {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn publish(&self, track_namespace: String, track_name: String) {
         // pub(crate) -> pub
         let option = moqt::PublishOption::default();
@@ -265,6 +272,7 @@ impl Client {
         runner.add_task(Box::pin(task)).await;
     }
 
+    #[allow(dead_code)]
     async fn create_datagram(
         label: String,
         publisher: &moqt::Publisher<moqt::QUIC>,

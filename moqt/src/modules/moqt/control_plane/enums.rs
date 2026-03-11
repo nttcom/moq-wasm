@@ -16,17 +16,6 @@ pub type RequestId = u64;
 pub(crate) type ErrorCode = u64;
 pub(crate) type ErrorPhrase = String;
 
-// parameters aliases
-// appear in
-// CLIENT_SETUP, SERVER_SETUP, PUBLISH, SUBSCRIBE, SUBSCRIBE_UPDATE,
-// SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE, TRACK_STATUS or FETCH
-pub type Authorization = String;
-// TRACK_STATUS, TRACK_STATUS_OK, PUBLISH, PUBLISH_OK, SUBSCRIBE,
-// SUBSCRIBE_OK, or SUBSCRIBE_UDPATE message.
-pub type DeliveryTimeout = u64;
-// PUBLISH, SUBSCRIBE_OK, FETCH_OK or TRACK_STATUS_OK
-pub type MaxCacheDuration = u64;
-
 #[derive(Clone, Debug)]
 pub enum SessionEvent<T: TransportProtocol> {
     PublishNamespace(PublishNamespaceHandler<T>),
@@ -36,6 +25,7 @@ pub enum SessionEvent<T: TransportProtocol> {
     ProtocolViolation(),
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum ResponseMessage {
     SubscribeNameSpaceOk(RequestId),

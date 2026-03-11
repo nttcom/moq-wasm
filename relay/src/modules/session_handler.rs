@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use moqt::{Endpoint, QUIC};
-use uuid::Uuid;
 
 use crate::modules::{
-    enums::MOQTMessageReceived, session_repository::SessionRepository,
+    enums::MOQTMessageReceived, session_repository::SessionRepository, types::generate_session_id,
 };
 
 pub struct SessionHandler {
@@ -23,9 +22,10 @@ impl SessionHandler {
         //     key_path,
         //     keep_alive_interval_sec: 15,
         // };
-        let endpoint = Endpoint::<QUIC>::create_server(&config) // 修正
-            .inspect_err(|e| tracing::error!("failed to create server: {}", e))
-            .unwrap();
+        let endpoint =
+            Endpoint::<QUIC>::create_server(&config) // 修正
+                .inspect_err(|e| tracing::error!("failed to create server: {}", e))
+                .unwrap();
         let join_handle = Self::create_joinhandle(endpoint, repo, session_event_sender);
         Self { join_handle }
     }
@@ -48,7 +48,7 @@ impl SessionHandler {
                             break;
                         }
                     };
-                    let session_id = Uuid::new_v4();
+                    let session_id = generate_session_id();
                     tracing::info!("Session ID: {}", session_id);
                     repo.lock()
                         .await
