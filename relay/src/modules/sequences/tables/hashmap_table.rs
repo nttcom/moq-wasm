@@ -161,7 +161,7 @@ impl Table for HashMapTable {
         );
     }
 
-    fn find_subscriber_track_alias(
+    fn _find_subscriber_track_alias(
         &self,
         publisher_session_id: SessionId,
         publisher_track_alias: u64,

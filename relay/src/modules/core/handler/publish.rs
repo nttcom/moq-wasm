@@ -19,15 +19,15 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
     fn track_namespace(&self) -> &str;
     fn track_name(&self) -> &str;
     fn track_alias(&self) -> u64;
-    fn group_order(&self) -> GroupOrder;
-    fn content_exists(&self) -> ContentExists;
-    fn forward(&self) -> bool;
-    fn authorization_token(&self) -> Option<String>;
-    fn delivery_timeout(&self) -> Option<u64>;
-    fn max_cache_duration(&self) -> Option<u64>;
+    fn _group_order(&self) -> GroupOrder;
+    fn _content_exists(&self) -> ContentExists;
+    fn _forward(&self) -> bool;
+    fn _authorization_token(&self) -> Option<String>;
+    fn _delivery_timeout(&self) -> Option<u64>;
+    fn _max_cache_duration(&self) -> Option<u64>;
     async fn ok(&self, subscriber_priority: u8, filter_type: FilterType) -> anyhow::Result<()>;
-    async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
-    fn into_subscription(&self, expires: u64) -> Subscription;
+    async fn _error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
+    fn convert_into_subscription(&self, expires: u64) -> Subscription;
 }
 
 #[async_trait]
@@ -41,34 +41,34 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
     fn track_alias(&self) -> u64 {
         self.track_alias
     }
-    fn group_order(&self) -> GroupOrder {
+    fn _group_order(&self) -> GroupOrder {
         GroupOrder::from(self.group_order)
     }
-    fn content_exists(&self) -> ContentExists {
+    fn _content_exists(&self) -> ContentExists {
         ContentExists::from(self.content_exists)
     }
-    fn forward(&self) -> bool {
+    fn _forward(&self) -> bool {
         self.forward
     }
-    fn authorization_token(&self) -> Option<String> {
+    fn _authorization_token(&self) -> Option<String> {
         self.authorization_token.clone()
     }
-    fn delivery_timeout(&self) -> Option<u64> {
+    fn _delivery_timeout(&self) -> Option<u64> {
         self.delivery_timeout
     }
-    fn max_cache_duration(&self) -> Option<u64> {
+    fn _max_cache_duration(&self) -> Option<u64> {
         self.max_cache_duration
     }
 
     async fn ok(&self, subscriber_priority: u8, filter_type: FilterType) -> anyhow::Result<()> {
-        self.ok(subscriber_priority, filter_type.into_moqt()).await
+        self.ok(subscriber_priority, filter_type.as_moqt()).await
     }
 
-    async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()> {
+    async fn _error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()> {
         self.error(code, reason_phrase).await
     }
 
-    fn into_subscription(&self, expires: u64) -> Subscription {
+    fn convert_into_subscription(&self, expires: u64) -> Subscription {
         Subscription::from(self.into_subscription(expires))
     }
 }
