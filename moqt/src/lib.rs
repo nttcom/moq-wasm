@@ -5,7 +5,6 @@ pub use modules::moqt::control_plane::control_messages::messages::parameters::co
 pub use modules::moqt::control_plane::control_messages::messages::parameters::filter_type::FilterType;
 pub use modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
 pub use modules::moqt::control_plane::enums::SessionEvent;
-pub use modules::moqt::control_plane::enums::{DeliveryTimeout, MaxCacheDuration};
 pub use modules::moqt::control_plane::handler::publish_handler::PublishHandler;
 pub use modules::moqt::control_plane::handler::publish_namespace_handler::PublishNamespaceHandler;
 pub use modules::moqt::control_plane::handler::subscribe_handler::SubscribeHandler;

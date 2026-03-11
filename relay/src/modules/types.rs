@@ -31,7 +31,3 @@ pub(crate) fn generate_session_id() -> SessionId {
 pub(crate) fn compose_session_track_key(session_id: SessionId, track_alias: u64) -> u128 {
     ((session_id as u128) << 64) | (track_alias as u128)
 }
-
-// parameter alias
-pub(crate) type DeliveryTimeout = moqt::DeliveryTimeout;
-pub(crate) type MaxCacheDuration = moqt::MaxCacheDuration;
