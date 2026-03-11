@@ -1,6 +1,6 @@
+use quinn::rustls;
 use quinn::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerifier};
 use quinn::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use quinn::rustls;
 
 #[derive(Debug)]
 pub(crate) struct SkipVerification;
