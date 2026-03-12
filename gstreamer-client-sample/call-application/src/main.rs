@@ -17,6 +17,20 @@ type StreamType = moqt::StreamDataSender<moqt::QUIC>;
 #[cfg(feature = "use_datagram")]
 type StreamType = moqt::DatagramSender<moqt::QUIC>;
 
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// 公開フラグ (--publish)
+    #[arg(long, short)]
+    publish: String,
+
+    /// 購読フラグ (--subscribe)
+    #[arg(long, short)]
+    subscribe: String,
+}
+
 pub(crate) enum MOQTEvent {
     StreamAdded { is_video: bool, stream: StreamType },
     NamespaceAdded(String),
@@ -31,27 +45,26 @@ unsafe extern "C" {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) async fn start() {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_line_number(true)
-        .try_init()
-        .ok();
-
-    tokio::task::spawn(async {
+pub(crate) async fn start(publish_namespace: String, subscribe_namespace: String) {
+    tokio::task::spawn(async move {
         let cert_path = "/Users/gazzy/Project/moq-wasm/keys/cert.pem";
         let (event_sender, mut event_receiver) = tokio::sync::mpsc::channel::<MOQTEvent>(100);
         let moqt_client = moqt_client::MOQTClient::new(cert_path, event_sender)
             .await
             .expect("Failed to create MOQT client");
         moqt_client
-            .subscribe_namespace("school")
+            .publish_namespace(&publish_namespace)
+            .await
+            .expect("Failed to publish namespace");
+        moqt_client
+            .subscribe_namespace(&subscribe_namespace)
             .await
             .expect("Failed to subscribe namespace");
 
         tracing::info!("waiting to get track namespace from message receive thread...");
         let mut video_senders = vec![];
         let mut audio_senders = vec![];
+        let mut media_send_threads = vec![];
         let mut video_receivers = vec![];
         let mut audio_receivers = vec![];
         loop {
@@ -70,15 +83,16 @@ pub(crate) async fn start() {
                                 gst_sender.start();
                                 audio_senders.push(gst_sender);
                             };
-                            MediaSendThread::start(data_receiver, stream);
+                            let media_send_thread = MediaSendThread::start(data_receiver, stream);
+                            media_send_threads.push(media_send_thread);
                         }
                         MOQTEvent::NamespaceAdded(namespace) => {
                             let video_receiver = moqt_client
-                                .subscribe(&namespace, "grade1", moqt::SubscribeOption::default())
+                                .subscribe(&namespace, "video", moqt::SubscribeOption::default())
                                 .await
                                 .expect("Failed to subscribe");
                             let audio_receiver = moqt_client
-                                .subscribe(&namespace, "grade1", moqt::SubscribeOption::default())
+                                .subscribe(&namespace, "audio", moqt::SubscribeOption::default())
                                 .await
                                 .expect("Failed to subscribe");
                             let v_receiver = video_receiver::VideoReceiver::new(video_receiver).unwrap();
@@ -114,11 +128,23 @@ pub(crate) async fn start() {
 }
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_line_number(true)
+        .try_init()
+        .ok();
+
+    let args = Args::parse();
+    let publish_namespace = args.publish;
+    let subscribe_namespace = args.subscribe;
+    tracing::info!("Publish Namespace: {}", publish_namespace);
+    tracing::info!("Subscribe Namespace: {}", subscribe_namespace);
+
     #[cfg(target_os = "macos")]
     {
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            start().await;
+        runtime.block_on(async move {
+            start(publish_namespace, subscribe_namespace).await;
         });
     }
 }

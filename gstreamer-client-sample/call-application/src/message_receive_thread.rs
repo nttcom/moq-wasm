@@ -52,10 +52,17 @@ impl MessageReceiveThread {
                     }
                     moqt::SessionEvent::Subscribe(subscribe_handler) => {
                         tracing::info!("Received! Subscribe");
-                        let _ = subscribe_handler
-                            .ok(0, 1000000, moqt::ContentExists::False)
-                            .await;
-                        let published_resource = subscribe_handler.into_publication(0);
+                        let track_alias = match subscribe_handler
+                            .ok(1000000, moqt::ContentExists::False)
+                            .await
+                        {
+                            Ok(track_alias) => track_alias,
+                            Err(e) => {
+                                tracing::error!("Failed to send SubscribeOk: {}", e);
+                                continue;
+                            }
+                        };
+                        let published_resource = subscribe_handler.into_publication(track_alias);
                         let stream = Self::stream(session.clone(), &published_resource)
                             .await
                             .expect("failed to create stream");

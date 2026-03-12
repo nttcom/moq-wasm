@@ -15,7 +15,7 @@ impl MOQTClient {
         sender: tokio::sync::mpsc::Sender<StreamType>,
     ) -> anyhow::Result<Self> {
         // let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client_with_custom_cert(0, cert_path)?;
-        let url = url::Url::from_str("moqt://localhost:4434")?;
+        // let url = url::Url::from_str("moqt://localhost:4434")?;
         let mut config = ClientConfig::default();
         config.verify_certificate = false;
         let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&config)?;

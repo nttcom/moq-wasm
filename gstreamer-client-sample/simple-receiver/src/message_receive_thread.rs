@@ -52,7 +52,7 @@ impl MessageReceiveThread {
                     moqt::SessionEvent::Subscribe(subscribe_handler) => {
                         tracing::info!("Received! Subscribe");
                         let _ = subscribe_handler
-                            .ok(0, 1000000, moqt::ContentExists::False)
+                            .ok(1000000, moqt::ContentExists::False)
                             .await;
                     }
                     moqt::SessionEvent::ProtocolViolation() => {

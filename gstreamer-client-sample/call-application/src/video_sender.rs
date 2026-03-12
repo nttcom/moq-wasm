@@ -46,17 +46,17 @@ impl VideoSender {
         appsink.set_callbacks(
             gstreamer_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
-                    tracing::info!("New sample received from appsink");
+                    // tracing::info!("New sample received from appsink");
                     let sample = sink.pull_sample().map_err(|_| gstreamer::FlowError::Eos)?;
                     let buffer = sample.buffer().ok_or(gstreamer::FlowError::Error)?;
                     let is_keyframe = !buffer.flags().contains(gstreamer::BufferFlags::DELTA_UNIT);
 
                     if is_keyframe {
-                        println!("🔑 key frame");
+                        // println!("🔑 key frame");
                         group_id += 1;
                         object_id = 0;
                     } else {
-                        println!("📹 delta frame (P/B frame)");
+                        // println!("📹 delta frame (P/B frame)");
                         object_id += 1;
                     }
 
