@@ -69,7 +69,10 @@ impl VideoSender {
                         object_id,
                         payload: Bytes::copy_from_slice(map.as_slice()),
                     };
-                    let _ = sender.try_send(send_data);
+                    if let Err(e) = sender.blocking_send(send_data) {
+                        tracing::error!("Failed to enqueue video sample: {}", e);
+                        return Err(gstreamer::FlowError::Eos);
+                    }
                     Ok(gstreamer::FlowSuccess::Ok)
                 })
                 .build(),
