@@ -3,6 +3,9 @@ name = "call-application"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+use_datagram = []
+
 [dependencies]
 moqt = {path = "../../moqt"}
 tokio = { version = "1.45.0", features = ["full", "tracing"] }
