@@ -1,4 +1,5 @@
 pub(crate) mod quic;
+pub(crate) mod read_error;
 pub(crate) mod transport_connection;
 pub(crate) mod transport_connection_creator;
 pub(crate) mod transport_receive_stream;
