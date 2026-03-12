@@ -10,6 +10,8 @@ pub(crate) struct MOQTClient {
 }
 
 impl MOQTClient {
+    // `cert_path` is not used in this sample because `verify_certificate` is set to false, but you can specify it if you want to use it.
+    #[allow(unused_variables)]
     pub(crate) async fn new(
         cert_path: &str,
         event_sender: tokio::sync::mpsc::Sender<MOQTEvent>,
