@@ -42,7 +42,7 @@ impl AudioSender {
         appsink.set_callbacks(
             gstreamer_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
-                    tracing::info!("New sample received from appsink");
+                    // tracing::info!("New sample received from appsink");
                     let sample = sink.pull_sample().map_err(|_| gstreamer::FlowError::Eos)?;
                     let buffer = sample.buffer().ok_or(gstreamer::FlowError::Error)?;
 

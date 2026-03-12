@@ -39,6 +39,14 @@ impl MOQTClient {
         })
     }
 
+    pub(crate) async fn publish_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {
+        self.session
+            .publisher()
+            .publish_namespace(track_namespace.to_string())
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to publish namespace: {}", e))
+    }
+
     pub(crate) async fn subscribe_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {
         self.session
             .subscriber()
