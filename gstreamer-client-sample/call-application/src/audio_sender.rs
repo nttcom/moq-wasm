@@ -14,7 +14,7 @@ pub(crate) struct AudioSender {
 impl AudioSender {
     pub(crate) async fn new(data_sender: tokio::sync::mpsc::Sender<SendData>) -> Self {
         gstreamer::init().unwrap();
-        let pipeline_str = "avfaudiosrc ! audioconvert ! audio/x-raw,rate=48000,channels=1 ! opusenc frame-size=20 audio-type=voice bitrate=32000 \
+        let pipeline_str = "osxaudiosrc ! audioconvert ! audio/x-raw,rate=48000,channels=1 ! opusenc frame-size=20 audio-type=voice bitrate=32000 \
                                 ! appsink name=audio_sink";
         // if you stream video file you want, comment out below and designate absolute path.
         // let pipeline_str = "filesrc location=path/to/something.mp4 ! decodebin ! videoconvert ! x264enc key-int-max=30 ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream ! appsink name=sink";
@@ -57,7 +57,10 @@ impl AudioSender {
                         object_id,
                         payload: Bytes::copy_from_slice(map.as_slice()),
                     };
-                    let _ = sender.try_send(send_data);
+                    if let Err(e) = sender.blocking_send(send_data) {
+                        tracing::error!("Failed to enqueue audio sample: {}", e);
+                        return Err(gstreamer::FlowError::Eos);
+                    }
                     Ok(gstreamer::FlowSuccess::Ok)
                 })
                 .build(),

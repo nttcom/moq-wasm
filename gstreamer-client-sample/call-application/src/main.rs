@@ -47,11 +47,16 @@ unsafe extern "C" {
 #[cfg(target_os = "macos")]
 pub(crate) async fn start(publish_namespace: String, subscribe_namespace: String) {
     tokio::task::spawn(async move {
+        use std::sync::Arc;
+
+        use tokio::task::join_set;
+
         let cert_path = "/Users/gazzy/Project/moq-wasm/keys/cert.pem";
         let (event_sender, mut event_receiver) = tokio::sync::mpsc::channel::<MOQTEvent>(100);
         let moqt_client = moqt_client::MOQTClient::new(cert_path, event_sender)
             .await
             .expect("Failed to create MOQT client");
+        let moqt_client = Arc::new(moqt_client);
         moqt_client
             .publish_namespace(&publish_namespace)
             .await
@@ -65,15 +70,14 @@ pub(crate) async fn start(publish_namespace: String, subscribe_namespace: String
         let mut video_senders = vec![];
         let mut audio_senders = vec![];
         let mut media_send_threads = vec![];
-        let mut video_receivers = vec![];
-        let mut audio_receivers = vec![];
+        let mut join_set = join_set::JoinSet::new();
         loop {
             tokio::select! {
                 Some(event) = event_receiver.recv() => {
                     match event {
                         MOQTEvent::StreamAdded { is_video, stream } => {
                             let (data_sender, data_receiver) =
-                                tokio::sync::mpsc::channel::<video_sender::SendData>(100);
+                                tokio::sync::mpsc::channel::<video_sender::SendData>(1000);
                             if is_video {
                                 let gst_sender = VideoSender::new(data_sender).await;
                                 gst_sender.start();
@@ -87,27 +91,30 @@ pub(crate) async fn start(publish_namespace: String, subscribe_namespace: String
                             media_send_threads.push(media_send_thread);
                         }
                         MOQTEvent::NamespaceAdded(namespace) => {
-                            let video_receiver = moqt_client
+                            let moqt_client = moqt_client.clone();
+                            join_set.spawn(async move {
+                                let video_receiver = moqt_client
                                 .subscribe(&namespace, "video", moqt::SubscribeOption::default())
                                 .await
                                 .expect("Failed to subscribe");
-                            let audio_receiver = moqt_client
-                                .subscribe(&namespace, "audio", moqt::SubscribeOption::default())
-                                .await
-                                .expect("Failed to subscribe");
-                            let v_receiver = video_receiver::VideoReceiver::new(video_receiver).unwrap();
-                            let a_receiver = audio_receiver::AudioReceiver::new(audio_receiver).unwrap();
-                            let _ = a_receiver.start();
-                            let _ = v_receiver.start();
-                            video_receivers.push(v_receiver);
-                            audio_receivers.push(a_receiver);
+                                let audio_receiver = moqt_client
+                                    .subscribe(&namespace, "audio", moqt::SubscribeOption::default())
+                                    .await
+                                    .expect("Failed to subscribe");
+                                let v_receiver = video_receiver::VideoReceiver::new(video_receiver).unwrap();
+                                let a_receiver = audio_receiver::AudioReceiver::new(audio_receiver).unwrap();
+                                let _ = a_receiver.start();
+                                let _ = v_receiver.start();
+
+                                tokio::signal::ctrl_c().await.unwrap();
+                                let _ = v_receiver.stop();
+                                let _ = a_receiver.stop();
+                            });
                         }
                     }
                 }
                 _ = tokio::signal::ctrl_c() => {
-                    for gst_receiver in video_receivers {
-                        let _ = gst_receiver.stop();
-                    }
+                    join_set.abort_all();
                     break;
                 }
             }
