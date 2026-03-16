@@ -19,7 +19,7 @@ impl VideoSender {
     pub(crate) async fn new(data_sender: tokio::sync::mpsc::Sender<SendData>) -> Self {
         gstreamer::init().unwrap();
         let pipeline_str = "avfvideosrc ! video/x-raw,framerate=30/1 ! videoconvert \
-                                ! vtenc_h264 realtime=true allow-frame-reordering=false max-keyframe-interval=60 bitrate=4000\
+                                ! vtenc_h264 realtime=true allow-frame-reordering=false max-keyframe-interval=60 bitrate=4000 \
                                 ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream \
                                 ! appsink name=video_sink sync=false max-buffers=1 drop=true";
         // if you stream video file you want, comment out below and designate absolute path.
