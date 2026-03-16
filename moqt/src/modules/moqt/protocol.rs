@@ -9,6 +9,10 @@ use crate::modules::transport::{
     transport_connection_creator::TransportConnectionCreator,
     transport_receive_stream::TransportReceiveStream,
     transport_send_stream::TransportSendStream,
+    webtransport::{
+        wt_connection::WtConnection, wt_connection_creator::WtConnectionCreator,
+        wt_receive_stream::WtReceiveStream, wt_send_stream::WtSendStream,
+    },
 };
 
 // Prevent `TransportConnectionCreator` from public
@@ -30,4 +34,15 @@ impl TransportProtocol for QUIC {
     type Connection = QUICConnection;
     type SendStream = QUICSendStream;
     type ReceiveStream = QUICReceiveStream;
+}
+
+#[allow(warnings)]
+#[derive(Debug)]
+pub struct WEBTRANSPORT;
+
+impl TransportProtocol for WEBTRANSPORT {
+    type ConnectionCreator = WtConnectionCreator;
+    type Connection = WtConnection;
+    type SendStream = WtSendStream;
+    type ReceiveStream = WtReceiveStream;
 }

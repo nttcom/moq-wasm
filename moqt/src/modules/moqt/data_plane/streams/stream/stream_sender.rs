@@ -22,6 +22,6 @@ impl<T: TransportProtocol> StreamSender<T> {
     }
 
     pub async fn close(&self) -> anyhow::Result<()> {
-        self.send_stream.lock().await.close()
+        self.send_stream.lock().await.close().await
     }
 }

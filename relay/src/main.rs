@@ -59,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
     create_certs_for_test_if_needed()?;
 
     // run_relay_serverをバックグラウンドで実行
-    let relay_handle = run_relay_server(
+    let relay_handle = run_relay_server::<moqt::QUIC>(
         4434,
         rx,
         get_key_path().to_str().unwrap(),
