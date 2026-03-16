@@ -3,17 +3,20 @@ use crate::modules::core::{data_object::DataObject, data_sender::DataSender};
 pub(crate) struct StreamSender<T: moqt::TransportProtocol> {
     inner: moqt::StreamDataSender<T>,
     header: Option<moqt::SubgroupHeader>,
+    subscriber_track_alias: u64,
 }
 
 impl<T: moqt::TransportProtocol> StreamSender<T> {
-    pub(crate) fn new(inner: moqt::StreamDataSender<T>) -> Self {
+    pub(crate) fn new(inner: moqt::StreamDataSender<T>, subscriber_track_alias: u64) -> Self {
         Self {
             inner,
             header: None,
+            subscriber_track_alias,
         }
     }
 
-    fn set_header(&mut self, object: moqt::SubgroupHeader) -> anyhow::Result<()> {
+    fn set_header(&mut self, mut object: moqt::SubgroupHeader) -> anyhow::Result<()> {
+        object.track_alias = self.subscriber_track_alias;
         self.header = Some(object);
         Ok(())
     }
