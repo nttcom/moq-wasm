@@ -63,10 +63,14 @@ impl StreamBinder {
             };
             tracing::debug!("accept type: {:?}", receiver);
             let prop = RelayProperties::new();
+            let subscriber_track_alias = published_resources.track_alias();
             let sender = if receiver.datagram() {
                 publisher.new_datagram(&published_resources)
             } else {
-                match publisher.new_stream(&published_resources).await {
+                match publisher
+                    .new_stream(&published_resources, subscriber_track_alias)
+                    .await
+                {
                     Ok(sender) => sender,
                     Err(_) => {
                         tracing::error!("Failed to create stream sender");

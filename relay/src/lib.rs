@@ -9,6 +9,7 @@ use crate::modules::enums::MOQTMessageReceived;
 use crate::modules::session_repository::SessionRepository;
 
 use console_subscriber::ConsoleLayer;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing_appender::rolling;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -51,6 +52,44 @@ pub fn init_logging(log_level: String) {
 
 use tokio::sync::oneshot::Receiver; // Receiver for shutdown signal
 
+pub struct RelayServer {
+    repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+    sender: UnboundedSender<MOQTMessageReceived>,
+    _manager: EventHandler,
+    key_path: String,
+    cert_path: String,
+}
+
+impl RelayServer {
+    pub fn new(key_path: &str, cert_path: &str) -> Self {
+        let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MOQTMessageReceived>();
+
+        // 共通のメッセージ処理ロジックを起動
+        let manager = EventHandler::run(repo.clone(), receiver);
+
+        Self {
+            repo,
+            sender,
+            _manager: manager,
+            key_path: key_path.to_string(),
+            cert_path: cert_path.to_string(),
+        }
+    }
+
+    pub fn spawn_transport<T: moqt::TransportProtocol>(&self, port: u16) -> SessionHandler {
+        tracing::info!("Spawning transport handler on port {}", port);
+        let server_config = ServerConfig {
+            port,
+            cert_path: self.cert_path.clone(),
+            key_path: self.key_path.clone(),
+            keep_alive_interval_sec: 15,
+        };
+
+        SessionHandler::run::<T>(server_config, self.repo.clone(), self.sender.clone())
+    }
+}
+
 pub fn run_relay_server<T: moqt::TransportProtocol>(
     port: u16,
     shutdown_signal: Receiver<()>,
@@ -63,23 +102,14 @@ pub fn run_relay_server<T: moqt::TransportProtocol>(
     let cert_path = cert_path.to_string();
 
     tokio::task::Builder::new()
-        .name("Handler")
+        .name("RelayServer")
         .spawn(async move {
-            tracing::info!("Handler started");
-            let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
-            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MOQTMessageReceived>();
+            tracing::info!("Relay server started");
+            let server = RelayServer::new(&key_path, &cert_path);
+            let _handler = server.spawn_transport::<T>(port);
 
-            // ServerConfigのポートを動的に設定
-            let server_config = ServerConfig {
-                port, // 引数で渡されたポートを使用
-                cert_path: cert_path.clone(),
-                key_path: key_path.clone(),
-                keep_alive_interval_sec: 15,
-            };
-
-            let _handler = SessionHandler::run::<T>(server_config, repo.clone(), sender);
-            let _manager = EventHandler::run(repo, receiver);
-            let _ = shutdown_signal.await.ok(); // 関数の引数として受け取ったshutdown_signalを使用
+            let _ = shutdown_signal.await.ok();
+            tracing::info!("Relay server shutting down");
         })
         .unwrap()
 }

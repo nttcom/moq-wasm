@@ -3,10 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rcgen::{CertifiedKey, generate_simple_self_signed};
-use relay::run_relay_server;
-use tokio::sync::oneshot;
-
+use rcgen::{generate_simple_self_signed, CertifiedKey};
 const CERT_DIR: &str = "keys";
 
 fn get_cert_path() -> PathBuf {
@@ -55,25 +52,25 @@ async fn main() -> anyhow::Result<()> {
         .try_init()
         .ok();
 
-    let (tx, rx) = oneshot::channel();
     create_certs_for_test_if_needed()?;
 
-    // run_relay_serverをバックグラウンドで実行
-    let relay_handle = run_relay_server::<moqt::QUIC>(
-        4434,
-        rx,
-        get_key_path().to_str().unwrap(),
-        get_cert_path().to_str().unwrap(),
-    );
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    let key_path = get_key_path().to_str().unwrap().to_string();
+    let cert_path = get_cert_path().to_str().unwrap().to_string();
 
+    // RelayServerインスタンスを作成（リポジトリとイベントハンドラが内部で初期化される）
+    let server = relay::RelayServer::new(&key_path, &cert_path);
+
+    // QUICサーバーを起動 (Port: 4434)
+    let _quic_handler = server.spawn_transport::<moqt::QUIC>(4434);
+
+    // WebTransportサーバーを起動 (Port: 4433)
+    let _wt_handler = server.spawn_transport::<moqt::WEBTRANSPORT>(4433);
+
+    tracing::info!("Relay server started with QUIC (4434) and WebTransport (4433)");
     tracing::info!("Ctrl+C to shutdown");
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("shutdown signal sent");
-    let _ = tx.send(()); // シャットダウンシグナルを送信
 
-    // relay_handleの終了を待つ
-    relay_handle.await?; // エラーを伝播
+    tokio::signal::ctrl_c().await?;
+    tracing::info!("Shutdown signal received. Closing...");
 
     tracing::info!("Relay server gracefully shutdown.");
     Ok(())
