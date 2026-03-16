@@ -14,8 +14,10 @@ pub(crate) struct AudioSender {
 impl AudioSender {
     pub(crate) async fn new(data_sender: tokio::sync::mpsc::Sender<SendData>) -> Self {
         gstreamer::init().unwrap();
-        let pipeline_str = "osxaudiosrc ! audioconvert ! audio/x-raw,rate=48000,channels=1 ! opusenc frame-size=20 audio-type=voice bitrate=32000 \
-                                ! appsink name=audio_sink";
+        let pipeline_str = "osxaudiosrc ! audioconvert ! audioresample ! \
+                                audio/x-raw,rate=48000,channels=1 ! \
+                                opusenc bitrate=32000 audio-type=voice frame-size=20 ! \
+                                appsink name=audio_sink sync=false max-buffers=1 drop=true";
         // if you stream video file you want, comment out below and designate absolute path.
         // let pipeline_str = "filesrc location=path/to/something.mp4 ! decodebin ! videoconvert ! x264enc key-int-max=30 ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream ! appsink name=sink";
         let pipeline = gstreamer::parse::launch(pipeline_str).unwrap();
