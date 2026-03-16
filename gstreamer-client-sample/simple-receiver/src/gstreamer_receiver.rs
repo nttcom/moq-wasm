@@ -9,7 +9,7 @@ pub(crate) struct GStreamerReceiver {
 impl GStreamerReceiver {
     pub(crate) fn new(data_receiver: moqt::DataReceiver<moqt::QUIC>) -> anyhow::Result<Self> {
         gstreamer::init().unwrap();
-        let pipeline_str = "appsrc name=src ! h264parse ! avdec_h264 ! videoconvert ! osxvideosink";
+        let pipeline_str = "appsrc name=src is-live=true format=time do-timestamp=true ! h264parse ! vtdec_hw ! videoconvert ! osxvideosink";
         let pipeline = gstreamer::parse::launch(pipeline_str).unwrap();
         let pipeline = pipeline.downcast::<gstreamer::Bin>().unwrap();
         let appsrc = pipeline

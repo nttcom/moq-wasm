@@ -9,8 +9,7 @@ pub(crate) struct AudioReceiver {
 impl AudioReceiver {
     pub(crate) fn new(data_receiver: moqt::DataReceiver<moqt::QUIC>) -> anyhow::Result<Self> {
         gstreamer::init().unwrap();
-        let pipeline_str =
-            "appsrc name=src ! opusparse ! opusdec ! audioconvert ! audioresample ! osxaudiosink";
+        let pipeline_str = "appsrc name=src is-live=true format=time do-timestamp=true ! opusparse ! opusdec ! audioconvert ! audioresample ! osxaudiosink";
         let pipeline = gstreamer::parse::launch(pipeline_str).unwrap();
         let pipeline = pipeline.downcast::<gstreamer::Bin>().unwrap();
         let appsrc = pipeline
