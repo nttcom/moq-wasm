@@ -18,11 +18,6 @@ pub struct WtReceiveStream {
 
 #[async_trait]
 impl TransportReceiveStream for WtReceiveStream {
-    async fn receive(&mut self, buffer: &mut BytesMut) -> anyhow::Result<Option<usize>> {
-        let result = self.recv_stream.read(buffer).await?;
-        Ok(result)
-    }
-
     fn poll_read(
         &mut self,
         cx: &mut std::task::Context<'_>,

@@ -20,10 +20,6 @@ impl TransportConnection for WtConnection {
     type SendStream = WtSendStream;
     type ReceiveStream = WtReceiveStream;
 
-    fn id(&self) -> usize {
-        self.connection.stable_id()
-    }
-
     async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
         let (send, recv) = self.connection.open_bi().await?.await?;
         let send_stream = WtSendStream {
