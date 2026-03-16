@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RELAY_KEYS_DIR="${1:-$SCRIPT_DIR/../../../relay/keys}"
+RELAY_KEYS_DIR="${1:-$SCRIPT_DIR/../../../keys}"
 
 mkdir -p "$RELAY_KEYS_DIR"
 
