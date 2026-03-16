@@ -5,7 +5,7 @@ import { defineConfig } from "vite";
 
 const RELAY_CERT_PATH =
 	process.env.RELAY_CERT_PATH ??
-	resolve(__dirname, "../../relay/keys/cert.pem");
+	resolve(__dirname, "../../keys/cert.pem");
 
 function computeCertHash(certPath: string): string {
 	const pem = readFileSync(certPath, "utf-8");
