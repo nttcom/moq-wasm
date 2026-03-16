@@ -16,6 +16,7 @@ pub(crate) trait Publisher: 'static + Send + Sync {
     async fn new_stream(
         &self,
         published_resource: &PublishedResource,
+        subscriber_track_alias: u64,
     ) -> anyhow::Result<Box<dyn DataSender>>;
     fn new_datagram(&self, published_resource: &PublishedResource) -> Box<dyn DataSender>;
 }
@@ -39,9 +40,10 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
     async fn new_stream(
         &self,
         published_resource: &PublishedResource,
+        subscriber_track_alias: u64,
     ) -> anyhow::Result<Box<dyn DataSender>> {
         let sender = self.create_stream(published_resource.as_moqt()).await?;
-        let sender = StreamSender::new(sender);
+        let sender = StreamSender::new(sender, subscriber_track_alias);
         Ok(Box::new(sender))
     }
 

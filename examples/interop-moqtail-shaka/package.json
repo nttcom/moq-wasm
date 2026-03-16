@@ -1,0 +1,19 @@
+{
+  "name": "interop-moqtail-shaka",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "gen-cert": "bash scripts/gen-cert.sh",
+    "dev": "vite"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "mediabunny": "^1.37.0",
+    "moqtail": "^0.7.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

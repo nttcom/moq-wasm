@@ -11,7 +11,7 @@ pub struct SessionHandler {
 }
 
 impl SessionHandler {
-    pub fn run<T: TransportProtocol>(
+    pub(crate) fn run<T: TransportProtocol>(
         config: moqt::ServerConfig,
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
