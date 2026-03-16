@@ -1,6 +1,5 @@
 use crate::modules::{
     core::handler::{publish::PublishHandler, subscribe::SubscribeHandler},
-    enums::ContentExists,
     event_resolver::stream_binder::StreamBinder,
     sequences::{notifier::Notifier, tables::table::Table},
     types::SessionId,
@@ -118,7 +117,7 @@ impl Subscribe {
             let publisher_track_alias = subscription.track_alias();
             tracing::info!("send `SUBSCRIBE_OK` ok");
             if let Ok(subscriber_track_alias) = handler
-                .ok(subscription.expires(), ContentExists::False)
+                .ok(subscription.expires(), subscription.content_exists())
                 .await
             {
                 table.register_track_alias_link(
