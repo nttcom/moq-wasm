@@ -17,6 +17,18 @@ const moqtClient = new MoqtClientWrapper()
 const transportState = new MediaTransportState()
 const catalogAliases = new Set<string>()
 
+type MoqSendVisualizationState = {
+  groupId: bigint | null
+  objectId: bigint | null
+}
+
+const moqSendVisualization: Record<'video' | 'audio', MoqSendVisualizationState> = {
+  video: { groupId: null, objectId: null },
+  audio: { groupId: null, objectId: null }
+}
+
+let isMoqSendVisualizerVisible = false
+
 const ensureClient = (): MOQTClient => {
   const client = moqtClient.getRawClient()
   if (!client) {
@@ -46,9 +58,81 @@ const sendMoqObject = async (
   groupId: bigint,
   objectId: bigint,
   data: Uint8Array,
-  client: MOQTClient
+  client: MOQTClient,
+  objectStatus?: number
 ): Promise<void> => {
-  await client.sendSubgroupStreamObject(trackAlias, groupId, 0n, objectId, undefined, data, undefined)
+  await client.sendSubgroupStreamObject(trackAlias, groupId, 0n, objectId, objectStatus, data, undefined)
+}
+
+const setMoqSendVisualizationState = (type: 'video' | 'audio', groupId: bigint, objectId: bigint): void => {
+  moqSendVisualization[type] = { groupId, objectId }
+  if (isMoqSendVisualizerVisible) {
+    renderMoqSendVisualization()
+  }
+}
+
+const resetMoqSendVisualizationState = (): void => {
+  moqSendVisualization.video = { groupId: null, objectId: null }
+  moqSendVisualization.audio = { groupId: null, objectId: null }
+}
+
+const renderMoqSendVisualization = (): void => {
+  const setText = (id: string, text: string) => {
+    const el = document.getElementById(id)
+    if (el) {
+      el.textContent = text
+    }
+  }
+  const formatBigInt = (value: bigint | null): string => (value === null ? '-' : value.toString())
+  setText('send-viz-video-group-id', formatBigInt(moqSendVisualization.video.groupId))
+  setText('send-viz-video-object-id', formatBigInt(moqSendVisualization.video.objectId))
+  setText('send-viz-audio-group-id', formatBigInt(moqSendVisualization.audio.groupId))
+  setText('send-viz-audio-object-id', formatBigInt(moqSendVisualization.audio.objectId))
+}
+
+const getVisualizerEyeSvg = (active: boolean): string => {
+  if (active) {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 3l18 18"></path>
+        <path d="M10.6 10.6A2 2 0 0 0 12 14a2 2 0 0 0 1.4-.6"></path>
+        <path d="M9.9 5.3A11.6 11.6 0 0 1 12 5c6.5 0 10 7 10 7a15 15 0 0 1-4 4.9"></path>
+        <path d="M6.6 6.6A15.1 15.1 0 0 0 2 12s3.5 7 10 7a11.3 11.3 0 0 0 5.1-1.2"></path>
+      </svg>
+    `
+  }
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path>
+      <circle cx="12" cy="12" r="3"></circle>
+    </svg>
+  `
+}
+
+const syncMoqSendVisualizerButton = (toggleBtn: HTMLButtonElement): void => {
+  toggleBtn.innerHTML = getVisualizerEyeSvg(isMoqSendVisualizerVisible)
+  toggleBtn.classList.toggle('active', isMoqSendVisualizerVisible)
+  toggleBtn.setAttribute('aria-pressed', isMoqSendVisualizerVisible ? 'true' : 'false')
+  const label = isMoqSendVisualizerVisible ? 'MoQ送信可視化を非表示' : 'MoQ送信可視化を表示'
+  toggleBtn.setAttribute('aria-label', label)
+  toggleBtn.setAttribute('title', label)
+}
+
+const setupMoqSendVisualizationButton = (): void => {
+  const toggleBtn = document.getElementById('toggleMoqSendVisualizerBtn') as HTMLButtonElement | null
+  const panel = document.getElementById('moqSendVisualizerPanel')
+  if (!toggleBtn || !panel) {
+    return
+  }
+  syncMoqSendVisualizerButton(toggleBtn)
+  toggleBtn.addEventListener('click', () => {
+    isMoqSendVisualizerVisible = !isMoqSendVisualizerVisible
+    panel.classList.toggle('is-visible', isMoqSendVisualizerVisible)
+    syncMoqSendVisualizerButton(toggleBtn)
+    if (isMoqSendVisualizerVisible) {
+      renderMoqSendVisualization()
+    }
+  })
 }
 
 const parseTrackNamespace = (raw: string): string[] => {
@@ -148,7 +232,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
     // mediabunny はキーフレーム境界でフラグメントを切るため、
     // 各フラグメント = 1 MoQ Group（Object 0 = init, Object 1 = moof+mdat）
     const buildMp4Callbacks = (
-      label: string,
+      type: 'video' | 'audio',
       getAliases: () => bigint[],
       advanceGroup: () => void,
       getGroupId: () => bigint
@@ -170,7 +254,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
             initSegment.set(part, offset)
             offset += part.byteLength
           }
-          console.info(`[CmafPublisher] ${label} init segment ready`, { byteLength: initSegment.byteLength })
+          console.info(`[CmafPublisher] ${type} init segment ready`, { byteLength: initSegment.byteLength })
         },
         onMoof: (data: ArrayBuffer) => {
           lastMoof = new Uint8Array(data)
@@ -192,10 +276,16 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
           }
 
           advanceGroup()
+          const groupId = getGroupId()
           for (const alias of trackAliases) {
-            await client.sendSubgroupStreamHeaderMessage(alias, getGroupId(), 0n, publisherPriority)
-            await sendMoqObject(alias, getGroupId(), 0n, initSegment, client)
-            await sendMoqObject(alias, getGroupId(), 1n, fragment, client)
+            await client.sendSubgroupStreamHeaderMessage(alias, groupId, 0n, publisherPriority)
+            setMoqSendVisualizationState(type, groupId, 0n)
+            await sendMoqObject(alias, groupId, 0n, initSegment, client)
+            setMoqSendVisualizationState(type, groupId, 1n)
+            await sendMoqObject(alias, groupId, 1n, fragment, client)
+            // Explicitly terminate each group stream so the stream writer can be closed.
+            setMoqSendVisualizationState(type, groupId, 2n)
+            await sendMoqObject(alias, groupId, 2n, new Uint8Array(0), client, 3)
           }
         }
       }
@@ -321,10 +411,15 @@ const setupCloseButtonHandler = (): void => {
   closeBtn.addEventListener('click', async () => {
     await moqtClient.disconnect()
     catalogAliases.clear()
+    resetMoqSendVisualizationState()
+    if (isMoqSendVisualizerVisible) {
+      renderMoqSendVisualization()
+    }
   })
 }
 
 setUpStartGetUserMediaButton()
+setupMoqSendVisualizationButton()
 setupClientCallbacks()
 setupCloseButtonHandler()
 
@@ -335,5 +430,9 @@ connectBtn.addEventListener('click', async () => {
 
   await moqtClient.connect(url, { sendSetup: false })
   catalogAliases.clear()
+  resetMoqSendVisualizationState()
+  if (isMoqSendVisualizerVisible) {
+    renderMoqSendVisualization()
+  }
   setupButtonClickHandler()
 })
