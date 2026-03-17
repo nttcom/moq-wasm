@@ -4,12 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MOQT CMAF Subscriber Test</title>
-    <script type="module" crossorigin src="/moq-wasm/assets/media-cmaf-subscriber-D9C2jIWl.js"></script>
+    <script type="module" crossorigin src="/moq-wasm/assets/media-cmaf-subscriber-Dw39h0vH.js"></script>
     <link rel="modulepreload" crossorigin href="/moq-wasm/assets/modulepreload-polyfill-B5Qt9EMX.js">
-    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-BF3DiCvy.js">
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-DrLnhBHh.js">
     <link rel="modulepreload" crossorigin href="/moq-wasm/assets/utils-08qyBd2C.js">
     <link rel="modulepreload" crossorigin href="/moq-wasm/assets/catalog-BYlufEzj.js">
-    <link rel="stylesheet" crossorigin href="/moq-wasm/assets/media-DC7xVNEh.css">
+    <link rel="stylesheet" crossorigin href="/moq-wasm/assets/media-DfT88zlG.css">
   </head>
   <body>
     <div class="page">
@@ -124,20 +124,148 @@
           </section>
 
           <section class="card stack full">
-            <h2>Playback</h2>
+            <div class="card-title-row">
+              <h2>Playback</h2>
+              <div class="card-title-actions">
+                <button
+                  type="button"
+                  id="toggleLiveCatchupBtn"
+                  class="compact-button mode-toggle-button active"
+                  aria-pressed="true"
+                  title="リアルタイム追従モード（ON）"
+                >
+                  Realtime追従
+                </button>
+                <button
+                  type="button"
+                  id="toggleMoqVisualizerBtn"
+                  class="icon-button"
+                  aria-label="MoQ受信可視化を表示"
+                  aria-pressed="false"
+                  title="MoQ受信可視化を表示"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              </div>
+            </div>
             <div class="media-grid">
               <video id="video" muted controls></video>
             </div>
-          </section>
+            <div id="moqVisualizerPanel" class="visualizer-panel">
+              <div class="visualizer-cards">
+                <section class="visualizer-card">
+                  <h3>Current MoQ Object</h3>
+                  <table class="visualizer-table">
+                    <thead>
+                      <tr>
+                        <th>Track</th>
+                        <th>Group ID</th>
+                        <th>Object ID</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <th>Video</th>
+                        <td id="viz-video-group-id">-</td>
+                        <td id="viz-video-object-id">-</td>
+                      </tr>
+                      <tr>
+                        <th>Audio</th>
+                        <td id="viz-audio-group-id">-</td>
+                        <td id="viz-audio-object-id">-</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
 
-          <section class="card stack full">
-            <h2>Overhead</h2>
-            <div style="display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px 16px; font-family: monospace; font-size: 14px;">
-              <span></span><span><strong>Video</strong></span><span><strong>Audio</strong></span>
-              <span>init</span><span id="oh-video-init">-</span><span id="oh-audio-init">-</span>
-              <span>moof</span><span id="oh-video-moof">-</span><span id="oh-audio-moof">-</span>
-              <span>mdat</span><span id="oh-video-mdat">-</span><span id="oh-audio-mdat">-</span>
-              <span>overhead</span><span id="oh-video-pct">-</span><span id="oh-audio-pct">-</span>
+                <section class="visualizer-card">
+                  <h3>Overhead Details</h3>
+                  <table class="visualizer-table">
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th>Video</th>
+                        <th>Audio</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <th>init</th>
+                        <td id="oh-video-init">-</td>
+                        <td id="oh-audio-init">-</td>
+                      </tr>
+                      <tr>
+                        <th>moof</th>
+                        <td id="oh-video-moof">-</td>
+                        <td id="oh-audio-moof">-</td>
+                      </tr>
+                      <tr>
+                        <th>mdat</th>
+                        <td id="oh-video-mdat">-</td>
+                        <td id="oh-audio-mdat">-</td>
+                      </tr>
+                      <tr>
+                        <th>overhead</th>
+                        <td id="oh-video-pct">-</td>
+                        <td id="oh-audio-pct">-</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+
+                <section class="visualizer-card">
+                  <h3>SourceBuffer</h3>
+                  <table class="visualizer-table">
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th>Video</th>
+                        <th>Audio</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <th>updating</th>
+                        <td id="sb-video-updating">-</td>
+                        <td id="sb-audio-updating">-</td>
+                      </tr>
+                      <tr>
+                        <th>queue</th>
+                        <td id="sb-video-queue">-</td>
+                        <td id="sb-audio-queue">-</td>
+                      </tr>
+                      <tr>
+                        <th>buffered ranges</th>
+                        <td id="sb-video-ranges">-</td>
+                        <td id="sb-audio-ranges">-</td>
+                      </tr>
+                      <tr>
+                        <th>buffered ahead</th>
+                        <td id="sb-video-ahead">-</td>
+                        <td id="sb-audio-ahead">-</td>
+                      </tr>
+                      <tr>
+                        <th>buffered end</th>
+                        <td id="sb-video-end">-</td>
+                        <td id="sb-audio-end">-</td>
+                      </tr>
+                      <tr>
+                        <th>end/wall speed</th>
+                        <td id="sb-video-speed">-</td>
+                        <td id="sb-audio-speed">-</td>
+                      </tr>
+                      <tr>
+                        <th>currentTime</th>
+                        <td id="sb-video-time">-</td>
+                        <td id="sb-audio-time">-</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+              </div>
             </div>
           </section>
         </form>

@@ -4,13 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MOQT CMAF Publisher</title>
-    <script type="module" crossorigin src="/moq-wasm/assets/media-cmaf-publisher-lAuocLe0.js"></script>
+    <script type="module" crossorigin src="/moq-wasm/assets/media-cmaf-publisher-BWxmvBDF.js"></script>
     <link rel="modulepreload" crossorigin href="/moq-wasm/assets/modulepreload-polyfill-B5Qt9EMX.js">
-    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-BF3DiCvy.js">
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-DrLnhBHh.js">
     <link rel="modulepreload" crossorigin href="/moq-wasm/assets/utils-08qyBd2C.js">
     <link rel="modulepreload" crossorigin href="/moq-wasm/assets/transportState-hJ_n0Kd-.js">
     <link rel="modulepreload" crossorigin href="/moq-wasm/assets/catalog-BYlufEzj.js">
-    <link rel="stylesheet" crossorigin href="/moq-wasm/assets/media-DC7xVNEh.css">
+    <link rel="stylesheet" crossorigin href="/moq-wasm/assets/media-DfT88zlG.css">
   </head>
   <body>
     <div class="page">
@@ -97,14 +97,14 @@
           <section class="card stack full">
             <h3>OBJECT (Video + Audio)</h3>
             <p class="hint">
-              Published tracks: catalog, video_720p, audio_aac
-              (CMAF packaging — 1 GoP = 1 moof+mdat segment)
+              Published tracks: catalog, video_720p, audio_aac (CMAF packaging — 1 GoP = 1 moof+mdat segment)
             </p>
             <div class="field-row">
               <label
                 >Video Publisher Priority: <input type="text" name="video-publisher-priority" id="" value="0" />
               </label>
-              <label>Keyframe Interval:
+              <label
+                >Keyframe Interval:
                 <select name="keyframe-interval">
                   <option value="0.5">0.5s</option>
                   <option value="1" selected>1s</option>
@@ -121,8 +121,51 @@
           </section>
 
           <section class="card stack full">
-            <h2>Preview</h2>
+            <div class="card-title-row">
+              <h2>Preview</h2>
+              <button
+                type="button"
+                id="toggleMoqSendVisualizerBtn"
+                class="icon-button"
+                aria-label="MoQ送信可視化を表示"
+                aria-pressed="false"
+                title="MoQ送信可視化を表示"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
             <video id="video" autoplay muted inline></video>
+            <div id="moqSendVisualizerPanel" class="visualizer-panel">
+              <div class="visualizer-cards">
+                <section class="visualizer-card">
+                  <h3>Current MoQ Object</h3>
+                  <table class="visualizer-table">
+                    <thead>
+                      <tr>
+                        <th>Track</th>
+                        <th>Group ID</th>
+                        <th>Object ID</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <th>Video</th>
+                        <td id="send-viz-video-group-id">-</td>
+                        <td id="send-viz-video-object-id">-</td>
+                      </tr>
+                      <tr>
+                        <th>Audio</th>
+                        <td id="send-viz-audio-group-id">-</td>
+                        <td id="send-viz-audio-object-id">-</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+              </div>
+            </div>
           </section>
         </form>
       </div>

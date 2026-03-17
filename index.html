@@ -94,7 +94,10 @@
         background: var(--surface);
         border: 1px solid var(--surface-border);
         box-shadow: 0 16px 34px rgba(0, 0, 0, 0.26);
-        transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+        transition:
+          transform 180ms ease,
+          border-color 180ms ease,
+          box-shadow 180ms ease;
         animation: fade-up 420ms ease-out both;
       }
 
@@ -109,6 +112,9 @@
       }
       .grid .card:nth-child(5) {
         animation-delay: 200ms;
+      }
+      .grid .card:nth-child(6) {
+        animation-delay: 250ms;
       }
 
       .card:hover {
@@ -195,7 +201,8 @@
         <h1>Examples Hub</h1>
         <p>
           MoQ / WebTransport / WebCodecs を使ったサンプル群への入口です。<br />
-          目的別に「シグナリング検証」「送受信デバッグ」「ONVIF連携」「通話アプリ」「単体 WebCodecs テスト」を選べます。
+          目的別に「シグナリング検証」「送受信デバッグ」「CMAF 配信検証」「ONVIF連携」「通話アプリ」「単体 WebCodecs
+          テスト」を選べます。
         </p>
       </section>
 
@@ -210,6 +217,12 @@
           <span class="tag">Transport</span>
           <h2>Media</h2>
           <p>Publisher / Subscriber を分けて、Media over MoQ の送受信と挙動を個別に確認。</p>
+          <span class="arrow">Open Example</span>
+        </a>
+        <a class="card" href="examples/media-cmaf/index.html">
+          <span class="tag">CMAF</span>
+          <h2>Media CMAF</h2>
+          <p>moof+mdat のフル CMAF パッケージで Publish / Subscribe を試す配信検証ページ。</p>
           <span class="arrow">Open Example</span>
         </a>
         <a class="card" href="examples/onvif/index.html">
