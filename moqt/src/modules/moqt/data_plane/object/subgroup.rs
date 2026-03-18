@@ -274,9 +274,10 @@ impl SubgroupHeader {
         buf.put_varint(self.track_alias);
         buf.put_varint(self.group_id);
         if self.message_type.has_subgroup_id()
-            && let SubgroupId::Value(id) = self.subgroup_id {
-                buf.put_varint(id);
-            }
+            && let SubgroupId::Value(id) = self.subgroup_id
+        {
+            buf.put_varint(id);
+        }
         buf.put_u8(self.publisher_priority);
         buf
     }
