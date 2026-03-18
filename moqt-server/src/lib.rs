@@ -63,17 +63,17 @@ impl MOQTServer {
             bail!("Underlay must be WebTransport, not {:?}", self.underlay);
         }
         let mut transport_config = TransportConfig::default();
-        // 単方向ストリーム数を100000に設定
-        transport_config.max_concurrent_uni_streams(100000u32.into());
+        // 単方向ストリーム数を10000に設定
+        transport_config.max_concurrent_uni_streams(10000u32.into());
         // initial_max_stream_data_uniと同義。デフォルトは65,536 バイト (64KB) 大きくするとACKを待たずに送信するため、輻輳が発生する可能性が高まるが、小さいとACKを受け取るまで次が送れないため、スループットが低下する
         // 64KBの場合、15Mbps(=1.875MB)送ろうとすると 64KB / 1.875MB = 約0.034秒 ≒ 34msでACKを受け取る必要がある。RTT=200msの場合、400KBは設定していないといけない
         transport_config.send_window(1024 * 1024);
         // パケロス判定して再送を要求するまでの時間(RTTの倍数)を指定する。小さくすると再送が増える Default(RFC推奨値): 1.125
         // transport_config.time_threshold(1.5);
         // パケロス判定して再送を要求するまでのパケット間隔を指定する。小さくすると再送が増える Default(RFC推奨値): 3
-        transport_config.packet_threshold(5);
-        transport_config.receive_window(VarInt::from_u32(10 * 1024 * 1024)); // 1コネクション10Streamあった場合に10MBのデータを受信できるようにする。
-        transport_config.stream_receive_window(VarInt::from_u32(1024 * 1024)); // initial_max_stream_data_uniと同義。デフォルトは65,536 バイト (64KB)なので1MBにする
+        // transport_config.packet_threshold(5);
+        transport_config.receive_window(VarInt::from_u32(50 * 1024 * 1024)); // 1コネクション10Streamあった場合に50MBのデータを受信できるようにする。
+        transport_config.stream_receive_window(VarInt::from_u32(10 * 1024 * 1024)); // initial_max_stream_data_uniと同義。デフォルトは65,536 バイト (64KB)だが、10MBにする
         transport_config.congestion_controller_factory(Arc::new(
             wtransport::quinn::congestion::BbrConfig::default(),
             // wtransport::quinn::congestion::NewRenoConfig::default(),

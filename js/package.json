@@ -4,20 +4,38 @@
   "description": "moq-wasm client",
   "main": "index.js",
   "scripts": {
-    "wasm": "wasm-pack build ../moqt-client-sample --target web --out-dir=../js/pkg --features web_sys_unstable_apis",
+    "wasm": "wasm-pack build ../moqt-client-wasm --target web --out-dir=../js/pkg --features web_sys_unstable_apis",
     "dev": "npm run wasm && vite",
     "build": "npm run wasm && vite build",
-    "prod": "npm run wasm && vite --host"
+    "prod": "npm run wasm && vite --host",
+    "lint": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.14",
+    "@types/node": "^24.6.2",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "autoprefixer": "^10.4.21",
+    "baseline-browser-mapping": "^2.9.19",
     "prettier": "^3.2.5",
-    "vite": "^4.4.10",
+    "tailwindcss": "^4.1.14",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2",
     "vite-plugin-wasm-pack": "^0.1.12"
   },
   "dependencies": {
-    "@types/dom-mediacapture-transform": "^0.1.11"
+    "@types/dom-mediacapture-transform": "^0.1.11",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.544.0",
+    "mediabunny": "^1.35.1",
+    "mp4box": "^0.5.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwind-merge": "^3.3.1"
   }
 }

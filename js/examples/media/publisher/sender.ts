@@ -1,48 +1,10 @@
-function packMetaAndChunk(chunk: {
-  type: string
-  timestamp: number
-  duration: number | null
-  byteLength: number
-  copyTo: (dest: Uint8Array) => void
-}): Uint8Array {
-  const meta = { type: chunk.type, timestamp: chunk.timestamp, duration: chunk.duration ?? 0 }
-  const metaJson = JSON.stringify(meta)
-  const metaBytes = new TextEncoder().encode(metaJson)
-  const metaLen = metaBytes.length
+import { MOQTClient } from '../../../pkg/moqt_client_wasm'
+import { createBitrateLogger } from '../../../utils/media/logger'
+import { buildLocHeader, type LocHeader, arrayBufferToUint8Array } from '../../../utils/media/loc'
+import { monotonicUnixMicros } from '../../../utils/media/clock'
 
-  // chunkデータをUint8Arrayに変換
-  const chunkArray = new Uint8Array(chunk.byteLength)
-  chunk.copyTo(chunkArray)
-
-  const totalLen = 4 + metaLen + chunkArray.length
-  const payload = new Uint8Array(totalLen)
-  const view = new DataView(payload.buffer)
-  view.setUint32(0, metaLen) // 先頭4バイトにメタデータ長
-  payload.set(metaBytes, 4)
-  payload.set(chunkArray, 4 + metaLen)
-  return payload
-}
-// chunkDataのビットレート計測用
-function createChunkDataBitrateLogger() {
-  let bytesThisSecond = 0
-  let lastLogTime = performance.now()
-  return {
-    addBytes(byteLength: number) {
-      bytesThisSecond += byteLength
-      const now = performance.now()
-      if (now - lastLogTime >= 1000) {
-        const mbps = (bytesThisSecond * 8) / 1_000_000
-        console.log(`chunkData bitrate: ${mbps.toFixed(2)} Mbps`)
-        bytesThisSecond = 0
-        lastLogTime = now
-      }
-    }
-  }
-}
-
-const chunkDataBitrateLogger = createChunkDataBitrateLogger()
-import { MOQTClient } from '../../../pkg/moqt_client_sample'
-import { KEYFRAME_INTERVAL } from './const'
+const chunkDataBitrateLogger = createBitrateLogger('chunkData bitrate')
+const videoGroupStates = new Map<bigint, { groupId: bigint; lastObjectId: bigint }>()
 
 export async function sendVideoObjectMessage(
   trackAlias: bigint,
@@ -50,24 +12,46 @@ export async function sendVideoObjectMessage(
   subgroupId: bigint,
   objectId: bigint,
   chunk: EncodedVideoChunk,
-  client: MOQTClient
+  client: MOQTClient,
+  locHeader?: LocHeader
 ) {
-  chunkDataBitrateLogger.addBytes(chunk.byteLength)
-  const payload = packMetaAndChunk(chunk)
-  await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, payload)
-  // If this object is end of group, send the ObjectStatus=EndOfGroupMessage.
-  // And delete unnecessary streams.
-  if (objectId === BigInt(KEYFRAME_INTERVAL - 1)) {
+  console.debug('[MediaPublisher] sendVideoObjectMessage', {
+    trackAlias: trackAlias.toString(),
+    groupId: groupId.toString(),
+    subgroupId: subgroupId.toString(),
+    objectId: objectId.toString(),
+    byteLength: chunk.byteLength
+  })
+  const previousState = videoGroupStates.get(trackAlias)
+  if (previousState && previousState.groupId !== groupId) {
+    const endObjectId = previousState.lastObjectId + 1n
     await client.sendSubgroupStreamObject(
-      BigInt(trackAlias),
-      groupId,
-      subgroupId,
-      BigInt(KEYFRAME_INTERVAL),
-      3, // 0x3: EndOfGroup
-      Uint8Array.from([])
+      trackAlias,
+      previousState.groupId,
+      0n,
+      endObjectId,
+      3,
+      new Uint8Array(0),
+      undefined
     )
-    console.log('send Object(ObjectStatus=EndOfGroup)')
+    console.log(
+      `[MediaPublisher] Sent EndOfGroup trackAlias=${trackAlias} groupId=${previousState.groupId} subgroupId=0 objectId=${endObjectId}`
+    )
   }
+
+  chunkDataBitrateLogger.addBytes(chunk.byteLength)
+  const payload = new Uint8Array(chunk.byteLength)
+  chunk.copyTo(payload)
+  await client.sendSubgroupStreamObject(
+    BigInt(trackAlias),
+    groupId,
+    subgroupId,
+    objectId,
+    undefined,
+    payload,
+    locHeader
+  )
+  videoGroupStates.set(trackAlias, { groupId, lastObjectId: objectId })
 }
 
 export async function sendAudioObjectMessage(
@@ -76,10 +60,35 @@ export async function sendAudioObjectMessage(
   subgroupId: bigint,
   objectId: bigint,
   chunk: EncodedAudioChunk,
-  client: MOQTClient
+  client: MOQTClient,
+  locHeader?: LocHeader
 ) {
-  // `EncodedAudioChunk` のデータを Uint8Array に変換
-  const payload = packMetaAndChunk(chunk)
+  const payload = new Uint8Array(chunk.byteLength)
+  chunk.copyTo(payload)
 
-  await client.sendSubgroupStreamObject(BigInt(trackAlias), groupId, subgroupId, objectId, undefined, payload)
+  await client.sendSubgroupStreamObject(
+    BigInt(trackAlias),
+    groupId,
+    subgroupId,
+    objectId,
+    undefined,
+    payload,
+    locHeader
+  )
+}
+
+export function buildVideoLocHeader(metadata?: EncodedVideoChunkMetadata): LocHeader {
+  const configBytes = arrayBufferToUint8Array(
+    (metadata as { decoderConfig?: any } | undefined)?.decoderConfig?.description
+  )
+  return buildLocHeader({
+    captureTimestampMicros: monotonicUnixMicros(),
+    videoConfig: configBytes
+  })
+}
+
+export function buildAudioLocHeader(): LocHeader {
+  return buildLocHeader({
+    captureTimestampMicros: monotonicUnixMicros()
+  })
 }

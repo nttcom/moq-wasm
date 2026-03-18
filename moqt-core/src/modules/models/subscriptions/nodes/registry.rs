@@ -41,6 +41,11 @@ pub trait SubscriptionNodeRegistry {
     ) -> Result<Option<SubscribeId>>;
     fn get_all_subscribe_ids(&self) -> Result<Vec<SubscribeId>>;
     fn has_track(&self, track_namespace: TrackNamespace, track_name: String) -> bool;
+    fn get_track_aliases_for_track(
+        &self,
+        track_namespace: TrackNamespace,
+        track_name: String,
+    ) -> Result<Vec<TrackAlias>>;
     fn activate_subscription(&mut self, subscribe_id: SubscribeId) -> Result<bool>;
     fn is_requesting(&self, subscribe_id: SubscribeId) -> bool;
     fn delete_subscription(&mut self, subscribe_id: SubscribeId) -> Result<()>;
@@ -80,6 +85,10 @@ pub trait SubscriptionNodeRegistry {
         actual_object_start: ObjectStart,
     ) -> Result<()>;
     fn get_actual_object_start(&self, subscribe_id: SubscribeId) -> Result<Option<ObjectStart>>;
+
+    fn set_subscription_success(&mut self, subscribe_id: SubscribeId) -> Result<()>;
+    fn set_subscription_failed(&mut self, subscribe_id: SubscribeId) -> Result<()>;
+    fn is_failed(&self, subscribe_id: SubscribeId) -> bool;
 
     fn is_subscribe_id_unique(&self, subscribe_id: SubscribeId) -> bool;
     fn is_subscribe_id_less_than_max(&self, subscribe_id: SubscribeId) -> bool;
