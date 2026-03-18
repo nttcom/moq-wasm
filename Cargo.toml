@@ -6,7 +6,6 @@ members = [
     'media-streaming-format',
     'moqt-server',
     'moqt-server-sample',
-    'moqt-client-sample',
     'moqt',
     'relay',
     'client',
