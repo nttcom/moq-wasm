@@ -2,7 +2,7 @@ use super::{
     cache::{CacheId, CacheKey},
     commands::ObjectCacheStorageCommand,
 };
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow};
 use moqt_core::messages::data_streams::{DatagramObject, subgroup_stream};
 use tokio::sync::{mpsc, oneshot};
 
@@ -15,6 +15,20 @@ impl ObjectCacheStorageWrapper {
         Self { tx }
     }
 
+    async fn send_command<T>(
+        &mut self,
+        cmd: ObjectCacheStorageCommand,
+        resp_rx: oneshot::Receiver<Result<T>>,
+    ) -> Result<T> {
+        self.tx
+            .send(cmd)
+            .await
+            .map_err(|err| anyhow!("object_cache_storage send failed: {err}"))?;
+        resp_rx
+            .await
+            .map_err(|err| anyhow!("object_cache_storage response dropped: {err}"))?
+    }
+
     pub(crate) async fn create_datagram_cache(&mut self, cache_key: &CacheKey) -> Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel::<Result<()>>();
 
@@ -23,14 +37,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn create_subgroup_stream_cache(
@@ -50,14 +57,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn exist_datagram_cache(&mut self, cache_key: &CacheKey) -> Result<bool> {
@@ -68,14 +68,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(exist) => Ok(exist),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn get_subgroup_stream_header(
@@ -93,14 +86,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(header_cache) => Ok(header_cache),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn set_datagram_object(
@@ -118,14 +104,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn set_subgroup_stream_object(
@@ -147,14 +126,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn get_absolute_datagram_object(
@@ -172,14 +144,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(object_cache) => Ok(object_cache),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn get_absolute_or_next_subgroup_stream_object(
@@ -200,14 +165,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(object_cache) => Ok(object_cache),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn get_next_datagram_object(
@@ -223,14 +181,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(object_cache) => Ok(object_cache),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn get_next_subgroup_stream_object(
@@ -251,14 +202,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(object_cache) => Ok(object_cache),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn get_latest_datagram_object(
@@ -272,14 +216,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(object_cache) => Ok(object_cache),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn get_latest_datagram_group(
@@ -293,14 +230,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(object_cache) => Ok(object_cache),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn get_first_subgroup_stream_object(
@@ -319,14 +249,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(object_cache) => Ok(object_cache),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     #[allow(dead_code)]
@@ -346,14 +269,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(object_cache) => Ok(object_cache),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn get_all_subgroup_ids(
@@ -369,14 +285,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(subgroup_ids) => Ok(subgroup_ids),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn get_largest_group_id(
@@ -390,14 +299,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(group_id) => Ok(group_id),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub(crate) async fn get_largest_object_id(
@@ -411,14 +313,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(object_id) => Ok(object_id),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 
     pub async fn delete_client(&mut self, session_id: usize) -> Result<()> {
@@ -429,14 +324,7 @@ impl ObjectCacheStorageWrapper {
             resp: resp_tx,
         };
 
-        self.tx.send(cmd).await.unwrap();
-
-        let result = resp_rx.await.unwrap();
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(err) => bail!(err),
-        }
+        self.send_command(cmd, resp_rx).await
     }
 }
 

@@ -3,6 +3,12 @@
   "[javascript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
+  "[typescript]": {"editor.defaultFormatter": "esbenp.prettier-vscode"},
+  "[typescriptreact]": {"editor.defaultFormatter": "esbenp.prettier-vscode"},
+  "[javascriptreact]": {"editor.defaultFormatter": "esbenp.prettier-vscode"},
+  "[json]": {"editor.defaultFormatter": "esbenp.prettier-vscode"},
+  "[css]": {"editor.defaultFormatter": "esbenp.prettier-vscode"},
+  "[markdown]": {"editor.defaultFormatter": "esbenp.prettier-vscode"},
   "[rust]": {
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
     "editor.inlayHints.enabled": "on"
@@ -10,8 +16,10 @@
   "rust-analyzer.checkOnSave": true,
   "rust-analyzer.check.command": "clippy",
   "rust-analyzer.cargo.extraEnv": {
-    "RUSTFLAGS": "--cfg web_sys_unstable_apis --cfg tokio_unstable"
-    // "RUST_BACKTRACE": "1"
+    "RUSTFLAGS": "--cfg web_sys_unstable_apis --cfg tokio_unstable",
+    "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "PKG_CONFIG": "/opt/homebrew/bin/pkg-config",
+    "PKG_CONFIG_PATH": "/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/ffmpeg/lib/pkgconfig"
   },
   "rust-analyzer.cargo.features": [
     // "web_sys_unstable_apis"
