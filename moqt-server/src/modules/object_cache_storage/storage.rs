@@ -1,9 +1,25 @@
 use super::commands::ObjectCacheStorageCommand;
-use crate::modules::object_cache_storage::cache::{
-    Cache, CacheKey, datagram::DatagramCache, subgroup_stream::SubgroupStreamsCache,
-};
+use crate::modules::object_cache_storage::cache::Cache;
+use crate::modules::object_cache_storage::cache::CacheKey;
+use crate::modules::object_cache_storage::cache::datagram::DatagramCache;
+use crate::modules::object_cache_storage::cache::subgroup_stream::SubgroupStreamsCache;
 use std::{collections::HashMap, time::Duration};
+use thiserror::Error;
 use tokio::sync::mpsc;
+
+#[derive(Debug, Error)]
+pub(crate) enum ObjectCacheError {
+    #[error("subgroup stream not found")]
+    SubgroupStreamNotFound,
+    #[error("datagram not found")]
+    DatagramNotFound,
+    #[error("cache not found")]
+    NotFound,
+    // 将来の未知エラーを受けるためのプレースホルダ
+    #[allow(dead_code)]
+    #[error("unknown error: {0}")]
+    Unknown(String),
+}
 
 pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStorageCommand>) {
     tracing::trace!("object_cache_storage start");
@@ -29,7 +45,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         // Insert the DatagramCache into the ObjectCacheStorage
                         storage.insert(cache_key.clone(), cache);
 
-                        resp.send(Ok(())).unwrap();
+                        let _ = resp.send(Ok(()));
                     }
                     ObjectCacheStorageCommand::CreateSubgroupStreamCache {
                         cache_key,
@@ -56,16 +72,16 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                             max_cache_size,
                         );
 
-                        resp.send(Ok(())).unwrap();
+                        let _ = resp.send(Ok(()));
                     }
                     ObjectCacheStorageCommand::HasDatagramCache { cache_key, resp } => {
                         let cache = storage.get(&cache_key);
                         match cache {
                             Some(Cache::Datagram(_)) => {
-                                resp.send(Ok(true)).unwrap();
+                                let _ = resp.send(Ok(true));
                             }
                             _ => {
-                                resp.send(Ok(false)).unwrap();
+                                let _ = resp.send(Ok(false));
                             }
                         }
                     }
@@ -79,14 +95,13 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         let subgroup_stream_cache = match cache {
                             Some(Cache::SubgroupStream(subgroup_stream_cache)) => subgroup_stream_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("subgroup stream cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::SubgroupStreamNotFound.into()));
                                 continue;
                             }
                         };
 
                         let header = subgroup_stream_cache.get_header(group_id, subgroup_id);
-                        resp.send(Ok(header)).unwrap();
+                        let _ = resp.send(Ok(header));
                     }
                     ObjectCacheStorageCommand::SetDatagramObject {
                         cache_key,
@@ -98,14 +113,13 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         let datagram_cache = match cache {
                             Some(Cache::Datagram(datagram_cache)) => datagram_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("datagram cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::DatagramNotFound.into()));
                                 continue;
                             }
                         };
 
                         datagram_cache.insert_object(datagram_object, duration);
-                        resp.send(Ok(())).unwrap();
+                        let _ = resp.send(Ok(()));
                     }
                     ObjectCacheStorageCommand::SetSubgroupStreamObject {
                         cache_key,
@@ -119,8 +133,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         let subgroup_streams_cache = match cache {
                             Some(Cache::SubgroupStream(subgroup_stream_cache)) => subgroup_stream_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("subgroup stream cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::SubgroupStreamNotFound.into()));
                                 continue;
                             }
                         };
@@ -131,7 +144,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                             subgroup_stream_object,
                             duration,
                         );
-                        resp.send(Ok(())).unwrap();
+                        let _ = resp.send(Ok(()));
                     }
                     ObjectCacheStorageCommand::GetDatagramObject {
                         cache_key,
@@ -143,14 +156,13 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         let datagram_cache = match cache {
                             Some(Cache::Datagram(datagram_cache)) => datagram_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("datagram cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::DatagramNotFound.into()));
                                 continue;
                             }
                         };
 
                         let object_with_cache_id = datagram_cache.get_object(group_id, object_id);
-                        resp.send(Ok(object_with_cache_id)).unwrap();
+                        let _ = resp.send(Ok(object_with_cache_id));
                     }
                     ObjectCacheStorageCommand::GetAbsoluteOrNextSubgroupStreamObject {
                         cache_key,
@@ -163,8 +175,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         let subgroup_streams_cache = match cache {
                             Some(Cache::SubgroupStream(subgroup_stream_cache)) => subgroup_stream_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("subgroup stream cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::SubgroupStreamNotFound.into()));
                                 continue;
                             }
                         };
@@ -174,7 +185,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                             subgroup_id,
                             object_id,
                         );
-                        resp.send(Ok(object_with_cache_id)).unwrap();
+                        let _ = resp.send(Ok(object_with_cache_id));
                     }
                     ObjectCacheStorageCommand::GetNextDatagramObject {
                         cache_key,
@@ -185,14 +196,13 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         let datagram_cache = match cache {
                             Some(Cache::Datagram(datagram_cache)) => datagram_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("datagram cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::DatagramNotFound.into()));
                                 continue;
                             }
                         };
 
                         let object_with_cache_id = datagram_cache.get_next_object(cache_id);
-                        resp.send(Ok(object_with_cache_id)).unwrap();
+                        let _ = resp.send(Ok(object_with_cache_id));
                     }
                     ObjectCacheStorageCommand::GetNextSubgroupStreamObject {
                         cache_key,
@@ -205,43 +215,40 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         let subgroup_streams_cache = match cache {
                             Some(Cache::SubgroupStream(subgroup_stream_cache)) => subgroup_stream_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("subgroup stream cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::SubgroupStreamNotFound.into()));
                                 continue;
                             }
                         };
 
                         let object_with_cache_id =
                             subgroup_streams_cache.get_next_object(group_id, subgroup_id, cache_id);
-                        resp.send(Ok(object_with_cache_id)).unwrap();
+                        let _ = resp.send(Ok(object_with_cache_id));
                     }
                     ObjectCacheStorageCommand::GetLatestDatagramGroup { cache_key, resp } => {
                         let cache = storage.get_mut(&cache_key);
                         let datagram_cache = match cache {
                             Some(Cache::Datagram(datagram_cache)) => datagram_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("datagram cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::DatagramNotFound.into()));
                                 continue;
                             }
                         };
 
                         let object_with_cache_id = datagram_cache.get_latest_group();
-                        resp.send(Ok(object_with_cache_id)).unwrap();
+                        let _ = resp.send(Ok(object_with_cache_id));
                     }
                     ObjectCacheStorageCommand::GetLatestDatagramObject { cache_key, resp } => {
                         let cache = storage.get_mut(&cache_key);
                         let datagram_cache = match cache {
                             Some(Cache::Datagram(datagram_cache)) => datagram_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("datagram cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::DatagramNotFound.into()));
                                 continue;
                             }
                         };
 
                         let object_with_cache_id = datagram_cache.get_latest_object();
-                        resp.send(Ok(object_with_cache_id)).unwrap();
+                        let _ = resp.send(Ok(object_with_cache_id));
                     }
                     ObjectCacheStorageCommand::GetFirstSubgroupStreamObject {
                         cache_key,
@@ -253,15 +260,14 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         let subgroup_streams_cache = match cache {
                             Some(Cache::SubgroupStream(subgroup_stream_cache)) => subgroup_stream_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("subgroup stream cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::SubgroupStreamNotFound.into()));
                                 continue;
                             }
                         };
 
                         let object_with_cache_id =
                             subgroup_streams_cache.get_first_object(group_id, subgroup_id);
-                        resp.send(Ok(object_with_cache_id)).unwrap();
+                        let _ = resp.send(Ok(object_with_cache_id));
                     }
                     ObjectCacheStorageCommand::GetLatestSubgroupStreamObject {
                         cache_key,
@@ -273,15 +279,14 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         let subgroup_streams_cache = match cache {
                             Some(Cache::SubgroupStream(subgroup_stream_cache)) => subgroup_stream_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("subgroup stream cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::SubgroupStreamNotFound.into()));
                                 continue;
                             }
                         };
 
                         let object_with_cache_id =
                             subgroup_streams_cache.get_latest_object(group_id, subgroup_id);
-                        resp.send(Ok(object_with_cache_id)).unwrap();
+                        let _ = resp.send(Ok(object_with_cache_id));
                     }
                     ObjectCacheStorageCommand::GetAllSubgroupIds {
                         cache_key,
@@ -292,14 +297,13 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                         let subgroup_streams_cache = match cache {
                             Some(Cache::SubgroupStream(subgroup_stream_cache)) => subgroup_stream_cache,
                             _ => {
-                                resp.send(Err(anyhow::anyhow!("subgroup stream cache not found")))
-                                    .unwrap();
+                                let _ = resp.send(Err(ObjectCacheError::SubgroupStreamNotFound.into()));
                                 continue;
                             }
                         };
 
                         let subgroup_ids = subgroup_streams_cache.get_all_subgroup_ids(group_id);
-                        resp.send(Ok(subgroup_ids)).unwrap();
+                        let _ = resp.send(Ok(subgroup_ids));
                     }
                     ObjectCacheStorageCommand::GetLargestGroupId { cache_key, resp } => {
                         let cache = storage.get_mut(&cache_key);
@@ -311,9 +315,9 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 }
                             };
 
-                            resp.send(Ok(largest_group_id)).unwrap();
+                            let _ = resp.send(Ok(largest_group_id));
                         } else {
-                            resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
+                            let _ = resp.send(Err(ObjectCacheError::NotFound.into()));
                         }
                     }
                     ObjectCacheStorageCommand::GetLargestObjectId { cache_key, resp } => {
@@ -326,9 +330,9 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 }
                             };
 
-                            resp.send(Ok(largest_object_id)).unwrap();
+                            let _ = resp.send(Ok(largest_object_id));
                         } else {
-                            resp.send(Err(anyhow::anyhow!("cache not found"))).unwrap();
+                            let _ = resp.send(Err(ObjectCacheError::NotFound.into()));
                         }
                     }
                     ObjectCacheStorageCommand::DeleteClient { session_id, resp } => {
@@ -338,7 +342,7 @@ pub(crate) async fn object_cache_storage(rx: &mut mpsc::Receiver<ObjectCacheStor
                                 let _ = storage.remove(&key);
                             }
                         }
-                        resp.send(Ok(())).unwrap();
+                        let _ = resp.send(Ok(()));
                     }
                 }
             }

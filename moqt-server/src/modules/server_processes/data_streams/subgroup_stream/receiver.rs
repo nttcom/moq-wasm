@@ -47,6 +47,7 @@ pub(crate) struct SubgroupStreamObjectReceiver {
     subgroup_stream_id: Option<SubgroupStreamId>,
     filter_type: Option<FilterType>,
     requested_object_range: Option<ObjectRange>,
+    read_buffer: Box<[u8]>,
 }
 
 impl SubgroupStreamObjectReceiver {
@@ -63,6 +64,11 @@ impl SubgroupStreamObjectReceiver {
         let duration = 100000;
         let signal_rx = Arc::new(Mutex::new(signal_rx));
 
+        // H264 720P keyframe is about 100~250KBytes
+        // H264 1080P keyframe is about 250~500KBytes
+        // H264 4K keyframe is about 1~2MBytes
+        let buffer = vec![0; 1024 * 1024].into_boxed_slice(); // stream_receive_windonwと同様の値を設定する(1MB)
+
         SubgroupStreamObjectReceiver {
             stream,
             buf,
@@ -74,6 +80,7 @@ impl SubgroupStreamObjectReceiver {
             subgroup_stream_id: None,
             filter_type: None,
             requested_object_range: None,
+            read_buffer: buffer,
         }
     }
 
@@ -142,15 +149,13 @@ impl SubgroupStreamObjectReceiver {
     }
 
     async fn read_stream(&mut self) -> Result<BytesMut, TerminationError> {
-        // Align with the stream_receive_window configured on the MoQT Server
-        let mut buffer = vec![0; 10 * 1024 * 1024].into_boxed_slice();
+        let buffer = &mut self.read_buffer;
 
-        let length: usize = match self.stream.read(&mut buffer).await {
+        let length: usize = match self.stream.read(buffer).await {
             Ok(byte_read) => byte_read.unwrap(),
             Err(err) => {
                 let msg = format!("Failed to read from stream: {:?}", err);
                 let code = TerminationErrorCode::InternalError;
-
                 return Err((code, msg));
             }
         };

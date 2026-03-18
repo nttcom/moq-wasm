@@ -107,11 +107,12 @@ impl Object {
         }
 
         // Any object with a status code other than zero MUST have an empty payload.
-        if let Some(status) = object_status {
-            if status != ObjectStatus::Normal && object_payload_length != 0 {
-                // TODO: return Termination Error Code
-                bail!("Any object with a status code other than zero MUST have an empty payload.");
-            }
+        if let Some(status) = object_status
+            && status != ObjectStatus::Normal
+            && object_payload_length != 0
+        {
+            // TODO: return Termination Error Code
+            bail!("Any object with a status code other than zero MUST have an empty payload.");
         }
 
         // length of total byte of extension headers
@@ -148,6 +149,10 @@ impl Object {
 
     pub fn extension_headers(&self) -> &Vec<ExtensionHeader> {
         &self.extension_headers
+    }
+
+    pub fn object_payload(&self) -> &[u8] {
+        &self.object_payload
     }
 }
 
@@ -488,8 +493,8 @@ mod tests {
         fn packetize_subgroup_stream_object_with_even_type_extension_header() {
             let object_id = 0;
             let header_type = 0;
-            let value = 1;
-            let header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(value));
+            let value = vec![1];
+            let header_value = ExtensionHeaderValue::EvenTypeValue(ValueWithLength::new(value));
 
             let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
             let object_status = None;
@@ -508,8 +513,9 @@ mod tests {
 
             let expected_bytes_array = [
                 0, // Object ID (i)
-                2, // Extension Headers Length (i)
+                3, // Extension Headers Length (i)
                 0, // Header Type (i)
+                1, // Header Value Length (i)
                 1, // Header Value (i)
                 3, // Object Payload Length (i)
                 1, 2, 3, // Object Payload (..)
@@ -522,8 +528,8 @@ mod tests {
         fn packetize_subgroup_stream_object_with_odd_type_extension_header() {
             let object_id = 0;
             let header_type = 1;
-            let value = vec![116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53, 54];
-            let header_value = ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(value));
+            let value = 14;
+            let header_value = ExtensionHeaderValue::OddTypeValue(Value::new(value));
 
             let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
             let object_status = Some(ObjectStatus::Normal);
@@ -542,11 +548,9 @@ mod tests {
 
             let expected_bytes_array = [
                 0,  // Object ID (i)
-                16, // Extension Headers Length (i)
+                2,  // Extension Headers Length (i)
                 1,  // Header Type (i)
-                14, // Header Length (i)
-                116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53,
-                54, // Header Value (..)
+                14, // Header Value (i)
                 0,  // Object Payload Length (i)
                 0,  // Object Status (i)
             ];
@@ -559,13 +563,13 @@ mod tests {
             let object_id = 0;
 
             let even_header_type = 4;
-            let even_value = 3;
-            let even_header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(even_value));
+            let even_value = vec![3];
+            let even_header_value =
+                ExtensionHeaderValue::EvenTypeValue(ValueWithLength::new(even_value));
 
             let odd_header_type = 5;
-            let odd_value = vec![116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53, 54];
-            let odd_header_value =
-                ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(odd_value));
+            let odd_value = 14;
+            let odd_header_value = ExtensionHeaderValue::OddTypeValue(Value::new(odd_value));
 
             let extension_headers = vec![
                 ExtensionHeader::new(even_header_type, even_header_value).unwrap(),
@@ -586,16 +590,15 @@ mod tests {
             subgroup_stream_object.packetize(&mut buf);
 
             let expected_bytes_array = [
-                0,  // Object ID (i)
-                18, // Extension Headers Length (i)
+                0, // Object ID (i)
+                5, // Extension Headers Length (i)
                 // {
                 4, // Header Type (i)
+                1, // Header Value Length (i)
                 3, // Header Value (i)
                 // }{
                 5,  // Header Type (i)
-                14, // Header Length (i)
-                116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53,
-                54, // Header Value (..)
+                14, // Header Value (i)
                 // }
                 0, // Object Payload Length (i)
                 0, // Object Status (i)
@@ -608,8 +611,9 @@ mod tests {
         fn depacketize_subgroup_stream_object_with_even_type_extension_header() {
             let bytes_array = [
                 0, // Object ID (i)
-                2, // Extension Headers Length (i)
+                3, // Extension Headers Length (i)
                 0, // Header Type (i)
+                1, // Header Value Length (i)
                 1, // Header Value (i)
                 0, // Object Payload Length (i)
                 0, // Object Status (i)
@@ -622,8 +626,8 @@ mod tests {
 
             let object_id = 0;
             let header_type = 0;
-            let value = 1;
-            let header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(value));
+            let value = vec![1];
+            let header_value = ExtensionHeaderValue::EvenTypeValue(ValueWithLength::new(value));
 
             let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
             let object_status = Some(ObjectStatus::Normal);
@@ -647,11 +651,9 @@ mod tests {
         fn depacketize_subgroup_stream_object_with_odd_type_extension_header() {
             let bytes_array = [
                 0,  // Object ID (i)
-                16, // Extension Headers Length (i)
+                2,  // Extension Headers Length (i)
                 1,  // Header Type (i)
-                14, // Header Length (i)
-                116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53,
-                54, // Header Value (..)
+                14, // Header Value (i)
                 3,  // Object Payload Length (i)
                 1, 2, 3, // Object Payload (..)
             ];
@@ -663,8 +665,8 @@ mod tests {
 
             let object_id = 0;
             let header_type = 1;
-            let value = vec![116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53, 54];
-            let header_value = ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(value));
+            let value = 14;
+            let header_value = ExtensionHeaderValue::OddTypeValue(Value::new(value));
 
             let extension_headers = vec![ExtensionHeader::new(header_type, header_value).unwrap()];
             let object_status = None;
@@ -687,16 +689,15 @@ mod tests {
         #[test]
         fn depacketize_subgroup_stream_object_with_mixed_type_extension_headers() {
             let bytes_array = [
-                0,  // Object ID (i)
-                18, // Extension Headers Length (i)
+                0, // Object ID (i)
+                5, // Extension Headers Length (i)
                 // {
                 4, // Header Type (i)
+                1, // Header Value Length (i)
                 3, // Header Value (i)
                 // }{
                 5,  // Header Type (i)
-                14, // Header Length (i)
-                116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53,
-                54, // Header Value (..)
+                14, // Header Value (i)
                 // }
                 0, // Object Payload Length (i)
                 0, // Object Status (i)
@@ -705,13 +706,13 @@ mod tests {
             let object_id = 0;
 
             let even_header_type = 4;
-            let even_value = 3;
-            let even_header_value = ExtensionHeaderValue::EvenTypeValue(Value::new(even_value));
+            let even_value = vec![3];
+            let even_header_value =
+                ExtensionHeaderValue::EvenTypeValue(ValueWithLength::new(even_value));
 
             let odd_header_type = 5;
-            let odd_value = vec![116, 114, 97, 99, 101, 73, 68, 58, 49, 50, 51, 52, 53, 54];
-            let odd_header_value =
-                ExtensionHeaderValue::OddTypeValue(ValueWithLength::new(odd_value));
+            let odd_value = 14;
+            let odd_header_value = ExtensionHeaderValue::OddTypeValue(Value::new(odd_value));
 
             let extension_headers = vec![
                 ExtensionHeader::new(even_header_type, even_header_value).unwrap(),
