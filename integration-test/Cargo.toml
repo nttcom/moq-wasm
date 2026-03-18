@@ -1,0 +1,21 @@
+[package]
+name = "integration-test"
+version = "0.1.0"
+edition = "2024"
+
+[[test]]
+name = "scenarios"
+path = "tests/scenarios.rs"
+harness = true
+
+[dependencies]
+tokio = { version = "1.45.0", features = ["full", "macros"] }
+anyhow = { version = "1.0.75", features = ["backtrace"] }
+url = "2.5.7"
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+moqt = { path = "../moqt" }
+relay = { path = "../relay" } # `package = "relay"` を追加
+tracing-test = "0.2.4"
+rcgen = "0.13.1"
+bytes = "1.6.0"

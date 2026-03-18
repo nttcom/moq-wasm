@@ -26,6 +26,15 @@ moqt-ingest-gateway/recordings/
 
 log/*
 
+cargo-flamegraph.trace/*
+
+# certs
+key.pem
+cert.pem
+
+Cargo.lock
+
+**.log
 /.env
 
 
