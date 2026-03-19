@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Cross-Protocol Subscriber (MSE)</title>
+  <style>
+    body { font-family: sans-serif; margin: 2em; }
+    .controls { margin: 1rem 0; display: flex; gap: 0.5rem; align-items: center; }
+    .controls input { font-family: monospace; padding: 0.3rem; width: 200px; }
+    video { width: 640px; background: #000; margin: 1rem 0; }
+    #log { white-space: pre-wrap; font-family: monospace; background: #f0f0f0; padding: 1em; max-height: 400px; overflow-y: auto; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>Cross-Protocol Subscriber</h1>
+  <p>QUIC Publisher → Relay → WebTransport (moqtail) → MSE</p>
+  <div class="controls">
+    <label for="nsInput">Namespace:</label>
+    <input id="nsInput" type="text" placeholder="live-1234">
+    <label for="trackInput">Track:</label>
+    <input id="trackInput" type="text" value="video" style="width:100px">
+    <button id="startBtn" type="button">Subscribe</button>
+  </div>
+  <video id="video" autoplay muted controls></video>
+  <div id="log">Ready</div>
+
+  <script type="module" src="src/main.ts"></script>
+</body>
+</html>
