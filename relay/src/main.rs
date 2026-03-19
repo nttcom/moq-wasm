@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rcgen::{generate_simple_self_signed, CertifiedKey};
+use rcgen::{CertifiedKey, generate_simple_self_signed};
 const CERT_DIR: &str = "keys";
 
 fn get_cert_path() -> PathBuf {

@@ -12,8 +12,8 @@ async fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: wt-subscriber <namespace> <track_name>");
-        eprintln!("Example: cargo run -p wt-subscriber -- live-1123 video | ffplay -");
+        eprintln!("Usage: quic-subscriber <namespace> <track_name>");
+        eprintln!("Example: cargo run -p quic-subscriber -- live-1123 video | ffplay -");
         std::process::exit(1);
     }
     let namespace = &args[1];

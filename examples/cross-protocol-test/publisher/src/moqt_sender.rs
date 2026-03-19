@@ -2,15 +2,13 @@ use std::net::ToSocketAddrs;
 use std::str::FromStr;
 
 use anyhow::{Context as _, Result};
-use moqt::{ClientConfig, ContentExists, Endpoint, SessionEvent, StreamDataSender, QUIC};
+use moqt::{ClientConfig, ContentExists, Endpoint, QUIC, SessionEvent, StreamDataSender};
 use tokio::sync::oneshot;
 use tracing::info;
 
 /// MoQT に接続し、namespace を publish し、StreamDataSender を返す。
 /// subscriber が来るまでイベントループで待機する。
-pub async fn connect_and_wait_for_subscriber(
-    namespace: &str,
-) -> Result<StreamDataSender<QUIC>> {
+pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDataSender<QUIC>> {
     let config = ClientConfig {
         port: 0,
         verify_certificate: false,
@@ -55,9 +53,7 @@ pub async fn connect_and_wait_for_subscriber(
                         track = handler.track_name,
                         "received subscribe"
                     );
-                    let Ok(_track_alias) =
-                        handler.ok(1_000_000, ContentExists::False).await
-                    else {
+                    let Ok(_track_alias) = handler.ok(1_000_000, ContentExists::False).await else {
                         tracing::error!("failed to send subscribe ok");
                         continue;
                     };
@@ -78,7 +74,10 @@ pub async fn connect_and_wait_for_subscriber(
                     let _ = h.ok().await;
                 }
                 SessionEvent::SubscribeNameSpace(h) => {
-                    info!(prefix = h.track_namespace_prefix, "subscribe namespace event");
+                    info!(
+                        prefix = h.track_namespace_prefix,
+                        "subscribe namespace event"
+                    );
                     let _ = h.ok().await;
                 }
                 SessionEvent::Publish(h) => {
@@ -94,7 +93,9 @@ pub async fn connect_and_wait_for_subscriber(
     });
 
     info!("waiting for subscriber...");
-    let stream = rx.await.context("event task dropped before subscriber arrived")?;
+    let stream = rx
+        .await
+        .context("event task dropped before subscriber arrived")?;
     info!("subscriber connected, stream ready");
     Ok(stream)
 }
