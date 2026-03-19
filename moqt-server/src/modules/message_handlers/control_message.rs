@@ -97,6 +97,12 @@ pub async fn control_message_handler(
         return MessageProcessResult::Fragment;
     }
 
+    if read_cur.get_ref().len() < (read_cur.position() as usize + payload_length as usize) {
+        // The length is insufficient, so do nothing. Do not synchronize with the cursor.
+        tracing::error!("fragmented {}", read_buf.len());
+        return MessageProcessResult::Fragment;
+    }
+
     read_buf.advance(read_cur.position() as usize);
     let mut payload_buf = read_buf.split_to(payload_length as usize);
     let mut write_buf = BytesMut::new();

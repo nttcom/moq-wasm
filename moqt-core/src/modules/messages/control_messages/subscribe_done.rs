@@ -51,6 +51,30 @@ impl SubscribeDone {
             final_object_id,
         }
     }
+
+    pub fn subscribe_id(&self) -> u64 {
+        self.subscribe_id
+    }
+
+    pub fn status_code(&self) -> StatusCode {
+        self.status_code
+    }
+
+    pub fn reason_phrase(&self) -> &str {
+        &self.reason_phrase
+    }
+
+    pub fn content_exists(&self) -> bool {
+        self.content_exists
+    }
+
+    pub fn final_group_id(&self) -> Option<u64> {
+        self.final_group_id
+    }
+
+    pub fn final_object_id(&self) -> Option<u64> {
+        self.final_object_id
+    }
 }
 
 impl MOQTPayload for SubscribeDone {

@@ -50,7 +50,7 @@ impl<T: TransportProtocol> Publisher<T> {
         tracing::info!("Publish namespace request id: {}", request_id);
         let result = receiver.await;
         if let Err(e) = result {
-            bail!("Failed to receive message: {}", e.to_string())
+            bail!("Failed to receive message: {}", e)
         }
         let response = result.unwrap();
         match response {
@@ -106,7 +106,7 @@ impl<T: TransportProtocol> Publisher<T> {
         tracing::info!("Publish");
         let result = receiver.await;
         if let Err(e) = result {
-            bail!("Failed to receive message: {}", e.to_string())
+            bail!("Failed to receive message: {}", e)
         }
         let response = result.unwrap();
         match response {

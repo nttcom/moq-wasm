@@ -43,7 +43,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         tracing::info!("Subscribe namespace");
         let result = receiver.await;
         if let Err(e) = result {
-            bail!("Failed to receive message: {}", e.to_string())
+            bail!("Failed to receive message: {}", e)
         }
         let response = result.unwrap();
         match response {
@@ -95,7 +95,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         tracing::info!("Subscribe");
         let result = receiver.await;
         if let Err(e) = result {
-            bail!("Failed to receive message: {}", e.to_string())
+            bail!("Failed to receive message: {}", e)
         }
         let response = result.unwrap();
         match response {
