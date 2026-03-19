@@ -1,0 +1,16 @@
+{
+  "name": "browser-subscriber",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "moqtail": "^0.7.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.1",
+    "typescript": "^5.9.3"
+  }
+}

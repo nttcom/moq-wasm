@@ -9,4 +9,6 @@ members = [
     'relay',
     'client',
     # 'integration-test',
+    'examples/cross-protocol-test/publisher',
+    'examples/cross-protocol-test/subscriber',
 ]
