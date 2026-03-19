@@ -19,7 +19,7 @@ pub(crate) struct EventHandler {
 }
 
 impl EventHandler {
-    pub fn run(
+    pub(crate) fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTMessageReceived>,
     ) -> Self {

@@ -40,6 +40,8 @@ impl TransportConnectionCreator for WtConnectionCreator {
                 ))
                 .with_no_client_auth()
         };
+        let mut tls_config = tls_config;
+        tls_config.alpn_protocols = vec![wtransport::tls::WEBTRANSPORT_ALPN.to_vec()];
 
         let config = wtransport::ClientConfig::builder()
             .with_bind_default()
