@@ -3,8 +3,8 @@ use std::str::FromStr;
 
 use anyhow::{Context as _, Result};
 use moqt::{
-    ClientConfig, ContentExists, Endpoint, FilterType, GroupOrder, QUIC, SessionEvent, Subgroup,
-    SubgroupObject, SubscribeOption,
+    ClientConfig, Endpoint, FilterType, GroupOrder, QUIC, SessionEvent, Subgroup, SubgroupObject,
+    SubscribeOption,
 };
 use std::io::Write;
 use tracing::info;
@@ -17,7 +17,7 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
     let url = url::Url::from_str("moqt://localhost:4434")?;
     let host = url.host_str().unwrap();
-    let remote_address = (host, url.port().unwrap_or(4434))
+    let remote_address = (host, url.port().unwrap())
         .to_socket_addrs()?
         .next()
         .context("failed to resolve address")?;
@@ -40,34 +40,9 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
                         break;
                     }
                 };
-                match event {
-                    SessionEvent::PublishNamespace(h) => {
-                        info!(ns = h.track_namespace, "publish namespace event");
-                        let _ = h.ok().await;
-                    }
-                    SessionEvent::Subscribe(h) => {
-                        info!(
-                            namespace = h.track_namespace,
-                            track = h.track_name,
-                            "received subscribe"
-                        );
-                        let _ = h.ok(1_000_000, ContentExists::False).await;
-                    }
-                    SessionEvent::SubscribeNameSpace(h) => {
-                        info!(
-                            prefix = h.track_namespace_prefix,
-                            "subscribe namespace event"
-                        );
-                        let _ = h.ok().await;
-                    }
-                    SessionEvent::Publish(h) => {
-                        info!("publish event");
-                        let _ = h.ok(128, FilterType::LatestObject).await;
-                    }
-                    SessionEvent::ProtocolViolation() => {
-                        tracing::error!("protocol violation");
-                        break;
-                    }
+                if let SessionEvent::ProtocolViolation() = event {
+                    tracing::error!("protocol violation");
+                    break;
                 }
             }
         }

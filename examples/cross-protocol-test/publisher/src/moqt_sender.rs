@@ -16,7 +16,7 @@ pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDa
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
     let url = url::Url::from_str("moqt://localhost:4434")?;
     let host = url.host_str().unwrap();
-    let remote_address = (host, url.port().unwrap_or(4433))
+    let remote_address = (host, url.port().unwrap())
         .to_socket_addrs()?
         .next()
         .context("failed to resolve address")?;
@@ -69,25 +69,11 @@ pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDa
                         let _ = tx.send(stream);
                     }
                 }
-                SessionEvent::PublishNamespace(h) => {
-                    info!(ns = h.track_namespace, "publish namespace event");
-                    let _ = h.ok().await;
-                }
-                SessionEvent::SubscribeNameSpace(h) => {
-                    info!(
-                        prefix = h.track_namespace_prefix,
-                        "subscribe namespace event"
-                    );
-                    let _ = h.ok().await;
-                }
-                SessionEvent::Publish(h) => {
-                    info!("publish event");
-                    let _ = h.ok(128, moqt::FilterType::LatestObject).await;
-                }
                 SessionEvent::ProtocolViolation() => {
                     tracing::error!("protocol violation");
                     break;
                 }
+                _ => {}
             }
         }
     });
