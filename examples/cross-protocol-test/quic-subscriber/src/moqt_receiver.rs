@@ -3,8 +3,8 @@ use std::str::FromStr;
 
 use anyhow::{Context as _, Result};
 use moqt::{
-    ClientConfig, ContentExists, Endpoint, FilterType, GroupOrder, SessionEvent, Subgroup,
-    SubgroupObject, SubscribeOption, WEBTRANSPORT,
+    ClientConfig, ContentExists, Endpoint, FilterType, GroupOrder, QUIC, SessionEvent, Subgroup,
+    SubgroupObject, SubscribeOption,
 };
 use std::io::Write;
 use tracing::info;
@@ -14,15 +14,15 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
         port: 0,
         verify_certificate: false,
     };
-    let endpoint = Endpoint::<WEBTRANSPORT>::create_client(&config)?;
-    let url = url::Url::from_str("https://localhost:4433")?;
+    let endpoint = Endpoint::<QUIC>::create_client(&config)?;
+    let url = url::Url::from_str("moqt://localhost:4434")?;
     let host = url.host_str().unwrap();
-    let remote_address = (host, url.port().unwrap_or(4433))
+    let remote_address = (host, url.port().unwrap_or(4434))
         .to_socket_addrs()?
         .next()
         .context("failed to resolve address")?;
 
-    info!(%remote_address, "connecting to relay via WebTransport");
+    info!(%remote_address, "connecting to relay via QUIC");
     let session = endpoint.connect(remote_address, host).await?;
     let (_publisher, subscriber) = session.publisher_subscriber_pair();
     let subscriber = std::sync::Arc::new(subscriber);
@@ -54,7 +54,10 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
                         let _ = h.ok(1_000_000, ContentExists::False).await;
                     }
                     SessionEvent::SubscribeNameSpace(h) => {
-                        info!(prefix = h.track_namespace_prefix, "subscribe namespace event");
+                        info!(
+                            prefix = h.track_namespace_prefix,
+                            "subscribe namespace event"
+                        );
                         let _ = h.ok().await;
                     }
                     SessionEvent::Publish(h) => {
@@ -74,7 +77,7 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
         subscriber_priority: 128,
         group_order: GroupOrder::Ascending,
         forward: true,
-        filter_type: FilterType::LatestObject,
+        filter_type: FilterType::LatestGroup,
     };
 
     info!(namespace, track_name, "subscribing");

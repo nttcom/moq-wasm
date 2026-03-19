@@ -1,9 +1,9 @@
 mod ffmpeg;
 mod moqt_sender;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use bytes::Bytes;
-use moqt::{ExtensionHeaders, StreamDataSender, SubgroupId, SubgroupObject, QUIC};
+use moqt::{ExtensionHeaders, QUIC, StreamDataSender, SubgroupId, SubgroupObject};
 use tokio::sync::mpsc;
 use tracing::info;
 
