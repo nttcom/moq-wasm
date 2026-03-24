@@ -32,30 +32,43 @@ impl SessionHandler {
             .spawn(async move {
                 loop {
                     tracing::info!("accepting...");
-                    let connecting = match endpoint.accept().await.inspect_err(|e| {
-                        tracing::error!("failed to accept: {}", e);
-                    }) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                            break;
+                    let mut join_set = tokio::task::JoinSet::new();
+                    
+                    tokio::select! {
+                        connecting = endpoint.accept() => {
+                            let connecting = match connecting {
+                                Ok(s) => s,
+                                Err(_) => {
+                                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                    break;
+                                }
+                            };
+                            join_set.spawn(connecting);
+                        },
+                        result = join_set.join_next() => {
+                            tracing::info!("a session task finished.");
+                            match result {
+                                Some(Ok(connecting)) => {
+                                    let session = match connecting {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            tracing::error!("failed to negotiate: {}", e);
+                                            continue;
+                                        }
+                                    };
+                                    let session_id = generate_session_id();
+                                    tracing::info!("Session ID: {}", session_id);
+                                    repo.lock()
+                                        .await
+                                        .add(session_id, Box::new(session), session_event_sender.clone())
+                                        .await;
+                                },
+                                _ => {
+                                    tracing::info!("no more session tasks.");
+                                }
+                            }
                         }
-                    };
-                    let session = match connecting.await.inspect_err(|e| {
-                        tracing::error!("failed to negotiate: {}", e);
-                    }) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                            break;
-                        }
-                    };
-                    let session_id = generate_session_id();
-                    tracing::info!("Session ID: {}", session_id);
-                    repo.lock()
-                        .await
-                        .add(session_id, Box::new(session), session_event_sender.clone())
-                        .await;
+                    }
                 }
             })
             .unwrap()
