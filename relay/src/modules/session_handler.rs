@@ -33,7 +33,6 @@ impl SessionHandler {
                 loop {
                     tracing::info!("accepting...");
                     let mut join_set = tokio::task::JoinSet::new();
-                    
                     tokio::select! {
                         connecting = endpoint.accept() => {
                             let connecting = match connecting {
