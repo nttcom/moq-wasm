@@ -32,8 +32,17 @@ impl SessionHandler {
             .spawn(async move {
                 loop {
                     tracing::info!("accepting...");
-                    let session = match endpoint.accept().await.inspect_err(|e| {
+                    let connecting = match endpoint.accept().await.inspect_err(|e| {
                         tracing::error!("failed to accept: {}", e);
+                    }) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
+                    };
+                    let session = match connecting.await.inspect_err(|e| {
+                        tracing::error!("failed to negotiate: {}", e);
                     }) {
                         Ok(s) => s,
                         Err(_) => {

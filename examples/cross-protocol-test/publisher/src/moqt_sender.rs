@@ -22,7 +22,14 @@ pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDa
         .context("failed to resolve address")?;
 
     info!(%remote_address, "connecting to relay");
-    let session = endpoint.connect(remote_address, host).await?;
+    let connecting = endpoint.connect(remote_address, host).await?;
+    let session = match connecting.await {
+        Ok(s) => s,
+        Err(e) => {
+            anyhow::bail!("test failed: {:?}", e)
+        }
+    };
+
     let (publisher, _subscriber) = session.publisher_subscriber_pair();
     let publisher = std::sync::Arc::new(publisher);
 

@@ -39,7 +39,13 @@ impl<T: TransportProtocol> Client<T> {
 
         tracing::info!("remote_address: {} host: {}", remote_address, host);
 
-        let session = match endpoint.connect(remote_address, host).await {
+        let connecting = match endpoint.connect(remote_address, host).await {
+            Ok(s) => s,
+            Err(e) => {
+                bail!("test failed: {:?}", e)
+            }
+        };
+        let session = match connecting.await {
             Ok(s) => s,
             Err(e) => {
                 bail!("test failed: {:?}", e)

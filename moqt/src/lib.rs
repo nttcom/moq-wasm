@@ -25,6 +25,7 @@ pub use modules::moqt::data_plane::streams::datagram::datagram_sender::DatagramS
 pub use modules::moqt::data_plane::streams::stream::stream_data_receiver::StreamDataReceiver;
 pub use modules::moqt::data_plane::streams::stream::stream_data_receiver::Subgroup;
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender::StreamDataSender;
+pub use modules::moqt::domains::connecting::Connecting;
 pub use modules::moqt::domains::endpoint::ClientConfig;
 pub use modules::moqt::domains::endpoint::Endpoint;
 pub use modules::moqt::domains::endpoint::ServerConfig;
