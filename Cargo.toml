@@ -10,6 +10,8 @@ members = [
     'relay',
     'client',
     # 'integration-test',
+    'examples/cross-protocol-test/publisher',
+    'examples/cross-protocol-test/quic-subscriber',
     'moqt-client-wasm',
     'moqt-ingest-gateway',
     'moqt-client-rust',
