@@ -36,7 +36,7 @@ impl<T: TransportProtocol> Client<T> {
             .next()
             .unwrap();
 
-        tracing::info!("remote_address: {} host:1 {}", remote_address, host);
+        tracing::info!("remote_address: {} host: {}", remote_address, host);
 
         let connecting = endpoint.connect(remote_address, host).await?;
         let session = connecting.await?;

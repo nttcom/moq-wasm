@@ -23,7 +23,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
             .transport_creator
             .create_new_transport(remote_address, host)
             .await?;
-        let negotioation = async move {
+        let handshake = async move {
             let (send_stream, receive_stream) = transport_conn.open_bi().await?;
             let mut moqt_receiver = BiStreamReceiver::new(receive_stream, ControlMessageDecoder);
             let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -38,13 +38,13 @@ impl<T: TransportProtocol> SessionCreator<T> {
             Ok(Session::<T>::new(moqt_receiver, inner, receiver))
         };
         Ok(Connecting {
-            inner: Box::pin(negotioation),
+            inner: Box::pin(handshake),
         })
     }
 
     pub(crate) async fn accept_new_connection(&mut self) -> anyhow::Result<Connecting<T>> {
         let transport_conn = self.transport_creator.accept_new_transport().await?;
-        let negotioation = async move {
+        let handshake = async move {
             let (send_stream, receive_stream) = transport_conn.accept_bi().await?;
             let mut moqt_receiver = BiStreamReceiver::new(receive_stream, ControlMessageDecoder);
             let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -59,7 +59,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
             Ok(Session::<T>::new(moqt_receiver, inner, receiver))
         };
         Ok(Connecting {
-            inner: Box::pin(negotioation),
+            inner: Box::pin(handshake),
         })
     }
 }
