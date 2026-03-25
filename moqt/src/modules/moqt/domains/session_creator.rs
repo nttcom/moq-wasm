@@ -46,7 +46,6 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let transport_conn = self.transport_creator.accept_new_transport().await?;
         let negotioation = async move {
             let (send_stream, receive_stream) = transport_conn.accept_bi().await?;
-            // 16 means the number of messages can be stored in the channel.
             let mut moqt_receiver = BiStreamReceiver::new(receive_stream, ControlMessageDecoder);
             let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
             let inner = SessionContextFactory::server(

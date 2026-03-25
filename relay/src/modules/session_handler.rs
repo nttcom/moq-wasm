@@ -32,7 +32,7 @@ impl SessionHandler {
             .spawn(async move {
                 loop {
                     tracing::info!("accepting...");
-                    let connecting = match endpoint.accept().await {
+                    let incoming = match endpoint.accept().await {
                         Ok(c) => c,
                         Err(e) => {
                             tracing::error!("failed to accept connection: {}", e);
@@ -40,18 +40,17 @@ impl SessionHandler {
                             continue;
                         }
                     };
-                    let cloned_repo = repo.clone();
+                    let repo = repo.clone();
                     let session_event_sender = session_event_sender.clone();
                     tokio::spawn(async move {
-                        let Ok(session) = connecting.await.inspect_err(|e| {
+                        let Ok(session) = incoming.await.inspect_err(|e| {
                             tracing::error!("failed to establish session: {:?}", e)
                         }) else {
                             return;
                         };
                         let session_id = generate_session_id();
                         tracing::info!("Session ID: {}", session_id);
-                        cloned_repo
-                            .lock()
+                        repo.lock()
                             .await
                             .add(session_id, Box::new(session), session_event_sender.clone())
                             .await;
