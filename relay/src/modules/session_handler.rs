@@ -43,12 +43,10 @@ impl SessionHandler {
                     let cloned_repo = repo.clone();
                     let session_event_sender = session_event_sender.clone();
                     tokio::spawn(async move {
-                        let session = match connecting.await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                tracing::error!("failed to negotiate: {}", e);
-                                return;
-                            }
+                        let Ok(session) = connecting.await.inspect_err(|e| {
+                            tracing::error!("failed to establish session: {:?}", e)
+                        }) else {
+                            return;
                         };
                         let session_id = generate_session_id();
                         tracing::info!("Session ID: {}", session_id);
