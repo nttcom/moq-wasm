@@ -6,13 +6,13 @@ use serde::Serialize;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct RequestError {
-    pub(crate) request_id: u64,
-    pub(crate) error_code: u64,
-    pub(crate) reason_phrase: String,
+    pub request_id: u64,
+    pub error_code: u64,
+    pub reason_phrase: String,
 }
 
 impl RequestError {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let error_code = buf.try_get_varint().log_context("error code").ok()?;
         let reason_phrase = buf.try_get_string().log_context("reason phrase").ok()?;
@@ -24,7 +24,7 @@ impl RequestError {
         })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_varint(self.error_code);

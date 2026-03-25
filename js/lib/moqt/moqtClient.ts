@@ -1,17 +1,16 @@
 import init, {
   MOQTClient,
-  AnnounceMessage,
+  NamespaceOkMessage,
+  ObjectDatagramMessage,
+  ObjectDatagramStatusMessage,
+  PublishNamespaceMessage,
+  RequestErrorMessage,
   ServerSetupMessage,
-  AnnounceOkMessage,
-  AnnounceErrorMessage,
-  SubscribeMessage,
-  SubscribeAnnouncesOkMessage,
-  SubscribeAnnouncesErrorMessage,
-  SubscribeOkMessage,
-  SubscribeDoneMessage,
-  SubscribeErrorMessage,
+  SubgroupHeaderMessage,
+  SubgroupObjectMessage,
   SubgroupState,
-  SubgroupStreamObjectMessage
+  SubscribeMessage,
+  SubscribeOkMessage
 } from '../../pkg/moqt_client_wasm'
 import {
   InMemorySubscriptionStateManager,
@@ -20,39 +19,85 @@ import {
 } from './subscriptionStateManager'
 
 type SetupResolver = ((value: void) => void) | null
-type AnnounceHandler = ((announce: AnnounceMessage) => void) | null
-type SubscribeResponseHandler = ((response: SubscribeOkMessage | SubscribeErrorMessage) => void) | null
-type SubscribeDoneHandler = ((message: SubscribeDoneMessage) => void) | null
+type PendingVoidResolver = { resolve: () => void; reject: (error: Error) => void }
+type PendingSubscribeResolver = { resolve: (trackAlias: bigint) => void; reject: (error: Error) => void }
+type SubscribeResponseHandler = ((response: SubscribeOkMessage | RequestErrorMessage) => void) | null
+type NamespaceResponseHandler = ((response: NamespaceOkMessage | RequestErrorMessage) => void) | null
 type ConnectionClosedHandler = (() => void) | null
-type IncomingUnsubscribeHandler = ((subscribeId: bigint) => void) | null
+type IncomingUnsubscribeHandler = ((requestId: bigint) => void) | null
+type ObjectDatagramHandler = ((message: ObjectDatagramMessage) => void) | null
+type ObjectDatagramStatusHandler = ((message: ObjectDatagramStatusMessage) => void) | null
+type SubgroupHeaderHandler = ((header: SubgroupHeaderMessage) => void) | null
 
 export interface ConnectOptions {
   sendSetup?: boolean
   versions?: BigUint64Array
-  maxSubscribeId?: bigint
+  maxRequestId?: bigint
+}
+
+export interface PublishNamespaceOptions {
+  requestId?: bigint
+}
+
+export interface SubscribeNamespaceOptions {
+  requestId?: bigint
+}
+
+export interface SubscribeOptions {
+  subscriberPriority?: number
+  groupOrder?: number
+  filterType?: number
+  startGroup?: bigint
+  startObject?: bigint
+  endGroup?: bigint
+  forward?: boolean
+  deliveryTimeout?: bigint
+}
+
+export interface IncomingPublishNamespaceContext {
+  publishNamespace: PublishNamespaceMessage
+  respondOk(): Promise<void>
+  respondError(code: bigint, reasonPhrase: string): Promise<void>
 }
 
 export interface IncomingSubscribeContext {
   subscribe: SubscribeMessage
   isSuccess: boolean
   code: number
-  respondOk(expire: bigint, authInfo: string, forwardingPreference: string): Promise<void>
+  respondOk(
+    expires?: bigint,
+    contentExists?: boolean,
+    largestGroupId?: bigint,
+    largestObjectId?: bigint,
+    deliveryTimeout?: bigint,
+    maxDuration?: bigint
+  ): Promise<bigint>
   respondError(code: bigint, reasonPhrase: string): Promise<void>
 }
 
+type IncomingPublishNamespaceHandler = (ctx: IncomingPublishNamespaceContext) => Promise<void> | void
 type IncomingSubscribeHandler = (ctx: IncomingSubscribeContext) => Promise<void> | void
 
 export class MoqtClientWrapper {
   client: MOQTClient | null = null
   private serverSetupResolve: SetupResolver = null
-  private onAnnounceHandler: AnnounceHandler = null
+  private onPublishNamespaceHandler: IncomingPublishNamespaceHandler | null = null
+  private onPublishNamespaceResponseHandler: NamespaceResponseHandler = null
+  private onSubscribeNamespaceResponseHandler: NamespaceResponseHandler = null
   private onSubscribeResponseHandler: SubscribeResponseHandler = null
-  private onSubscribeDoneHandler: SubscribeDoneHandler = null
   private onConnectionClosedHandler: ConnectionClosedHandler = null
   private incomingSubscribeHandler: IncomingSubscribeHandler | null = null
   private incomingUnsubscribeHandler: IncomingUnsubscribeHandler = null
   private onServerSetupHandler: ((setup: ServerSetupMessage) => void) | null = null
+  private onObjectDatagramHandler: ObjectDatagramHandler = null
+  private onObjectDatagramStatusHandler: ObjectDatagramStatusHandler = null
+  private onSubgroupHeaderHandler: SubgroupHeaderHandler = null
   private readonly subscriptionState: SubscriptionStateStore
+  private readonly pendingPublishNamespace = new Map<bigint, PendingVoidResolver>()
+  private readonly pendingSubscribeNamespace = new Map<bigint, PendingVoidResolver>()
+  private readonly pendingSubscribe = new Map<bigint, PendingSubscribeResolver>()
+  private readonly subscriptionTrackAliases = new Map<bigint, bigint>()
+  private nextRequestId = 0n
 
   constructor(subscriptionState?: SubscriptionStateStore) {
     this.subscriptionState = subscriptionState ?? new InMemorySubscriptionStateManager()
@@ -84,9 +129,9 @@ export class MoqtClientWrapper {
         this.serverSetupResolve = resolve
       })
 
-      const versions = options.versions ?? new BigUint64Array([0xff00000an])
-      const maxSubscribeId = options.maxSubscribeId ?? 100n
-      await this.client.sendSetupMessage(versions, maxSubscribeId)
+      const versions = options.versions ?? new BigUint64Array([0xff00000en])
+      const maxRequestId = options.maxRequestId ?? 100n
+      await this.client.sendClientSetup(versions, maxRequestId)
       await receiveServerSetup
     } catch (error) {
       this.cleanupClient()
@@ -101,12 +146,12 @@ export class MoqtClientWrapper {
     }
   }
 
-  async sendSetupMessage(versions: BigUint64Array, maxSubscribeId: bigint): Promise<void> {
+  async sendClientSetup(versions: BigUint64Array, maxRequestId: bigint): Promise<void> {
     const client = this.requireConnectedClient()
     const receiveServerSetup = new Promise<void>((resolve) => {
       this.serverSetupResolve = resolve
     })
-    await client.sendSetupMessage(versions, maxSubscribeId)
+    await client.sendClientSetup(versions, maxRequestId)
     await receiveServerSetup
   }
 
@@ -129,7 +174,7 @@ export class MoqtClientWrapper {
     return this.client
   }
 
-  setOnConnectionClosedHandler(handler: () => void): void {
+  setOnConnectionClosedHandler(handler: (() => void) | null): void {
     this.onConnectionClosedHandler = handler
   }
 
@@ -137,24 +182,40 @@ export class MoqtClientWrapper {
     this.onServerSetupHandler = handler
   }
 
-  setOnAnnounceHandler(handler: (announce: AnnounceMessage) => void): void {
-    this.onAnnounceHandler = handler
+  setOnPublishNamespaceHandler(handler: IncomingPublishNamespaceHandler | null): void {
+    this.onPublishNamespaceHandler = handler
   }
 
-  setOnSubscribeResponseHandler(handler: (response: SubscribeOkMessage | SubscribeErrorMessage) => void): void {
+  setOnPublishNamespaceResponseHandler(handler: NamespaceResponseHandler): void {
+    this.onPublishNamespaceResponseHandler = handler
+  }
+
+  setOnSubscribeNamespaceResponseHandler(handler: NamespaceResponseHandler): void {
+    this.onSubscribeNamespaceResponseHandler = handler
+  }
+
+  setOnSubscribeResponseHandler(handler: SubscribeResponseHandler): void {
     this.onSubscribeResponseHandler = handler
-  }
-
-  setOnSubscribeDoneHandler(handler: ((message: SubscribeDoneMessage) => void) | null): void {
-    this.onSubscribeDoneHandler = handler
   }
 
   setOnIncomingSubscribeHandler(handler: IncomingSubscribeHandler | null): void {
     this.incomingSubscribeHandler = handler
   }
 
-  setOnIncomingUnsubscribeHandler(handler: IncomingUnsubscribeHandler): void {
+  setOnIncomingUnsubscribeHandler(handler: IncomingUnsubscribeHandler | null): void {
     this.incomingUnsubscribeHandler = handler
+  }
+
+  setOnObjectDatagramHandler(handler: ObjectDatagramHandler): void {
+    this.onObjectDatagramHandler = handler
+  }
+
+  setOnObjectDatagramStatusHandler(handler: ObjectDatagramStatusHandler): void {
+    this.onObjectDatagramStatusHandler = handler
+  }
+
+  setOnSubgroupHeaderHandler(handler: SubgroupHeaderHandler): void {
+    this.onSubgroupHeaderHandler = handler
   }
 
   setOnSubgroupObjectHandler(trackAlias: bigint, handler: SubgroupObjectHandler): void {
@@ -169,59 +230,81 @@ export class MoqtClientWrapper {
     this.subscriptionState.clearHandlers()
   }
 
-  async announce(trackNamespace: string[], authInfo: string): Promise<void> {
+  async publishNamespace(
+    trackNamespace: string[],
+    authInfo: string,
+    options: PublishNamespaceOptions = {}
+  ): Promise<void> {
     const client = this.requireConnectedClient()
-    await client.sendAnnounceMessage(trackNamespace, authInfo)
+    const requestId = options.requestId ?? this.issueRequestId()
+    const response = new Promise<void>((resolve, reject) => {
+      this.pendingPublishNamespace.set(requestId, { resolve, reject })
+    })
+    await client.sendPublishNamespace(requestId, trackNamespace, authInfo)
+    await response
   }
 
-  async subscribeAnnounces(trackNamespacePrefix: string[], authInfo: string): Promise<void> {
+  async subscribeNamespace(
+    trackNamespacePrefix: string[],
+    authInfo: string,
+    options: SubscribeNamespaceOptions = {}
+  ): Promise<void> {
     const client = this.requireConnectedClient()
-    await client.sendSubscribeAnnouncesMessage(trackNamespacePrefix, authInfo)
+    const requestId = options.requestId ?? this.issueRequestId()
+    const response = new Promise<void>((resolve, reject) => {
+      this.pendingSubscribeNamespace.set(requestId, { resolve, reject })
+    })
+    await client.sendSubscribeNamespace(requestId, trackNamespacePrefix, authInfo)
+    await response
   }
 
   async subscribe(
-    subscribeId: bigint,
-    trackAlias: bigint,
+    requestId: bigint,
     trackNamespace: string[],
     trackName: string,
-    authInfo: string
-  ): Promise<void> {
+    authInfo: string,
+    options: SubscribeOptions = {}
+  ): Promise<bigint> {
     const client = this.requireConnectedClient()
-    if (client.isSubscribed(subscribeId)) {
-      return
+    const existingTrackAlias = this.subscriptionTrackAliases.get(requestId)
+    if (existingTrackAlias !== undefined) {
+      return existingTrackAlias
     }
 
-    const priority = 0
-    const groupOrder = 0
-    const filterType = 1
-    const startGroup = 0n
-    const startObject = 0n
-    const endGroup = 0n
+    const response = new Promise<bigint>((resolve, reject) => {
+      this.pendingSubscribe.set(requestId, { resolve, reject })
+    })
 
-    await client.sendSubscribeMessage(
-      subscribeId,
-      trackAlias,
+    await client.sendSubscribe(
+      requestId,
       trackNamespace,
       trackName,
-      priority,
-      groupOrder,
-      filterType,
-      startGroup,
-      startObject,
-      endGroup,
-      authInfo
+      options.subscriberPriority ?? 0,
+      options.groupOrder ?? 0,
+      options.filterType ?? 1,
+      options.startGroup,
+      options.startObject,
+      options.endGroup,
+      authInfo,
+      options.forward ?? false,
+      options.deliveryTimeout
     )
+
+    return response
   }
 
-  async unsubscribe(subscribeId: bigint): Promise<void> {
+  async unsubscribe(requestId: bigint): Promise<void> {
     const client = this.requireConnectedClient()
-    await client.sendUnsubscribeMessage(subscribeId)
-    this.clearSubgroupObjectHandler(subscribeId)
+    const trackAlias = this.subscriptionTrackAliases.get(requestId)
+    await client.sendUnsubscribe(requestId)
+    this.subscriptionTrackAliases.delete(requestId)
+    if (trackAlias !== undefined) {
+      this.clearSubgroupObjectHandler(trackAlias)
+    }
   }
 
   async sendSubgroupTextForTrack(trackNamespace: string[], trackName: string, text: string): Promise<void> {
     const client = this.requireConnectedClient()
-
     const aliases = client.getTrackSubscribers(trackNamespace, trackName)
     if (!aliases.length) {
       console.warn(`No subscribers registered for track ${trackNamespace.join('/')}/${trackName}`)
@@ -236,7 +319,7 @@ export class MoqtClientWrapper {
   private setupCallbacks(): void {
     if (!this.client) return
 
-    this.client.onSetup((setup: ServerSetupMessage) => {
+    this.client.onServerSetup((setup: ServerSetupMessage) => {
       if (this.serverSetupResolve) {
         this.serverSetupResolve()
         this.serverSetupResolve = null
@@ -244,11 +327,43 @@ export class MoqtClientWrapper {
       this.onServerSetupHandler?.(setup)
     })
 
-    this.client.onAnnounce((announce: AnnounceMessage) => {
-      this.onAnnounceHandler?.(announce)
+    this.client.onPublishNamespace((publishNamespace: PublishNamespaceMessage) => {
+      const handler = this.onPublishNamespaceHandler ?? defaultIncomingPublishNamespaceHandler
+      void handler({
+        publishNamespace,
+        respondOk: () => this.requireConnectedClient().sendPublishNamespaceOk(publishNamespace.requestId),
+        respondError: (errorCode, reasonPhrase) =>
+          this.requireConnectedClient().sendPublishNamespaceError(publishNamespace.requestId, errorCode, reasonPhrase)
+      })
     })
 
-    this.client.onAnnounceResponse((_response: AnnounceOkMessage | AnnounceErrorMessage) => {})
+    this.client.onPublishNamespaceResponse((response: NamespaceOkMessage | RequestErrorMessage) => {
+      this.onPublishNamespaceResponseHandler?.(response)
+      const pending = this.pendingPublishNamespace.get(response.requestId)
+      if (!pending) {
+        return
+      }
+      this.pendingPublishNamespace.delete(response.requestId)
+      if (isRequestError(response)) {
+        pending.reject(new Error(`PUBLISH_NAMESPACE_ERROR ${response.errorCode}: ${response.reasonPhrase}`))
+      } else {
+        pending.resolve()
+      }
+    })
+
+    this.client.onSubscribeNamespaceResponse((response: NamespaceOkMessage | RequestErrorMessage) => {
+      this.onSubscribeNamespaceResponseHandler?.(response)
+      const pending = this.pendingSubscribeNamespace.get(response.requestId)
+      if (!pending) {
+        return
+      }
+      this.pendingSubscribeNamespace.delete(response.requestId)
+      if (isRequestError(response)) {
+        pending.reject(new Error(`SUBSCRIBE_NAMESPACE_ERROR ${response.errorCode}: ${response.reasonPhrase}`))
+      } else {
+        pending.resolve()
+      }
+    })
 
     this.client.onSubscribe(async (subscribe: SubscribeMessage, isSuccess: boolean, code: number) => {
       const handler = this.incomingSubscribeHandler ?? defaultIncomingSubscribeHandler
@@ -256,40 +371,64 @@ export class MoqtClientWrapper {
         subscribe,
         isSuccess,
         code,
-        respondOk: (expire, authInfo, forwardingPreference) =>
-          this.requireConnectedClient().sendSubscribeOkMessage(
-            subscribe.subscribeId,
-            expire,
-            authInfo,
-            forwardingPreference
+        respondOk: async (
+          expires = 0n,
+          contentExists = false,
+          largestGroupId,
+          largestObjectId,
+          deliveryTimeout,
+          maxDuration
+        ) =>
+          this.requireConnectedClient().sendSubscribeOk(
+            subscribe.requestId,
+            expires,
+            contentExists,
+            largestGroupId,
+            largestObjectId,
+            deliveryTimeout,
+            maxDuration
           ),
         respondError: (errorCode, reasonPhrase) =>
-          this.requireConnectedClient().sendSubscribeErrorMessage(subscribe.subscribeId, errorCode, reasonPhrase)
+          this.requireConnectedClient().sendSubscribeError(subscribe.requestId, errorCode, reasonPhrase)
       })
     })
 
-    this.client.onSubscribeResponse((response: SubscribeOkMessage | SubscribeErrorMessage) => {
+    this.client.onSubscribeResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
+      if (isRequestError(response)) {
+        const pending = this.pendingSubscribe.get(response.requestId)
+        if (pending) {
+          this.pendingSubscribe.delete(response.requestId)
+          pending.reject(new Error(`SUBSCRIBE_ERROR ${response.errorCode}: ${response.reasonPhrase}`))
+        }
+        this.subscriptionTrackAliases.delete(response.requestId)
+      } else {
+        this.subscriptionTrackAliases.set(response.requestId, response.trackAlias)
+        const pending = this.pendingSubscribe.get(response.requestId)
+        if (pending) {
+          this.pendingSubscribe.delete(response.requestId)
+          pending.resolve(response.trackAlias)
+        }
+      }
       this.onSubscribeResponseHandler?.(response)
     })
 
-    this.client.onUnsubscribe((message: SubscribeDoneMessage) => {
-      this.onSubscribeDoneHandler?.(message)
+    this.client.onIncomingUnsubscribe((requestId: bigint) => {
+      this.incomingUnsubscribeHandler?.(requestId)
     })
 
-    this.client.onIncomingUnsubscribe((subscribeId: bigint) => {
-      this.incomingUnsubscribeHandler?.(subscribeId)
+    this.client.onObjectDatagram((message: ObjectDatagramMessage) => {
+      this.onObjectDatagramHandler?.(message)
     })
-
-    this.client.onSubscribeAnnouncesResponse(
-      (_response: SubscribeAnnouncesOkMessage | SubscribeAnnouncesErrorMessage) => {}
-    )
-    this.client.onSubgroupStreamHeader((_header: any) => {})
-    this.client.onSubgroupStreamObject(
-      (trackAlias: bigint, groupId: bigint, subgroupObject: SubgroupStreamObjectMessage) => {
-        const handler = this.subscriptionState.getSubgroupObjectHandler(trackAlias)
-        handler?.(groupId, subgroupObject)
-      }
-    )
+    this.client.onObjectDatagramStatus((message: ObjectDatagramStatusMessage) => {
+      this.onObjectDatagramStatusHandler?.(message)
+    })
+    this.client.onSubgroupHeader((header: SubgroupHeaderMessage) => {
+      this.onSubgroupHeaderHandler?.(header)
+    })
+    this.client.onSubgroupObject((trackAlias: bigint, groupId: bigint, subgroupObject: SubgroupObjectMessage) => {
+      const handler = this.subscriptionState.getSubgroupObjectHandler(trackAlias)
+      handler?.(groupId, subgroupObject)
+    })
     this.client.onConnectionClosed(() => this.handleConnectionClosed())
   }
 
@@ -299,12 +438,12 @@ export class MoqtClientWrapper {
     const publisherPriority = 0
 
     if (!state.headerSent) {
-      await client.sendSubgroupStreamHeaderMessage(trackAlias, state.groupId, state.subgroupId, publisherPriority)
+      await client.sendSubgroupHeader(trackAlias, state.groupId, state.subgroupId, publisherPriority)
       client.markSubgroupHeaderSent(trackAlias)
     }
 
     const payload = new TextEncoder().encode(text)
-    await client.sendSubgroupStreamObject(
+    await client.sendSubgroupObject(
       trackAlias,
       state.groupId,
       state.subgroupId,
@@ -316,18 +455,25 @@ export class MoqtClientWrapper {
     client.incrementSubgroupObject(trackAlias)
   }
 
+  private issueRequestId(): bigint {
+    const requestId = this.nextRequestId
+    this.nextRequestId += 1n
+    return requestId
+  }
+
   private handleConnectionClosed(): void {
     this.cleanupClient()
     this.onConnectionClosedHandler?.()
   }
 
   private cleanupClient(): void {
-    if (this.client) {
-      this.client.free()
-      this.client = null
-    }
-    this.subscriptionState.clearHandlers()
+    this.client = null
     this.serverSetupResolve = null
+    this.pendingPublishNamespace.clear()
+    this.pendingSubscribeNamespace.clear()
+    this.pendingSubscribe.clear()
+    this.subscriptionTrackAliases.clear()
+    this.clearSubgroupObjectHandlers()
   }
 
   private requireConnectedClient(): MOQTClient {
@@ -338,10 +484,16 @@ export class MoqtClientWrapper {
   }
 }
 
-const defaultIncomingSubscribeHandler: IncomingSubscribeHandler = async (ctx) => {
-  if (ctx.isSuccess) {
-    await ctx.respondOk(0n, 'secret', 'subgroup')
-    return
-  }
-  await ctx.respondError(BigInt(ctx.code), 'Subscription validation failed')
+function isRequestError(
+  message: NamespaceOkMessage | RequestErrorMessage | SubscribeOkMessage
+): message is RequestErrorMessage {
+  return 'errorCode' in message
+}
+
+const defaultIncomingPublishNamespaceHandler: IncomingPublishNamespaceHandler = async ({ respondOk }) => {
+  await respondOk()
+}
+
+const defaultIncomingSubscribeHandler: IncomingSubscribeHandler = async ({ code, respondError }) => {
+  await respondError(BigInt(code || 500), 'subscribe rejected')
 }

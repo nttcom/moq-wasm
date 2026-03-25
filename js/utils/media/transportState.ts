@@ -6,7 +6,7 @@ interface SubgroupHeaderState {
 
 interface TrackCounters {
   groupId: bigint
-  objectId: bigint
+  nextObjectNumber: bigint
   subgroups: Map<SubgroupId, SubgroupHeaderState>
 }
 
@@ -28,13 +28,13 @@ function aliasKey(alias: bigint | string): string {
 export class MediaTransportState {
   private readonly video: TrackCounters = {
     groupId: -1n,
-    objectId: 0n,
+    nextObjectNumber: 0n,
     subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
   }
 
   private readonly audio: TrackCounters = {
     groupId: -1n,
-    objectId: 0n,
+    nextObjectNumber: 0n,
     subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
   }
 
@@ -51,7 +51,7 @@ export class MediaTransportState {
 
   advanceVideoGroup(): void {
     this.video.groupId += 1n
-    this.video.objectId = 0n
+    this.video.nextObjectNumber = 0n
     this.resetHeaders(this.video)
   }
 
@@ -59,12 +59,12 @@ export class MediaTransportState {
     return this.video.groupId
   }
 
-  getVideoObjectId(): bigint {
-    return this.video.objectId
+  getVideoObjectNumber(): bigint {
+    return this.video.nextObjectNumber
   }
 
-  incrementVideoObject(): void {
-    this.video.objectId += 1n
+  incrementVideoObjectNumber(): void {
+    this.video.nextObjectNumber += 1n
   }
 
   hasVideoHeaderSent(trackAlias: bigint, subgroupId: SubgroupId): boolean {
@@ -81,16 +81,32 @@ export class MediaTransportState {
 
   advanceAudioGroup(): void {
     this.audio.groupId += 1n
-    this.audio.objectId = 0n
+    this.audio.nextObjectNumber = 0n
     this.resetHeaders(this.audio)
   }
 
+  getAudioObjectNumber(): bigint {
+    return this.audio.nextObjectNumber
+  }
+
+  incrementAudioObjectNumber(): void {
+    this.audio.nextObjectNumber += 1n
+  }
+
+  getVideoObjectId(): bigint {
+    return this.getVideoObjectNumber()
+  }
+
+  incrementVideoObject(): void {
+    this.incrementVideoObjectNumber()
+  }
+
   getAudioObjectId(): bigint {
-    return this.audio.objectId
+    return this.getAudioObjectNumber()
   }
 
   incrementAudioObject(): void {
-    this.audio.objectId += 1n
+    this.incrementAudioObjectNumber()
   }
 
   shouldSendAudioHeader(trackAlias: bigint, subgroupId: SubgroupId): boolean {

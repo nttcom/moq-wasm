@@ -61,7 +61,7 @@ const sendMoqObject = async (
   client: MOQTClient,
   objectStatus?: number
 ): Promise<void> => {
-  await client.sendSubgroupStreamObject(trackAlias, groupId, 0n, objectId, objectStatus, data, undefined)
+  await client.sendSubgroupObject(trackAlias, groupId, 0n, objectId, objectStatus, data, undefined)
 }
 
 const setMoqSendVisualizationState = (type: 'video' | 'audio', groupId: bigint, objectId: bigint): void => {
@@ -180,8 +180,8 @@ const sendCatalog = async (client: MOQTClient, trackAlias: bigint, trackNamespac
     return
   }
   const payload = new TextEncoder().encode(buildCmafCatalogJson(trackNamespace))
-  await client.sendSubgroupStreamHeaderMessage(trackAlias, 0n, 0n, 0)
-  await client.sendSubgroupStreamObject(trackAlias, 0n, 0n, 0n, undefined, payload, undefined)
+  await client.sendSubgroupHeader(trackAlias, 0n, 0n, 0)
+  await client.sendSubgroupObject(trackAlias, 0n, 0n, 0n, undefined, payload, undefined)
   catalogAliases.add(aliasKey)
   console.info('[CmafPublisher] sent catalog', { trackAlias: aliasKey, trackNamespace })
 }
@@ -190,18 +190,18 @@ const sendSetupButtonClickHandler = (): void => {
   const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
   sendSetupBtn.addEventListener('click', async () => {
     const form = getFormElement()
-    const versions = new BigUint64Array('0xff00000A'.split(',').map(BigInt))
+    const versions = new BigUint64Array('0xff00000E'.split(',').map(BigInt))
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
-    await moqtClient.sendSetupMessage(versions, maxSubscribeId)
+    await moqtClient.sendClientSetup(versions, maxSubscribeId)
   })
 }
 
-const sendAnnounceButtonClickHandler = (): void => {
-  const sendAnnounceBtn = document.getElementById('sendAnnounceBtn') as HTMLButtonElement
-  sendAnnounceBtn.addEventListener('click', async () => {
+const sendPublishNamespaceButtonClickHandler = (): void => {
+  const sendPublishNamespaceBtn = document.getElementById('sendPublishNamespaceBtn') as HTMLButtonElement
+  sendPublishNamespaceBtn.addEventListener('click', async () => {
     const form = getFormElement()
-    const trackNamespace = parseTrackNamespace(form['announce-track-namespace'].value)
-    await moqtClient.announce(trackNamespace, AUTH_INFO)
+    const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
+    await moqtClient.publishNamespace(trackNamespace, AUTH_INFO)
   })
 }
 
@@ -225,7 +225,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
 
     const getTrackNamespace = () => {
       const form = getFormElement()
-      return parseTrackNamespace(form['announce-track-namespace'].value)
+      return parseTrackNamespace(form['publish-track-namespace'].value)
     }
 
     // --- fMP4 fragment コールバック生成 ---
@@ -242,10 +242,10 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
       let lastMoof: Uint8Array | null = null
 
       return {
-        onFtyp: (data: ArrayBuffer) => {
+        onFtyp: (data: Uint8Array, _position: number) => {
           initParts.push(new Uint8Array(data))
         },
-        onMoov: (data: ArrayBuffer) => {
+        onMoov: (data: Uint8Array, _position: number) => {
           initParts.push(new Uint8Array(data))
           const totalLen = initParts.reduce((sum, part) => sum + part.byteLength, 0)
           initSegment = new Uint8Array(totalLen)
@@ -256,17 +256,17 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
           }
           console.info(`[CmafPublisher] ${type} init segment ready`, { byteLength: initSegment.byteLength })
         },
-        onMoof: (data: ArrayBuffer) => {
+        onMoof: (data: Uint8Array, _position: number) => {
           lastMoof = new Uint8Array(data)
         },
-        onMdat: async (data: ArrayBuffer) => {
+        onMdat: async (data: Uint8Array, _position: number) => {
           if (!lastMoof || !initSegment) {
             return
           }
 
           const fragment = new Uint8Array(lastMoof.byteLength + data.byteLength)
           fragment.set(lastMoof, 0)
-          fragment.set(new Uint8Array(data), lastMoof.byteLength)
+          fragment.set(data, lastMoof.byteLength)
 
           const form = getFormElement()
           const publisherPriority = Number(form['video-publisher-priority'].value)
@@ -278,7 +278,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
           advanceGroup()
           const groupId = getGroupId()
           for (const alias of trackAliases) {
-            await client.sendSubgroupStreamHeaderMessage(alias, groupId, 0n, publisherPriority)
+            await client.sendSubgroupHeader(alias, groupId, 0n, publisherPriority)
             setMoqSendVisualizationState(type, groupId, 0n)
             await sendMoqObject(alias, groupId, 0n, initSegment, client)
             setMoqSendVisualizationState(type, groupId, 1n)
@@ -351,7 +351,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
 
 const setupButtonClickHandler = (): void => {
   sendSetupButtonClickHandler()
-  sendAnnounceButtonClickHandler()
+  sendPublishNamespaceButtonClickHandler()
   sendSubgroupObjectButtonClickHandler()
 }
 
@@ -360,20 +360,19 @@ const setupClientCallbacks = (): void => {
     console.log({ serverSetup })
   })
 
-  moqtClient.setOnAnnounceHandler(async (announceMessage) => {
-    console.log({ announceMessage })
-    const client = ensureClient()
-    await client.sendAnnounceOkMessage(announceMessage.trackNamespace)
+  moqtClient.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
+    console.log({ publishNamespace })
+    await respondOk()
   })
 
-  moqtClient.setOnSubscribeResponseHandler((announceResponseMessage) => {
-    console.log({ announceResponseMessage })
+  moqtClient.setOnSubscribeResponseHandler((subscribeResponseMessage) => {
+    console.log({ subscribeResponseMessage })
   })
 
   moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
     console.log({ subscribeMessage: subscribe })
     const form = getFormElement()
-    const trackNamespace = parseTrackNamespace(form['announce-track-namespace'].value)
+    const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
     const requestedNamespace = subscribe.trackNamespace ?? []
     const trackName = subscribe.trackName ?? ''
     const namespaceMatched = requestedNamespace.join('/') === trackNamespace.join('/')
@@ -384,17 +383,17 @@ const setupClientCallbacks = (): void => {
         return
       }
       if (isCatalogTrack(trackName)) {
-        await respondOk(0n, AUTH_INFO, 'subgroup')
+        const trackAlias = await respondOk(0n)
         const client = ensureClient()
-        await sendCatalog(client, BigInt(subscribe.trackAlias), trackNamespace)
+        await sendCatalog(client, trackAlias, trackNamespace)
         return
       }
       if (isVideoTrack(trackName)) {
-        await respondOk(0n, AUTH_INFO, 'subgroup')
+        await respondOk(0n)
         return
       }
       if (isAudioTrack(trackName)) {
-        await respondOk(0n, AUTH_INFO, 'subgroup')
+        await respondOk(0n)
         return
       }
       await respondError(404n, 'unknown track')

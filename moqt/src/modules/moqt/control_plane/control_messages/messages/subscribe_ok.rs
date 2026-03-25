@@ -9,17 +9,17 @@ use bytes::{Buf, BufMut, BytesMut};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct SubscribeOk {
-    pub(crate) request_id: u64,
-    pub(crate) track_alias: u64,
-    pub(crate) expires: u64,
-    pub(crate) group_order: GroupOrder,
-    pub(crate) content_exists: ContentExists,
-    pub(crate) delivery_timeout: Option<u64>,
-    pub(crate) max_duration: Option<u64>,
+    pub request_id: u64,
+    pub track_alias: u64,
+    pub expires: u64,
+    pub group_order: GroupOrder,
+    pub content_exists: ContentExists,
+    pub delivery_timeout: Option<u64>,
+    pub max_duration: Option<u64>,
 }
 
 impl SubscribeOk {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_alias = buf.try_get_varint().log_context("track alias").ok()?;
         let expires = buf.try_get_varint().log_context("expires").ok()?;
@@ -68,7 +68,7 @@ impl SubscribeOk {
         })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_varint(self.track_alias);

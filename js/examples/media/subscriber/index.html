@@ -55,7 +55,7 @@
 
           <section class="card stack">
             <h3>CLIENT_SETUP</h3>
-            <label>Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
+            <label>Max Request ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
             <div class="button-row action-row">
               <button type="button" id="sendSetupBtn" class="compact-button">Send</button>
             </div>
@@ -124,8 +124,20 @@
           <section class="card stack full">
             <h2>Playback</h2>
             <div class="media-grid">
-              <video id="video" muted inline controls></video>
-              <audio id="audio"></audio>
+              <section class="playback-panel stack">
+                <div class="playback-meta">
+                  <strong>Video</strong>
+                  <span id="video-playback-object">Waiting for objects</span>
+                </div>
+                <video id="video" muted inline controls></video>
+              </section>
+              <section class="playback-panel stack">
+                <div class="playback-meta">
+                  <strong>Audio</strong>
+                  <span id="audio-playback-object">Waiting for objects</span>
+                </div>
+                <audio id="audio"></audio>
+              </section>
             </div>
           </section>
         </form>

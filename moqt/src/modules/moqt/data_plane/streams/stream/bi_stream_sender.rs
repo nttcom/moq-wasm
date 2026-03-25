@@ -1,12 +1,12 @@
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 
 use crate::{
     TransportProtocol,
     modules::{
-        extensions::buf_put_ext::BufPutExt,
         moqt::control_plane::control_messages::control_message_type::ControlMessageType,
         transport::transport_send_stream::TransportSendStream,
     },
+    wire::encode_control_message,
 };
 
 #[derive(Debug)]
@@ -26,10 +26,7 @@ impl<T: TransportProtocol> BiStreamSender<T> {
         message_type: ControlMessageType,
         bytes: BytesMut,
     ) -> anyhow::Result<()> {
-        let mut message_bytes = BytesMut::new();
-        message_bytes.put_varint(message_type as u64);
-        message_bytes.put_u16(bytes.len() as u16);
-        message_bytes.extend_from_slice(&bytes);
+        let message_bytes = encode_control_message(message_type, bytes);
         let mut stream_sender = self.stream_sender.lock().await;
         stream_sender.send(&message_bytes).await
     }

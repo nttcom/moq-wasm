@@ -43,6 +43,15 @@ function postDecodingObject(
   })
 }
 
+function postBufferedObject(groupId: bigint, objectId: bigint): void {
+  self.postMessage({
+    type: 'bufferedObject',
+    media: 'video',
+    groupId,
+    objectId
+  })
+}
+
 async function initializeVideoDecoder(config: VideoDecoderConfig) {
   function sendVideoFrameMessage(frame: VideoFrame): void {
     enqueueOutputFrame(frame)
@@ -525,8 +534,7 @@ function enqueueOutputFrame(frame: VideoFrame): void {
     return
   }
   const receivedKey = `${meta.groupId.toString()}:${meta.objectId.toString()}`
-  const receivedMs =
-    typeof meta.receivedMs === 'number' ? meta.receivedMs : (receivedFrameTimes.get(receivedKey) ?? null)
+  const receivedMs = typeof meta.receivedMs === 'number' ? meta.receivedMs : receivedFrameTimes.get(receivedKey) ?? null
   if (receivedFrameTimes.has(receivedKey)) {
     receivedFrameTimes.delete(receivedKey)
   }
@@ -620,23 +628,22 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
     return
   }
   const subgroupStreamObject: SubgroupObjectWithLoc = {
-    objectId: event.data.subgroupStreamObject.objectId,
+    subgroupId: event.data.subgroupStreamObject.subgroupId,
+    objectIdDelta: event.data.subgroupStreamObject.objectIdDelta,
     objectPayloadLength: event.data.subgroupStreamObject.objectPayloadLength,
     objectPayload: new Uint8Array(event.data.subgroupStreamObject.objectPayload),
     objectStatus: event.data.subgroupStreamObject.objectStatus,
     locHeader: event.data.subgroupStreamObject.locHeader
   }
   bitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
-  const receiveKey = `${event.data.groupId.toString()}:${subgroupStreamObject.objectId.toString()}`
 
-  const inserted = jitterBuffer.push(
-    event.data.groupId,
-    subgroupStreamObject.objectId,
-    subgroupStreamObject,
-    (latencyMs) => postReceiveLatency(latencyMs)
+  const objectId = jitterBuffer.push(event.data.groupId, subgroupStreamObject, (latencyMs) =>
+    postReceiveLatency(latencyMs)
   )
-  if (inserted) {
+  if (objectId !== null) {
+    const receiveKey = `${event.data.groupId.toString()}:${objectId.toString()}`
     postJitterBufferActivity('push')
+    postBufferedObject(event.data.groupId, objectId)
     receivedFrameTimes.set(receiveKey, performance.now())
     schedulePop(0)
   }

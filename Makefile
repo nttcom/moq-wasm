@@ -32,6 +32,12 @@ client:
 client-prod:
 	cd js && npm run prod
 
+relay:
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay -- --transport quic --port 4434
+
+relay-browser:
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay -- --transport webtransport --port 4433
+
 ingest-gateway:
 	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-ingest-gateway -- \
 		--rtmp-addr 0.0.0.0:1935 \

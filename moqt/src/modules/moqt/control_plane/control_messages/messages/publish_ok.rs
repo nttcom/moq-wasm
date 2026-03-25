@@ -9,17 +9,17 @@ use crate::modules::{
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct PublishOk {
-    pub(crate) request_id: u64,
-    pub(crate) forward: bool,
-    pub(crate) subscriber_priority: u8,
-    pub(crate) group_order: GroupOrder,
-    pub(crate) filter_type: FilterType,
-    pub(crate) delivery_timeout: Option<u64>,
+pub struct PublishOk {
+    pub request_id: u64,
+    pub forward: bool,
+    pub subscriber_priority: u8,
+    pub group_order: GroupOrder,
+    pub filter_type: FilterType,
+    pub delivery_timeout: Option<u64>,
 }
 
 impl PublishOk {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let forward_u8 = buf.try_get_u8().log_context("forward u8").ok()?;
         let forward = util::u8_to_bool(forward_u8).log_context("forward").ok()?;
@@ -41,7 +41,7 @@ impl PublishOk {
         })
     }
 
-    pub(crate) fn encode(&self) -> bytes::BytesMut {
+    pub fn encode(&self) -> bytes::BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_u8(self.forward as u8);

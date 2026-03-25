@@ -6,9 +6,9 @@ use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubscribeNamespace {
-    pub(crate) request_id: u64,
-    pub(crate) track_namespace_prefix: Vec<String>,
-    number_of_parameters: u64,
+    pub request_id: u64,
+    pub track_namespace_prefix: Vec<String>,
+    pub number_of_parameters: u64,
     pub authorization_token: Vec<AuthorizationToken>,
 }
 
@@ -29,7 +29,7 @@ impl SubscribeNamespace {
 }
 
 impl SubscribeNamespace {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_namespace_prefix_tuple_length = buf
             .try_get_varint()
@@ -63,7 +63,7 @@ impl SubscribeNamespace {
         })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_varint(self.track_namespace_prefix.len() as u64);

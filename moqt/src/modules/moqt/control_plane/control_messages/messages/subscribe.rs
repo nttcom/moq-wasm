@@ -14,19 +14,19 @@ use tracing;
 
 #[derive(Debug, PartialEq)]
 pub struct Subscribe {
-    pub(crate) request_id: u64,
-    pub(crate) track_namespace: Vec<String>,
-    pub(crate) track_name: String,
-    pub(crate) subscriber_priority: u8,
-    pub(crate) group_order: GroupOrder,
-    pub(crate) forward: bool,
-    pub(crate) filter_type: FilterType,
-    pub(crate) authorization_tokens: Vec<AuthorizationToken>,
-    pub(crate) delivery_timeout: Option<u64>,
+    pub request_id: u64,
+    pub track_namespace: Vec<String>,
+    pub track_name: String,
+    pub subscriber_priority: u8,
+    pub group_order: GroupOrder,
+    pub forward: bool,
+    pub filter_type: FilterType,
+    pub authorization_tokens: Vec<AuthorizationToken>,
+    pub delivery_timeout: Option<u64>,
 }
 
 impl Subscribe {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_namespace_tuple_length = buf
             .try_get_varint()
@@ -89,7 +89,7 @@ impl Subscribe {
         })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         // Track Namespace Number of elements

@@ -1,5 +1,5 @@
 import { Dispatch, SetStateAction, useEffect, useRef } from 'react'
-import { AnnounceMessage, SubscribeErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_wasm'
+import { PublishNamespaceMessage, RequestErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_wasm'
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
@@ -14,27 +14,27 @@ interface EventHandlerParams {
 }
 
 export function useSessionEventHandlers({ session, roomName, userName, setRoom, setChatMessages }: EventHandlerParams) {
-  const subscribedAnnouncesRef = useRef<LocalSession | null>(null)
+  const subscribedNamespacesRef = useRef<LocalSession | null>(null)
 
   useEffect(() => {
-    const handleAnnounce = createAnnounceHandler({ session, roomName, userName, setRoom })
-    session.setOnAnnounceHandler(handleAnnounce)
+    const handlePublishNamespace = createPublishNamespaceHandler({ session, roomName, userName, setRoom })
+    session.setOnPublishNamespaceHandler(handlePublishNamespace)
 
-    const ensureSubscribeAnnounces = async () => {
-      if (subscribedAnnouncesRef.current === session) {
+    const ensureSubscribeNamespace = async () => {
+      if (subscribedNamespacesRef.current === session) {
         return
       }
       try {
-        await session.subscribeAnnounces(session.trackNamespacePrefix)
-        subscribedAnnouncesRef.current = session
+        await session.subscribeNamespace(session.trackNamespacePrefix)
+        subscribedNamespacesRef.current = session
       } catch (error) {
-        console.error('Failed to subscribe announces:', error)
+        console.error('Failed to subscribe namespace:', error)
       }
     }
 
-    void ensureSubscribeAnnounces()
+    void ensureSubscribeNamespace()
     return () => {
-      session.setOnAnnounceHandler(() => {})
+      session.setOnPublishNamespaceHandler(null)
     }
   }, [roomName, session, setRoom, userName])
 
@@ -55,19 +55,19 @@ export function useSessionEventHandlers({ session, roomName, userName, setRoom, 
   }, [session, setChatMessages])
 }
 
-interface AnnounceHandlerOptions {
+interface PublishNamespaceHandlerOptions {
   session: LocalSession
   roomName: string
   userName: string
   setRoom: Dispatch<SetStateAction<Room>>
 }
 
-function createAnnounceHandler({ session, roomName, userName, setRoom }: AnnounceHandlerOptions) {
-  return (announce: AnnounceMessage) => {
+function createPublishNamespaceHandler({ session, roomName, userName, setRoom }: PublishNamespaceHandlerOptions) {
+  return (publishNamespace: PublishNamespaceMessage) => {
     if (session.status !== LocalSessionState.Ready) {
       return
     }
-    const trackNamespace = announce.trackNamespace
+    const trackNamespace = publishNamespace.trackNamespace
     if (!trackNamespace || trackNamespace.length < 2) {
       return
     }
@@ -85,14 +85,14 @@ function createAnnounceHandler({ session, roomName, userName, setRoom }: Announc
 }
 
 function createSubscribeResponseHandler(session: LocalSession, setRoom: Dispatch<SetStateAction<Room>>) {
-  return (response: SubscribeOkMessage | SubscribeErrorMessage) => {
+  return (response: SubscribeOkMessage | RequestErrorMessage) => {
     if (session.status !== LocalSessionState.Ready) {
       return
     }
     if ('errorCode' in response) {
-      console.error('SUBSCRIBE_ERROR:', response.subscribeId, response.errorCode, response.reasonPhrase)
+      console.error('SUBSCRIBE_ERROR:', response.requestId, response.errorCode, response.reasonPhrase)
       setRoom((currentRoom) =>
-        updateSubscriptionState(currentRoom, response.subscribeId, (track) => ({
+        updateSubscriptionState(currentRoom, response.requestId, (track) => ({
           ...track,
           isSubscribing: false,
           isSubscribed: false
@@ -102,7 +102,7 @@ function createSubscribeResponseHandler(session: LocalSession, setRoom: Dispatch
     }
 
     setRoom((currentRoom) =>
-      updateSubscriptionState(currentRoom, response.subscribeId, (track) => ({
+      updateSubscriptionState(currentRoom, response.requestId, (track) => ({
         ...track,
         isSubscribed: true,
         isSubscribing: false

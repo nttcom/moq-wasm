@@ -20,7 +20,7 @@ impl ServerSetup {
 }
 
 impl ServerSetup {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let selected_version = buf.try_get_varint().log_context("selected version").ok()?;
         let setup_parameters = SetupParameter::decode(buf)?;
 
@@ -31,7 +31,7 @@ impl ServerSetup {
         Some(server_setup_message)
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.selected_version as u64);
         payload.extend_from_slice(&self.setup_parameters.encode());

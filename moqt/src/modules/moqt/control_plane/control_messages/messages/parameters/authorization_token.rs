@@ -15,7 +15,7 @@ enum AliasType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum AuthorizationToken {
+pub enum AuthorizationToken {
     Delete,
     Register {
         token_alias: u64,
@@ -32,7 +32,7 @@ pub(crate) enum AuthorizationToken {
 }
 
 impl AuthorizationToken {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let token_alias = buf.try_get_varint().log_context("alias type").ok()?;
         if let Ok(token_alias) = AliasType::try_from(token_alias) {
             match token_alias {
@@ -66,7 +66,7 @@ impl AuthorizationToken {
         }
     }
 
-    pub(crate) fn encode(&self) -> bytes::BytesMut {
+    pub fn encode(&self) -> bytes::BytesMut {
         match self {
             AuthorizationToken::Delete => {
                 let mut buf = bytes::BytesMut::new();

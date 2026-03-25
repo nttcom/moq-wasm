@@ -1,7 +1,7 @@
 use anyhow::bail;
 use bytes::{Buf, TryGetError};
 
-pub(crate) trait BufGetExt {
+pub trait BufGetExt {
     fn try_get_varint(&mut self) -> Result<u64, TryGetError>;
     fn try_get_string(&mut self) -> anyhow::Result<String>;
 }

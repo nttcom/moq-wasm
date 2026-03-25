@@ -49,7 +49,7 @@ impl ObjectDatagram {
         }
     }
 
-    pub(crate) fn decode(buf: &mut BytesMut) -> Option<Self> {
+    pub fn decode(buf: &mut BytesMut) -> Option<Self> {
         let message_type = buf.try_get_varint().log_context("datagram type").ok()?;
         let track_alias = buf.try_get_varint().log_context("track alias").ok()?;
         let group_id = buf.try_get_varint().log_context("group id").ok()?;
@@ -63,7 +63,7 @@ impl ObjectDatagram {
         })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut buf = BytesMut::new();
         let (message_type, field_bytes) = self.field.encode();
         buf.put_varint(message_type);

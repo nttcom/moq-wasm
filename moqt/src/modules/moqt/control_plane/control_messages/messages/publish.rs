@@ -13,21 +13,21 @@ use crate::modules::{
 };
 
 #[derive(Debug)]
-pub(crate) struct Publish {
-    pub(crate) request_id: u64,
-    pub(crate) track_namespace_tuple: Vec<String>,
-    pub(crate) track_name: String,
-    pub(crate) track_alias: u64,
-    pub(crate) group_order: GroupOrder,
-    pub(crate) content_exists: ContentExists,
-    pub(crate) forward: bool,
-    pub(crate) authorization_tokens: Vec<AuthorizationToken>,
-    pub(crate) delivery_timeout: Option<u64>,
-    pub(crate) max_duration: Option<u64>,
+pub struct Publish {
+    pub request_id: u64,
+    pub track_namespace_tuple: Vec<String>,
+    pub track_name: String,
+    pub track_alias: u64,
+    pub group_order: GroupOrder,
+    pub content_exists: ContentExists,
+    pub forward: bool,
+    pub authorization_tokens: Vec<AuthorizationToken>,
+    pub delivery_timeout: Option<u64>,
+    pub max_duration: Option<u64>,
 }
 
 impl Publish {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_namespace_tuple_length = buf
             .try_get_varint()
@@ -97,7 +97,7 @@ impl Publish {
         })
     }
 
-    pub(crate) fn encode(&self) -> bytes::BytesMut {
+    pub fn encode(&self) -> bytes::BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         // Track Namespace Number of elements

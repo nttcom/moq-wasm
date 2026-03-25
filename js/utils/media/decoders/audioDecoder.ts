@@ -47,6 +47,15 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
 const POP_INTERVAL_MS = 5
 const jitterBuffer = new AudioJitterBuffer(1800, 'ordered')
 
+function postBufferedObject(groupId: bigint, objectId: bigint) {
+  self.postMessage({
+    type: 'bufferedObject',
+    media: 'audio',
+    groupId,
+    objectId
+  })
+}
+
 setInterval(() => {
   const jitterBufferEntry = jitterBuffer.pop()
   if (!jitterBufferEntry) {
@@ -72,7 +81,8 @@ self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
 
   const message = event.data as SubgroupWorkerMessage
   const subgroupStreamObject: SubgroupObjectWithLoc = {
-    objectId: message.subgroupStreamObject.objectId,
+    subgroupId: message.subgroupStreamObject.subgroupId,
+    objectIdDelta: message.subgroupStreamObject.objectIdDelta,
     objectPayloadLength: message.subgroupStreamObject.objectPayloadLength,
     objectPayload: new Uint8Array(message.subgroupStreamObject.objectPayload),
     objectStatus: message.subgroupStreamObject.objectStatus,
@@ -80,14 +90,12 @@ self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
   }
   audioBitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
 
-  const inserted = jitterBuffer.push(
-    message.groupId,
-    subgroupStreamObject.objectId,
-    subgroupStreamObject,
-    (latencyMs) => postReceiveLatency(latencyMs)
+  const objectId = jitterBuffer.push(message.groupId, subgroupStreamObject, (latencyMs) =>
+    postReceiveLatency(latencyMs)
   )
-  if (inserted) {
+  if (objectId !== null) {
     postJitterBufferActivity('push')
+    postBufferedObject(message.groupId, objectId)
   }
 }
 

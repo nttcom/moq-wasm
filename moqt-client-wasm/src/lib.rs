@@ -11,1832 +11,266 @@ pub use media_streaming_format::*;
 pub use messages::*;
 
 #[cfg(feature = "web_sys_unstable_apis")]
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 #[cfg(feature = "web_sys_unstable_apis")]
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 #[cfg(feature = "web_sys_unstable_apis")]
-use js_sys::BigInt;
-#[cfg(feature = "web_sys_unstable_apis")]
-use moqt_core::{
-    control_message_type::ControlMessageType,
-    data_stream_type::DataStreamType,
-    messages::control_messages::{
-        announce::Announce,
-        announce_error::AnnounceError,
-        announce_ok::AnnounceOk,
-        client_setup::ClientSetup,
-        group_order::GroupOrder,
-        server_setup::ServerSetup,
-        setup_parameters::{MaxSubscribeID, SetupParameter},
-        subscribe::{FilterType, Subscribe},
-        subscribe_announces::SubscribeAnnounces,
-        subscribe_announces_error::SubscribeAnnouncesError,
-        subscribe_announces_ok::SubscribeAnnouncesOk,
-        subscribe_done::SubscribeDone,
-        subscribe_error::{SubscribeError, SubscribeErrorCode},
-        subscribe_ok::SubscribeOk,
-        unannounce::UnAnnounce,
-        unsubscribe::Unsubscribe,
-        version_specific_parameters::{
-            AuthorizationInfo, DeliveryTimeout, MaxCacheDuration, VersionSpecificParameter,
-        },
-    },
-    messages::{
-        data_streams::{
-            DataStreams, datagram, datagram_status, object_status::ObjectStatus, subgroup_stream,
-        },
-        moqt_payload::MOQTPayload,
-    },
-    models::subscriptions::{
-        Subscription,
-        nodes::{consumers::Consumer, producers::Producer, registry::SubscriptionNodeRegistry},
-    },
-    variable_integer::{
-        read_variable_integer, read_variable_integer_from_buffer, write_variable_integer,
-    },
+use moqt::wire::{
+    AuthorizationToken, BufGetExt, BufPutExt, ClientSetup, ContentExists, ControlMessageType,
+    DatagramField, ExtensionHeaders, FilterType, GroupOrder, Location, NamespaceOk, ObjectDatagram,
+    ObjectStatus, Publish, PublishNamespace, PublishOk, RequestError, ServerSetup, SetupParameter,
+    SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace,
+    SubscribeOk, encode_control_message, take_control_message,
 };
-
 #[cfg(feature = "web_sys_unstable_apis")]
-use std::{cell::RefCell, collections::HashMap, io::Cursor, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeSet, HashMap, HashSet},
+    io::Cursor,
+    rc::Rc,
+};
+#[cfg(feature = "web_sys_unstable_apis")]
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 #[cfg(feature = "web_sys_unstable_apis")]
 use wasm_bindgen_futures::JsFuture;
 #[cfg(feature = "web_sys_unstable_apis")]
 use web_sys::{
     ReadableStream, ReadableStreamDefaultReader, WebTransport, WebTransportBidirectionalStream,
-    WritableStream, WritableStreamDefaultWriter,
+    WritableStreamDefaultWriter,
 };
 
 #[wasm_bindgen]
 extern "C" {
-    fn alert(s: &str);
-
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]
 macro_rules! console_log {
-    // Note that this is using the `log` function imported above during
-    // `bare_bones`
-    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+    ($($t:tt)*) => {
+        log(&format_args!($($t)*).to_string())
+    };
 }
 
-// Call `utils::set_panic_hook` automatically
 #[wasm_bindgen(start)]
 fn main() {
     utils::set_panic_hook();
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]
-type SubscribeId = u64;
-#[cfg(feature = "web_sys_unstable_apis")]
-type GroupId = u64;
-#[cfg(feature = "web_sys_unstable_apis")]
-type SubgroupId = u64;
-#[cfg(feature = "web_sys_unstable_apis")]
-type WriterKey = (SubscribeId, Option<(GroupId, SubgroupId)>);
+type WriterKey = (u64, u64, u64);
 
 #[cfg(feature = "web_sys_unstable_apis")]
-#[wasm_bindgen]
-pub struct MOQTClient {
-    pub id: u64,
-    url: String,
-    subscription_node: Rc<RefCell<SubscriptionNode>>,
-    transport: Rc<RefCell<Option<WebTransport>>>,
-    control_stream_writer: Rc<RefCell<Option<WritableStreamDefaultWriter>>>,
-    datagram_writer: Rc<RefCell<Option<WritableStreamDefaultWriter>>>,
-    stream_writers: Rc<RefCell<HashMap<WriterKey, WritableStreamDefaultWriter>>>,
-    callbacks: Rc<RefCell<MOQTCallbacks>>,
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TrackKey {
+    namespace: Vec<String>,
+    name: String,
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]
-#[wasm_bindgen]
-impl MOQTClient {
-    #[wasm_bindgen(constructor)]
-    pub fn new(url: String) -> Self {
-        MOQTClient {
-            id: 42,
-            url,
-            subscription_node: Rc::new(RefCell::new(SubscriptionNode::new())),
-            transport: Rc::new(RefCell::new(None)),
-            control_stream_writer: Rc::new(RefCell::new(None)),
-            datagram_writer: Rc::new(RefCell::new(None)),
-            stream_writers: Rc::new(RefCell::new(HashMap::new())),
-            callbacks: Rc::new(RefCell::new(MOQTCallbacks::new())),
-        }
-    }
-    pub fn url(&self) -> JsValue {
-        JsValue::from_str(self.url.as_str())
-    }
-
-    #[wasm_bindgen(js_name = onSetup)]
-    pub fn set_setup_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks.borrow_mut().set_setup_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onAnnounce)]
-    pub fn set_announce_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks.borrow_mut().set_announce_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onAnnounceResponse)]
-    pub fn set_announce_response_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_announce_response_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onSubscribe)]
-    pub fn set_subscribe_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks.borrow_mut().set_subscribe_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onUnsubscribe)]
-    pub fn set_unsubscribe_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_unsubscribe_callback(callback)
-    }
-
-    #[wasm_bindgen(js_name = onIncomingUnsubscribe)]
-    pub fn set_incoming_unsubscribe_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_incoming_unsubscribe_callback(callback)
-    }
-
-    #[wasm_bindgen(js_name = onSubscribeResponse)]
-    pub fn set_subscribe_response_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_subscribe_response_callback(callback);
-    }
-    #[wasm_bindgen(js_name = onSubscribeAnnouncesResponse)]
-    pub fn set_subscribe_announces_response_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_subscribe_announces_response_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onDatagramObject)]
-    pub fn set_datagram_object_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_datagram_object_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onDatagramObjectStatus)]
-    pub fn set_datagram_object_status_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_datagram_object_status_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onSubgroupStreamHeader)]
-    pub fn set_subgroup_stream_header_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_subgroup_stream_header_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onSubgroupStreamObject)]
-    pub fn set_subgroup_stream_object_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_subgroup_stream_object_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = onConnectionClosed)]
-    pub fn set_connection_closed_callback(&mut self, callback: js_sys::Function) {
-        self.callbacks
-            .borrow_mut()
-            .set_connection_closed_callback(callback);
-    }
-
-    #[wasm_bindgen(js_name = isConnected)]
-    pub fn is_connected(&self) -> bool {
-        self.transport.borrow().is_some()
-    }
-
-    #[wasm_bindgen(js_name = sendSetupMessage)]
-    pub async fn send_setup_message(
-        &mut self,
-        versions: Vec<u64>,
-        max_subscribe_id: u64,
-    ) -> Result<(), JsValue> {
-        let writer = self.control_stream_writer.borrow().clone();
-        if let Some(writer) = writer {
-            let versions = versions.iter().map(|v| *v as u32).collect::<Vec<u32>>();
-            let setup_parameters = vec![SetupParameter::MaxSubscribeID(MaxSubscribeID::new(
-                max_subscribe_id,
-            ))];
-
-            let client_setup_message = ClientSetup::new(versions, setup_parameters);
-            let mut client_setup_message_buf = BytesMut::new();
-            client_setup_message.packetize(&mut client_setup_message_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(ControlMessageType::ClientSetup) as u64,
-            ));
-            // Message Payload and Payload Length
-            buf.extend(write_variable_integer(client_setup_message_buf.len() as u64));
-            buf.extend(client_setup_message_buf);
-
-            // send
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                // Setup nodes along with the role
-                Ok(_) => {
-                    log(std::format!("sent: client_setup: {:#x?}", client_setup_message).as_str());
-                    self.subscription_node
-                        .borrow_mut()
-                        .setup_as_publisher(max_subscribe_id);
-                    self.subscription_node
-                        .borrow_mut()
-                        .setup_as_subscriber(max_subscribe_id);
-
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        } else {
-            Err(JsValue::from_str("control_stream_writer is None"))
-        }
-    }
-
-    // TODO: auth
-    #[wasm_bindgen(js_name = sendAnnounceMessage)]
-    pub async fn send_announce_message(
-        &self,
-        track_namespace: Vec<String>,
-        auth_info: String, // param[0]
-    ) -> Result<(), JsValue> {
-        let writer = self.control_stream_writer.borrow().clone();
-        if let Some(writer) = writer {
-            let auth_info_parameter =
-                VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
-
-            let already_announced = !self
-                .subscription_node
-                .borrow_mut()
-                .register_publisher_namespace(track_namespace.clone());
-
-            if already_announced {
-                return Ok(());
-            }
-
-            let announce_message =
-                Announce::new(track_namespace.clone(), vec![auth_info_parameter]);
-            let mut announce_message_buf = BytesMut::new();
-            announce_message.packetize(&mut announce_message_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(ControlMessageType::Announce) as u64,
-            ));
-            // Message Payload and Payload Length
-            buf.extend(write_variable_integer(announce_message_buf.len() as u64));
-            buf.extend(announce_message_buf);
-
-            // send
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(_) => {
-                    log(std::format!("sent: announce: {:#x?}", announce_message).as_str());
-                    Ok(())
-                }
-                Err(e) => {
-                    self.subscription_node
-                        .borrow_mut()
-                        .unregister_publisher_namespace(track_namespace);
-                    Err(e)
-                }
-            }
-        } else {
-            Err(JsValue::from_str("control_stream_writer is None"))
-        }
-    }
-
-    #[wasm_bindgen(js_name = sendAnnounceOkMessage)]
-    pub async fn send_announce_ok_message(
-        &self,
-        track_namespace: Vec<String>,
-    ) -> Result<(), JsValue> {
-        let writer = self.control_stream_writer.borrow().clone();
-        if let Some(writer) = writer {
-            let announce_ok_message = AnnounceOk::new(track_namespace.clone());
-            let mut announce_ok_message_buf = BytesMut::new();
-            announce_ok_message.packetize(&mut announce_ok_message_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(ControlMessageType::AnnounceOk) as u64,
-            ));
-            // Message Payload and Payload Length
-            buf.extend(write_variable_integer(announce_ok_message_buf.len() as u64));
-            buf.extend(announce_ok_message_buf);
-
-            // send
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(_) => {
-                    log(std::format!("sent: announce_ok: {:#x?}", announce_ok_message).as_str());
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        } else {
-            Err(JsValue::from_str("control_stream_writer is None"))
-        }
-    }
-
-    #[wasm_bindgen(js_name = sendUnannounceMessage)]
-    pub async fn send_unannounce_message(
-        &self,
-        track_namespace: Vec<String>,
-    ) -> Result<(), JsValue> {
-        let writer = self.control_stream_writer.borrow().clone();
-        if let Some(writer) = writer {
-            {
-                let mut node = self.subscription_node.borrow_mut();
-                if !node.publisher_has_namespace(&track_namespace) {
-                    return Ok(());
-                }
-                let _ = node.unregister_publisher_namespace(track_namespace.clone());
-            }
-
-            let unannounce_message = UnAnnounce::new(track_namespace.clone());
-            let mut unannounce_message_buf = BytesMut::new();
-            unannounce_message.packetize(&mut unannounce_message_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(ControlMessageType::UnAnnounce) as u64,
-            ));
-            // Message Payload and Payload Length
-            buf.extend(write_variable_integer(unannounce_message_buf.len() as u64));
-            buf.extend(unannounce_message_buf);
-
-            // send
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(_) => {
-                    log(std::format!("sent: unannounce: {:#x?}", unannounce_message).as_str());
-                    Ok(())
-                }
-                Err(e) => {
-                    self.subscription_node
-                        .borrow_mut()
-                        .register_publisher_namespace(track_namespace);
-                    Err(e)
-                }
-            }
-        } else {
-            Err(JsValue::from_str("control_stream_writer is None"))
-        }
-    }
-
-    // tmp impl
-    #[wasm_bindgen(js_name = sendSubscribeMessage)]
-    #[allow(clippy::too_many_arguments)]
-    pub async fn send_subscribe_message(
-        &self,
-        subscribe_id: u64,
-        track_alias: u64,
-        track_namespace: Vec<String>,
-        track_name: String,
-        priority: u8,
-        group_order: u8,
-        filter_type: u8,
-        start_group: u64,
-        start_object: u64,
-        end_group: u64,
-        auth_info: String,
-    ) -> Result<(), JsValue> {
-        let writer = self.control_stream_writer.borrow().clone();
-        if let Some(writer) = writer {
-            // This is equal to `Now example`
-            let auth_info =
-                VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
-
-            let group_order = GroupOrder::try_from(group_order).unwrap();
-            let filter_type = FilterType::try_from(filter_type).unwrap();
-            let (start_group, start_object) = match filter_type {
-                FilterType::LatestObject | FilterType::LatestGroup => (None, None),
-                FilterType::AbsoluteStart | FilterType::AbsoluteRange => {
-                    (Some(start_group), Some(start_object))
-                }
-            };
-            let end_group = match filter_type {
-                FilterType::LatestObject | FilterType::LatestGroup | FilterType::AbsoluteStart => {
-                    None
-                }
-                FilterType::AbsoluteRange => Some(end_group),
-            };
-
-            let max_cache_duration =
-                VersionSpecificParameter::MaxCacheDuration(MaxCacheDuration::new(1000000));
-            let delivery_timeout =
-                VersionSpecificParameter::DeliveryTimeout(DeliveryTimeout::new(100000));
-            let version_specific_parameters = vec![auth_info, max_cache_duration, delivery_timeout];
-            let subscribe_message = Subscribe::new(
-                subscribe_id,
-                track_alias,
-                track_namespace.clone(),
-                track_name.clone(),
-                priority,
-                group_order,
-                filter_type,
-                start_group,
-                start_object,
-                end_group,
-                version_specific_parameters,
-            )
-            .unwrap();
-            let mut subscribe_message_buf = BytesMut::new();
-            subscribe_message.packetize(&mut subscribe_message_buf);
-
-            let is_already_subscribed = !self.subscription_node.borrow_mut().start_subscription(
-                subscribe_id,
-                track_alias,
-                track_namespace.clone(),
-                track_name.clone(),
-                priority,
-                group_order,
-                filter_type,
-                start_group,
-                start_object,
-                end_group,
-            );
-
-            if is_already_subscribed {
-                return Ok(());
-            }
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(ControlMessageType::Subscribe) as u64,
-            ));
-            // Message Payload and Payload Length
-            buf.extend(write_variable_integer(subscribe_message_buf.len() as u64));
-            buf.extend(subscribe_message_buf);
-
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(_) => {
-                    log(std::format!("sent: subscribe: {:#x?}", subscribe_message).as_str());
-                    Ok(())
-                }
-                Err(e) => {
-                    self.subscription_node
-                        .borrow_mut()
-                        .cancel_subscription(subscribe_id);
-                    Err(e)
-                }
-            }
-        } else {
-            Err(JsValue::from_str("control_stream_writer is None"))
-        }
-    }
-
-    #[wasm_bindgen(js_name = isSubscribed)]
-    pub fn is_subscribed(&self, subscribe_id: u64) -> bool {
-        self.subscription_node.borrow().is_subscribing(subscribe_id)
-    }
-
-    #[wasm_bindgen(js_name = getTrackSubscribers)]
-    pub fn get_track_subscribers(
-        &self,
-        track_namespace: Vec<String>,
-        track_name: String,
-    ) -> Vec<u64> {
-        self.subscription_node
-            .borrow()
-            .get_publishing_track_aliases(track_namespace, track_name)
-    }
-
-    #[wasm_bindgen(js_name = getSubgroupState)]
-    pub fn get_subgroup_state(&self, track_alias: u64) -> SubgroupState {
-        let mut node = self.subscription_node.borrow_mut();
-        node.current_subgroup_state(track_alias)
-    }
-
-    #[wasm_bindgen(js_name = markSubgroupHeaderSent)]
-    pub fn mark_subgroup_header_sent(&self, track_alias: u64) {
-        self.subscription_node
-            .borrow_mut()
-            .mark_subgroup_header_sent(track_alias);
-    }
-
-    #[wasm_bindgen(js_name = incrementSubgroupObject)]
-    pub fn increment_subgroup_object(&self, track_alias: u64) {
-        self.subscription_node
-            .borrow_mut()
-            .increment_subgroup_object(track_alias);
-    }
-
-    #[wasm_bindgen(js_name = resetSubgroupState)]
-    pub fn reset_subgroup_state(&self, track_alias: u64) {
-        self.subscription_node
-            .borrow_mut()
-            .reset_subgroup_state(track_alias);
-    }
-
-    #[wasm_bindgen(js_name = sendSubscribeOkMessage)]
-    pub async fn send_subscribe_ok_message(
-        &self,
-        subscribe_id: u64,
-        expires: u64,
-        auth_info: String,
-        fowarding_preference: String,
-    ) -> Result<(), JsValue> {
-        let writer = self.control_stream_writer.borrow().clone();
-        if let Some(writer) = writer {
-            let auth_info =
-                VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
-            let subscription = self
-                .subscription_node
-                .borrow()
-                .get_publishing_subscription(subscribe_id)
-                .unwrap();
-
-            let requested_group_order = subscription.get_group_order();
-            let group_order = if requested_group_order == GroupOrder::Original {
-                // If requested_group_order is Original, use Ascending as its response
-                GroupOrder::Ascending
-            } else {
-                // Otherwise, return the requested_group_order as is
-                requested_group_order
-            };
-
-            let version_specific_parameters = vec![auth_info];
-            let subscribe_ok_message = SubscribeOk::new(
-                subscribe_id,
-                expires,
-                group_order,
-                false,
-                None,
-                None,
-                version_specific_parameters,
-            );
-            let mut subscribe_ok_message_buf = BytesMut::new();
-            subscribe_ok_message.packetize(&mut subscribe_ok_message_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(ControlMessageType::SubscribeOk) as u64,
-            ));
-            // Message Payload and Payload Length
-            buf.extend(write_variable_integer(subscribe_ok_message_buf.len() as u64));
-            buf.extend(subscribe_ok_message_buf);
-
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(_) => {
-                    log(std::format!("sent: subscribe_ok: {:#x?}", subscribe_ok_message).as_str());
-                    self.subscription_node
-                        .borrow_mut()
-                        .activate_as_publisher(subscribe_id);
-
-                    match &*fowarding_preference {
-                        // stream
-                        "datagram" => {
-                            let datagram_writer = self
-                                .transport
-                                .borrow()
-                                .as_ref()
-                                .unwrap()
-                                .datagrams()
-                                .writable()
-                                .get_writer()?;
-                            *self.datagram_writer.borrow_mut() = Some(datagram_writer);
-                        }
-                        "track" => {
-                            // Writer will be generated when sending in a new Subgroup Stream
-                        }
-                        "subgroup" => {
-                            // Writer will be generated when sending in a new Subgroup Stream
-                        }
-                        _ => {}
-                    }
-
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        } else {
-            Err(JsValue::from_str("control_stream_writer is None"))
-        }
-    }
-
-    #[wasm_bindgen(js_name = sendSubscribeAnnouncesMessage)]
-    pub async fn send_subscribe_announces_message(
-        &self,
-        track_namespace_prefix: Vec<String>,
-        auth_info: String,
-    ) -> Result<(), JsValue> {
-        let writer = self.control_stream_writer.borrow().clone();
-        if let Some(writer) = writer {
-            let auth_info =
-                VersionSpecificParameter::AuthorizationInfo(AuthorizationInfo::new(auth_info));
-
-            let already_subscribed = !self
-                .subscription_node
-                .borrow_mut()
-                .register_subscriber_namespace_prefix(track_namespace_prefix.clone());
-
-            if already_subscribed {
-                return Ok(());
-            }
-
-            let version_specific_parameters = vec![auth_info];
-            let subscribe_announces_message = SubscribeAnnounces::new(
-                track_namespace_prefix.clone(),
-                version_specific_parameters,
-            );
-            let mut subscribe_announces_message_buf = BytesMut::new();
-            subscribe_announces_message.packetize(&mut subscribe_announces_message_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(ControlMessageType::SubscribeAnnounces) as u64,
-            ));
-            // Message Payload and Payload Length
-            buf.extend(write_variable_integer(
-                subscribe_announces_message_buf.len() as u64,
-            ));
-            buf.extend(subscribe_announces_message_buf);
-
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(_) => {
-                    log(std::format!(
-                        "sent: subscribe_announces: {:#x?}",
-                        subscribe_announces_message
-                    )
-                    .as_str());
-                    Ok(())
-                }
-                Err(e) => {
-                    self.subscription_node
-                        .borrow_mut()
-                        .unregister_subscriber_namespace_prefix(track_namespace_prefix);
-                    Err(e)
-                }
-            }
-        } else {
-            Err(JsValue::from_str("control_stream_writer is None"))
-        }
-    }
-
-    #[wasm_bindgen(js_name = sendSubscribeErrorMessage)]
-    pub async fn send_subscribe_error_message(
-        &self,
-        subscribe_id: u64,
-        error_code: u64,
-        reason_phrase: String,
-    ) -> Result<(), JsValue> {
-        let writer = self.control_stream_writer.borrow().clone();
-        if let Some(writer) = writer {
-            // Find unused subscribe_id and track_alias automatically
-            let valid_track_alias = self
-                .subscription_node
-                .borrow_mut()
-                .create_valid_track_alias()
-                .unwrap();
-            let subscribe_error_message = SubscribeError::new(
-                subscribe_id,
-                SubscribeErrorCode::try_from(error_code as u8).unwrap(),
-                reason_phrase,
-                valid_track_alias,
-            );
-            let mut subscribe_error_message_buf = BytesMut::new();
-            subscribe_error_message.packetize(&mut subscribe_error_message_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(ControlMessageType::SubscribeError) as u64,
-            ));
-            // Message Payload and Payload Length
-            buf.extend(write_variable_integer(
-                subscribe_error_message_buf.len() as u64
-            ));
-            buf.extend(subscribe_error_message_buf);
-
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(_) => {
-                    log(
-                        std::format!("sent: subscribe_error: {:#x?}", subscribe_error_message)
-                            .as_str(),
-                    );
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        } else {
-            Err(JsValue::from_str("control_stream_writer is None"))
-        }
-    }
-
-    #[wasm_bindgen(js_name = sendUnsubscribeMessage)]
-    pub async fn send_unsubscribe_message(&self, subscribe_id: u64) -> Result<(), JsValue> {
-        let writer = self.control_stream_writer.borrow().clone();
-        if let Some(writer) = writer {
-            let unsubscribe_message = Unsubscribe::new(subscribe_id);
-            let mut unsubscribe_message_buf = BytesMut::new();
-            unsubscribe_message.packetize(&mut unsubscribe_message_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(ControlMessageType::UnSubscribe) as u64,
-            ));
-            // Message Payload and Payload Length
-            buf.extend(write_variable_integer(unsubscribe_message_buf.len() as u64));
-            buf.extend(unsubscribe_message_buf);
-
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(_) => {
-                    self.subscription_node
-                        .borrow_mut()
-                        .cancel_subscription(subscribe_id);
-                    log(std::format!("sent: unsubscribe: {:#x?}", unsubscribe_message).as_str());
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        } else {
-            Err(JsValue::from_str("control_stream_writer is None"))
-        }
-    }
-
-    #[wasm_bindgen(js_name = sendDatagramObject)]
-    pub async fn send_datagram_object(
-        &self,
-        track_alias: u64,
-        group_id: u64,
-        object_id: u64,
-        publisher_priority: u8,
-        object_payload: Vec<u8>,
-    ) -> Result<(), JsValue> {
-        let writer = self.datagram_writer.borrow().clone();
-        if let Some(writer) = writer {
-            let extension_headers = vec![];
-            let datagram_object = datagram::Object::new(
-                track_alias,
-                group_id,
-                object_id,
-                publisher_priority,
-                extension_headers,
-                object_payload,
-            )
-            .unwrap();
-            let mut datagram_object_buf = BytesMut::new();
-            datagram_object.packetize(&mut datagram_object_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(DataStreamType::ObjectDatagram) as u64,
-            ));
-            buf.extend(datagram_object_buf);
-
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(_) => {
-                    log(std::format!("sent: object id: {:#?}", object_id).as_str());
-                    Ok(())
-                }
-                Err(e) => {
-                    log(std::format!("err: {:?}", e).as_str());
-                    Err(e)
-                }
-            }
-        } else {
-            Err(JsValue::from_str("datagram_writer is None"))
-        }
-    }
-
-    #[wasm_bindgen(js_name = sendDatagramObjectStatus)]
-    pub async fn send_datagram_object_status(
-        &self,
-        track_alias: u64,
-        group_id: u64,
-        object_id: u64,
-        publisher_priority: u8,
-        object_status: u8,
-    ) -> Result<(), JsValue> {
-        let writer = self.datagram_writer.borrow().clone();
-        if let Some(writer) = writer {
-            let extension_headers = vec![];
-            let datagram_object = datagram_status::Object::new(
-                track_alias,
-                group_id,
-                object_id,
-                publisher_priority,
-                extension_headers,
-                ObjectStatus::try_from(object_status).unwrap(),
-            )
-            .unwrap();
-            let mut datagram_object_buf = BytesMut::new();
-            datagram_object.packetize(&mut datagram_object_buf);
-
-            let mut buf = Vec::new();
-            // Message Type
-            buf.extend(write_variable_integer(
-                u8::from(DataStreamType::ObjectDatagramStatus) as u64,
-            ));
-            buf.extend(datagram_object_buf);
-
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(_) => {
-                    log(std::format!("sent: object id: {:#?}", object_id).as_str());
-                    Ok(())
-                }
-                Err(e) => {
-                    log(std::format!("err: {:?}", e).as_str());
-                    Err(e)
-                }
-            }
-        } else {
-            Err(JsValue::from_str("datagram_writer is None"))
-        }
-    }
-
-    async fn get_or_create_stream_writer(
-        &self,
-        subscribe_id: u64,
-        group_id: u64,
-        subgroup_id: u64,
-    ) -> Result<WritableStreamDefaultWriter> {
-        let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
-        let mut need_create = false;
-
-        // step 1: writer exists check
-        {
-            let stream_writers = self.stream_writers.borrow();
-            if !stream_writers.contains_key(&writer_key) {
-                need_create = true;
-            }
-        }
-        // step 2: create if needed
-        if need_create {
-            let uni_stream_future = {
-                let transport = self.transport.borrow();
-                transport.as_ref().unwrap().create_unidirectional_stream()
-            };
-            let send_uni_stream = WritableStream::from(
-                JsFuture::from(uni_stream_future)
-                    .await
-                    .map_err(|e| anyhow::Error::msg(format!("{:?}", e)))?,
-            );
-            let send_uni_stream_writer = match send_uni_stream.get_writer() {
-                Ok(writer) => writer,
-                Err(e) => return Err(anyhow::anyhow!("Failed to get writer: {:?}", e)),
-            };
-
-            self.stream_writers
-                .borrow_mut()
-                .insert(writer_key, send_uni_stream_writer);
-        }
-        // step 3: return writer
-        let writer = {
-            let stream_writers = self.stream_writers.borrow();
-            stream_writers
-                .get(&writer_key)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("Writer not found for key: {:?}", writer_key))?
-        };
-
-        Ok(writer)
-    }
-
-    #[wasm_bindgen(js_name = sendSubgroupStreamHeaderMessage)]
-    pub async fn send_subgroup_stream_header_message(
-        &self,
-        track_alias: u64,
-        group_id: u64,
-        subgroup_id: u64,
-        publisher_priority: u8,
-    ) -> Result<(), JsValue> {
-        let subscribe_id = match self
-            .subscription_node
-            .borrow()
-            .get_publishing_subscribe_id_by_track_alias(track_alias)
-        {
-            Some(id) => id,
-            None => return Err(JsValue::from_str("subscribe_id not found for track_alias")),
-        };
-
-        let writer = self
-            .get_or_create_stream_writer(subscribe_id, group_id, subgroup_id)
-            .await
-            .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
-
-        let subgroup_stream_header_message =
-            subgroup_stream::Header::new(track_alias, group_id, subgroup_id, publisher_priority)
-                .unwrap();
-        let mut subgroup_stream_header_message_buf = BytesMut::new();
-        subgroup_stream_header_message.packetize(&mut subgroup_stream_header_message_buf);
-
-        let mut buf = Vec::new();
-        // Message Type
-        buf.extend(write_variable_integer(
-            u8::from(DataStreamType::SubgroupHeader) as u64,
-        ));
-        buf.extend(subgroup_stream_header_message_buf);
-
-        let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-        buffer.copy_from(&buf);
-        JsFuture::from(writer.write_with_chunk(&buffer))
-            .await
-            .map(|_| ())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[wasm_bindgen(js_name = sendSubgroupStreamObject)]
-    pub async fn send_subgroup_stream_object(
-        &self,
-        track_alias: u64,
-        group_id: u64,
-        subgroup_id: u64,
-        object_id: u64,
-        object_status: Option<u8>,
-        object_payload: Vec<u8>,
-        loc_header: JsValue,
-    ) -> Result<(), JsValue> {
-        let subscribe_id = match self
-            .subscription_node
-            .borrow()
-            .get_publishing_subscribe_id_by_track_alias(track_alias)
-        {
-            Some(id) => id,
-            None => return Err(JsValue::from_str("subscribe_id not found for track_alias")),
-        };
-        let writer_key = (subscribe_id, Some((group_id, subgroup_id)));
-        let writer = {
-            let stream_writers = self.stream_writers.borrow();
-            stream_writers.get(&writer_key).cloned()
-        };
-        if let Some(writer) = writer {
-            let is_end_of_group = object_status == Some(3);
-            let extension_headers = match crate::loc::parse_loc_header(loc_header) {
-                Ok(Some(loc_header)) => crate::loc::loc_header_to_extension_headers(&loc_header)
-                    .map_err(|e| JsValue::from_str(&e.to_string()))?,
-                Ok(None) => vec![],
-                Err(e) => return Err(JsValue::from_str(&e.to_string())),
-            };
-            let subgroup_stream_object = subgroup_stream::Object::new(
-                object_id,
-                extension_headers,
-                object_status.map(|status| ObjectStatus::try_from(status).unwrap()),
-                object_payload,
-            )
-            .unwrap();
-            let mut subgroup_stream_object_buf = BytesMut::new();
-            subgroup_stream_object.packetize(&mut subgroup_stream_object_buf);
-
-            let mut buf = Vec::new();
-            // Message Payload and Payload Length
-            buf.extend(subgroup_stream_object_buf);
-
-            let buffer = js_sys::Uint8Array::new_with_length(buf.len() as u32);
-            buffer.copy_from(&buf);
-            match JsFuture::from(writer.write_with_chunk(&buffer)).await {
-                Ok(_) => {
-                    if is_end_of_group {
-                        let _ = JsFuture::from(writer.close()).await;
-                        self.stream_writers.borrow_mut().remove(&writer_key);
-                    }
-                    // log(std::format!(
-                    //     "sent: trackAlias: {:#?} object . group_id: {:#?} subgroup_id: {:#?} object_id: {:#?} object_status: {:#?}",
-                    //     track_alias,
-                    //     group_id,
-                    //     subgroup_id,
-                    //     object_id,
-                    //     object_status,
-                    // )
-                    // .as_str());
-                    Ok(())
-                }
-                Err(e) => {
-                    self.stream_writers.borrow_mut().remove(&writer_key);
-                    log(std::format!("err: {:?}", e).as_str());
-                    Err(e)
-                }
-            }
-        } else {
-            Err(JsValue::from_str("stream_writer is None"))
-        }
-    }
-
-    pub async fn start(&self) -> Result<(), JsValue> {
-        let transport = WebTransport::new(self.url.as_str());
-        match &transport {
-            Ok(v) => console_log!("{:#?}", v),
-            Err(e) => {
-                console_log!("{:#?}", e.as_string());
-                return Err(e.clone());
-            }
-        }
-
-        let transport = transport?;
-        // Keep it for sending object messages
-        *self.transport.borrow_mut() = Some(transport.clone());
-
-        if let Err(err) = JsFuture::from(transport.ready()).await {
-            self.transport.borrow_mut().take();
-            return Err(err);
-        }
-
-        if let Err(err) = self.setup_transport(&transport).await {
-            self.transport.borrow_mut().take();
-            return Err(err);
-        }
-
-        Ok(())
-    }
-
-    async fn setup_transport(&self, transport: &WebTransport) -> Result<(), JsValue> {
-        let callbacks = self.callbacks.clone();
-        let transport_cell = self.transport.clone();
-        let closed_promise = transport.closed();
-        wasm_bindgen_futures::spawn_local(async move {
-            let closed_result = JsFuture::from(closed_promise).await;
-            transport_cell.borrow_mut().take();
-
-            if let Some(callback) = callbacks.borrow().connection_closed_callback() {
-                if let Err(error) = &closed_result {
-                    console_log!("WebTransport closed with error: {:?}", error);
-                }
-                if let Err(err) = callback.call0(&JsValue::NULL) {
-                    console_log!("connection_closed callback error: {:?}", err);
-                }
-            }
-        });
-
-        // All control messages are sent on same bidirectional stream which is called "control stream"
-        let control_stream = WebTransportBidirectionalStream::from(
-            JsFuture::from(transport.create_bidirectional_stream()).await?,
-        );
-
-        let control_stream_readable = control_stream.readable();
-        let control_stream_reader =
-            ReadableStreamDefaultReader::new(&control_stream_readable.into())?;
-
-        let control_stream_writable = control_stream.writable();
-        let control_stream_writer = control_stream_writable.get_writer()?;
-        *self.control_stream_writer.borrow_mut() = Some(control_stream_writer);
-
-        // For receiving control messages
-        let callbacks = self.callbacks.clone();
-        let subscription_node = self.subscription_node.clone();
-        wasm_bindgen_futures::spawn_local(async move {
-            let _ = bi_directional_stream_read_thread(
-                callbacks,
-                subscription_node,
-                &control_stream_reader,
-            )
-            .await;
-        });
-
-        // For receiving object messages as datagrams
-        let datagram_reader_readable = transport.datagrams().readable();
-        let datagram_reader = ReadableStreamDefaultReader::new(&datagram_reader_readable)?;
-        let callbacks = self.callbacks.clone();
-        wasm_bindgen_futures::spawn_local(async move {
-            let _ = datagram_read_thread(callbacks, &datagram_reader).await;
-        });
-
-        // For receiving object messages as streams
-        let incoming_uni_stream = transport.incoming_unidirectional_streams();
-        let incoming_uni_stream_reader = ReadableStreamDefaultReader::new(&incoming_uni_stream)?;
-        let callbacks = self.callbacks.clone();
-        *self.stream_writers.borrow_mut() = HashMap::new();
-
-        wasm_bindgen_futures::spawn_local(async move {
-            let _ = receive_unidirectional_thread(callbacks, &incoming_uni_stream_reader).await;
-        });
-
-        Ok(())
-    }
-
-    #[wasm_bindgen(js_name = close)]
-    pub async fn close(&self) -> Result<(), JsValue> {
-        let transport = self.transport.borrow().clone();
-        if let Some(transport) = transport {
-            transport.close();
-            JsFuture::from(transport.closed()).await?;
-        }
-        Ok(())
-    }
-
-    pub fn array_buffer_sample_method(&self, buf: Vec<u8>) {
-        log(std::format!("array_buffer_sample_method: {:#?}", buf).as_str());
+impl TrackKey {
+    fn new(namespace: Vec<String>, name: String) -> Self {
+        Self { namespace, name }
     }
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]
-async fn receive_unidirectional_thread(
-    callbacks: Rc<RefCell<MOQTCallbacks>>,
-    reader: &ReadableStreamDefaultReader,
-) -> Result<(), JsValue> {
-    log("receive_unidirectional_thread");
-
-    loop {
-        // Be careful about returned value of reader.read. It is a unidirectional stream of WebTransport.
-        let ret = reader.read();
-        let ret = JsFuture::from(ret).await?;
-
-        let ret_value = js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?;
-        let ret_done = js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?;
-        let ret_done = js_sys::Boolean::from(ret_done).value_of();
-
-        if ret_done {
-            break;
-        }
-
-        let ret_value = ReadableStream::from(ret_value);
-
-        let callbacks = callbacks.clone();
-
-        let reader = ReadableStreamDefaultReader::new(&ret_value)?;
-        wasm_bindgen_futures::spawn_local(async move {
-            let _ = uni_directional_stream_read_thread(callbacks, &reader).await;
-        });
-    }
-
-    Ok(())
+#[derive(Debug, Clone)]
+struct OutgoingSubscribeRequest {
+    track_key: TrackKey,
+    track_alias: Option<u64>,
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]
-async fn bi_directional_stream_read_thread(
-    callbacks: Rc<RefCell<MOQTCallbacks>>,
-    subscription_node: Rc<RefCell<SubscriptionNode>>,
-    reader: &ReadableStreamDefaultReader,
-) -> Result<(), JsValue> {
-    log("control_stream_read_thread");
-
-    loop {
-        let ret = reader.read();
-        let ret = JsFuture::from(ret).await?;
-
-        let ret_value = js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?;
-        let ret_done = js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?;
-        let ret_done = js_sys::Boolean::from(ret_done).value_of();
-
-        if ret_done {
-            break;
-        }
-
-        let ret_value = js_sys::Uint8Array::from(ret_value).to_vec();
-
-        log(std::format!("bi: recv value: {} {:#?}", ret_value.len(), ret_value).as_str());
-
-        let mut buf = BytesMut::with_capacity(ret_value.len());
-        for i in ret_value {
-            buf.put_u8(i);
-        }
-
-        while buf.has_remaining() {
-            if let Err(e) =
-                control_message_handler(callbacks.clone(), subscription_node.clone(), &mut buf)
-                    .await
-            {
-                log(std::format!("error: {:#?}", e).as_str());
-                break;
-                // return Err(js_sys::Error::new(&e.to_string()).into());
-            }
-        }
-    }
-
-    Ok(())
-}
-
-// TODO: Separate handler to control message handler and object message handler
-#[cfg(feature = "web_sys_unstable_apis")]
-async fn control_message_handler(
-    callbacks: Rc<RefCell<MOQTCallbacks>>,
-    subscription_node: Rc<RefCell<SubscriptionNode>>,
-    buf: &mut BytesMut,
-) -> Result<()> {
-    let message_type_value = read_variable_integer_from_buffer(buf);
-
-    // TODO: Check stream type
-    match message_type_value {
-        Ok(v) => {
-            let message_type = ControlMessageType::try_from(v as u8)?;
-            let payload_length = read_variable_integer_from_buffer(buf)?;
-            let mut payload_buf = buf.split_to(payload_length as usize);
-
-            log(std::format!("message_type_value: {:#?}", message_type).as_str());
-
-            match message_type {
-                ControlMessageType::ServerSetup => {
-                    let server_setup_message = ServerSetup::depacketize(&mut payload_buf)?;
-                    log(
-                        std::format!("recv: server_setup_message: {:#x?}", server_setup_message)
-                            .as_str(),
-                    );
-                    if let Some(callback) = callbacks.borrow().setup_callback() {
-                        let wrapper = ServerSetupMessage::from(&server_setup_message);
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from(wrapper))
-                            .unwrap();
-                    }
-                }
-                ControlMessageType::Announce => {
-                    let announce_message = Announce::depacketize(&mut payload_buf)?;
-                    log(std::format!("recv: announce_message: {:#x?}", announce_message).as_str());
-
-                    if let Some(callback) = callbacks.borrow().announce_callback() {
-                        // Convert to JavaScript-friendly wrapper
-                        let wrapper = AnnounceMessage::from(&announce_message);
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from(wrapper))
-                            .unwrap();
-                    }
-                }
-                ControlMessageType::AnnounceOk => {
-                    let announce_ok_message = AnnounceOk::depacketize(&mut payload_buf)?;
-                    log(
-                        std::format!("recv: announce_ok_message: {:#x?}", announce_ok_message)
-                            .as_str(),
-                    );
-
-                    subscription_node
-                        .borrow_mut()
-                        .set_namespace(announce_ok_message.track_namespace().clone());
-
-                    if let Some(callback) = callbacks.borrow().announce_response_callback() {
-                        let wrapper = AnnounceOkMessage::from(&announce_ok_message);
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from(wrapper))
-                            .unwrap();
-                    }
-                }
-                ControlMessageType::AnnounceError => {
-                    let announce_error_message = AnnounceError::depacketize(&mut payload_buf)?;
-                    log(std::format!(
-                        "recv: announce_error_message: {:#x?}",
-                        announce_error_message
-                    )
-                    .as_str());
-
-                    if let Some(callback) = callbacks.borrow().announce_response_callback() {
-                        let wrapper = AnnounceErrorMessage::from(&announce_error_message);
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from(wrapper))
-                            .unwrap();
-                    }
-                }
-                ControlMessageType::Subscribe => {
-                    let subscribe_message = Subscribe::depacketize(&mut payload_buf)?;
-                    log(
-                        std::format!("recv: subscribe_message: {:#x?}", subscribe_message).as_str(),
-                    );
-
-                    let result = subscription_node
-                        .borrow_mut()
-                        .validation_and_register_subscription(subscribe_message.clone());
-
-                    if let Some(callback) = callbacks.borrow().subscribe_callback() {
-                        let wrapper = SubscribeMessage::from(&subscribe_message);
-
-                        match result {
-                            Ok(_) => {
-                                let is_success = JsValue::from_bool(true);
-                                let empty = JsValue::null();
-                                callback
-                                    .call3(
-                                        &JsValue::null(),
-                                        &JsValue::from(wrapper),
-                                        &(is_success),
-                                        &(empty),
-                                    )
-                                    .unwrap();
-                            }
-                            Err(e) => {
-                                let is_success = JsValue::from_bool(false);
-                                if let Some(e_u8) = e.downcast_ref::<u8>() {
-                                    let code = JsValue::from_f64(*e_u8 as f64);
-                                    callback
-                                        .call3(
-                                            &JsValue::null(),
-                                            &JsValue::from(wrapper),
-                                            &(is_success),
-                                            &(code),
-                                        )
-                                        .unwrap();
-                                }
-                            }
-                        }
-                    }
-                }
-                ControlMessageType::UnSubscribe => {
-                    let unsubscribe_message = Unsubscribe::depacketize(&mut payload_buf)?;
-                    log(
-                        std::format!("recv: unsubscribe_message: {:#x?}", unsubscribe_message)
-                            .as_str(),
-                    );
-
-                    subscription_node
-                        .borrow_mut()
-                        .cancel_publishing_subscription(unsubscribe_message.subscribe_id());
-
-                    if let Some(callback) = callbacks.borrow().incoming_unsubscribe_callback() {
-                        callback
-                            .call1(
-                                &JsValue::null(),
-                                &JsValue::from(js_sys::BigInt::from(
-                                    unsubscribe_message.subscribe_id(),
-                                )),
-                            )
-                            .unwrap();
-                    }
-                }
-                ControlMessageType::SubscribeOk => {
-                    let subscribe_ok_message = SubscribeOk::depacketize(&mut payload_buf)?;
-                    log(
-                        std::format!("recv: subscribe_ok_message: {:#x?}", subscribe_ok_message)
-                            .as_str(),
-                    );
-
-                    {
-                        let mut node = subscription_node.borrow_mut();
-                        node.mark_subscription_success(subscribe_ok_message.subscribe_id());
-                        node.activate_as_subscriber(subscribe_ok_message.subscribe_id());
-                    }
-
-                    if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
-                        let wrapper = SubscribeOkMessage::from(&subscribe_ok_message);
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from(wrapper))
-                            .unwrap();
-                    }
-                }
-                ControlMessageType::SubscribeError => {
-                    let subscribe_error_message = SubscribeError::depacketize(&mut payload_buf)?;
-                    log(std::format!(
-                        "recv: subscribe_error_message: {:#x?}",
-                        subscribe_error_message
-                    )
-                    .as_str());
-
-                    subscription_node
-                        .borrow_mut()
-                        .mark_subscription_failed(subscribe_error_message.subscribe_id());
-
-                    if let Some(callback) = callbacks.borrow().subscribe_response_callback() {
-                        let wrapper = SubscribeErrorMessage::from(&subscribe_error_message);
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from(wrapper))
-                            .unwrap();
-                    }
-                }
-                ControlMessageType::SubscribeDone => {
-                    let subscribe_done_message = SubscribeDone::depacketize(&mut payload_buf)?;
-                    log(std::format!(
-                        "recv: subscribe_done_message: {:#x?}",
-                        subscribe_done_message
-                    )
-                    .as_str());
-
-                    subscription_node
-                        .borrow_mut()
-                        .cancel_subscription(subscribe_done_message.subscribe_id());
-
-                    if let Some(callback) = callbacks.borrow().unsubscribe_callback() {
-                        let wrapper = SubscribeDoneMessage::from(&subscribe_done_message);
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from(wrapper))
-                            .unwrap();
-                    }
-                }
-                ControlMessageType::SubscribeAnnouncesOk => {
-                    let subscribe_announces_ok_message =
-                        SubscribeAnnouncesOk::depacketize(&mut payload_buf)?;
-                    log(std::format!(
-                        "recv: subscribe_announces_ok_message: {:#x?}",
-                        subscribe_announces_ok_message
-                    )
-                    .as_str());
-
-                    subscription_node.borrow_mut().set_namespace_prefix(
-                        subscribe_announces_ok_message
-                            .track_namespace_prefix()
-                            .clone(),
-                    );
-
-                    if let Some(callback) =
-                        callbacks.borrow().subscribe_announces_response_callback()
-                    {
-                        let wrapper =
-                            SubscribeAnnouncesOkMessage::from(&subscribe_announces_ok_message);
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from(wrapper))
-                            .unwrap();
-                    }
-                }
-                ControlMessageType::SubscribeAnnouncesError => {
-                    let subscribe_announces_error_message =
-                        SubscribeAnnouncesError::depacketize(&mut payload_buf)?;
-                    log(std::format!(
-                        "recv: subscribe_announces_error_message: {:#x?}",
-                        subscribe_announces_error_message
-                    )
-                    .as_str());
-
-                    if let Some(callback) =
-                        callbacks.borrow().subscribe_announces_response_callback()
-                    {
-                        let wrapper = SubscribeAnnouncesErrorMessage::from(
-                            &subscribe_announces_error_message,
-                        );
-                        callback
-                            .call1(&JsValue::null(), &JsValue::from(wrapper))
-                            .unwrap();
-                    }
-                }
-                _ => {
-                    // TODO: impl rest of message type
-                    log(std::format!("message_type: {:#?}", message_type).as_str());
-                }
-            };
-        }
-        Err(e) => {
-            log("message_type_value is None");
-            return Err(e);
-        }
-    }
-
-    Ok(())
+#[derive(Debug, Clone)]
+struct IncomingSubscribeRequest {
+    track_key: TrackKey,
+    group_order: GroupOrder,
+    track_alias: Option<u64>,
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]
-async fn datagram_read_thread(
-    callbacks: Rc<RefCell<MOQTCallbacks>>,
-    reader: &ReadableStreamDefaultReader,
-) -> Result<(), JsValue> {
-    log("datagram_read_thread");
-
-    let mut buf = BytesMut::new();
-
-    loop {
-        let ret = reader.read();
-        let ret = JsFuture::from(ret).await?;
-
-        let ret_value = js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?;
-        let ret_done = js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?;
-        let ret_done = js_sys::Boolean::from(ret_done).value_of();
-
-        if ret_done {
-            break;
-        }
-
-        let ret_value = js_sys::Uint8Array::from(ret_value).to_vec();
-
-        for i in ret_value {
-            buf.put_u8(i);
-        }
-
-        while !buf.is_empty() {
-            if let Err(e) = datagram_handler(callbacks.clone(), &mut buf).await {
-                log(std::format!("error: {:#?}", e).as_str());
-                break;
-            }
-        }
-    }
-    Ok(())
-}
-
-#[cfg(feature = "web_sys_unstable_apis")]
-async fn uni_directional_stream_read_thread(
-    callbacks: Rc<RefCell<MOQTCallbacks>>,
-    reader: &ReadableStreamDefaultReader,
-) -> Result<(), JsValue> {
-    log("uni_directional_stream_read_thread");
-
-    let mut subgroup_stream_header: Option<subgroup_stream::Header> = None;
-    let mut data_stream_type = DataStreamType::ObjectDatagram;
-    let mut buf = BytesMut::new();
-    let mut is_end_of_stream = false;
-
-    while !is_end_of_stream {
-        let ret = JsFuture::from(reader.read()).await?;
-        let is_done =
-            js_sys::Boolean::from(js_sys::Reflect::get(&ret, &JsValue::from_str("done"))?)
-                .value_of();
-        if is_done {
-            break;
-        }
-        let value =
-            js_sys::Uint8Array::from(js_sys::Reflect::get(&ret, &JsValue::from_str("value"))?)
-                .to_vec();
-
-        for i in value {
-            buf.put_u8(i);
-        }
-
-        while !buf.is_empty() {
-            if subgroup_stream_header.is_none() {
-                let (_data_stream_type, _subgroup_stream_header) =
-                    match object_header_handler(callbacks.clone(), &mut buf).await {
-                        Ok(v) => v,
-                        Err(_e) => {
-                            break;
-                        }
-                    };
-                data_stream_type = _data_stream_type;
-                subgroup_stream_header = _subgroup_stream_header;
-                continue;
-            }
-
-            match data_stream_type {
-                DataStreamType::ObjectDatagram | DataStreamType::ObjectDatagramStatus => {
-                    let msg = "format error".to_string();
-                    log(std::format!("{:#?}", msg).as_str());
-                    return Err(js_sys::Error::new(&msg).into());
-                }
-                DataStreamType::SubgroupHeader => {
-                    match subgroup_stream_object_handler(
-                        callbacks.clone(),
-                        subgroup_stream_header.clone().unwrap(),
-                        &mut buf,
-                    )
-                    .await
-                    {
-                        Ok(object) => {
-                            if object.object_status() == Some(ObjectStatus::EndOfGroup) {
-                                is_end_of_stream = true;
-                                break;
-                            }
-                        }
-                        Err(_e) => {
-                            // log(std::format!("error: {:#?}", e).as_str());
-                            break;
-                        }
-                    }
-                }
-                DataStreamType::FetchHeader => {
-                    unimplemented!();
-                }
-            }
-        }
-    }
-    JsFuture::from(reader.cancel()).await?;
-    log("End of unidirectional stream");
-
-    Ok(())
-}
-
-#[cfg(feature = "web_sys_unstable_apis")]
-async fn object_header_handler(
-    callbacks: Rc<RefCell<MOQTCallbacks>>,
-    buf: &mut BytesMut,
-) -> Result<(DataStreamType, Option<subgroup_stream::Header>)> {
-    let mut read_cur = Cursor::new(&buf[..]);
-    let header_type_value = read_variable_integer(&mut read_cur);
-
-    let (data_stream_type, subgroup_stream_header) = match header_type_value {
-        Ok(v) => {
-            let data_stream_type = DataStreamType::try_from(v as u8)?;
-
-            log(std::format!("data_stream_type_value: {:#x?}", data_stream_type).as_str());
-
-            let subgroup_stream_header = match data_stream_type {
-                DataStreamType::SubgroupHeader => {
-                    let subgroup_stream_header =
-                        subgroup_stream::Header::depacketize(&mut read_cur)?;
-                    buf.advance(read_cur.position() as usize);
-
-                    log(
-                        std::format!("subgroup_stream_header: {:#x?}", subgroup_stream_header)
-                            .as_str(),
-                    );
-
-                    if let Some(callback) = callbacks.borrow().subgroup_stream_header_callback() {
-                        let v = serde_wasm_bindgen::to_value(&subgroup_stream_header).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
-                    }
-                    Some(subgroup_stream_header)
-                }
-                _ => {
-                    // TODO: impl rest of message type
-                    log(std::format!("data_stream_type: {:#?}", data_stream_type).as_str());
-                    None
-                }
-            };
-
-            (data_stream_type, subgroup_stream_header)
-        }
-        Err(e) => {
-            log("data_stream_type_value is None");
-            return Err(e);
-        }
-    };
-
-    Ok((data_stream_type, subgroup_stream_header))
-}
-
-#[cfg(feature = "web_sys_unstable_apis")]
-async fn datagram_handler(callbacks: Rc<RefCell<MOQTCallbacks>>, buf: &mut BytesMut) -> Result<()> {
-    use moqt_core::messages::data_streams::datagram_status;
-
-    let mut read_cur = Cursor::new(&buf[..]);
-    let header_type_value = read_variable_integer(&mut read_cur);
-
-    match header_type_value {
-        Ok(v) => {
-            let data_stream_type = DataStreamType::try_from(v as u8)?;
-
-            log(std::format!("data_stream_type_value: {:#x?}", data_stream_type).as_str());
-
-            match data_stream_type {
-                DataStreamType::ObjectDatagram => {
-                    let datagram_object = match datagram::Object::depacketize(&mut read_cur) {
-                        Ok(v) => {
-                            buf.advance(read_cur.position() as usize);
-                            v
-                        }
-                        Err(e) => {
-                            read_cur.set_position(0);
-                            log(std::format!("retry because: {:#?}", e).as_str());
-                            return Err(e);
-                        }
-                    };
-
-                    if let Some(callback) = callbacks.borrow().datagram_object_callback() {
-                        let v = serde_wasm_bindgen::to_value(&datagram_object).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
-                    }
-                }
-                DataStreamType::ObjectDatagramStatus => {
-                    let datagram_object = match datagram_status::Object::depacketize(&mut read_cur)
-                    {
-                        Ok(v) => {
-                            buf.advance(read_cur.position() as usize);
-                            v
-                        }
-                        Err(e) => {
-                            read_cur.set_position(0);
-                            log(std::format!("retry because: {:#?}", e).as_str());
-                            return Err(e);
-                        }
-                    };
-
-                    if let Some(callback) = callbacks.borrow().datagram_object_status_callback() {
-                        let v = serde_wasm_bindgen::to_value(&datagram_object).unwrap();
-                        callback.call1(&JsValue::null(), &(v)).unwrap();
-                    }
-                }
-                _ => {
-                    let msg = "format error".to_string();
-                    log(std::format!("msg: {}", msg).as_str());
-                    return Err(anyhow::anyhow!(msg));
-                }
-            }
-        }
-        Err(e) => {
-            log("data_stream_type_value is None");
-            return Err(e);
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(feature = "web_sys_unstable_apis")]
-async fn subgroup_stream_object_handler(
-    callbacks: Rc<RefCell<MOQTCallbacks>>,
-    subgroup_stream_header: subgroup_stream::Header,
-    buf: &mut BytesMut,
-) -> Result<subgroup_stream::Object> {
-    let mut read_cur = Cursor::new(&buf[..]);
-    let subgroup_stream_object = match subgroup_stream::Object::depacketize(&mut read_cur) {
-        Ok(v) => {
-            buf.advance(read_cur.position() as usize);
-            v
-        }
-        Err(e) => {
-            read_cur.set_position(0);
-            // log(std::format!("retry because: {:#?}", e).as_str());
-            return Err(e);
-        }
-    };
-
-    if let Some(callback) = callbacks.borrow().get_subgroup_stream_object_callback() {
-        let wasm_object = SubgroupStreamObjectMessage::from(&subgroup_stream_object);
-        let object_js = JsValue::from(wasm_object);
-        let group_id = JsValue::from(BigInt::from(subgroup_stream_header.group_id()));
-        let track_alias = JsValue::from(BigInt::from(subgroup_stream_header.track_alias()));
-        callback
-            .call3(&JsValue::NULL, &track_alias, &group_id, &object_js)
-            .unwrap();
-    }
-
-    Ok(subgroup_stream_object)
-}
-
-#[cfg(feature = "web_sys_unstable_apis")]
-struct SubscriptionNode {
-    consumer: Option<Consumer>,
-    producer: Option<Producer>,
+#[derive(Debug, Default)]
+struct ClientState {
+    max_request_id: u64,
+    published_namespaces: HashSet<Vec<String>>,
+    subscribed_namespace_prefixes: HashSet<Vec<String>>,
+    publish_namespace_requests: HashMap<u64, Vec<String>>,
+    subscribe_namespace_requests: HashMap<u64, Vec<String>>,
+    publish_requests: HashMap<u64, TrackKey>,
+    outgoing_subscriptions: HashMap<u64, OutgoingSubscribeRequest>,
+    incoming_subscriptions: HashMap<u64, IncomingSubscribeRequest>,
+    publishing_track_aliases: HashMap<TrackKey, BTreeSet<u64>>,
+    alias_to_track_key: HashMap<u64, TrackKey>,
     subgroup_states: HashMap<u64, SubgroupState>,
+    next_track_alias: u64,
 }
 
 #[cfg(feature = "web_sys_unstable_apis")]
-impl SubscriptionNode {
-    fn new() -> Self {
-        SubscriptionNode {
-            consumer: None,
-            producer: None,
-            subgroup_states: HashMap::new(),
-        }
+impl ClientState {
+    fn configure(&mut self, max_request_id: u64) {
+        self.max_request_id = max_request_id;
     }
 
-    fn setup_as_publisher(&mut self, max_subscribe_id: u64) {
-        self.producer = Some(Producer::new(max_subscribe_id));
+    fn contains_published_namespace(&self, namespace: &[String]) -> bool {
+        self.published_namespaces.contains(namespace)
     }
 
-    fn setup_as_subscriber(&mut self, max_subscribe_id: u64) {
-        self.consumer = Some(Consumer::new(max_subscribe_id));
+    fn register_publish_namespace_request(&mut self, request_id: u64, namespace: Vec<String>) {
+        self.published_namespaces.insert(namespace.clone());
+        self.publish_namespace_requests
+            .insert(request_id, namespace);
     }
 
-    fn register_publisher_namespace(&mut self, namespace: Vec<String>) -> bool {
-        if let Some(producer) = &mut self.producer {
-            producer.set_namespace(namespace).is_ok()
-        } else {
-            false
-        }
-    }
-
-    fn publisher_has_namespace(&self, namespace: &[String]) -> bool {
-        if let Some(producer) = &self.producer {
-            producer.has_namespace(namespace.to_vec())
-        } else {
-            false
-        }
-    }
-
-    fn unregister_publisher_namespace(&mut self, namespace: Vec<String>) -> bool {
-        if let Some(producer) = &mut self.producer
-            && producer.has_namespace(namespace.clone())
+    fn finish_publish_namespace_request(&mut self, request_id: u64, success: bool) {
+        if let Some(namespace) = self.publish_namespace_requests.remove(&request_id)
+            && !success
         {
-            let _ = producer.delete_namespace(namespace);
-            return true;
-        }
-        false
-    }
-
-    fn register_subscriber_namespace_prefix(&mut self, namespace_prefix: Vec<String>) -> bool {
-        if let Some(consumer) = &mut self.consumer {
-            consumer.set_namespace_prefix(namespace_prefix).is_ok()
-        } else {
-            false
+            self.published_namespaces.remove(&namespace);
         }
     }
 
-    fn unregister_subscriber_namespace_prefix(&mut self, namespace_prefix: Vec<String>) -> bool {
-        if let Some(consumer) = &mut self.consumer
-            && consumer
-                .get_namespace_prefixes()
-                .map(|prefixes| prefixes.contains(&namespace_prefix))
-                .unwrap_or(false)
+    fn register_subscribe_namespace_request(
+        &mut self,
+        request_id: u64,
+        namespace_prefix: Vec<String>,
+    ) {
+        self.subscribed_namespace_prefixes
+            .insert(namespace_prefix.clone());
+        self.subscribe_namespace_requests
+            .insert(request_id, namespace_prefix);
+    }
+
+    fn finish_subscribe_namespace_request(&mut self, request_id: u64, success: bool) {
+        if let Some(namespace_prefix) = self.subscribe_namespace_requests.remove(&request_id)
+            && !success
         {
-            let _ = consumer.delete_namespace_prefix(namespace_prefix);
-            return true;
+            self.subscribed_namespace_prefixes.remove(&namespace_prefix);
         }
-        false
+    }
+
+    fn register_publish_request(&mut self, request_id: u64, track_key: TrackKey) {
+        self.publish_requests.insert(request_id, track_key);
+    }
+
+    fn finish_publish_request(&mut self, request_id: u64) {
+        self.publish_requests.remove(&request_id);
+    }
+
+    fn start_outgoing_subscription(&mut self, request_id: u64, track_key: TrackKey) {
+        self.outgoing_subscriptions.insert(
+            request_id,
+            OutgoingSubscribeRequest {
+                track_key,
+                track_alias: None,
+            },
+        );
+    }
+
+    fn activate_outgoing_subscription(&mut self, request_id: u64, track_alias: u64) {
+        if let Some(subscription) = self.outgoing_subscriptions.get_mut(&request_id) {
+            subscription.track_alias = Some(track_alias);
+            self.alias_to_track_key
+                .insert(track_alias, subscription.track_key.clone());
+        }
+    }
+
+    fn remove_outgoing_subscription(&mut self, request_id: u64) -> Option<u64> {
+        let track_alias = self
+            .outgoing_subscriptions
+            .remove(&request_id)
+            .and_then(|subscription| subscription.track_alias);
+        if let Some(track_alias) = track_alias {
+            self.alias_to_track_key.remove(&track_alias);
+            self.subgroup_states.remove(&track_alias);
+        }
+        track_alias
+    }
+
+    fn validate_incoming_subscribe(&self, message: &Subscribe) -> u64 {
+        if !self.contains_published_namespace(&message.track_namespace) {
+            return 404;
+        }
+        if self
+            .incoming_subscriptions
+            .contains_key(&message.request_id)
+        {
+            return 409;
+        }
+        0
+    }
+
+    fn register_incoming_subscribe(&mut self, message: &Subscribe) {
+        self.incoming_subscriptions.insert(
+            message.request_id,
+            IncomingSubscribeRequest {
+                track_key: TrackKey::new(
+                    message.track_namespace.clone(),
+                    message.track_name.clone(),
+                ),
+                group_order: message.group_order,
+                track_alias: None,
+            },
+        );
+    }
+
+    fn allocate_track_alias(&mut self) -> u64 {
+        let track_alias = self.next_track_alias;
+        self.next_track_alias = self.next_track_alias.saturating_add(1);
+        track_alias
+    }
+
+    fn activate_incoming_subscribe(&mut self, request_id: u64) -> Result<u64> {
+        let new_track_alias = self.allocate_track_alias();
+        let (track_alias, track_key) = {
+            let entry = self
+                .incoming_subscriptions
+                .get_mut(&request_id)
+                .ok_or_else(|| anyhow!("unknown subscribe request: {request_id}"))?;
+            let track_alias = entry.track_alias.unwrap_or(new_track_alias);
+            entry.track_alias = Some(track_alias);
+            (track_alias, entry.track_key.clone())
+        };
+
+        self.alias_to_track_key
+            .insert(track_alias, track_key.clone());
+        self.publishing_track_aliases
+            .entry(track_key)
+            .or_default()
+            .insert(track_alias);
+
+        Ok(track_alias)
+    }
+
+    fn incoming_subscribe_group_order(&self, request_id: u64) -> Result<GroupOrder> {
+        self.incoming_subscriptions
+            .get(&request_id)
+            .map(|entry| entry.group_order)
+            .ok_or_else(|| anyhow!("unknown subscribe request: {request_id}"))
+    }
+
+    fn remove_incoming_subscribe(&mut self, request_id: u64) -> Option<u64> {
+        let removed = self.incoming_subscriptions.remove(&request_id)?;
+        if let Some(track_alias) = removed.track_alias {
+            self.alias_to_track_key.remove(&track_alias);
+            self.subgroup_states.remove(&track_alias);
+            if let Some(aliases) = self.publishing_track_aliases.get_mut(&removed.track_key) {
+                aliases.remove(&track_alias);
+                if aliases.is_empty() {
+                    self.publishing_track_aliases.remove(&removed.track_key);
+                }
+            }
+            return Some(track_alias);
+        }
+        None
+    }
+
+    fn get_track_subscribers(&self, namespace: Vec<String>, track_name: String) -> Vec<u64> {
+        self.publishing_track_aliases
+            .get(&TrackKey::new(namespace, track_name))
+            .map(|aliases| aliases.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     fn subgroup_state_entry(&mut self, track_alias: u64) -> &mut SubgroupState {
@@ -1860,396 +294,1456 @@ impl SubscriptionNode {
     fn reset_subgroup_state(&mut self, track_alias: u64) {
         self.subgroup_states.remove(&track_alias);
     }
+}
 
-    fn set_namespace(&mut self, track_namespace: Vec<String>) {
-        if let Some(producer) = &mut self.producer {
-            let _ = producer.set_namespace(track_namespace);
+#[cfg(feature = "web_sys_unstable_apis")]
+#[wasm_bindgen]
+pub struct MOQTClient {
+    url: String,
+    state: Rc<RefCell<ClientState>>,
+    transport: Rc<RefCell<Option<WebTransport>>>,
+    control_stream_writer: Rc<RefCell<Option<WritableStreamDefaultWriter>>>,
+    datagram_writer: Rc<RefCell<Option<WritableStreamDefaultWriter>>>,
+    stream_writers: Rc<RefCell<HashMap<WriterKey, WritableStreamDefaultWriter>>>,
+    stream_object_numbers: Rc<RefCell<HashMap<WriterKey, u64>>>,
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+#[wasm_bindgen]
+impl MOQTClient {
+    #[wasm_bindgen(constructor)]
+    pub fn new(url: String) -> Self {
+        Self {
+            url,
+            state: Rc::new(RefCell::new(ClientState::default())),
+            transport: Rc::new(RefCell::new(None)),
+            control_stream_writer: Rc::new(RefCell::new(None)),
+            datagram_writer: Rc::new(RefCell::new(None)),
+            stream_writers: Rc::new(RefCell::new(HashMap::new())),
+            stream_object_numbers: Rc::new(RefCell::new(HashMap::new())),
+            callbacks: Rc::new(RefCell::new(MOQTCallbacks::default())),
         }
     }
 
-    fn set_namespace_prefix(&mut self, track_namespace_prefix: Vec<String>) {
-        if let Some(consumer) = &mut self.consumer {
-            let _ = consumer.set_namespace_prefix(track_namespace_prefix);
-        }
+    pub fn url(&self) -> JsValue {
+        JsValue::from_str(&self.url)
     }
 
-    fn create_valid_track_alias(&self) -> Result<u64> {
-        if let Some(producer) = &self.producer {
-            producer.create_valid_track_alias()
-        } else {
-            Err(anyhow::anyhow!("producer is None"))
-        }
+    #[wasm_bindgen(js_name = onServerSetup)]
+    pub fn set_server_setup_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().server_setup_callback = Some(callback);
     }
 
+    #[wasm_bindgen(js_name = onPublishNamespace)]
+    pub fn set_publish_namespace_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().publish_namespace_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onPublishNamespaceResponse)]
+    pub fn set_publish_namespace_response_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .publish_namespace_response_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onSubscribeNamespaceResponse)]
+    pub fn set_subscribe_namespace_response_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks
+            .borrow_mut()
+            .subscribe_namespace_response_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onPublish)]
+    pub fn set_publish_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().publish_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onPublishResponse)]
+    pub fn set_publish_response_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().publish_response_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onSubscribe)]
+    pub fn set_subscribe_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().subscribe_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onSubscribeResponse)]
+    pub fn set_subscribe_response_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().subscribe_response_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onIncomingUnsubscribe)]
+    pub fn set_incoming_unsubscribe_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().incoming_unsubscribe_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onObjectDatagram)]
+    pub fn set_object_datagram_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().object_datagram_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onObjectDatagramStatus)]
+    pub fn set_object_datagram_status_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().object_datagram_status_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onSubgroupHeader)]
+    pub fn set_subgroup_header_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().subgroup_header_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onSubgroupObject)]
+    pub fn set_subgroup_object_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().subgroup_object_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onConnectionClosed)]
+    pub fn set_connection_closed_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().connection_closed_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = isConnected)]
+    pub fn is_connected(&self) -> bool {
+        self.transport.borrow().is_some()
+    }
+
+    #[wasm_bindgen(js_name = sendClientSetup)]
+    pub async fn send_client_setup(
+        &self,
+        versions: Vec<u64>,
+        max_request_id: u64,
+    ) -> Result<(), JsValue> {
+        let supported_versions = versions.into_iter().map(|version| version as u32).collect();
+        let payload =
+            ClientSetup::new(supported_versions, default_setup_parameters(max_request_id)).encode();
+        self.state.borrow_mut().configure(max_request_id);
+        self.send_control_message(ControlMessageType::ClientSetup, payload)
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendPublishNamespace)]
+    pub async fn send_publish_namespace(
+        &self,
+        request_id: u64,
+        track_namespace: Vec<String>,
+        auth_info: String,
+    ) -> Result<(), JsValue> {
+        if self
+            .state
+            .borrow()
+            .contains_published_namespace(&track_namespace)
+        {
+            return Ok(());
+        }
+
+        let payload = PublishNamespace::new(
+            request_id,
+            track_namespace.clone(),
+            authorization_tokens(&auth_info),
+        )
+        .encode();
+        self.state
+            .borrow_mut()
+            .register_publish_namespace_request(request_id, track_namespace);
+        self.send_control_message(ControlMessageType::PublishNamespace, payload)
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendPublishNamespaceOk)]
+    pub async fn send_publish_namespace_ok(&self, request_id: u64) -> Result<(), JsValue> {
+        self.send_control_message(
+            ControlMessageType::PublishNamespaceOk,
+            NamespaceOk { request_id }.encode(),
+        )
+        .await
+    }
+
+    #[wasm_bindgen(js_name = sendPublishNamespaceError)]
+    pub async fn send_publish_namespace_error(
+        &self,
+        request_id: u64,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Result<(), JsValue> {
+        self.send_request_error(
+            ControlMessageType::PublishNamespaceError,
+            request_id,
+            error_code,
+            reason_phrase,
+        )
+        .await
+    }
+
+    #[wasm_bindgen(js_name = sendSubscribeNamespace)]
+    pub async fn send_subscribe_namespace(
+        &self,
+        request_id: u64,
+        track_namespace_prefix: Vec<String>,
+        auth_info: String,
+    ) -> Result<(), JsValue> {
+        if self
+            .state
+            .borrow()
+            .subscribed_namespace_prefixes
+            .contains(&track_namespace_prefix)
+        {
+            return Ok(());
+        }
+
+        let payload = SubscribeNamespace::new(
+            request_id,
+            track_namespace_prefix.clone(),
+            authorization_tokens(&auth_info),
+        )
+        .encode();
+        self.state
+            .borrow_mut()
+            .register_subscribe_namespace_request(request_id, track_namespace_prefix);
+        self.send_control_message(ControlMessageType::SubscribeNamespace, payload)
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendPublish)]
     #[allow(clippy::too_many_arguments)]
-    fn start_subscription(
-        &mut self,
-        subscribe_id: u64,
-        track_alias: u64,
+    pub async fn send_publish(
+        &self,
+        request_id: u64,
         track_namespace: Vec<String>,
         track_name: String,
-        priority: u8,
-        group_order: GroupOrder,
-        filter_type: FilterType,
+        track_alias: u64,
+        group_order: u8,
+        content_exists: bool,
+        largest_group_id: Option<u64>,
+        largest_object_id: Option<u64>,
+        forward: bool,
+        auth_info: String,
+    ) -> Result<(), JsValue> {
+        let group_order =
+            GroupOrder::try_from(group_order).map_err(|_| js_error("invalid group order"))?;
+        let content_exists =
+            content_exists_from_fields(content_exists, largest_group_id, largest_object_id);
+        let payload = Publish {
+            request_id,
+            track_namespace_tuple: track_namespace.clone(),
+            track_name: track_name.clone(),
+            track_alias,
+            group_order,
+            content_exists,
+            forward,
+            authorization_tokens: authorization_tokens(&auth_info),
+            delivery_timeout: None,
+            max_duration: None,
+        }
+        .encode();
+        self.state
+            .borrow_mut()
+            .register_publish_request(request_id, TrackKey::new(track_namespace, track_name));
+        self.send_control_message(ControlMessageType::Publish, payload)
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendPublishOk)]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_publish_ok(
+        &self,
+        request_id: u64,
+        subscriber_priority: u8,
+        group_order: u8,
+        filter_type: u8,
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-    ) -> bool {
-        if let Some(consumer) = &mut self.consumer {
-            if consumer
-                .get_subscription(subscribe_id)
-                .map(|option| option.is_some())
-                .unwrap_or(false)
-            {
-                return false;
-            }
-
-            let _ = consumer.set_subscription(
-                subscribe_id,
-                track_alias,
-                track_namespace,
-                track_name,
-                priority,
-                group_order,
-                filter_type,
-                start_group,
-                start_object,
-                end_group,
-            );
-            true
-        } else {
-            false
+        delivery_timeout: Option<u64>,
+        forward: bool,
+    ) -> Result<(), JsValue> {
+        let group_order =
+            GroupOrder::try_from(group_order).map_err(|_| js_error("invalid group order"))?;
+        let filter_type =
+            filter_type_from_fields(filter_type, start_group, start_object, end_group)?;
+        let payload = PublishOk {
+            request_id,
+            forward,
+            subscriber_priority,
+            group_order,
+            filter_type,
+            delivery_timeout,
         }
+        .encode();
+        self.send_control_message(ControlMessageType::PublishOk, payload)
+            .await
     }
 
-    fn cancel_subscription(&mut self, subscribe_id: u64) {
-        let track_alias = if let Some(consumer) = &mut self.consumer {
-            let track_alias = consumer
-                .get_subscription(subscribe_id)
-                .ok()
-                .and_then(|subscription| subscription.map(|s| s.get_track_alias()));
-            let _ = consumer.delete_subscription(subscribe_id);
-            track_alias
-        } else {
-            None
-        };
-
-        if let Some(alias) = track_alias {
-            self.reset_subgroup_state(alias);
-        }
+    #[wasm_bindgen(js_name = sendPublishError)]
+    pub async fn send_publish_error(
+        &self,
+        request_id: u64,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Result<(), JsValue> {
+        self.send_request_error(
+            ControlMessageType::PublishError,
+            request_id,
+            error_code,
+            reason_phrase,
+        )
+        .await
     }
 
-    fn cancel_publishing_subscription(&mut self, subscribe_id: u64) {
-        let track_alias = if let Some(producer) = &mut self.producer {
-            let track_alias = producer
-                .get_subscription(subscribe_id)
-                .ok()
-                .and_then(|subscription| subscription.map(|s| s.get_track_alias()));
-            let _ = producer.delete_subscription(subscribe_id);
-            track_alias
-        } else {
-            None
-        };
-
-        if let Some(alias) = track_alias {
-            self.reset_subgroup_state(alias);
-        }
-    }
-
-    fn mark_subscription_success(&mut self, subscribe_id: u64) {
-        if let Some(consumer) = &mut self.consumer {
-            let _ = consumer.set_subscription_success(subscribe_id);
-        }
-    }
-
-    fn mark_subscription_failed(&mut self, subscribe_id: u64) {
-        if let Some(consumer) = &mut self.consumer {
-            let _ = consumer.set_subscription_failed(subscribe_id);
-        }
-    }
-
+    #[wasm_bindgen(js_name = sendSubscribe)]
     #[allow(clippy::too_many_arguments)]
-    fn set_publishing_subscription(
-        &mut self,
-        subscribe_id: u64,
-        track_alias: u64,
+    pub async fn send_subscribe(
+        &self,
+        request_id: u64,
         track_namespace: Vec<String>,
         track_name: String,
         subscriber_priority: u8,
-        group_order: GroupOrder,
-        filter_type: FilterType,
+        group_order: u8,
+        filter_type: u8,
         start_group: Option<u64>,
         start_object: Option<u64>,
         end_group: Option<u64>,
-    ) {
-        if let Some(producer) = &mut self.producer {
-            let _ = producer.set_subscription(
-                subscribe_id,
-                track_alias,
-                track_namespace,
-                track_name,
-                subscriber_priority,
-                group_order,
-                filter_type,
-                start_group,
-                start_object,
-                end_group,
-            );
+        auth_info: String,
+        forward: bool,
+        delivery_timeout: Option<u64>,
+    ) -> Result<(), JsValue> {
+        let group_order =
+            GroupOrder::try_from(group_order).map_err(|_| js_error("invalid group order"))?;
+        let filter_type =
+            filter_type_from_fields(filter_type, start_group, start_object, end_group)?;
+        let payload = Subscribe {
+            request_id,
+            track_namespace: track_namespace.clone(),
+            track_name: track_name.clone(),
+            subscriber_priority,
+            group_order,
+            forward,
+            filter_type,
+            authorization_tokens: authorization_tokens(&auth_info),
+            delivery_timeout,
         }
+        .encode();
+        self.state
+            .borrow_mut()
+            .start_outgoing_subscription(request_id, TrackKey::new(track_namespace, track_name));
+        self.send_control_message(ControlMessageType::Subscribe, payload)
+            .await
     }
 
-    fn validate_subscribe(&self, subscribe_message: Subscribe) -> Result<()> {
-        if let Some(producer) = &self.producer {
-            match producer.has_namespace(subscribe_message.track_namespace().clone()) {
-                true => {}
-                false => {
-                    let error_code = SubscribeErrorCode::TrackDoesNotExist;
-                    return Err(anyhow::anyhow!(u8::from(error_code)));
-                }
-            }
-
-            match producer.is_subscribe_id_unique(subscribe_message.subscribe_id()) {
-                true => {}
-                false => {
-                    let error_code = SubscribeErrorCode::InvalidRange;
-                    return Err(anyhow::anyhow!(u8::from(error_code)));
-                }
-            }
-
-            match producer.is_subscribe_id_less_than_max(subscribe_message.subscribe_id()) {
-                true => {}
-                false => {
-                    let error_code = SubscribeErrorCode::InvalidRange;
-                    return Err(anyhow::anyhow!(u8::from(error_code)));
-                }
-            }
-
-            match producer.is_track_alias_unique(subscribe_message.track_alias()) {
-                true => {}
-                false => {
-                    let error_code = SubscribeErrorCode::RetryTrackAlias;
-                    return Err(anyhow::anyhow!(u8::from(error_code)));
-                }
-            }
-            Ok(())
-        } else {
-            let error_code = SubscribeErrorCode::InternalError;
-            Err(anyhow::anyhow!(u8::from(error_code)))
-        }
+    #[wasm_bindgen(js_name = isSubscribed)]
+    pub fn is_subscribed(&self, request_id: u64) -> bool {
+        self.state
+            .borrow()
+            .outgoing_subscriptions
+            .contains_key(&request_id)
     }
 
-    fn validation_and_register_subscription(&mut self, subscribe_message: Subscribe) -> Result<()> {
-        self.validate_subscribe(subscribe_message.clone())?;
-
-        self.set_publishing_subscription(
-            subscribe_message.subscribe_id(),
-            subscribe_message.track_alias(),
-            subscribe_message.track_namespace().to_vec(),
-            subscribe_message.track_name().to_string(),
-            subscribe_message.subscriber_priority(),
-            subscribe_message.group_order(),
-            subscribe_message.filter_type(),
-            subscribe_message.start_group(),
-            subscribe_message.start_object(),
-            subscribe_message.end_group(),
-        );
-
-        Ok(())
-    }
-
-    fn get_publishing_subscription(&self, subscribe_id: u64) -> Option<Subscription> {
-        if let Some(producer) = &self.producer {
-            producer.get_subscription(subscribe_id).unwrap()
-        } else {
-            None
-        }
-    }
-
-    fn get_publishing_track_aliases(
+    #[wasm_bindgen(js_name = getTrackSubscribers)]
+    pub fn get_track_subscribers(
         &self,
         track_namespace: Vec<String>,
         track_name: String,
     ) -> Vec<u64> {
-        if let Some(producer) = &self.producer {
-            producer
-                .get_track_aliases_for_track(track_namespace, track_name)
-                .unwrap_or_default()
+        self.state
+            .borrow()
+            .get_track_subscribers(track_namespace, track_name)
+    }
+
+    #[wasm_bindgen(js_name = getSubgroupState)]
+    pub fn get_subgroup_state(&self, track_alias: u64) -> SubgroupState {
+        self.state.borrow_mut().current_subgroup_state(track_alias)
+    }
+
+    #[wasm_bindgen(js_name = markSubgroupHeaderSent)]
+    pub fn mark_subgroup_header_sent(&self, track_alias: u64) {
+        self.state
+            .borrow_mut()
+            .mark_subgroup_header_sent(track_alias);
+    }
+
+    #[wasm_bindgen(js_name = incrementSubgroupObject)]
+    pub fn increment_subgroup_object(&self, track_alias: u64) {
+        self.state
+            .borrow_mut()
+            .increment_subgroup_object(track_alias);
+    }
+
+    #[wasm_bindgen(js_name = resetSubgroupState)]
+    pub fn reset_subgroup_state(&self, track_alias: u64) {
+        self.state.borrow_mut().reset_subgroup_state(track_alias);
+    }
+
+    #[wasm_bindgen(js_name = sendSubscribeOk)]
+    pub async fn send_subscribe_ok(
+        &self,
+        request_id: u64,
+        expires: u64,
+        content_exists: bool,
+        largest_group_id: Option<u64>,
+        largest_object_id: Option<u64>,
+        delivery_timeout: Option<u64>,
+        max_duration: Option<u64>,
+    ) -> Result<u64, JsValue> {
+        let (track_alias, group_order) = {
+            let mut state = self.state.borrow_mut();
+            let group_order = state
+                .incoming_subscribe_group_order(request_id)
+                .map_err(|error| js_error(error.to_string()))?;
+            let group_order = if group_order == GroupOrder::Publisher {
+                GroupOrder::Ascending
+            } else {
+                group_order
+            };
+            let track_alias = state
+                .activate_incoming_subscribe(request_id)
+                .map_err(|error| js_error(error.to_string()))?;
+            (track_alias, group_order)
+        };
+
+        let payload = SubscribeOk {
+            request_id,
+            track_alias,
+            expires,
+            group_order,
+            content_exists: content_exists_from_fields(
+                content_exists,
+                largest_group_id,
+                largest_object_id,
+            ),
+            delivery_timeout,
+            max_duration,
+        }
+        .encode();
+        self.send_control_message(ControlMessageType::SubscribeOk, payload)
+            .await?;
+        Ok(track_alias)
+    }
+
+    #[wasm_bindgen(js_name = sendSubscribeError)]
+    pub async fn send_subscribe_error(
+        &self,
+        request_id: u64,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Result<(), JsValue> {
+        self.send_request_error(
+            ControlMessageType::SubscribeError,
+            request_id,
+            error_code,
+            reason_phrase,
+        )
+        .await
+    }
+
+    #[wasm_bindgen(js_name = sendUnsubscribe)]
+    pub async fn send_unsubscribe(&self, request_id: u64) -> Result<(), JsValue> {
+        let mut payload = BytesMut::new();
+        payload.put_varint(request_id);
+        self.send_control_message(ControlMessageType::UnSubscribe, payload)
+            .await?;
+        self.state
+            .borrow_mut()
+            .remove_outgoing_subscription(request_id);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = sendObjectDatagram)]
+    pub async fn send_object_datagram(
+        &self,
+        track_alias: u64,
+        group_id: u64,
+        object_id: u64,
+        publisher_priority: u8,
+        object_payload: Vec<u8>,
+        loc_header: JsValue,
+    ) -> Result<(), JsValue> {
+        let extension_headers = match crate::loc::parse_loc_header(loc_header) {
+            Ok(Some(header)) => crate::loc::loc_header_to_extension_headers(&header),
+            Ok(None) => Ok(empty_extension_headers()),
+            Err(error) => Err(error),
+        }
+        .map_err(|error| js_error(error.to_string()))?;
+
+        let field = if extension_headers == empty_extension_headers() {
+            DatagramField::Payload0x00 {
+                object_id,
+                publisher_priority,
+                payload: Bytes::from(object_payload),
+            }
         } else {
-            Vec::new()
-        }
+            DatagramField::Payload0x01 {
+                object_id,
+                publisher_priority,
+                extension_headers,
+                payload: Bytes::from(object_payload),
+            }
+        };
+
+        let payload = ObjectDatagram::new(track_alias, group_id, field).encode();
+        self.send_datagram_bytes(&payload).await
     }
 
-    fn activate_as_publisher(&mut self, subscribe_id: u64) {
-        if let Some(producer) = &mut self.producer {
-            let _ = producer.activate_subscription(subscribe_id);
+    #[wasm_bindgen(js_name = sendObjectDatagramStatus)]
+    pub async fn send_object_datagram_status(
+        &self,
+        track_alias: u64,
+        group_id: u64,
+        object_id: u64,
+        publisher_priority: u8,
+        object_status: u8,
+        loc_header: JsValue,
+    ) -> Result<(), JsValue> {
+        let object_status =
+            ObjectStatus::try_from(object_status).map_err(|_| js_error("invalid object status"))?;
+        let extension_headers = match crate::loc::parse_loc_header(loc_header) {
+            Ok(Some(header)) => crate::loc::loc_header_to_extension_headers(&header),
+            Ok(None) => Ok(empty_extension_headers()),
+            Err(error) => Err(error),
         }
-    }
+        .map_err(|error| js_error(error.to_string()))?;
 
-    fn activate_as_subscriber(&mut self, subscribe_id: u64) {
-        if let Some(consumer) = &mut self.consumer {
-            let _ = consumer.activate_subscription(subscribe_id);
-        }
-    }
-
-    fn get_publishing_subscribe_id_by_track_alias(&self, track_alias: u64) -> Option<u64> {
-        if let Some(producer) = &self.producer {
-            producer
-                .get_subscribe_id_by_track_alias(track_alias)
-                .unwrap()
+        let field = if extension_headers == empty_extension_headers() {
+            DatagramField::Status0x20 {
+                object_id,
+                publisher_priority,
+                status: object_status,
+            }
         } else {
-            None
-        }
+            DatagramField::Status0x21 {
+                object_id,
+                publisher_priority,
+                extension_headers,
+                status: object_status,
+            }
+        };
+
+        let payload = ObjectDatagram::new(track_alias, group_id, field).encode();
+        self.send_datagram_bytes(&payload).await
     }
 
-    fn is_subscribing(&self, subscribe_id: u64) -> bool {
-        if let Some(consumer) = &self.consumer {
-            consumer.get_subscription(subscribe_id).unwrap().is_some()
-        } else {
-            false
+    #[wasm_bindgen(js_name = sendSubgroupHeader)]
+    pub async fn send_subgroup_header(
+        &self,
+        track_alias: u64,
+        group_id: u64,
+        subgroup_id: u64,
+        publisher_priority: u8,
+    ) -> Result<(), JsValue> {
+        let writer = self
+            .get_or_create_stream_writer(track_alias, group_id, subgroup_id)
+            .await
+            .map_err(|error| js_error(error.to_string()))?;
+        let header = SubgroupHeader::new(
+            track_alias,
+            group_id,
+            SubgroupId::Value(subgroup_id),
+            publisher_priority,
+            true,
+            true,
+        )
+        .encode();
+        write_to_writer(&writer, &header).await
+    }
+
+    #[wasm_bindgen(js_name = sendSubgroupObject)]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_subgroup_object(
+        &self,
+        track_alias: u64,
+        group_id: u64,
+        subgroup_id: u64,
+        object_number: u64,
+        object_status: Option<u8>,
+        object_payload: Vec<u8>,
+        loc_header: JsValue,
+    ) -> Result<(), JsValue> {
+        let writer_key = (track_alias, group_id, subgroup_id);
+        let writer = self
+            .stream_writers
+            .borrow()
+            .get(&writer_key)
+            .cloned()
+            .ok_or_else(|| js_error("subgroup writer is None"))?;
+
+        let extension_headers = match crate::loc::parse_loc_header(loc_header) {
+            Ok(Some(header)) => crate::loc::loc_header_to_extension_headers(&header),
+            Ok(None) => Ok(empty_extension_headers()),
+            Err(error) => Err(error),
         }
+        .map_err(|error| js_error(error.to_string()))?;
+        let object_id_delta = {
+            let stream_object_numbers = self.stream_object_numbers.borrow();
+            match stream_object_numbers.get(&writer_key).copied() {
+                Some(previous_object_number) => object_number.checked_sub(previous_object_number),
+                None => object_number.checked_add(1),
+            }
+            .ok_or_else(|| {
+                js_error("object number must be non-decreasing within a subgroup stream")
+            })?
+        };
+        let header = SubgroupHeader::new(
+            track_alias,
+            group_id,
+            SubgroupId::Value(subgroup_id),
+            0,
+            true,
+            true,
+        );
+
+        let subgroup_object = match object_status {
+            Some(status) => SubgroupObject::new_status(
+                ObjectStatus::try_from(status).map_err(|_| js_error("invalid object status"))?
+                    as u64,
+            ),
+            None => SubgroupObject::new_payload(Bytes::from(object_payload)),
+        };
+
+        let bytes = SubgroupObjectField {
+            message_type: header.message_type,
+            object_id_delta,
+            extension_headers,
+            subgroup_object,
+        }
+        .encode();
+
+        write_to_writer(&writer, &bytes).await?;
+        self.stream_object_numbers
+            .borrow_mut()
+            .insert(writer_key, object_number);
+
+        if matches!(
+            object_status.and_then(|status| ObjectStatus::try_from(status).ok()),
+            Some(ObjectStatus::EndOfGroup | ObjectStatus::EndOfTrack)
+        ) {
+            let _ = JsFuture::from(writer.close()).await;
+            self.stream_writers.borrow_mut().remove(&writer_key);
+            self.stream_object_numbers.borrow_mut().remove(&writer_key);
+        }
+
+        Ok(())
+    }
+
+    pub async fn start(&self) -> Result<(), JsValue> {
+        let transport = WebTransport::new(&self.url)?;
+        *self.transport.borrow_mut() = Some(transport.clone());
+
+        if let Err(error) = JsFuture::from(transport.ready()).await {
+            self.transport.borrow_mut().take();
+            return Err(error);
+        }
+
+        if let Err(error) = self.setup_transport(&transport).await {
+            self.transport.borrow_mut().take();
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = close)]
+    pub async fn close(&self) -> Result<(), JsValue> {
+        if let Some(transport) = self.transport.borrow().clone() {
+            let closed = webtransport_closed_promise(&transport);
+            transport.close();
+            if let Some(closed) = closed {
+                let _ = JsFuture::from(closed).await;
+            }
+        }
+        self.transport.borrow_mut().take();
+        self.control_stream_writer.borrow_mut().take();
+        self.datagram_writer.borrow_mut().take();
+        self.stream_writers.borrow_mut().clear();
+        self.stream_object_numbers.borrow_mut().clear();
+        Ok(())
+    }
+
+    async fn setup_transport(&self, transport: &WebTransport) -> Result<(), JsValue> {
+        let callbacks = self.callbacks.clone();
+        let transport_cell = self.transport.clone();
+        if let Some(closed) = webtransport_closed_promise(transport) {
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = JsFuture::from(closed).await;
+                transport_cell.borrow_mut().take();
+                if let Some(callback) = callbacks.borrow().connection_closed_callback.clone() {
+                    let _ = callback.call0(&JsValue::NULL);
+                }
+            });
+        }
+
+        let control_stream = WebTransportBidirectionalStream::from(
+            JsFuture::from(transport.create_bidirectional_stream()).await?,
+        );
+        let control_reader = ReadableStreamDefaultReader::new(&control_stream.readable().into())?;
+        let control_writer = control_stream.writable().get_writer()?;
+        *self.control_stream_writer.borrow_mut() = Some(control_writer);
+
+        let datagram_writer = transport.datagrams().writable().get_writer()?;
+        *self.datagram_writer.borrow_mut() = Some(datagram_writer);
+
+        let callbacks = self.callbacks.clone();
+        let state = self.state.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = control_stream_read_thread(callbacks, state, &control_reader).await;
+        });
+
+        let datagram_reader = ReadableStreamDefaultReader::new(&transport.datagrams().readable())?;
+        let callbacks = self.callbacks.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = datagram_read_thread(callbacks, &datagram_reader).await;
+        });
+
+        let incoming_uni_streams = transport.incoming_unidirectional_streams();
+        let incoming_uni_streams_reader = ReadableStreamDefaultReader::new(&incoming_uni_streams)?;
+        let callbacks = self.callbacks.clone();
+        *self.stream_writers.borrow_mut() = HashMap::new();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = receive_unidirectional_thread(callbacks, &incoming_uni_streams_reader).await;
+        });
+
+        Ok(())
+    }
+
+    async fn send_control_message(
+        &self,
+        message_type: ControlMessageType,
+        payload: BytesMut,
+    ) -> Result<(), JsValue> {
+        let writer = self
+            .control_stream_writer
+            .borrow()
+            .clone()
+            .ok_or_else(|| js_error("control_stream_writer is None"))?;
+        let bytes = encode_control_message(message_type, payload);
+        write_to_writer(&writer, &bytes).await
+    }
+
+    async fn send_request_error(
+        &self,
+        message_type: ControlMessageType,
+        request_id: u64,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Result<(), JsValue> {
+        self.send_control_message(
+            message_type,
+            RequestError {
+                request_id,
+                error_code,
+                reason_phrase,
+            }
+            .encode(),
+        )
+        .await
+    }
+
+    async fn send_datagram_bytes(&self, payload: &[u8]) -> Result<(), JsValue> {
+        let writer = self
+            .datagram_writer
+            .borrow()
+            .clone()
+            .ok_or_else(|| js_error("datagram_writer is None"))?;
+        write_to_writer(&writer, payload).await
+    }
+
+    async fn get_or_create_stream_writer(
+        &self,
+        track_alias: u64,
+        group_id: u64,
+        subgroup_id: u64,
+    ) -> Result<WritableStreamDefaultWriter> {
+        let writer_key = (track_alias, group_id, subgroup_id);
+        if let Some(writer) = self.stream_writers.borrow().get(&writer_key).cloned() {
+            return Ok(writer);
+        }
+
+        let transport = self
+            .transport
+            .borrow()
+            .clone()
+            .ok_or_else(|| anyhow!("transport is None"))?;
+        let writable = web_sys::WritableStream::from(
+            JsFuture::from(transport.create_unidirectional_stream())
+                .await
+                .map_err(|error| anyhow!("create_unidirectional_stream: {error:?}"))?,
+        );
+        let writer = writable
+            .get_writer()
+            .map_err(|error| anyhow!("get_writer: {error:?}"))?;
+        self.stream_object_numbers.borrow_mut().remove(&writer_key);
+        self.stream_writers
+            .borrow_mut()
+            .insert(writer_key, writer.clone());
+        Ok(writer)
     }
 }
 
-// Due to the lifetime issue of `spawn_local`, it needs to be kept separate from MOQTClient.
-// The callback is passed from JavaScript.
 #[cfg(feature = "web_sys_unstable_apis")]
+async fn receive_unidirectional_thread(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    reader: &ReadableStreamDefaultReader,
+) -> Result<(), JsValue> {
+    while let Some(value) = read_reader_value(reader).await? {
+        let stream = ReadableStream::from(value);
+        let callbacks = callbacks.clone();
+        let stream_reader = ReadableStreamDefaultReader::new(&stream)?;
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = uni_directional_stream_read_thread(callbacks, &stream_reader).await;
+        });
+    }
+    Ok(())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+async fn control_stream_read_thread(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    state: Rc<RefCell<ClientState>>,
+    reader: &ReadableStreamDefaultReader,
+) -> Result<(), JsValue> {
+    let mut buf = BytesMut::new();
+    let mut stream_snapshot = Vec::new();
+
+    while let Some(chunk) = read_byte_chunk(reader).await? {
+        let new_bytes = normalize_stream_chunk(&mut stream_snapshot, chunk);
+        if new_bytes.is_empty() {
+            continue;
+        }
+        buf.extend_from_slice(&new_bytes);
+        loop {
+            match take_control_message(&mut buf).map_err(|error| js_error(error.to_string()))? {
+                Some((message_type, payload)) => {
+                    handle_control_message(callbacks.clone(), state.clone(), message_type, payload)
+                        .await?;
+                }
+                None => break,
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+async fn datagram_read_thread(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    reader: &ReadableStreamDefaultReader,
+) -> Result<(), JsValue> {
+    while let Some(chunk) = read_byte_chunk(reader).await? {
+        let mut buf = BytesMut::from(chunk.as_slice());
+        if let Some(datagram) = ObjectDatagram::decode(&mut buf) {
+            emit_object_datagram(callbacks.clone(), datagram)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+async fn uni_directional_stream_read_thread(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    reader: &ReadableStreamDefaultReader,
+) -> Result<(), JsValue> {
+    let mut header: Option<SubgroupHeader> = None;
+    let mut buf = BytesMut::new();
+    let mut stream_snapshot = Vec::new();
+
+    while let Some(chunk) = read_byte_chunk(reader).await? {
+        let new_bytes = normalize_stream_chunk(&mut stream_snapshot, chunk);
+        if new_bytes.is_empty() {
+            continue;
+        }
+        buf.extend_from_slice(&new_bytes);
+
+        loop {
+            if header.is_none() {
+                match take_subgroup_header(&mut buf) {
+                    Ok(Some(parsed_header)) => {
+                        emit_subgroup_header(callbacks.clone(), &parsed_header)?;
+                        header = Some(parsed_header);
+                        continue;
+                    }
+                    Ok(None) => break,
+                    Err(error) => return Err(js_error(error.to_string())),
+                }
+            }
+
+            let parsed_header = header.clone().expect("subgroup header");
+            match SubgroupObjectField::decode(parsed_header.message_type, &mut buf) {
+                Ok(field) => {
+                    let object_id_delta = field.object_id_delta;
+                    emit_subgroup_object(
+                        callbacks.clone(),
+                        &parsed_header,
+                        field,
+                        object_id_delta,
+                    )?;
+                    continue;
+                }
+                Err(moqt::wire::DecodeError::NeedMoreData) => break,
+                Err(moqt::wire::DecodeError::Fatal(error)) => return Err(js_error(error)),
+            }
+        }
+    }
+
+    let _ = JsFuture::from(reader.cancel()).await;
+    Ok(())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+async fn handle_control_message(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    state: Rc<RefCell<ClientState>>,
+    message_type: ControlMessageType,
+    payload: BytesMut,
+) -> Result<(), JsValue> {
+    let mut cursor = Cursor::new(payload.as_ref());
+
+    match message_type {
+        ControlMessageType::ServerSetup => {
+            let message = ServerSetup::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode SERVER_SETUP"))?;
+            state
+                .borrow_mut()
+                .configure(message.setup_parameters.max_request_id);
+            if let Some(callback) = callbacks.borrow().server_setup_callback.clone() {
+                let wrapper = ServerSetupMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::PublishNamespace => {
+            let message = PublishNamespace::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE"))?;
+            if let Some(callback) = callbacks.borrow().publish_namespace_callback.clone() {
+                let wrapper = PublishNamespaceMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::PublishNamespaceOk => {
+            let message = NamespaceOk::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE_OK"))?;
+            state
+                .borrow_mut()
+                .finish_publish_namespace_request(message.request_id, true);
+            if let Some(callback) = callbacks
+                .borrow()
+                .publish_namespace_response_callback
+                .clone()
+            {
+                let wrapper = NamespaceOkMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::PublishNamespaceError => {
+            let message = RequestError::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE_ERROR"))?;
+            state
+                .borrow_mut()
+                .finish_publish_namespace_request(message.request_id, false);
+            if let Some(callback) = callbacks
+                .borrow()
+                .publish_namespace_response_callback
+                .clone()
+            {
+                let wrapper = RequestErrorMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::SubscribeNamespaceOk => {
+            let message = NamespaceOk::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode SUBSCRIBE_NAMESPACE_OK"))?;
+            state
+                .borrow_mut()
+                .finish_subscribe_namespace_request(message.request_id, true);
+            if let Some(callback) = callbacks
+                .borrow()
+                .subscribe_namespace_response_callback
+                .clone()
+            {
+                let wrapper = NamespaceOkMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::SubscribeNamespaceError => {
+            let message = RequestError::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode SUBSCRIBE_NAMESPACE_ERROR"))?;
+            state
+                .borrow_mut()
+                .finish_subscribe_namespace_request(message.request_id, false);
+            if let Some(callback) = callbacks
+                .borrow()
+                .subscribe_namespace_response_callback
+                .clone()
+            {
+                let wrapper = RequestErrorMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::Publish => {
+            let message =
+                Publish::decode(&mut cursor).ok_or_else(|| js_error("failed to decode PUBLISH"))?;
+            if let Some(callback) = callbacks.borrow().publish_callback.clone() {
+                let wrapper = PublishMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::PublishOk => {
+            let message = PublishOk::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode PUBLISH_OK"))?;
+            state
+                .borrow_mut()
+                .finish_publish_request(message.request_id);
+            if let Some(callback) = callbacks.borrow().publish_response_callback.clone() {
+                let wrapper = PublishOkMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::PublishError => {
+            let message = RequestError::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode PUBLISH_ERROR"))?;
+            state
+                .borrow_mut()
+                .finish_publish_request(message.request_id);
+            if let Some(callback) = callbacks.borrow().publish_response_callback.clone() {
+                let wrapper = RequestErrorMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::Subscribe => {
+            let message = Subscribe::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode SUBSCRIBE"))?;
+            let validation_code = state.borrow().validate_incoming_subscribe(&message);
+            if validation_code == 0 {
+                state.borrow_mut().register_incoming_subscribe(&message);
+            }
+            if let Some(callback) = callbacks.borrow().subscribe_callback.clone() {
+                let wrapper = SubscribeMessage::from(&message);
+                let _ = callback.call3(
+                    &JsValue::NULL,
+                    &JsValue::from(wrapper),
+                    &JsValue::from_bool(validation_code == 0),
+                    &JsValue::from_f64(validation_code as f64),
+                );
+            }
+        }
+        ControlMessageType::SubscribeOk => {
+            let message = SubscribeOk::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode SUBSCRIBE_OK"))?;
+            state
+                .borrow_mut()
+                .activate_outgoing_subscription(message.request_id, message.track_alias);
+            if let Some(callback) = callbacks.borrow().subscribe_response_callback.clone() {
+                let wrapper = SubscribeOkMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::SubscribeError => {
+            let message = RequestError::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode SUBSCRIBE_ERROR"))?;
+            state
+                .borrow_mut()
+                .remove_outgoing_subscription(message.request_id);
+            if let Some(callback) = callbacks.borrow().subscribe_response_callback.clone() {
+                let wrapper = RequestErrorMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::UnSubscribe => {
+            let request_id =
+                decode_request_id(&mut cursor).map_err(|error| js_error(error.to_string()))?;
+            state.borrow_mut().remove_incoming_subscribe(request_id);
+            if let Some(callback) = callbacks.borrow().incoming_unsubscribe_callback.clone() {
+                let _ = callback.call1(
+                    &JsValue::NULL,
+                    &JsValue::from(js_sys::BigInt::from(request_id)),
+                );
+            }
+        }
+        _ => {
+            console_log!("Unhandled control message: {:?}", message_type);
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn emit_object_datagram(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    datagram: ObjectDatagram,
+) -> Result<(), JsValue> {
+    match datagram.field {
+        DatagramField::Payload0x00 {
+            object_id,
+            publisher_priority,
+            payload,
+        }
+        | DatagramField::Payload0x02WithEndOfGroup {
+            object_id,
+            publisher_priority,
+            payload,
+        }
+        | DatagramField::Payload0x04 {
+            object_id,
+            publisher_priority,
+            payload,
+        } => {
+            if let Some(callback) = callbacks.borrow().object_datagram_callback.clone() {
+                let wrapper = ObjectDatagramMessage::new(
+                    datagram.track_alias,
+                    datagram.group_id,
+                    Some(object_id),
+                    publisher_priority,
+                    payload.to_vec(),
+                    packages::loc::LocHeader::default(),
+                );
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        DatagramField::Payload0x01 {
+            object_id,
+            publisher_priority,
+            extension_headers,
+            payload,
+        }
+        | DatagramField::Payload0x03WithEndOfGroup {
+            object_id,
+            publisher_priority,
+            extension_headers,
+            payload,
+        } => {
+            if let Some(callback) = callbacks.borrow().object_datagram_callback.clone() {
+                let wrapper = ObjectDatagramMessage::new(
+                    datagram.track_alias,
+                    datagram.group_id,
+                    Some(object_id),
+                    publisher_priority,
+                    payload.to_vec(),
+                    crate::loc::extension_headers_to_loc_header(&extension_headers),
+                );
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        DatagramField::Payload0x05 {
+            publisher_priority,
+            extension_headers,
+            payload,
+        }
+        | DatagramField::Payload0x07WithEndOfGroup {
+            publisher_priority,
+            extension_headers,
+            payload,
+        } => {
+            if let Some(callback) = callbacks.borrow().object_datagram_callback.clone() {
+                let wrapper = ObjectDatagramMessage::new(
+                    datagram.track_alias,
+                    datagram.group_id,
+                    None,
+                    publisher_priority,
+                    payload.to_vec(),
+                    crate::loc::extension_headers_to_loc_header(&extension_headers),
+                );
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        DatagramField::Payload0x06WithEndOfGroup {
+            publisher_priority,
+            payload,
+        } => {
+            if let Some(callback) = callbacks.borrow().object_datagram_callback.clone() {
+                let wrapper = ObjectDatagramMessage::new(
+                    datagram.track_alias,
+                    datagram.group_id,
+                    None,
+                    publisher_priority,
+                    payload.to_vec(),
+                    packages::loc::LocHeader::default(),
+                );
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        DatagramField::Status0x20 {
+            object_id,
+            publisher_priority,
+            status,
+        } => {
+            if let Some(callback) = callbacks.borrow().object_datagram_status_callback.clone() {
+                let wrapper = ObjectDatagramStatusMessage::new(
+                    datagram.track_alias,
+                    datagram.group_id,
+                    Some(object_id),
+                    publisher_priority,
+                    status,
+                    packages::loc::LocHeader::default(),
+                );
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        DatagramField::Status0x21 {
+            object_id,
+            publisher_priority,
+            extension_headers,
+            status,
+        } => {
+            if let Some(callback) = callbacks.borrow().object_datagram_status_callback.clone() {
+                let wrapper = ObjectDatagramStatusMessage::new(
+                    datagram.track_alias,
+                    datagram.group_id,
+                    Some(object_id),
+                    publisher_priority,
+                    status,
+                    crate::loc::extension_headers_to_loc_header(&extension_headers),
+                );
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn emit_subgroup_header(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    header: &SubgroupHeader,
+) -> Result<(), JsValue> {
+    if let Some(callback) = callbacks.borrow().subgroup_header_callback.clone() {
+        let subgroup_id = match header.subgroup_id {
+            SubgroupId::Value(value) => Some(value),
+            _ => None,
+        };
+        let wrapper = SubgroupHeaderMessage::new(
+            header.track_alias,
+            header.group_id,
+            subgroup_id,
+            header.publisher_priority,
+        );
+        let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn emit_subgroup_object(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    header: &SubgroupHeader,
+    field: SubgroupObjectField,
+    object_id_delta: u64,
+) -> Result<(), JsValue> {
+    if let Some(callback) = callbacks.borrow().subgroup_object_callback.clone() {
+        let loc_header = crate::loc::extension_headers_to_loc_header(&field.extension_headers);
+        let subgroup_id = match header.subgroup_id {
+            SubgroupId::Value(value) => Some(value),
+            _ => None,
+        };
+        let wrapper = match field.subgroup_object {
+            SubgroupObject::Payload { data, .. } => SubgroupObjectMessage::new(
+                subgroup_id,
+                object_id_delta,
+                None,
+                data.to_vec(),
+                loc_header,
+            ),
+            SubgroupObject::Status { code, .. } => {
+                let status = ObjectStatus::try_from(code as u8).ok();
+                SubgroupObjectMessage::new(
+                    subgroup_id,
+                    object_id_delta,
+                    status,
+                    Vec::new(),
+                    loc_header,
+                )
+            }
+        };
+        let _ = callback.call3(
+            &JsValue::NULL,
+            &JsValue::from(js_sys::BigInt::from(header.track_alias)),
+            &JsValue::from(js_sys::BigInt::from(header.group_id)),
+            &JsValue::from(wrapper),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn default_setup_parameters(max_request_id: u64) -> SetupParameter {
+    SetupParameter {
+        path: None,
+        max_request_id,
+        authorization_token: vec![],
+        max_auth_token_cache_size: None,
+        authority: None,
+        moq_implementation: Some("moqt-client-wasm".to_string()),
+    }
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn authorization_tokens(auth_info: &str) -> Vec<AuthorizationToken> {
+    if auth_info.trim().is_empty() {
+        return vec![];
+    }
+
+    vec![AuthorizationToken::UseValue {
+        token_type: 0,
+        token_value: Bytes::copy_from_slice(auth_info.as_bytes()),
+    }]
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn empty_extension_headers() -> ExtensionHeaders {
+    ExtensionHeaders {
+        prior_group_id_gap: vec![],
+        prior_object_id_gap: vec![],
+        immutable_extensions: vec![],
+    }
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn content_exists_from_fields(
+    content_exists: bool,
+    largest_group_id: Option<u64>,
+    largest_object_id: Option<u64>,
+) -> ContentExists {
+    if content_exists {
+        ContentExists::True {
+            location: Location {
+                group_id: largest_group_id.unwrap_or(0),
+                object_id: largest_object_id.unwrap_or(0),
+            },
+        }
+    } else {
+        ContentExists::False
+    }
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn filter_type_from_fields(
+    filter_type: u8,
+    start_group: Option<u64>,
+    start_object: Option<u64>,
+    end_group: Option<u64>,
+) -> Result<FilterType, JsValue> {
+    match filter_type {
+        1 => Ok(FilterType::LatestGroup),
+        2 => Ok(FilterType::LatestObject),
+        3 => Ok(FilterType::AbsoluteStart {
+            location: Location {
+                group_id: start_group.unwrap_or(0),
+                object_id: start_object.unwrap_or(0),
+            },
+        }),
+        4 => Ok(FilterType::AbsoluteRange {
+            location: Location {
+                group_id: start_group.unwrap_or(0),
+                object_id: start_object.unwrap_or(0),
+            },
+            end_group: end_group.unwrap_or(0),
+        }),
+        _ => Err(js_error("invalid filter type")),
+    }
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn take_subgroup_header(buf: &mut BytesMut) -> Result<Option<SubgroupHeader>> {
+    let mut cursor = Cursor::new(buf.as_ref());
+    match SubgroupHeader::decode(&mut cursor) {
+        Ok(header) => {
+            buf.advance(cursor.position() as usize);
+            Ok(Some(header))
+        }
+        Err(moqt::wire::DecodeError::NeedMoreData) => Ok(None),
+        Err(moqt::wire::DecodeError::Fatal(error)) => Err(anyhow!(error)),
+    }
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn decode_request_id(cursor: &mut Cursor<&[u8]>) -> Result<u64> {
+    cursor
+        .try_get_varint()
+        .map_err(|error| anyhow!("failed to decode request id: {error}"))
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+async fn write_to_writer(
+    writer: &WritableStreamDefaultWriter,
+    bytes: &[u8],
+) -> Result<(), JsValue> {
+    let buffer = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
+    buffer.copy_from(bytes);
+    JsFuture::from(writer.write_with_chunk(&buffer)).await?;
+    Ok(())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+async fn read_byte_chunk(reader: &ReadableStreamDefaultReader) -> Result<Option<Vec<u8>>, JsValue> {
+    let result = JsFuture::from(reader.read()).await?;
+    let done = js_sys::Boolean::from(js_sys::Reflect::get(&result, &JsValue::from_str("done"))?)
+        .value_of();
+    if done {
+        return Ok(None);
+    }
+    let value = js_sys::Reflect::get(&result, &JsValue::from_str("value"))?;
+    Ok(Some(js_sys::Uint8Array::from(value).to_vec()))
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+async fn read_reader_value(
+    reader: &ReadableStreamDefaultReader,
+) -> Result<Option<JsValue>, JsValue> {
+    let result = JsFuture::from(reader.read()).await?;
+    let done = js_sys::Boolean::from(js_sys::Reflect::get(&result, &JsValue::from_str("done"))?)
+        .value_of();
+    if done {
+        return Ok(None);
+    }
+    let value = js_sys::Reflect::get(&result, &JsValue::from_str("value"))?;
+    Ok(Some(value))
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn normalize_stream_chunk(stream_snapshot: &mut Vec<u8>, chunk: Vec<u8>) -> Vec<u8> {
+    if !stream_snapshot.is_empty()
+        && chunk.len() >= stream_snapshot.len()
+        && chunk.starts_with(stream_snapshot.as_slice())
+    {
+        let new_bytes = chunk[stream_snapshot.len()..].to_vec();
+        *stream_snapshot = chunk;
+        return new_bytes;
+    }
+
+    stream_snapshot.extend_from_slice(&chunk);
+    chunk
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn webtransport_closed_promise(transport: &WebTransport) -> Option<js_sys::Promise> {
+    js_sys::Reflect::get(transport.as_ref(), &JsValue::from_str("closed"))
+        .ok()
+        .and_then(|value| value.dyn_into::<js_sys::Promise>().ok())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn js_error(message: impl Into<String>) -> JsValue {
+    JsValue::from_str(&message.into())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+#[derive(Default)]
 struct MOQTCallbacks {
-    setup_callback: Option<js_sys::Function>,
-    announce_callback: Option<js_sys::Function>,
-    announce_response_callback: Option<js_sys::Function>,
+    server_setup_callback: Option<js_sys::Function>,
+    publish_namespace_callback: Option<js_sys::Function>,
+    publish_namespace_response_callback: Option<js_sys::Function>,
+    subscribe_namespace_response_callback: Option<js_sys::Function>,
+    publish_callback: Option<js_sys::Function>,
+    publish_response_callback: Option<js_sys::Function>,
     subscribe_callback: Option<js_sys::Function>,
     subscribe_response_callback: Option<js_sys::Function>,
-    subscribe_announces_response_callback: Option<js_sys::Function>,
-    unsubscribe_callback: Option<js_sys::Function>,
     incoming_unsubscribe_callback: Option<js_sys::Function>,
-    datagram_object_callback: Option<js_sys::Function>,
-    datagram_object_status_callback: Option<js_sys::Function>,
-    subgroup_stream_header_callback: Option<js_sys::Function>,
-    subgroup_stream_object_callback: Option<js_sys::Function>,
+    object_datagram_callback: Option<js_sys::Function>,
+    object_datagram_status_callback: Option<js_sys::Function>,
+    subgroup_header_callback: Option<js_sys::Function>,
+    subgroup_object_callback: Option<js_sys::Function>,
     connection_closed_callback: Option<js_sys::Function>,
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
-impl MOQTCallbacks {
-    fn new() -> Self {
-        MOQTCallbacks {
-            setup_callback: None,
-            announce_callback: None,
-            announce_response_callback: None,
-            subscribe_callback: None,
-            subscribe_response_callback: None,
-            subscribe_announces_response_callback: None,
-            unsubscribe_callback: None,
-            incoming_unsubscribe_callback: None,
-            datagram_object_callback: None,
-            datagram_object_status_callback: None,
-            subgroup_stream_header_callback: None,
-            subgroup_stream_object_callback: None,
-            connection_closed_callback: None,
-        }
-    }
-
-    pub fn setup_callback(&self) -> Option<js_sys::Function> {
-        self.setup_callback.clone()
-    }
-
-    pub fn set_setup_callback(&mut self, callback: js_sys::Function) {
-        self.setup_callback = Some(callback);
-    }
-
-    pub fn announce_callback(&self) -> Option<js_sys::Function> {
-        self.announce_callback.clone()
-    }
-
-    pub fn set_announce_callback(&mut self, callback: js_sys::Function) {
-        self.announce_callback = Some(callback);
-    }
-
-    pub fn announce_response_callback(&self) -> Option<js_sys::Function> {
-        self.announce_response_callback.clone()
-    }
-
-    pub fn set_announce_response_callback(&mut self, callback: js_sys::Function) {
-        self.announce_response_callback = Some(callback);
-    }
-
-    pub fn subscribe_callback(&self) -> Option<js_sys::Function> {
-        self.subscribe_callback.clone()
-    }
-
-    pub fn set_subscribe_callback(&mut self, callback: js_sys::Function) {
-        self.subscribe_callback = Some(callback);
-    }
-
-    pub fn subscribe_response_callback(&self) -> Option<js_sys::Function> {
-        self.subscribe_response_callback.clone()
-    }
-
-    pub fn set_subscribe_response_callback(&mut self, callback: js_sys::Function) {
-        self.subscribe_response_callback = Some(callback);
-    }
-
-    pub fn subscribe_announces_response_callback(&self) -> Option<js_sys::Function> {
-        self.subscribe_announces_response_callback.clone()
-    }
-
-    pub fn set_subscribe_announces_response_callback(&mut self, callback: js_sys::Function) {
-        self.subscribe_announces_response_callback = Some(callback);
-    }
-
-    pub fn set_unsubscribe_callback(&mut self, callback: js_sys::Function) {
-        self.unsubscribe_callback = Some(callback);
-    }
-
-    pub fn unsubscribe_callback(&self) -> Option<js_sys::Function> {
-        self.unsubscribe_callback.clone()
-    }
-
-    pub fn set_incoming_unsubscribe_callback(&mut self, callback: js_sys::Function) {
-        self.incoming_unsubscribe_callback = Some(callback);
-    }
-
-    pub fn incoming_unsubscribe_callback(&self) -> Option<js_sys::Function> {
-        self.incoming_unsubscribe_callback.clone()
-    }
-
-    pub fn datagram_object_callback(&self) -> Option<js_sys::Function> {
-        self.datagram_object_callback.clone()
-    }
-
-    pub fn set_datagram_object_callback(&mut self, callback: js_sys::Function) {
-        self.datagram_object_callback = Some(callback);
-    }
-
-    pub fn datagram_object_status_callback(&self) -> Option<js_sys::Function> {
-        self.datagram_object_status_callback.clone()
-    }
-
-    pub fn set_datagram_object_status_callback(&mut self, callback: js_sys::Function) {
-        self.datagram_object_status_callback = Some(callback);
-    }
-
-    pub fn subgroup_stream_header_callback(&self) -> Option<js_sys::Function> {
-        self.subgroup_stream_header_callback.clone()
-    }
-
-    pub fn set_subgroup_stream_header_callback(&mut self, callback: js_sys::Function) {
-        self.subgroup_stream_header_callback = Some(callback);
-    }
-
-    pub fn get_subgroup_stream_object_callback(&self) -> Option<js_sys::Function> {
-        self.subgroup_stream_object_callback.clone()
-    }
-
-    pub fn set_subgroup_stream_object_callback(&mut self, callback: js_sys::Function) {
-        self.subgroup_stream_object_callback = Some(callback);
-    }
-
-    pub fn connection_closed_callback(&self) -> Option<js_sys::Function> {
-        self.connection_closed_callback.clone()
-    }
-
-    pub fn set_connection_closed_callback(&mut self, callback: js_sys::Function) {
-        self.connection_closed_callback = Some(callback);
-    }
-}
+#[cfg(not(feature = "web_sys_unstable_apis"))]
+#[wasm_bindgen]
+pub struct MOQTClient;

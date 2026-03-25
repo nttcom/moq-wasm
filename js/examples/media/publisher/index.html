@@ -54,7 +54,7 @@
           </section>
 
           <section class="card stack">
-            <h2>Forwarding Preference</h2>
+            <h2>Transport Mode</h2>
             <div class="radio-group">
               <label
                 ><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram
@@ -74,17 +74,17 @@
 
           <section class="card stack">
             <h3>CLIENT_SETUP</h3>
-            <label>Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
+            <label>Max Request ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
             <div class="button-row action-row">
               <button type="button" id="sendSetupBtn" class="compact-button">Send</button>
             </div>
           </section>
 
           <section class="card stack">
-            <h3>ANNOUNCE</h3>
+            <h3>PUBLISH_NAMESPACE</h3>
             <label
               >Track Namespace:
-              <input type="text" name="announce-track-namespace" id="announce-track-namespace" value="video_audio" />
+              <input type="text" name="publish-track-namespace" id="publish-track-namespace" value="video_audio" />
             </label>
             <script>
               // Set default value for Track Namespace input
@@ -99,12 +99,12 @@
                 const HH = pad(now.getHours())
                 const MM = pad(now.getMinutes())
                 const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
-                const input = document.getElementById('announce-track-namespace')
+                const input = document.getElementById('publish-track-namespace')
                 if (input) input.value = value
               })()
             </script>
             <div class="button-row action-row">
-              <button type="button" id="sendAnnounceBtn">Send</button>
+              <button type="button" id="sendPublishNamespaceBtn">Send</button>
             </div>
           </section>
 

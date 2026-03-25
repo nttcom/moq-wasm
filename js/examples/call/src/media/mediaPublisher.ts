@@ -993,7 +993,7 @@ export class MediaPublisher {
     }
 
     const objectSendStartedAtMs = performance.now()
-    await client.sendSubgroupStreamObject(trackAlias, groupId, subgroupId, objectId, undefined, payload, locHeader)
+    await client.sendSubgroupObject(trackAlias, groupId, subgroupId, objectId, undefined, payload, locHeader)
     if (timingAcc) {
       timingAcc.objectSendMs += Math.max(0, performance.now() - objectSendStartedAtMs)
     }
@@ -1307,7 +1307,7 @@ export class MediaPublisher {
       return
     }
     for (const alias of aliases) {
-      await client.sendSubgroupStreamObject(alias, currentGroupId, 0n, endObjectId, 3, new Uint8Array(0), undefined)
+      await client.sendSubgroupObject(alias, currentGroupId, 0n, endObjectId, 3, new Uint8Array(0), undefined)
     }
   }
 
@@ -1359,11 +1359,11 @@ export class MediaPublisher {
     this.catalogGroupByAlias.set(aliasKey, groupId)
 
     const payload = new TextEncoder().encode(buildCallCatalogJson(this.trackNamespace, this.catalogTracks))
-    await client.sendSubgroupStreamHeaderMessage(trackAlias, groupId, 0n, 0)
-    await client.sendSubgroupStreamObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
+    await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
+    await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
   }
 
   private async sendEndOfGroup(client: MOQTClient, trackAlias: bigint, groupId: bigint, endObjectId: bigint) {
-    await client.sendSubgroupStreamObject(trackAlias, groupId, 0n, endObjectId, 3, new Uint8Array(0), undefined)
+    await client.sendSubgroupObject(trackAlias, groupId, 0n, endObjectId, 3, new Uint8Array(0), undefined)
   }
 }

@@ -22,7 +22,7 @@ impl ClientSetup {
 }
 
 impl ClientSetup {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let number_of_supported_versions = buf
             .try_get_varint()
             .log_context("number_of_supported_versions")
@@ -44,7 +44,7 @@ impl ClientSetup {
         Some(client_setup_message)
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.number_of_supported_versions);
         for supported_version in &self.supported_versions {

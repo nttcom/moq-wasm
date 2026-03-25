@@ -239,7 +239,7 @@ impl SubgroupHeader {
         }
     }
 
-    pub(crate) fn decode(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self, DecodeError> {
+    pub fn decode(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self, DecodeError> {
         let message_type = cursor
             .try_get_varint()
             .log_context("Subgroup Header Message Type")
@@ -268,7 +268,7 @@ impl SubgroupHeader {
         })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut buf = BytesMut::new();
         buf.put_varint(self.message_type.get_value());
         buf.put_varint(self.track_alias);
@@ -296,7 +296,7 @@ impl SubgroupObjectField {
         self.message_type.has_end_of_group()
     }
 
-    pub(crate) fn decode(
+    pub fn decode(
         message_type: SubgroupHeaderType,
         buf: &mut BytesMut,
     ) -> Result<Self, DecodeError> {
@@ -329,7 +329,7 @@ impl SubgroupObjectField {
         })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut buf = BytesMut::new();
         buf.put_varint(self.object_id_delta);
         if self.message_type.has_extensions() {

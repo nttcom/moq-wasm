@@ -1,4 +1,4 @@
-import { AnnounceMessage, SubscribeErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_wasm'
+import { PublishNamespaceMessage, RequestErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_wasm'
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
@@ -30,6 +30,7 @@ export class LocalSession {
   private readonly mediaController: CallMediaController
   private state: LocalSessionState
   private chatMessageHandler: ((message: ChatMessage) => void) | null
+  private readonly subscribeTrackAliases = new Map<bigint, bigint>()
 
   constructor({ roomName, userName, relayUrl, defaultAuthInfo = 'secret' }: LocalSessionOptions) {
     this.roomName = roomName
@@ -68,11 +69,18 @@ export class LocalSession {
     return [this.roomName]
   }
 
-  setOnAnnounceHandler(handler: (announce: AnnounceMessage) => void): void {
-    this.client.setOnAnnounceHandler(handler)
+  setOnPublishNamespaceHandler(handler: ((publishNamespace: PublishNamespaceMessage) => void) | null): void {
+    if (!handler) {
+      this.client.setOnPublishNamespaceHandler(null)
+      return
+    }
+    this.client.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
+      handler(publishNamespace)
+      await respondOk()
+    })
   }
 
-  setOnSubscribeResponseHandler(handler: (response: SubscribeOkMessage | SubscribeErrorMessage) => void): void {
+  setOnSubscribeResponseHandler(handler: (response: SubscribeOkMessage | RequestErrorMessage) => void): void {
     this.client.setOnSubscribeResponseHandler(handler)
   }
 
@@ -89,7 +97,7 @@ export class LocalSession {
     try {
       await this.client.connect(this.relayUrl)
       this.transitionToState(LocalSessionState.Ready)
-      await this.client.announce(this.trackNamespace, this.defaultAuthInfo)
+      await this.publishNamespace(this.trackNamespace, this.defaultAuthInfo)
     } catch (error) {
       this.transitionToState(LocalSessionState.Idle)
       throw error
@@ -109,32 +117,33 @@ export class LocalSession {
     }
   }
 
-  async announce(trackNamespace: string[], authInfo: string = this.defaultAuthInfo): Promise<void> {
+  async publishNamespace(trackNamespace: string[], authInfo: string = this.defaultAuthInfo): Promise<void> {
     if (this.state !== LocalSessionState.Ready) {
-      throw new Error(`Cannot announce tracks when session state is "${this.state}"`)
+      throw new Error(`Cannot publish namespace when session state is "${this.state}"`)
     }
-    await this.client.announce(trackNamespace, authInfo)
+    await this.client.publishNamespace(trackNamespace, authInfo)
   }
 
-  async subscribeAnnounces(trackNamespacePrefix: string[], authInfo: string = this.defaultAuthInfo): Promise<void> {
+  async subscribeNamespace(trackNamespacePrefix: string[], authInfo: string = this.defaultAuthInfo): Promise<void> {
     if (this.state !== LocalSessionState.Ready) {
-      throw new Error(`Cannot subscribe announces when session state is "${this.state}"`)
+      throw new Error(`Cannot subscribe namespace when session state is "${this.state}"`)
     }
-    await this.client.subscribeAnnounces(trackNamespacePrefix, authInfo)
+    await this.client.subscribeNamespace(trackNamespacePrefix, authInfo)
   }
 
   async subscribe(
     subscribeId: bigint,
-    trackAlias: bigint,
     trackNamespace: string[],
     trackName: string,
     authInfo: string = this.defaultAuthInfo,
     role?: CatalogSubscribeRole,
     codec?: string
-  ): Promise<void> {
+  ): Promise<bigint> {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot subscribe when session state is "${this.state}"`)
     }
+    const trackAlias = await this.client.subscribe(subscribeId, trackNamespace, trackName, authInfo)
+    this.subscribeTrackAliases.set(subscribeId, trackAlias)
     const remoteUser = trackNamespace[1] ?? `alias-${trackAlias.toString()}`
 
     const resolvedRole = role ?? this.resolveTrackRole(trackName)
@@ -163,12 +172,11 @@ export class LocalSession {
       this.mediaController.registerRemoteTrack(remoteUser, trackName, trackAlias, resolvedRole, codec)
     }
 
-    await this.client.subscribe(subscribeId, trackAlias, trackNamespace, trackName, authInfo)
+    return trackAlias
   }
 
   async subscribeCatalog(
     subscribeId: bigint,
-    trackAlias: bigint,
     trackNamespace: string[],
     authInfo: string = this.defaultAuthInfo,
     timeoutMs: number = 5000,
@@ -187,36 +195,40 @@ export class LocalSession {
         reject(new Error('Catalog subscribe timed out'))
       }, timeoutMs)
 
-      this.client.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroup) => {
-        try {
-          const payload = new TextDecoder().decode(new Uint8Array(subgroup.objectPayload))
-          const tracks = parseCallCatalogTracks(payload)
-          onTracksUpdated?.(tracks)
+      this.client
+        .subscribe(subscribeId, trackNamespace, 'catalog', authInfo)
+        .then((trackAlias) => {
+          this.subscribeTrackAliases.set(subscribeId, trackAlias)
+          this.client.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroup) => {
+            try {
+              const payload = new TextDecoder().decode(new Uint8Array(subgroup.objectPayload))
+              const tracks = parseCallCatalogTracks(payload)
+              onTracksUpdated?.(tracks)
+              if (settled) {
+                return
+              }
+              settled = true
+              window.clearTimeout(timeoutId)
+              resolve(tracks)
+            } catch (error) {
+              if (settled) {
+                console.error('Failed to parse updated catalog payload:', error)
+                return
+              }
+              settled = true
+              window.clearTimeout(timeoutId)
+              reject(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
+            }
+          })
+        })
+        .catch((error) => {
           if (settled) {
             return
           }
           settled = true
           window.clearTimeout(timeoutId)
-          resolve(tracks)
-        } catch (error) {
-          if (settled) {
-            console.error('Failed to parse updated catalog payload:', error)
-            return
-          }
-          settled = true
-          window.clearTimeout(timeoutId)
-          reject(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
-        }
-      })
-
-      this.client.subscribe(subscribeId, trackAlias, trackNamespace, 'catalog', authInfo).catch((error) => {
-        if (settled) {
-          return
-        }
-        settled = true
-        window.clearTimeout(timeoutId)
-        reject(error instanceof Error ? error : new Error('Catalog subscribe failed'))
-      })
+          reject(error instanceof Error ? error : new Error('Catalog subscribe failed'))
+        })
     })
   }
 
@@ -225,11 +237,17 @@ export class LocalSession {
       throw new Error(`Cannot unsubscribe when session state is "${this.state}"`)
     }
     await this.client.unsubscribe(subscribeId)
+    const trackAlias = this.subscribeTrackAliases.get(subscribeId)
+    this.subscribeTrackAliases.delete(subscribeId)
     if (role === 'video' || role === 'screenshare' || role === 'audio') {
-      this.mediaController.unregisterRemoteTrack(subscribeId, role)
+      if (trackAlias !== undefined) {
+        this.mediaController.unregisterRemoteTrack(trackAlias, role)
+      }
       return
     }
-    this.mediaController.unregisterRemoteTrack(subscribeId)
+    if (trackAlias !== undefined) {
+      this.mediaController.unregisterRemoteTrack(trackAlias)
+    }
   }
 
   async sendChatMessage(message: string): Promise<void> {

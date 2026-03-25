@@ -7,7 +7,7 @@ export type VideoChunkSender = (
   trackAlias: bigint,
   groupId: bigint,
   subgroupId: bigint,
-  objectId: bigint,
+  objectNumber: bigint,
   chunk: EncodedVideoChunk,
   client: MOQTClient,
   locHeader?: LocHeader
@@ -56,26 +56,21 @@ export async function sendVideoChunkViaMoqt({
 
   if (chunk.type === 'key') {
     transportState.advanceVideoGroup()
+  } else if (transportState.getVideoGroupId() < 0n) {
+    transportState.advanceVideoGroup()
+  }
+
+  if (chunk.type === 'key') {
     for (const alias of trackAliases) {
       for (const subgroup of transportState.listVideoSubgroups()) {
-        await client.sendSubgroupStreamHeaderMessage(
-          alias,
-          transportState.getVideoGroupId(),
-          BigInt(subgroup),
-          publisherPriority
-        )
+        await client.sendSubgroupHeader(alias, transportState.getVideoGroupId(), BigInt(subgroup), publisherPriority)
         transportState.markVideoHeaderSent(alias, subgroup)
       }
     }
   } else {
     for (const alias of trackAliases) {
       if (!transportState.hasVideoHeaderSent(alias, subgroupId)) {
-        await client.sendSubgroupStreamHeaderMessage(
-          alias,
-          transportState.getVideoGroupId(),
-          BigInt(subgroupId),
-          publisherPriority
-        )
+        await client.sendSubgroupHeader(alias, transportState.getVideoGroupId(), BigInt(subgroupId), publisherPriority)
         transportState.markVideoHeaderSent(alias, subgroupId)
       }
     }
@@ -86,7 +81,7 @@ export async function sendVideoChunkViaMoqt({
       alias,
       transportState.getVideoGroupId(),
       BigInt(subgroupId),
-      transportState.getVideoObjectId(),
+      transportState.getVideoObjectNumber(),
       chunk,
       client,
       locHeader
@@ -96,5 +91,5 @@ export async function sendVideoChunkViaMoqt({
     }
   }
 
-  transportState.incrementVideoObject()
+  transportState.incrementVideoObjectNumber()
 }

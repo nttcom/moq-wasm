@@ -1,5 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { SubgroupStreamObjectMessage } from '../../../../pkg/moqt_client_wasm'
+import { SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { AudioJitterBufferMode } from '../../../../utils/media/audioJitterBuffer'
 import {
   DEFAULT_AUDIO_JITTER_CONFIG,
@@ -103,7 +103,7 @@ interface AudioSubscriptionContext {
   lastPlaybackQueueReportAtMs: number
 }
 
-type SubgroupStreamObjectMessageWithLoc = SubgroupStreamObjectMessage & { locHeader?: any }
+type SubgroupObjectMessageWithLoc = SubgroupObjectMessage & { locHeader?: any }
 
 export class MediaSubscriber {
   private handlers: MediaSubscriberHandlers = {}
@@ -418,14 +418,15 @@ export class MediaSubscriber {
     this.audioContexts.delete(trackAlias)
   }
 
-  private forwardToWorker(worker: Worker, groupId: bigint, message: SubgroupStreamObjectMessageWithLoc) {
+  private forwardToWorker(worker: Worker, groupId: bigint, message: SubgroupObjectMessageWithLoc) {
     const payload = new Uint8Array(message.objectPayload)
     const payloadLength = message.objectPayloadLength
     worker.postMessage(
       {
         groupId,
         subgroupStreamObject: {
-          objectId: message.objectId,
+          subgroupId: message.subgroupId,
+          objectIdDelta: message.objectIdDelta,
           objectPayloadLength: payloadLength,
           objectPayload: payload,
           objectStatus: message.objectStatus,

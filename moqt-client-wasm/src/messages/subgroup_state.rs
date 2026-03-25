@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 
 /// JavaScript-friendly wrapper for subgroup send state
 #[wasm_bindgen]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SubgroupState {
     track_alias: u64,
     group_id: u64,

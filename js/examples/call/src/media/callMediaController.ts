@@ -165,12 +165,12 @@ export class CallMediaController {
       }
       const trackName = subscribe.trackName ?? ''
       if (trackName === 'chat') {
-        await respondOk(0n, 'secret', 'subgroup')
+        await respondOk(0n)
         return
       }
       if (this.publisher.isCatalogTrack(trackName)) {
-        await respondOk(0n, 'secret', 'subgroup')
-        await this.publisher.sendCatalogToAlias(BigInt(subscribe.trackAlias))
+        const trackAlias = await respondOk(0n)
+        await this.publisher.sendCatalogToAlias(trackAlias)
         return
       }
       const role = this.publisher.resolveTrackRole(trackName)
@@ -178,7 +178,7 @@ export class CallMediaController {
         await respondError(404n, 'Unknown track')
         return
       }
-      await respondOk(0n, 'secret', 'subgroup')
+      await respondOk(0n)
       try {
         if (role === 'video') {
           await this.publisher.applyVideoEncodingForTrack(trackName)
@@ -192,10 +192,6 @@ export class CallMediaController {
 
     client.setOnIncomingUnsubscribeHandler((subscribeId) => {
       this.publisher.handleIncomingUnsubscribe(subscribeId)
-    })
-
-    client.setOnSubscribeDoneHandler((message) => {
-      this.publisher.handleSubscribeDone(message.subscribeId)
     })
   }
 
