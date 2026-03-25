@@ -24,12 +24,7 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
 
     info!(%remote_address, "connecting to relay via QUIC");
     let connecting = endpoint.connect(remote_address, host).await?;
-    let session = match connecting.await {
-        Ok(s) => s,
-        Err(e) => {
-            anyhow::bail!("test failed: {:?}", e)
-        }
-    };
+    let session = connecting.await?;
 
     let (_publisher, subscriber) = session.publisher_subscriber_pair();
     let subscriber = std::sync::Arc::new(subscriber);

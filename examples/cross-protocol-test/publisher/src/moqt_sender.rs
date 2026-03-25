@@ -23,12 +23,7 @@ pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDa
 
     info!(%remote_address, "connecting to relay");
     let connecting = endpoint.connect(remote_address, host).await?;
-    let session = match connecting.await {
-        Ok(s) => s,
-        Err(e) => {
-            anyhow::bail!("test failed: {:?}", e)
-        }
-    };
+    let session = connecting.await?;
 
     let (publisher, _subscriber) = session.publisher_subscriber_pair();
     let publisher = std::sync::Arc::new(publisher);
