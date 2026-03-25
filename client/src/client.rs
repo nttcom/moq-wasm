@@ -7,7 +7,6 @@ use std::{
     },
 };
 
-use anyhow::bail;
 use moqt::{DatagramField, Endpoint, Session, SubscribeOption, TransportProtocol};
 
 use crate::stream_runner::StreamTaskRunner;
@@ -39,12 +38,9 @@ impl<T: TransportProtocol> Client<T> {
 
         tracing::info!("remote_address: {} host: {}", remote_address, host);
 
-        let session = match endpoint.connect(remote_address, host).await {
-            Ok(s) => s,
-            Err(e) => {
-                bail!("test failed: {:?}", e)
-            }
-        };
+        let connecting = endpoint.connect(remote_address, host).await?;
+        let session = connecting.await?;
+
         let track_alias = Arc::new(AtomicU64::new(0));
         let (publisher, subscriber) = session.publisher_subscriber_pair();
         let publisher = Arc::new(publisher);

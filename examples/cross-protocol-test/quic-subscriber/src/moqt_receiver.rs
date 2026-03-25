@@ -23,7 +23,9 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
         .context("failed to resolve address")?;
 
     info!(%remote_address, "connecting to relay via QUIC");
-    let session = endpoint.connect(remote_address, host).await?;
+    let connecting = endpoint.connect(remote_address, host).await?;
+    let session = connecting.await?;
+
     let (_publisher, subscriber) = session.publisher_subscriber_pair();
     let subscriber = std::sync::Arc::new(subscriber);
     let session = std::sync::Arc::new(session);

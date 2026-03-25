@@ -1,8 +1,11 @@
 use std::net::SocketAddr;
 
 use crate::{
-    Session, TransportProtocol, modules::moqt::domains::session_creator::SessionCreator,
-    modules::transport::transport_connection_creator::TransportConnectionCreator,
+    Connecting, TransportProtocol,
+    modules::{
+        moqt::domains::session_creator::SessionCreator,
+        transport::transport_connection_creator::TransportConnectionCreator,
+    },
 };
 
 pub struct ClientConfig {
@@ -68,13 +71,13 @@ impl<T: TransportProtocol> Endpoint<T> {
         &self,
         remote_address: SocketAddr,
         host: &str,
-    ) -> anyhow::Result<Session<T>> {
+    ) -> anyhow::Result<Connecting<T>> {
         self.session_creator
             .create_new_connection(remote_address, host)
             .await
     }
 
-    pub async fn accept(&mut self) -> anyhow::Result<Session<T>> {
+    pub async fn accept(&mut self) -> anyhow::Result<Connecting<T>> {
         self.session_creator.accept_new_connection().await
     }
 }
