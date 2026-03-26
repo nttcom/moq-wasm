@@ -10,6 +10,7 @@ pub enum DataReceiver<T: TransportProtocol> {
     Datagram(DatagramReceiver<T>),
 }
 
+#[derive(Debug)]
 pub struct Subscription {
     pub track_alias: u64,
     pub expires: u64,

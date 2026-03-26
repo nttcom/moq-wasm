@@ -1,5 +1,6 @@
 use crate::modules::enums::{ContentExists, GroupOrder};
 
+#[derive(Debug)]
 pub struct Subscription {
     subscription: moqt::Subscription,
 }

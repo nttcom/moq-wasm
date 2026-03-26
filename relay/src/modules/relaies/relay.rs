@@ -14,14 +14,22 @@ pub(crate) struct Relay {
 }
 
 impl Relay {
-    pub(crate) fn add_object_receiver(
+    pub(crate) fn init_object_receiver(
         &mut self,
         session_id: SessionId,
-        mut data_receiver: Box<dyn DataReceiver>,
+        track_alias: u64,
+        data_receiver: Box<dyn DataReceiver>,
     ) {
-        let track_alias = data_receiver.get_track_alias();
         let track_key = compose_session_track_key(session_id, track_alias);
         self.initialize_if_needed(track_key);
+        self.add_object_receiver(track_key, data_receiver);
+    }
+
+    pub(crate) fn add_object_receiver(
+        &mut self,
+        track_key: u128,
+        mut data_receiver: Box<dyn DataReceiver>,
+    ) {
         let queue = self.relay_properties.object_queue.clone();
         self.relay_properties.joinset.spawn(async move {
             tracing::info!("add object receiver");
@@ -37,16 +45,26 @@ impl Relay {
         });
     }
 
-    pub(crate) fn add_object_sender(
+    pub(crate) fn init_object_sender(
         &mut self,
         session_id: SessionId,
         track_alias: u64,
-        mut datagram_sender: Box<dyn DataSender>,
+        datagram_sender: Box<dyn DataSender>,
         group_order: GroupOrder,
         filter_type: FilterType,
     ) {
         let track_key = compose_session_track_key(session_id, track_alias);
         self.initialize_if_needed(track_key);
+        self.add_object_sender(track_key, datagram_sender, group_order, filter_type);
+    }
+
+    pub(crate) fn add_object_sender(
+        &mut self,
+        track_key: u128,
+        mut datagram_sender: Box<dyn DataSender>,
+        group_order: GroupOrder,
+        filter_type: FilterType,
+    ) {
         let cache = self
             .relay_properties
             .object_queue

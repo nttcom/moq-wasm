@@ -18,8 +18,8 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         option: SubscribeOption,
     ) -> anyhow::Result<Subscription>;
     async fn create_data_receiver(
-        &self,
-        subscription: Subscription,
+        &mut self,
+        subscription: &Subscription,
     ) -> anyhow::Result<Box<dyn DataReceiver>>;
 }
 
@@ -46,8 +46,8 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
     }
 
     async fn create_data_receiver(
-        &self,
-        subscription: Subscription,
+        &mut self,
+        subscription: &Subscription,
     ) -> anyhow::Result<Box<dyn DataReceiver>> {
         let result = self.accept_data_receiver(subscription.as_moqt()).await?;
         match result {

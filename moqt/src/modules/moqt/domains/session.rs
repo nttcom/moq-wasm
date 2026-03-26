@@ -44,9 +44,7 @@ impl<T: TransportProtocol> Session<T> {
     }
 
     pub fn subscriber(&self) -> Subscriber<T> {
-        Subscriber::<T> {
-            session: self.inner.clone(),
-        }
+        Subscriber::<T>::new(self.inner.clone())
     }
 
     pub fn publisher_subscriber_pair(&self) -> (Publisher<T>, Subscriber<T>) {

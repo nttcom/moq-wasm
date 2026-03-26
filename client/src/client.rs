@@ -22,8 +22,7 @@ pub struct Client<T: TransportProtocol> {
     label: String,
     join_handle: tokio::task::JoinHandle<()>,
     track_alias: Arc<AtomicU64>,
-    publisher: Arc<moqt::Publisher<T>>,
-    subscriber: Arc<moqt::Subscriber<T>>,
+    session: Arc<Session<T>>,
     runner: StreamTaskRunner,
 }
 
@@ -46,22 +45,15 @@ impl<T: TransportProtocol> Client<T> {
             }
         };
         let track_alias = Arc::new(AtomicU64::new(0));
-        let (publisher, subscriber) = session.publisher_subscriber_pair();
-        let publisher = Arc::new(publisher);
-        let subscriber = Arc::new(subscriber);
-        let join_handle = Self::create_receiver(
-            label.clone(),
-            publisher.clone(),
-            session,
-            track_alias.clone(),
-        );
+        let session = Arc::new(session);
+        let join_handle =
+            Self::create_receiver(label.clone(), session.clone(), track_alias.clone());
 
         Ok(Self {
             label,
             join_handle,
             track_alias,
-            publisher,
-            subscriber,
+            session,
             runner: StreamTaskRunner::new(),
         })
     }
@@ -69,8 +61,7 @@ impl<T: TransportProtocol> Client<T> {
     pub fn create_receiver(
         // pub(crate) -> pub
         label: String,
-        publisher: Arc<moqt::Publisher<T>>,
-        session: Session<T>,
+        session: Arc<Session<T>>,
         track_alias: Arc<AtomicU64>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
@@ -120,7 +111,7 @@ impl<T: TransportProtocol> Client<T> {
                                 .ok(1000000, moqt::ContentExists::False)
                                 .await;
                             let publication = subscribe_handler.into_publication(track_alias);
-                            Self::create_stream(label.clone(), &publisher, publication, &runner)
+                            Self::create_stream(label.clone(), &session, publication, &runner)
                                 .await;
                         }
                         moqt::SessionEvent::ProtocolViolation() => {
@@ -134,7 +125,11 @@ impl<T: TransportProtocol> Client<T> {
 
     pub async fn publish_namespace(&self, track_namespace: String) -> anyhow::Result<()> {
         // pub(crate) -> pub
-        let result = self.publisher.publish_namespace(track_namespace).await;
+        let result = self
+            .session
+            .publisher()
+            .publish_namespace(track_namespace)
+            .await;
         if result.is_err() {
             tracing::info!("{}: publish namespace error", self.label);
             return Err(anyhow::anyhow!("Publish namespace error"));
@@ -147,7 +142,8 @@ impl<T: TransportProtocol> Client<T> {
     pub async fn subscribe_namespace(&self, track_namespace_prefix: String) -> anyhow::Result<()> {
         // pub(crate) -> pub
         let result = self
-            .subscriber
+            .session
+            .subscriber()
             .subscribe_namespace(track_namespace_prefix)
             .await;
         if result.is_err() {
@@ -164,7 +160,8 @@ impl<T: TransportProtocol> Client<T> {
         // pub(crate) -> pub
         let option = moqt::PublishOption::default();
         let pub_result = self
-            .publisher
+            .session
+            .publisher()
             .publish(track_namespace, track_name, option)
             .await;
         if let Ok(p) = pub_result {
@@ -223,12 +220,16 @@ impl<T: TransportProtocol> Client<T> {
 
     async fn create_stream(
         label: String,
-        publisher: &moqt::Publisher<T>,
+        session: &Arc<Session<T>>,
         publication: moqt::PublishedResource,
         runner: &StreamTaskRunner,
     ) {
         tracing::info!("{} :create stream", label);
-        let mut stream = publisher.create_stream(&publication).await.unwrap();
+        let mut stream = session
+            .publisher()
+            .create_stream(&publication)
+            .await
+            .unwrap();
         let task = async move {
             let mut group_id = 0;
             let mut id = 0;
@@ -244,7 +245,7 @@ impl<T: TransportProtocol> Client<T> {
                     immutable_extensions: vec![],
                 };
                 let obj = stream.create_object_field(&header, id, extension_headers, data);
-                match stream.send(header.clone(), obj).await {
+                match stream.send(&header, obj).await {
                     Ok(_) => {
                         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
                         id += 1;
@@ -321,7 +322,7 @@ impl<T: TransportProtocol> Client<T> {
             forward: true,
             filter_type: moqt::FilterType::LatestObject,
         };
-        let subscriber = self.subscriber.clone();
+        let mut subscriber = self.session.subscriber();
         tracing::info!("{} :subscribe {}", label, full_name);
         let subscription = match subscriber
             .subscribe(track_namespace, track_name, option)
