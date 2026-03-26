@@ -95,7 +95,7 @@ async fn send_segments(
             ext.clone(),
             SubgroupObject::new_payload(Bytes::from(segment.init_segment)),
         );
-        stream.send(header.clone(), obj0).await?;
+        stream.send(&header, obj0).await?;
 
         // Object 1: media segment (moof + mdat)
         let obj1 = stream.create_object_field(
@@ -104,7 +104,7 @@ async fn send_segments(
             ext,
             SubgroupObject::new_payload(Bytes::from(segment.media_segment)),
         );
-        stream.send(header, obj1).await?;
+        stream.send(&header, obj1).await?;
 
         info!(group_id, "group sent");
         group_id += 1;

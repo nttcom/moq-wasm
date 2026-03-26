@@ -20,9 +20,17 @@ use crate::{
 
 pub struct Subscriber<T: TransportProtocol> {
     pub(crate) session: Arc<SessionContext<T>>,
+    is_waiting_stream: bool,
 }
 
 impl<T: TransportProtocol> Subscriber<T> {
+    pub(crate) fn new(session: Arc<SessionContext<T>>) -> Self {
+        Self {
+            session,
+            is_waiting_stream: false,
+        }
+    }
+
     pub async fn subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -116,22 +124,25 @@ impl<T: TransportProtocol> Subscriber<T> {
     }
 
     pub async fn accept_data_receiver(
-        &self,
+        &mut self,
         subscription: &Subscription,
     ) -> anyhow::Result<DataReceiver<T>> {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
-        self.session
-            .notification_map
-            .write()
-            .await
-            .insert(subscription.track_alias, sender);
+        if !self.is_waiting_stream {
+            self.session
+                .notification_map
+                .write()
+                .await
+                .insert(subscription.track_alias, sender);
+            self.is_waiting_stream = true;
+        }
         let result = receiver
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
         match result {
             StreamWithObject::StreamHeader { stream, header } => {
-                let data_receiver = StreamDataReceiver::new(receiver, stream, header).await?;
+                let data_receiver = StreamDataReceiver::new(stream, header).await?;
                 Ok(DataReceiver::Stream(data_receiver))
             }
             StreamWithObject::Datagram(object) => {

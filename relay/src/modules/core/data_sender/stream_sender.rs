@@ -25,7 +25,7 @@ impl<T: moqt::TransportProtocol> StreamSender<T> {
         match object {
             DataObject::SubgroupObject(field) => {
                 if let Some(header) = &self.header {
-                    self.inner.send(header.clone(), field).await
+                    self.inner.send(header, field).await
                 } else {
                     Err(anyhow::anyhow!("Header not set for StreamSender"))
                 }

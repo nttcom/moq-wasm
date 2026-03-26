@@ -24,8 +24,6 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
 
     info!(%remote_address, "connecting to relay via QUIC");
     let session = endpoint.connect(remote_address, host).await?;
-    let (_publisher, subscriber) = session.publisher_subscriber_pair();
-    let subscriber = std::sync::Arc::new(subscriber);
     let session = std::sync::Arc::new(session);
 
     // イベント処理タスク
@@ -56,13 +54,15 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
     };
 
     info!(namespace, track_name, "subscribing");
-    let subscription = subscriber
+    let subscription = session
+        .subscriber()
         .subscribe(namespace.to_string(), track_name.to_string(), option)
         .await
         .context("failed to subscribe")?;
 
     info!("waiting for data stream");
-    let receiver = subscriber
+    let receiver = session
+        .subscriber()
         .accept_data_receiver(&subscription)
         .await
         .context("failed to accept data receiver")?;
