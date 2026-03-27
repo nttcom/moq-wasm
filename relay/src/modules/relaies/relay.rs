@@ -4,7 +4,9 @@ use crate::modules::{
     core::{data_receiver::DataReceiver, data_sender::DataSender},
     enums::{FilterType, GroupOrder},
     relaies::{
-        caches::cache_map::CacheMap, object_sender::ObjectSender, relay_properties::RelayProperties,
+        caches::{cache::Cache, cache_map::CacheMap},
+        object_sender::ObjectSender,
+        relay_properties::RelayProperties,
     },
     types::{SessionId, compose_session_track_key},
 };
@@ -18,16 +20,18 @@ impl Relay {
         &mut self,
         session_id: SessionId,
         track_alias: u64,
+        group_id: Option<u64>,
         data_receiver: Box<dyn DataReceiver>,
     ) {
         let track_key = compose_session_track_key(session_id, track_alias);
         self.initialize_if_needed(track_key);
-        self.add_object_receiver(track_key, data_receiver);
+        self.add_object_receiver(track_key, group_id, data_receiver);
     }
 
     pub(crate) fn add_object_receiver(
         &mut self,
         track_key: u128,
+        group_id: Option<u64>,
         mut data_receiver: Box<dyn DataReceiver>,
     ) {
         let queue = self.relay_properties.object_queue.clone();
@@ -40,8 +44,13 @@ impl Relay {
                     tracing::error!("Track key {} not found in object queue", track_key);
                     break;
                 }
-                queue.unwrap().set_latest_object(data_object).await;
+                let group_id = group_id.or_else(|| data_object.group_id());
+                queue
+                    .unwrap()
+                    .set_latest_object(track_key, group_id.unwrap(), data_object)
+                    .await;
             }
+            tracing::info!("object receiver task ended");
         });
     }
 
@@ -49,19 +58,27 @@ impl Relay {
         &mut self,
         session_id: SessionId,
         track_alias: u64,
+        group_id: Option<u64>,
         datagram_sender: Box<dyn DataSender>,
         group_order: GroupOrder,
         filter_type: FilterType,
     ) {
         let track_key = compose_session_track_key(session_id, track_alias);
         self.initialize_if_needed(track_key);
-        self.add_object_sender(track_key, datagram_sender, group_order, filter_type);
+        self.add_object_sender(
+            track_key,
+            group_id,
+            datagram_sender,
+            group_order,
+            filter_type,
+        );
     }
 
     pub(crate) fn add_object_sender(
         &mut self,
         track_key: u128,
-        mut datagram_sender: Box<dyn DataSender>,
+        group_id: Option<u64>,
+        datagram_sender: Box<dyn DataSender>,
         group_order: GroupOrder,
         filter_type: FilterType,
     ) {
@@ -73,44 +90,23 @@ impl Relay {
             .clone();
         self.relay_properties.joinset.spawn(async move {
             tracing::info!("add object sender");
-            let object_sender = ObjectSender {};
             let mut receiver = Some(cache.get_latest_receiver());
-            let (mut start_group_id, start_object_id) = match filter_type {
-                FilterType::LatestGroup => (cache.get_latest_group_id(), 0u64),
-                FilterType::AbsoluteStart { ref location } => {
-                    (location.group_id, location.object_id)
-                }
-                FilterType::AbsoluteRange { ref location, .. } => {
-                    (location.group_id, location.object_id)
-                }
-                _ => (0u64, 0u64),
-            };
+            let (mut start_group_id, start_object_id) = Self::get_start_ids(&cache, &filter_type);
+            let mut object_sender = ObjectSender { sender: datagram_sender, cache, group_id: start_group_id };
             loop {
                 match filter_type {
-                    FilterType::LatestGroup => {
-                        if let Some(ref mut recv) = receiver {
-                            let _ = recv.recv().await;
-                        }
-                        start_group_id = cache.get_latest_group_id();
-                        object_sender
-                            .send_latest_group(datagram_sender.as_mut(), &cache, start_group_id)
-                            .await;
-                    }
-                    FilterType::LatestObject => {
+                    FilterType::LatestObject | FilterType::LatestGroup => {
                         if let Some(ref mut recv) = receiver {
                             object_sender
-                                .send_latest_object(datagram_sender.as_mut(), recv)
+                                .send_latest_object(recv)
                                 .await;
                         }
                     }
                     FilterType::AbsoluteStart { .. } => {
                         object_sender
                             .send_absolute_start(
-                                datagram_sender.as_mut(),
-                                &cache,
                                 start_group_id,
                                 start_object_id,
-                                group_order == GroupOrder::Descending,
                             )
                             .await;
                     }
@@ -120,27 +116,21 @@ impl Relay {
                     } => {
                         object_sender
                             .send_absolute_start(
-                                datagram_sender.as_mut(),
-                                &cache,
                                 start_group_id,
                                 start_object_id,
-                                group_order == GroupOrder::Descending,
                             )
                             .await;
-                        if start_group_id == end_group {
+                        if start_group_id < end_group {
                             break;
                         }
                     }
                 }
                 match group_order {
-                    GroupOrder::Ascending => {
+                    GroupOrder::Ascending | GroupOrder::Publisher => {
                         start_group_id += 1;
                     }
                     GroupOrder::Descending => {
                         start_group_id -= 1;
-                    }
-                    GroupOrder::Publisher => {
-                        // No change in group_id for Publisher order
                     }
                 };
             }
@@ -152,5 +142,13 @@ impl Relay {
             .object_queue
             .entry(track_key)
             .or_insert_with(|| Arc::new(CacheMap::new()));
+    }
+
+    fn get_start_ids(cache: &Arc<dyn Cache>, filter_type: &FilterType) -> (u64, u64) {
+        match filter_type {
+            FilterType::LatestGroup | FilterType::LatestObject => (cache.get_latest_group_id(), 0),
+            FilterType::AbsoluteStart { location } => (location.group_id, location.object_id),
+            FilterType::AbsoluteRange { location, .. } => (location.group_id, location.object_id),
+        }
     }
 }
