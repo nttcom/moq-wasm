@@ -1,29 +1,26 @@
 use crate::modules::enums::{ContentExists, GroupOrder};
 
-#[derive(Debug)]
-pub struct Subscription {
-    subscription: moqt::Subscription,
+pub trait Subscription: 'static + Send + Sync {
+    fn track_alias(&self) -> u64;
+    fn expires(&self) -> u64;
+    fn group_order(&self) -> GroupOrder;
+    fn content_exists(&self) -> ContentExists;
 }
 
-impl Subscription {
-    pub(crate) fn from(subscription: moqt::Subscription) -> Self {
-        Self { subscription }
+impl<T: moqt::TransportProtocol> Subscription for moqt::Subscription<T> {
+    fn track_alias(&self) -> u64 {
+        self.track_alias
     }
 
-    pub(crate) fn as_moqt(&self) -> &moqt::Subscription {
-        &self.subscription
+    fn expires(&self) -> u64 {
+        self.expires
     }
 
-    pub(crate) fn track_alias(&self) -> u64 {
-        self.subscription.track_alias
+    fn group_order(&self) -> GroupOrder {
+        GroupOrder::from(self.group_order)
     }
-    pub(crate) fn expires(&self) -> u64 {
-        self.subscription.expires
-    }
-    pub(crate) fn _group_order(&self) -> GroupOrder {
-        GroupOrder::from(self.subscription.group_order)
-    }
-    pub(crate) fn content_exists(&self) -> ContentExists {
-        ContentExists::from(self.subscription.content_exists)
+
+    fn content_exists(&self) -> ContentExists {
+        ContentExists::from(self.content_exists)
     }
 }

@@ -27,7 +27,7 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
     fn _max_cache_duration(&self) -> Option<u64>;
     async fn ok(&self, subscriber_priority: u8, filter_type: FilterType) -> anyhow::Result<()>;
     async fn _error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
-    fn convert_into_subscription(&self, expires: u64) -> Subscription;
+    fn convert_into_subscription(&self, expires: u64) -> Box<dyn Subscription>;
 }
 
 #[async_trait]
@@ -68,7 +68,7 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
         self.error(code, reason_phrase).await
     }
 
-    fn convert_into_subscription(&self, expires: u64) -> Subscription {
-        Subscription::from(self.into_subscription(expires))
+    fn convert_into_subscription(&self, expires: u64) -> Box<dyn Subscription> {
+        Box::new(Subscription::from(self.into_subscription(expires)))
     }
 }

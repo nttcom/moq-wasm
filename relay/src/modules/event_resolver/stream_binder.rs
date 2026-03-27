@@ -87,14 +87,16 @@ impl StreamBinder {
             };
             let track_alias = receiver.get_track_alias();
             let track_key = compose_session_track_key(publisher_session_id, track_alias);
+            let group_id = receiver.get_group_id();
             relay.init_object_sender(
                 publisher_session_id,
                 track_alias,
+                group_id,
                 sender,
                 published_resources.group_order(),
                 published_resources.filter_type(),
             );
-            relay.init_object_receiver(publisher_session_id, track_alias, receiver);
+            relay.init_object_receiver(publisher_session_id, track_alias, group_id, receiver);
             relay_manager.relay_map.insert(track_key, relay);
 
             if is_datagram {
@@ -137,6 +139,7 @@ impl StreamBinder {
             }
 
             let subscriber_track_alias = receiver.get_track_alias();
+            let group_id = receiver.get_group_id();
 
             let sender = match publisher
                 .new_stream(&published_resources, subscriber_track_alias)
@@ -151,11 +154,12 @@ impl StreamBinder {
             if let Some(mut relay) = relay_manager.relay_map.get_mut(&track_key) {
                 relay.add_object_sender(
                     track_key,
+                    group_id,
                     sender,
                     published_resources.group_order(),
                     published_resources.filter_type(),
                 );
-                relay.add_object_receiver(track_key, receiver);
+                relay.add_object_receiver(track_key, group_id, receiver);
             }
         }
     }
