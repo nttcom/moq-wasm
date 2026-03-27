@@ -3,12 +3,15 @@ use std::sync::Arc;
 use crate::{
     FilterType, GroupOrder, Subscription, TransportProtocol,
     modules::moqt::{
-        control_plane::control_messages::{
-            control_message_type::ControlMessageType,
-            messages::{
-                parameters::content_exists::ContentExists, publish::Publish, publish_ok::PublishOk,
-                request_error::RequestError,
+        control_plane::{
+            control_messages::{
+                control_message_type::ControlMessageType,
+                messages::{
+                    parameters::content_exists::ContentExists, publish::Publish,
+                    publish_ok::PublishOk, request_error::RequestError,
+                },
             },
+            threads::enums::StreamWithObject,
         },
         domains::session_context::SessionContext,
     },
@@ -74,13 +77,20 @@ impl<T: TransportProtocol> PublishHandler<T> {
             .await
     }
 
-    pub fn into_subscription(&self, expires: u64) -> Subscription {
+    pub async fn into_subscription(&self, expires: u64) -> Subscription<T> {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
+        self.session_context
+            .notification_map
+            .write()
+            .await
+            .insert(self.track_alias, sender);
         Subscription {
             track_alias: self.track_alias,
             expires,
             group_order: self.group_order,
             content_exists: self.content_exists,
             delivery_timeout: self.delivery_timeout,
+            receiver: Some(receiver),
         }
     }
 }

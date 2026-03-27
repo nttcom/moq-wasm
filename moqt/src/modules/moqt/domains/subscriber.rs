@@ -20,17 +20,9 @@ use crate::{
 
 pub struct Subscriber<T: TransportProtocol> {
     pub(crate) session: Arc<SessionContext<T>>,
-    is_waiting_stream: bool,
 }
 
 impl<T: TransportProtocol> Subscriber<T> {
-    pub(crate) fn new(session: Arc<SessionContext<T>>) -> Self {
-        Self {
-            session,
-            is_waiting_stream: false,
-        }
-    }
-
     pub async fn subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -76,7 +68,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         track_namespace: String,
         track_name: String,
         option: SubscribeOption,
-    ) -> anyhow::Result<Subscription> {
+    ) -> anyhow::Result<Subscription<T>> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -112,7 +104,7 @@ impl<T: TransportProtocol> Subscriber<T> {
                     bail!("Protocol violation")
                 } else {
                     tracing::info!("Subscribe ok");
-                    Ok(Subscription::new(message))
+                    Ok(Subscription::new(message, &self.session).await)
                 }
             }
             ResponseMessage::SubscribeError(_, _, _) => {
@@ -125,27 +117,25 @@ impl<T: TransportProtocol> Subscriber<T> {
 
     pub async fn accept_data_receiver(
         &mut self,
-        subscription: &Subscription,
+        subscription: &mut Subscription<T>,
     ) -> anyhow::Result<DataReceiver<T>> {
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
-        if !self.is_waiting_stream {
-            self.session
-                .notification_map
-                .write()
-                .await
-                .insert(subscription.track_alias, sender);
-            self.is_waiting_stream = true;
-        }
-        let result = receiver
+        // Subscription always contains receiver at first.
+        // so we can safely unwrap here.
+        // Multiple datagram for same track_alias is not allowed, so after receiving datagram, we set receiver to None.
+        let stream_with_object = subscription
+            .receiver
+            .as_mut()
+            .unwrap()
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
-        match result {
+        match stream_with_object {
             StreamWithObject::StreamHeader { stream, header } => {
                 let data_receiver = StreamDataReceiver::new(stream, header).await?;
                 Ok(DataReceiver::Stream(data_receiver))
             }
             StreamWithObject::Datagram(object) => {
+                let receiver = subscription.receiver.take().unwrap();
                 let data_receiver = DatagramReceiver::new(object, receiver).await;
                 Ok(DataReceiver::Datagram(data_receiver))
             }
