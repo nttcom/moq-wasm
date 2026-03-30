@@ -1,10 +1,7 @@
 use async_trait::async_trait;
 
 use crate::modules::core::{
-    data_receiver::{
-        datagram_receiver::DatagramReceiver, receiver::DataReceiver,
-        stream_receiver::StreamReceiver,
-    },
+    data_receiver::receiver::DataReceiver,
     handler::publish::SubscribeOption,
     subscription::Subscription,
 };
@@ -20,7 +17,7 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
     ) -> anyhow::Result<Box<dyn Subscription>>;
     async fn create_data_receiver(
         &mut self,
-        subscription: &dyn Subscription,
+        subscription: &mut dyn Subscription,
     ) -> anyhow::Result<DataReceiver>;
 }
 
@@ -43,22 +40,26 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
             filter_type: option.filter_type.as_moqt(),
         };
         let subscription = self.subscribe(track_namespace, track_name, option).await?;
-        Ok(Subscription::from(subscription))
+        Ok(Box::new(subscription))
     }
 
     async fn create_data_receiver(
         &mut self,
-        subscription: &dyn Subscription,
+        subscription: &mut dyn Subscription,
     ) -> anyhow::Result<DataReceiver> {
-        let result = self.accept_data_receiver(subscription.as_moqt()).await?;
+        let Some(subscription) = subscription
+            .as_any_mut()
+            .downcast_mut::<moqt::Subscription<T>>()
+        else {
+            return Err(anyhow::anyhow!("subscription transport type mismatch"));
+        };
+        let result = self.accept_data_receiver(subscription).await?;
         match result {
             moqt::DataReceiver::Stream(inner) => {
-                let receiver = StreamReceiver::new(inner);
-                Ok(DataReceiver::Stream(Box::new(receiver)))
+                Ok(DataReceiver::Stream(Box::new(inner)))
             }
             moqt::DataReceiver::Datagram(inner) => {
-                let receiver = DatagramReceiver::new(inner);
-                Ok(DataReceiver::Datagram(Box::new(receiver)))
+                Ok(DataReceiver::Datagram(Box::new(inner)))
             }
         }
     }

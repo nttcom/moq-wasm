@@ -6,6 +6,7 @@ use crate::modules::{
     types::SessionId,
 };
 
+#[derive(Clone)]
 pub(crate) struct Location {
     pub(crate) group_id: u64,
     pub(crate) object_id: u64,
@@ -27,6 +28,7 @@ impl Location {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum FilterType {
     LatestGroup,
     LatestObject,

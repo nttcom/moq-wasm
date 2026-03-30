@@ -1,5 +1,5 @@
 use crate::modules::{
-    core::handler::{publish::PublishHandler, subscribe::SubscribeHandler},
+    core::handler::subscribe::SubscribeHandler,
     event_resolver::stream_binder::StreamBinder,
     sequences::{notifier::Notifier, tables::table::Table},
     types::SessionId,
@@ -22,19 +22,15 @@ impl Subscribe {
         let full_track_namespace = format!("{}:{}", track_namespace, track_name);
         tracing::debug!("New track '{}' is subscribed.", full_track_namespace,);
 
-        let pub_handler = table
+        let active_publish = table
             .find_publish_handler_with(handler.track_namespace(), handler.track_name())
             .await;
-        if let Some((pub_session_id, pub_handler)) = pub_handler {
-            self.subscribe_active_publish(
-                session_id,
-                pub_session_id,
-                pub_handler.as_ref(),
-                handler.as_ref(),
-                table,
-                stream_handler,
-            )
-            .await;
+        if active_publish.is_some() {
+            tracing::info!(
+                "active publish already exists for {}/{}. ignore for now",
+                track_namespace,
+                track_name
+            );
         } else if let Some(pub_session_id) = table.get_publish_namespace(track_namespace) {
             self.relay_subscribe(
                 session_id,
@@ -51,47 +47,6 @@ impl Subscribe {
             self.response_error(handler.as_ref()).await;
         }
         tracing::info!("SequenceHandler::subscribe: {} DONE", session_id);
-    }
-
-    async fn subscribe_active_publish(
-        &self,
-        session_id: SessionId,
-        pub_session_id: SessionId,
-        pub_handler: &dyn PublishHandler,
-        handler: &dyn SubscribeHandler,
-        table: &dyn Table,
-        stream_handler: &mut StreamBinder,
-    ) {
-        tracing::info!(
-            "publisher found. {}/{} (alias {})",
-            pub_handler.track_namespace(),
-            pub_handler.track_name(),
-            pub_handler.track_alias()
-        );
-        let subscription = pub_handler.convert_into_subscription(0);
-        let publisher_track_alias = subscription.track_alias();
-        if let Ok(subscriber_track_alias) = handler
-            .ok(subscription.expires(), subscription.content_exists())
-            .await
-        {
-            table.register_track_alias_link(
-                pub_session_id,
-                publisher_track_alias,
-                session_id,
-                subscriber_track_alias,
-            );
-            tracing::info!("send `SUBSCRIBE_OK` ok");
-            let _ = stream_handler
-                .bind_by_subscribe(
-                    session_id,
-                    subscription,
-                    pub_session_id,
-                    handler.convert_into_publication(subscriber_track_alias),
-                )
-                .await;
-        } else {
-            tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
-        }
     }
 
     #[allow(warnings)]

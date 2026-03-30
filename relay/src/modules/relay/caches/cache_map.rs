@@ -5,14 +5,13 @@ use dashmap::DashMap;
 use crate::modules::{
     core::data_object::DataObject,
     enums::Location,
-    relaies::caches::{
+    relay::caches::{
         cache::Cache, group_of_frames_map::GroupOfFramesMap, latest_info::LatestInfo,
     },
 };
 
 pub(crate) struct CacheMap {
     pub(crate) caches: DashMap<u64, GroupOfFramesMap>,
-    // short term lock for latest info
     latest_object_notifier: tokio::sync::broadcast::Sender<LatestInfo>,
 }
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::modules::{
-    core::data_object::DataObject, enums::Location, relaies::caches::latest_info::LatestInfo,
+    core::data_object::DataObject, enums::Location, relay::caches::latest_info::LatestInfo,
 };
 
 #[async_trait::async_trait]

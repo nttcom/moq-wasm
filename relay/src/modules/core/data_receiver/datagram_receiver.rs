@@ -1,7 +1,7 @@
 use crate::modules::core::data_object::DataObject;
 
 #[async_trait::async_trait]
-pub(crate) trait DatagramReceiver {
+pub(crate) trait DatagramReceiver: Send + Sync + 'static {
     fn get_track_alias(&self) -> u64;
     async fn receive_object(&mut self) -> anyhow::Result<DataObject>;
 }
@@ -9,7 +9,7 @@ pub(crate) trait DatagramReceiver {
 #[async_trait::async_trait]
 impl<T: moqt::TransportProtocol> DatagramReceiver for moqt::DatagramReceiver<T> {
     fn get_track_alias(&self) -> u64 {
-        self.track_alias()
+        self.track_alias
     }
 
     async fn receive_object(&mut self) -> anyhow::Result<DataObject> {
