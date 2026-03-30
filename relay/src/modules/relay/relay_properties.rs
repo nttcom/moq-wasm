@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
-use crate::modules::relaies::caches::cache::Cache;
+use crate::modules::relay::caches::cache::Cache;
 
 pub(crate) struct RelayProperties {
     pub(crate) object_queue: DashMap<u128, Arc<dyn Cache>>,

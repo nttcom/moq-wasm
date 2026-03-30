@@ -1,6 +1,6 @@
 use dashmap::DashMap;
 
-use crate::modules::relaies::relay::Relay;
+use crate::modules::relay::relay::Relay;
 
 pub struct RelayManager {
     pub(crate) relay_map: DashMap<u128, Relay>,

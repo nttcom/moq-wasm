@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::modules::{
     core::data_sender::DataSender,
-    relaies::caches::{cache::Cache, latest_info::LatestInfo},
+    relay::caches::{cache::Cache, latest_info::LatestInfo},
 };
 
 pub(crate) struct ObjectSender {

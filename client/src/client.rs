@@ -324,7 +324,7 @@ impl<T: TransportProtocol> Client<T> {
         };
         let mut subscriber = self.session.subscriber();
         tracing::info!("{} :subscribe {}", label, full_name);
-        let subscription = match subscriber
+        let mut subscription = match subscriber
             .subscribe(track_namespace, track_name, option)
             .await
         {
@@ -335,7 +335,7 @@ impl<T: TransportProtocol> Client<T> {
             }
         };
         let task = async move {
-            let receiver = match subscriber.accept_data_receiver(&subscription).await {
+            let receiver = match subscriber.accept_data_receiver(&mut subscription).await {
                 Ok(receiver) => receiver,
                 Err(e) => {
                     tracing::error!("Failed to accept stream or datagram: {}", e);

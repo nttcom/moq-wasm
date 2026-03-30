@@ -2,7 +2,7 @@ pub(crate) mod core;
 pub(crate) mod enums;
 pub(crate) mod event_handler;
 pub(crate) mod event_resolver;
-pub(crate) mod relaies;
+pub(crate) mod relay;
 pub(crate) mod sequences;
 pub(crate) mod session_handler;
 pub(crate) mod session_repository;
