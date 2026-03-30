@@ -17,6 +17,13 @@ impl DatagramReader {
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             let mut current_group_id = initial_group_id;
+            if sender
+                .send(ReceivedEvent::DatagramOpened { track_key })
+                .await
+                .is_err()
+            {
+                return;
+            }
             loop {
                 match receiver.receive_object().await {
                     Ok(object) => {

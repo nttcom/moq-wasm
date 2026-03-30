@@ -3,7 +3,10 @@ use tokio::sync::mpsc;
 
 use crate::modules::{
     enums::MOQTMessageReceived,
-    event_resolver::stream_binder::BindBySubscribeRequest,
+    relay::{
+        egress::coordinator::EgressCommand,
+        ingest::coordinator::IngestCommand,
+    },
     sequences::{
         notifier::Notifier,
         publish::Publish,
@@ -23,10 +26,15 @@ impl EventHandler {
     pub(crate) fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTMessageReceived>,
-        stream_binder_sender: mpsc::Sender<BindBySubscribeRequest>,
+        ingest_sender: mpsc::Sender<IngestCommand>,
+        egress_sender: mpsc::Sender<EgressCommand>,
     ) -> Self {
-        let session_event_watcher =
-            Self::create_pub_sub_event_watcher(repo, session_receiver, stream_binder_sender);
+        let session_event_watcher = Self::create_pub_sub_event_watcher(
+            repo,
+            session_receiver,
+            ingest_sender,
+            egress_sender,
+        );
         Self { session_event_watcher }
     }
 
@@ -37,7 +45,8 @@ impl EventHandler {
     fn create_pub_sub_event_watcher(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTMessageReceived>,
-        stream_binder_sender: mpsc::Sender<BindBySubscribeRequest>,
+        ingest_sender: mpsc::Sender<IngestCommand>,
+        egress_sender: mpsc::Sender<EgressCommand>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Session Event Watcher")
@@ -72,7 +81,8 @@ impl EventHandler {
                                         session_id,
                                         table.as_ref(),
                                         &notifier,
-                                        &stream_binder_sender,
+                                        &ingest_sender,
+                                        &egress_sender,
                                         handler,
                                     )
                                     .await;

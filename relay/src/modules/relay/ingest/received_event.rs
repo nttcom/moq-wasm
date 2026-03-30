@@ -6,6 +6,9 @@ pub(crate) enum ReceivedEvent {
         track_key: TrackKey,
         group_id: u64,
     },
+    DatagramOpened {
+        track_key: TrackKey,
+    },
     Object {
         track_key: TrackKey,
         group_id: u64,

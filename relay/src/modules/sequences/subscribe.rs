@@ -1,6 +1,9 @@
 use crate::modules::{
     core::handler::subscribe::SubscribeHandler,
-    event_resolver::stream_binder::BindBySubscribeRequest,
+    relay::{
+        egress::coordinator::{EgressCommand, EgressStartRequest},
+        ingest::coordinator::{IngestCommand, IngestStartRequest},
+    },
     sequences::{notifier::Notifier, tables::table::Table},
     types::SessionId,
 };
@@ -13,7 +16,8 @@ impl Subscribe {
         session_id: SessionId,
         table: &dyn Table,
         notifier: &Notifier,
-        stream_handler: &tokio::sync::mpsc::Sender<BindBySubscribeRequest>,
+        ingest_sender: &tokio::sync::mpsc::Sender<IngestCommand>,
+        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn SubscribeHandler>,
     ) {
         tracing::info!("SequenceHandler::subscribe: {}", session_id);
@@ -39,7 +43,8 @@ impl Subscribe {
                 track_name,
                 notifier,
                 table,
-                stream_handler,
+                ingest_sender,
+                egress_sender,
                 handler.as_ref(),
             )
             .await;
@@ -49,7 +54,6 @@ impl Subscribe {
         tracing::info!("SequenceHandler::subscribe: {} DONE", session_id);
     }
 
-    #[allow(warnings)]
     async fn relay_subscribe(
         &self,
         session_id: SessionId,
@@ -58,7 +62,8 @@ impl Subscribe {
         track_name: &str,
         notifier: &Notifier,
         table: &dyn Table,
-        stream_handler: &tokio::sync::mpsc::Sender<BindBySubscribeRequest>,
+        ingest_sender: &tokio::sync::mpsc::Sender<IngestCommand>,
+        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &dyn SubscribeHandler,
     ) {
         if let Ok(subscription) = notifier
@@ -75,22 +80,7 @@ impl Subscribe {
                 .ok(subscription.expires(), subscription.content_exists())
                 .await
             {
-                table.register_track_alias_link(
-                    pub_session_id,
-                    publisher_track_alias,
-                    session_id,
-                    subscriber_track_alias,
-                );
-                let pub_resource = handler.convert_into_publication(subscriber_track_alias);
-                let request = BindBySubscribeRequest {
-                    subscriber_session_id: session_id,
-                    subscription,
-                    publisher_session_id: pub_session_id,
-                    published_resources: pub_resource,
-                };
-                if let Err(error) = stream_handler.send(request).await {
-                    tracing::error!(?error, "Failed to send bind request to StreamBinder");
-                }
+                
             } else {
                 tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
                 // TODO: send_unsubscribe
