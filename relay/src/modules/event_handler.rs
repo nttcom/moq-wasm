@@ -72,6 +72,10 @@ impl EventHandler {
                                     )
                                     .await;
                             }
+                            MOQTMessageReceived::Disconnected(session_id) => {
+                                tracing::info!("Session disconnected: {}", session_id);
+                                notifier.repository.lock().await.remove(session_id);
+                            }
                             MOQTMessageReceived::ProtocolViolation() => todo!(),
                         }
                     } else {

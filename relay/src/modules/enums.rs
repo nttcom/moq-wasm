@@ -125,5 +125,6 @@ pub(crate) enum MOQTMessageReceived {
     SubscribeNameSpace(SessionId, Box<dyn SubscribeNamespaceHandler>),
     Publish(SessionId, Box<dyn PublishHandler>),
     Subscribe(SessionId, Box<dyn SubscribeHandler>),
+    Disconnected(SessionId),
     ProtocolViolation(),
 }

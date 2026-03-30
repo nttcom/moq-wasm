@@ -8,5 +8,6 @@ pub(crate) enum SessionEvent {
     SubscribeNamespace(Box<dyn SubscribeNamespaceHandler>),
     Publish(Box<dyn PublishHandler>),
     Subscribe(Box<dyn SubscribeHandler>),
+    Disconnected(),
     ProtocolViolation(),
 }

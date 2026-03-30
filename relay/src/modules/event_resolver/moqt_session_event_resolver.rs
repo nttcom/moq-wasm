@@ -15,6 +15,7 @@ impl MOQTSessionEventResolver {
             }
             SessionEvent::Publish(handler) => MOQTMessageReceived::Publish(session_id, handler),
             SessionEvent::Subscribe(handler) => MOQTMessageReceived::Subscribe(session_id, handler),
+            SessionEvent::Disconnected() => MOQTMessageReceived::Disconnected(session_id),
             SessionEvent::ProtocolViolation() => MOQTMessageReceived::ProtocolViolation(),
         }
     }

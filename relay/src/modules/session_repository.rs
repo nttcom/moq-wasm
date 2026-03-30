@@ -3,7 +3,9 @@ use std::sync::{Arc, Weak};
 use dashmap::DashMap;
 
 use crate::modules::{
-    core::{publisher::Publisher, session::Session, subscriber::Subscriber},
+    core::{
+        publisher::Publisher, session::Session, session_event::SessionEvent, subscriber::Subscriber,
+    },
     enums::MOQTMessageReceived,
     event_resolver::moqt_session_event_resolver::MOQTSessionEventResolver,
     thread_manager::ThreadManager,
@@ -34,6 +36,11 @@ impl SessionRepository {
         self.sessions.insert(session_id, arc_session);
     }
 
+    pub(crate) fn remove(&mut self, session_id: SessionId) {
+        self.sessions.remove(&session_id);
+        self.thread_manager.remove(&session_id);
+    }
+
     fn start_receive(
         &mut self,
         session_id: SessionId,
@@ -50,9 +57,16 @@ impl SessionRepository {
                             tracing::error!("Failed to receive session event: {}", e);
                             break;
                         }
-                        let session_event =
-                            MOQTSessionEventResolver::resolve(session_id, event.unwrap());
-                        event_sender.send(session_event).unwrap();
+                        let event = event.unwrap();
+                        let disconnected = matches!(event, SessionEvent::Disconnected());
+                        let session_event = MOQTSessionEventResolver::resolve(session_id, event);
+                        if let Err(err) = event_sender.send(session_event) {
+                            tracing::error!("Failed to forward session event: {}", err);
+                            break;
+                        }
+                        if disconnected {
+                            break;
+                        }
                     } else {
                         tracing::error!("Session dropped.");
                         break;
