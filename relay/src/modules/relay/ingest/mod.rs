@@ -1,3 +1,4 @@
+pub(crate) mod coordinator;
 pub(crate) mod datagram_reader;
 pub(crate) mod received_event;
 pub(crate) mod receiver_registry;
