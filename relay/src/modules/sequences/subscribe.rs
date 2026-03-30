@@ -1,6 +1,6 @@
 use crate::modules::{
     core::handler::subscribe::SubscribeHandler,
-    event_resolver::stream_binder::StreamBinder,
+    event_resolver::stream_binder::BindBySubscribeRequest,
     sequences::{notifier::Notifier, tables::table::Table},
     types::SessionId,
 };
@@ -13,7 +13,7 @@ impl Subscribe {
         session_id: SessionId,
         table: &dyn Table,
         notifier: &Notifier,
-        stream_handler: &mut StreamBinder,
+        stream_handler: &tokio::sync::mpsc::Sender<BindBySubscribeRequest>,
         handler: Box<dyn SubscribeHandler>,
     ) {
         tracing::info!("SequenceHandler::subscribe: {}", session_id);
@@ -58,7 +58,7 @@ impl Subscribe {
         track_name: &str,
         notifier: &Notifier,
         table: &dyn Table,
-        stream_handler: &mut StreamBinder,
+        stream_handler: &tokio::sync::mpsc::Sender<BindBySubscribeRequest>,
         handler: &dyn SubscribeHandler,
     ) {
         if let Ok(subscription) = notifier
@@ -82,9 +82,15 @@ impl Subscribe {
                     subscriber_track_alias,
                 );
                 let pub_resource = handler.convert_into_publication(subscriber_track_alias);
-                stream_handler
-                    .bind_by_subscribe(session_id, subscription, pub_session_id, pub_resource)
-                    .await;
+                let request = BindBySubscribeRequest {
+                    subscriber_session_id: session_id,
+                    subscription,
+                    publisher_session_id: pub_session_id,
+                    published_resources: pub_resource,
+                };
+                if let Err(error) = stream_handler.send(request).await {
+                    tracing::error!(?error, "Failed to send bind request to StreamBinder");
+                }
             } else {
                 tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
                 // TODO: send_unsubscribe

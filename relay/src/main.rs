@@ -61,16 +61,18 @@ async fn main() -> anyhow::Result<()> {
     let server = relay::RelayServer::new(&key_path, &cert_path);
 
     // QUICサーバーを起動 (Port: 4434)
-    let _quic_handler = server.spawn_transport::<moqt::QUIC>(4434);
+    let quic_handler = server.spawn_transport::<moqt::QUIC>(4434);
 
     // WebTransportサーバーを起動 (Port: 4433)
-    let _wt_handler = server.spawn_transport::<moqt::WEBTRANSPORT>(4433);
+    let wt_handler = server.spawn_transport::<moqt::WEBTRANSPORT>(4433);
 
     tracing::info!("Relay server started with QUIC (4434) and WebTransport (4433)");
     tracing::info!("Ctrl+C to shutdown");
 
     tokio::signal::ctrl_c().await?;
     tracing::info!("Shutdown signal received. Closing...");
+    drop(quic_handler);
+    drop(wt_handler);
 
     tracing::info!("Relay server gracefully shutdown.");
     Ok(())

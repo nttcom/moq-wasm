@@ -17,7 +17,7 @@ pub(crate) struct CacheMap {
 
 impl CacheMap {
     pub(crate) fn new() -> Self {
-        let (sender, _receiver) = tokio::sync::broadcast::channel(128);
+        let sender = tokio::sync::broadcast::channel(128).0;
         Self {
             caches: DashMap::new(),
             latest_object_notifier: sender,

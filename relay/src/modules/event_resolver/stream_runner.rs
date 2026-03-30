@@ -40,6 +40,10 @@ impl StreamTaskRunner {
     pub(crate) async fn add_task(&self, task: Pin<Box<dyn Future<Output = ()> + Send + 'static>>) {
         let _ = self.sender.send(task).await;
     }
+
+    pub(crate) fn is_running(&self) -> bool {
+        !self.join_handle.is_finished()
+    }
 }
 
 impl Drop for StreamTaskRunner {

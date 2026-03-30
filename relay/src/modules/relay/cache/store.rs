@@ -21,4 +21,8 @@ impl TrackCacheStore {
             .or_insert_with(|| Arc::new(TrackCache::new()))
             .clone()
     }
+
+    pub(crate) fn len(&self) -> usize {
+        self.caches.len()
+    }
 }
