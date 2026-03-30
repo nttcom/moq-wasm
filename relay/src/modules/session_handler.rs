@@ -3,7 +3,7 @@ use std::sync::Arc;
 use moqt::{Endpoint, TransportProtocol};
 
 use crate::modules::{
-    enums::MOQTMessageReceived, session_repository::SessionRepository, types::generate_session_id,
+    enums::MoqtRelayEvent, session_repository::SessionRepository, types::generate_session_id,
 };
 
 pub struct SessionHandler {
@@ -14,19 +14,19 @@ impl SessionHandler {
     pub(crate) fn run<T: TransportProtocol>(
         config: moqt::ServerConfig,
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        session_event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
+        relay_event_sender: tokio::sync::mpsc::UnboundedSender<MoqtRelayEvent>,
     ) -> Self {
         let endpoint = Endpoint::<T>::create_server(&config)
             .inspect_err(|e| tracing::error!("failed to create server: {}", e))
             .unwrap();
-        let join_handle = Self::create_joinhandle::<T>(endpoint, repo, session_event_sender);
+        let join_handle = Self::create_joinhandle::<T>(endpoint, repo, relay_event_sender);
         Self { join_handle }
     }
 
     fn create_joinhandle<T: TransportProtocol>(
         mut endpoint: Endpoint<T>,
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        session_event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
+        relay_event_sender: tokio::sync::mpsc::UnboundedSender<MoqtRelayEvent>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .spawn(async move {
@@ -45,7 +45,7 @@ impl SessionHandler {
                     tracing::info!("Session ID: {}", session_id);
                     repo.lock()
                         .await
-                        .add(session_id, Box::new(session), session_event_sender.clone())
+                        .add(session_id, Box::new(session), relay_event_sender.clone())
                         .await;
                 }
             })
