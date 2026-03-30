@@ -7,8 +7,7 @@ use crate::modules::{
         stream_receiver::StreamReceiver,
     },
     relay::ingest::{
-        datagram_reader::DatagramReader, received_event::ReceivedEvent,
-        stream_reader::StreamReader,
+        datagram_reader::DatagramReader, received_event::ReceivedEvent, stream_reader::StreamReader,
     },
     types::TrackKey,
 };
@@ -48,12 +47,27 @@ impl ReceiverRegistry {
         receiver: Box<dyn DatagramReceiver>,
         initial_group_id: Option<u64>,
     ) {
-        let handle = DatagramReader::spawn(track_key, receiver, self.sender.clone(), initial_group_id);
+        let handle =
+            DatagramReader::spawn(track_key, receiver, self.sender.clone(), initial_group_id);
         self.push_handle(track_key, handle);
     }
 
     fn push_handle(&self, track_key: TrackKey, handle: JoinHandle<()>) {
         let mut handles = self.tasks.entry(track_key).or_default();
         handles.push(handle);
+    }
+
+    pub(crate) fn track_count(&self) -> usize {
+        self.tasks.len()
+    }
+}
+
+impl Drop for ReceiverRegistry {
+    fn drop(&mut self) {
+        for mut entry in self.tasks.iter_mut() {
+            for handle in entry.value_mut().iter_mut() {
+                handle.abort();
+            }
+        }
     }
 }

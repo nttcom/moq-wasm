@@ -1,295 +1,167 @@
-# Relay Cache Design
+# Relay Runtime Design (Current)
 
-## 方針
+## 目的
 
-- 実装は `relay/src/modules/relay` 配下に新設する
-- `TrackKey = (session_id << 64) | track_alias` を relay 内の一意キーとする
-- cache への書き込みは `TrackKey` ごとではなく、relay 全体で 1 本の writer task に集約する
-- Stream と Datagram は受信レイヤで共通イベントへ正規化し、cache 自体は入力ソース差異を意識しない
-- subscriber への再送は cache 内の読み出し位置を cursor として管理し、既存キャッシュを飛ばして最新だけ送る動作は禁止する
+- relay の実装と設計ドキュメントの乖離をなくし、現状コードの責務とデータ経路を明確化する
+- RelayServer 初期化時に起動される runtime コンポーネントの所有関係を定義する
+- subscribe 起点の ingest/egress 委譲処理を mpsc ベースで整理する
 
-## 用語対応
+## 現在の所有関係
 
-- 本設計での reader は `subscriber.accept` の処理系を指す
-- 本設計での sender 生成は `publisher.create_stream` / `publisher.create_datagram` を指す
-- したがって egress 側は「cache から読む」だけでなく「必要時に publisher API で送信路を開く」責務を持つ
+RelayServer は以下の runtime コンポーネントをメンバとして保持する。
 
-## 新ディレクトリ案
+- `stream_binder: StreamBinder`
+- `ingest_receiver_registry: Arc<ReceiverRegistry>`
+- `ingest_cache_writer: CacheWriter`
+- `egress_stream_runner: Arc<StreamTaskRunner>`
+- `cache_store: Arc<TrackCacheStore>`
+- `manager: EventHandler`
 
-```text
-relay/src/modules/relay/
-  mod.rs
-  design.md
-  types.rs
-  cache/
-    mod.rs
-    store.rs
-    track_cache.rs
-    group_cache.rs
-    latest_event.rs
-  ingest/
-    mod.rs
-    writer.rs
-    receiver_registry.rs
-    stream_reader.rs
-    datagram_reader.rs
-    received_event.rs
-  egress/
-    mod.rs
-    reader.rs
-    reader_cursor.rs
-    stream_allocator.rs
-```
+この構成により、StreamBinder/ingest/egress/cache の生存期間は RelayServer と一致する。
+
+## 起動シーケンス
+
+1. RelayServer::new が SessionRepository と session event channel を生成
+2. TrackCacheStore を生成
+3. CacheWriter を生成して ReceivedEvent queue を起動
+4. ReceiverRegistry を生成し、CacheWriter sender を注入
+5. StreamTaskRunner を生成
+6. StreamBinder を生成し、cache_store/receiver_registry/stream_runner/session_repo を注入
+7. StreamBinder sender を EventHandler に渡して session watcher task を起動
 
 ## コンポーネント責務
 
-### 1. TrackCacheStore
+### EventHandler
 
-- `TrackKey -> Arc<TrackCache>` の repository
-- relay 内の全 cache の入り口
-- `get_or_create(track_key)` で cache を遅延生成する
+- session event を受信し、sequence 層へ振り分ける
+- Subscribe イベント時のみ StreamBinder sender を使って bind 要求を送る
+- StreamBinder 実体は保持しない
 
-### 2. TrackCache
+### StreamBinder
 
-- 1 track 分の全 group を保持する
-- `group_id -> GroupCache` を持つ
-- 最新入力位置を `broadcast::Sender<LatestCacheEvent>` で通知する
-- group の完了通知を保持する
-- cache 読み出し API は object の物理オフセットではなく、`CacheLocation { group_id, index }` を返す
+- subscribe 由来の `BindBySubscribeRequest` を command queue で受理
+- 内部で 3 種の非同期経路を分離
+    - command queue: bind 要求処理
+    - ingest queue: DataReceiver 登録処理
+    - egress queue: subscriber 向け reader 起動処理
+- Stream の場合は追加 accept ループを stream runner へ登録し、同一 track の後続 stream を ingest へ委譲
 
-保持状態:
+### ReceiverRegistry (ingest)
 
-- `groups: BTreeMap<u64, Arc<GroupCache>>`
-- `latest: Option<CacheLocation>`
-- `closed_groups: BTreeSet<u64>`
-- `stream_headers: BTreeMap<u64, Arc<DataObject>>`
+- `DataReceiver::Stream` / `DataReceiver::Datagram` を判定し、対応 reader task を生成
+- track ごとに task handle を保持し、drop で abort
 
-`stream_headers` を別管理する理由:
+### CacheWriter (ingest)
 
-- Stream の subgroup は header が先頭に必要
-- subscriber 側で group の途中から送る場合でも、header 未送信のまま object 本体を送れない
-- そのため group の replay 開始時に header 送出要否を判断できるようにする
+- `ReceivedEvent` を単一 writer task で処理
+- `TrackCacheStore` を更新し、必要に応じて group 作成・object 追記・group close を反映
 
-### 3. GroupCache
+### TrackCacheStore / TrackCache (cache)
 
-- 1 group 分の object 列を順序付きで保持する
-- Stream/Datagram ともに cache 上は `Vec<Arc<DataObject>>` として保持する
-- ただし Stream では先頭に `SubgroupHeader` が入ることを保証する
+- `TrackKey -> Arc<TrackCache>` を保持
+- egress 側は track 単位に cache を取得して購読・再送する
 
-保持状態:
+### SubscriberAcceptReader (egress)
 
-- `objects: Vec<Arc<DataObject>>`
-- `end_of_group: bool`
+- cache の backlog と最新通知を見ながら送信対象 object を決定
+- transport が Stream の場合、group 単位で sender を確保
+- transport が Datagram の場合、単一 sender を確保
+- subgroup header の再送制御を cursor と連携して行う
 
-### 4. ReceiverRegistry
+## チャネル一覧
 
-- publisher から入ってくる受信口を track 単位で管理する
-- Stream は group ごとに新規 receiver が増えるので、既存 task を止めずに追加登録する
-- Datagram は 1 session につき 1 本の継続 reader を維持する
+- `session_receiver: mpsc::UnboundedReceiver<MOQTMessageReceived>`
+    - SessionHandler -> EventHandler
+- `command_sender: mpsc::Sender<BindBySubscribeRequest>(512)`
+    - Subscribe sequence -> StreamBinder
+- `ingest_sender: mpsc::Sender<IngestCommand>(512)`
+    - StreamBinder(command) -> StreamBinder(ingest)
+- `egress_sender: mpsc::Sender<EgressCommand>(512)`
+    - StreamBinder(command) -> StreamBinder(egress)
+- `cache_writer_sender: mpsc::Sender<ReceivedEvent>(1024)`
+    - ReceiverRegistry readers -> CacheWriter
+- `latest_notifier: broadcast::Sender<LatestCacheEvent>(512)`
+    - TrackCache -> SubscriberAcceptReader
 
-### 5. StreamReader
-
-- `StreamDataReceiver` 1 本につき 1 task
-- subgroup header を最初に受け、その後 object を順次読む
-- 読み出した内容を `ReceivedEvent::Object` として writer に送る
-- EOF 時は `ReceivedEvent::EndOfGroup` を writer に送る
-
-### 6. DatagramReader
-
-- `DatagramReceiver` 1 本につき 1 task
-- 受信 object から `group_id` を抽出して writer に送る
-- Datagram 自身には stream-open/close がないため、group 完了は原則 object から判断しない
-- 明示的にセッション終了した場合のみ `ReceivedEvent::DatagramClosed` を送る
-
-### 7. CacheWriter
-
-- relay 全体で 1 本だけ起動する専用 task
-- `mpsc::Receiver<ReceivedEvent>` から受け取ったイベントを cache に反映する
-- cache 更新後に `LatestCacheEvent` を publish する
-- 書き込み順序の単一点を作ることで、同一 `TrackKey` 内の並行 stream/datagram 入力でも cache の整合性を保つ
-
-### 8. SubscriberAcceptReader
-
-- `subscriber.accept` ごとに 1 つ持つ
-- `LatestCacheEvent` を購読しつつ、自身の `ReaderCursor` に基づいて次に送るべき object を決める
-- 既存 cache に未送信分がある場合、最新通知が来ても先に backlog を送る
-- 必要な group の送信路が未生成なら `publisher.create_stream` または `publisher.create_datagram` を呼ぶ
-
-### 9. ReaderCursor
-
-- subscriber ごとの進捗を持つ
-- `next_group_id`, `next_index`, `header_sent_groups` を管理する
-- `FilterType` と `GroupOrder` から初期位置を決める
-
-重要制約:
-
-- `LatestObject` を受け取っても cursor をジャンプさせない
-- cache 上で `cursor <= latest` の間を順に送る
-- これにより「キャッシュに存在しているデータを通り越して最新のみ送る」ことを防ぐ
-
-## 受信イベントモデル
-
-```rust
-pub(crate) enum ReceivedEvent {
-    StreamOpened {
-        track_key: u128,
-        group_id: u64,
-    },
-    Object {
-        track_key: u128,
-        group_id: u64,
-        object: DataObject,
-    },
-    EndOfGroup {
-        track_key: u128,
-        group_id: u64,
-    },
-    DatagramClosed {
-        track_key: u128,
-    },
-}
-```
-
-`StreamOpened` を入れる理由:
-
-- group stream が先に開通し、header 到着前に sender 側で新 stream を用意すべきケースがある
-- ただし送信開始は header または最初の object が cache に入ってからでよい
-
-## 最新通知モデル
-
-```rust
-pub(crate) enum LatestCacheEvent {
-    ObjectAppended {
-        track_key: u128,
-        group_id: u64,
-        index: u64,
-    },
-    GroupClosed {
-        track_key: u128,
-        group_id: u64,
-    },
-}
-```
-
-`offset` ではなく `index` とする理由:
-
-- cache 内部の添字であることを明確にするため
-- 将来 object_id と物理格納位置を分けても API 名が崩れないため
-
-## 読み出し開始位置
-
-### LatestGroup
-
-- cache に存在する最新 group を開始点にする
-- ただしその group に backlog がある場合は先頭から順に送る
-
-### LatestObject
-
-- 最新 object を含む group を開始点にする
-- ただし同 group 内で header と未送信先行 object があれば、それを飛ばさず送る
-
-### AbsoluteStart
-
-- `location.group_id`, `location.object_id` から cache 内 index を解決する
-- Stream で開始 object が header より後ろでも、wire 上は header を先に送る
-
-### AbsoluteRange
-
-- `AbsoluteStart` と同じ起点で開始し、`end_group` 到達後に停止する
-
-## stream 生成ルール
-
-- Stream 配信では `group_id` ごとに送信用 stream が必要
-- `SubscriberAcceptReader` は cursor が別 group に進み、未作成の送信用 stream が必要になった時だけ `publisher.create_stream` を呼ぶ
-- `group_id=0` の送信中に `group_id=1` が cache へ入っても、reader は cursor 順序を維持し、0 の backlog 完了後に 1 へ進む
-- Datagram 配信では `subscriber.accept` 開始時に `publisher.create_datagram` を 1 回作成し、同一送信路を継続利用する
-
-## 並行性の考え方
+## ランタイムデータフロー
 
 ```mermaid
-flowchart LR
-    subgraph Ingest[Ingest Path]
-        SM[Stream monitor]
-        DM[Datagram monitor]
-        SR[Stream reader task per group]
-        DR[Datagram reader task]
-        Q[mpsc ReceivedEvent queue]
-        W[Single CacheWriter]
-    end
+flowchart TD
+        subgraph Server[RelayServer Owned Runtime]
+                EH[EventHandler]
+                SB[StreamBinder]
+                RR[ReceiverRegistry]
+                CW[CacheWriter]
+                TS[TrackCacheStore]
+                SRN[StreamTaskRunner]
+        end
 
-    subgraph Cache[Track-scoped cache]
-        TS[TrackCacheStore]
-        TC[TrackCache]
-        GC0[GroupCache 0]
-        GC1[GroupCache 1]
-        N[broadcast LatestCacheEvent]
-    end
+        subgraph Sequence[Sequence Layer]
+                SUB[Subscribe Sequence]
+        end
 
-    subgraph Egress[Egress Path]
-        R1[subscriber.accept loop A]
-        R2[subscriber.accept loop B]
-        PA[publisher.create_stream or create_datagram]
-    end
+        subgraph Ingress[Ingress Readers]
+                IR1[StreamReader Tasks]
+                IR2[DatagramReader Tasks]
+        end
 
-    SM --> SR
-    DM --> DR
-    SR --> Q
-    DR --> Q
-    Q --> W
-    W --> TS
-    TS --> TC
-    TC --> GC0
-    TC --> GC1
-    W --> N
-    N --> R1
-    N --> R2
-    R1 --> PA
-    R2 --> PA
+        subgraph Egress[Egress Readers]
+                EAR[SubscriberAcceptReader]
+                PAPI[publisher.create_stream or create_datagram]
+        end
+
+        EH --> SUB
+        SUB -->|BindBySubscribeRequest| SB
+        SB -->|IngestCommand| RR
+        RR --> IR1
+        RR --> IR2
+        IR1 -->|ReceivedEvent| CW
+        IR2 -->|ReceivedEvent| CW
+        CW --> TS
+        TS -->|track cache| EAR
+        EAR --> PAPI
+        SB -->|EgressCommand| SRN
+        SRN --> EAR
 ```
 
-## group 跨ぎの挙動
+## Subscribe 起点の処理順
 
 ```mermaid
 sequenceDiagram
-    participant Pub as Publisher
-    participant SR0 as StreamReader g0
-    participant SR1 as StreamReader g1
-    participant W as CacheWriter
-    participant C as TrackCache
-    participant R as subscriber.accept loop
-    participant PAPI as publisher.create_stream
+        participant EV as EventHandler
+        participant SQ as Subscribe Sequence
+        participant SB as StreamBinder
+        participant RR as ReceiverRegistry
+        participant CW as CacheWriter
+        participant TC as TrackCache
+        participant EG as SubscriberAcceptReader
 
-    Pub->>SR0: open stream(group 0)
-    SR0->>W: Object(Header g0)
-    W->>C: append g0[0]
-    W-->>R: ObjectAppended(g0, 0)
-    R->>R: cursor=0/0 を送信開始
-
-    Pub->>SR1: open stream(group 1)
-    SR1->>W: Object(Header g1)
-    W->>C: append g1[0]
-    W-->>R: ObjectAppended(g1, 0)
-    R->>R: g0 backlog があるので g1 へ進まない
-
-    SR0->>W: EndOfGroup(g0)
-    W-->>R: GroupClosed(g0)
-    R->>PAPI: create_stream(g1)
-    PAPI-->>R: stream sender ready
+        EV->>SQ: handle subscribe
+        SQ->>SB: send BindBySubscribeRequest
+        SB->>SB: resolve publisher/subscriber
+        SB->>RR: send IngestCommand(RegisterDataReceiver)
+        RR->>CW: reader sends ReceivedEvent
+        CW->>TC: append object or close group
+        SB->>EG: start via EgressCommand and StreamTaskRunner
+        EG->>TC: read backlog and latest updates
+        EG->>EG: ensure stream or datagram sender
 ```
 
-## 実装順
+## 重要な挙動
 
-1. `relay/src/modules/relay` を追加し、型定義と event 定義を置く
-2. `TrackCacheStore`, `TrackCache`, `GroupCache`, `LatestCacheEvent` を実装する
-3. `CacheWriter` と `ReceivedEvent` queue を実装する
-4. `StreamReader` と `DatagramReader` を実装し、writer に接続する
-5. `SubscriberAcceptReader` と `ReaderCursor` を実装する
-6. 最後に既存 `relaies` から新 `relay` へ接続点を差し替える
+- Stream 再オープン時は subgroup header を契機に送信用 stream を再確保する
+- cursor は backlog を優先し、最新通知のみで読み飛ばさない
+- stream/datagram の違いは ingest reader と egress sender 確保ロジックで吸収する
 
-## 実装時の注意点
+## 停止と drop
 
-- `SubgroupObject.object_id_delta` は group 先頭基準なので、cache API では object_id と index を混同しない
-- Stream は header 未着の group を sender 側で送出開始しない
-- Datagram は `group_id` を object から解決できないデータを破棄せず、`invalid datagram` として観測可能にする
-- writer queue が詰まった時に受信側でドロップしない
-- `broadcast` の取りこぼしに備え、reader は通知受信後に必ず cache 本体を再走査して backlog を回収する
+- RelayServer drop 時に各 runtime コンポーネントの状態をログ出力する
+- EventHandler drop: session watcher を abort
+- StreamBinder drop: command/ingest/egress runner を abort
+- ReceiverRegistry drop: 保持する reader task を abort
+- CacheWriter drop: writer task を abort
+
+## 既知の設計メモ
+
+- queue 容量は現在固定値 (512/1024) のため、負荷に応じた調整余地がある
+- bind 処理で publisher/subscriber を解決するロジックは session 種別の明確化余地がある

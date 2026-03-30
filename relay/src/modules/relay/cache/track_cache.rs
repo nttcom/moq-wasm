@@ -25,7 +25,7 @@ pub(crate) struct TrackCache {
 
 impl TrackCache {
     pub(crate) fn new() -> Self {
-        let (latest_notifier, _receiver) = broadcast::channel(512);
+        let latest_notifier = broadcast::channel(512).0;
         Self {
             groups: RwLock::new(BTreeMap::new()),
             latest: RwLock::new(None),

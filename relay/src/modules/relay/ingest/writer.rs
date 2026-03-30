@@ -2,14 +2,11 @@ use std::sync::Arc;
 
 use tokio::{sync::mpsc, task::JoinHandle};
 
-use crate::modules::relay::{
-    cache::store::TrackCacheStore,
-    ingest::received_event::ReceivedEvent,
-};
+use crate::modules::relay::{cache::store::TrackCacheStore, ingest::received_event::ReceivedEvent};
 
 pub(crate) struct CacheWriter {
     sender: mpsc::Sender<ReceivedEvent>,
-    _join_handle: JoinHandle<()>,
+    join_handle: JoinHandle<()>,
 }
 
 impl CacheWriter {
@@ -49,11 +46,17 @@ impl CacheWriter {
 
         Self {
             sender,
-            _join_handle: join_handle,
+            join_handle,
         }
     }
 
     pub(crate) fn sender(&self) -> mpsc::Sender<ReceivedEvent> {
         self.sender.clone()
+    }
+}
+
+impl Drop for CacheWriter {
+    fn drop(&mut self) {
+        self.join_handle.abort();
     }
 }

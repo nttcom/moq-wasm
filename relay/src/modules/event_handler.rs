@@ -1,8 +1,9 @@
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use crate::modules::{
     enums::MOQTMessageReceived,
-    event_resolver::stream_binder::StreamBinder,
+    event_resolver::stream_binder::BindBySubscribeRequest,
     sequences::{
         notifier::Notifier,
         publish::Publish,
@@ -22,21 +23,25 @@ impl EventHandler {
     pub(crate) fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTMessageReceived>,
+        stream_binder_sender: mpsc::Sender<BindBySubscribeRequest>,
     ) -> Self {
-        let session_event_watcher = Self::create_pub_sub_event_watcher(repo, session_receiver);
-        Self {
-            session_event_watcher,
-        }
+        let session_event_watcher =
+            Self::create_pub_sub_event_watcher(repo, session_receiver, stream_binder_sender);
+        Self { session_event_watcher }
+    }
+
+    pub(crate) fn is_running(&self) -> bool {
+        !self.session_event_watcher.is_finished()
     }
 
     fn create_pub_sub_event_watcher(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTMessageReceived>,
+        stream_binder_sender: mpsc::Sender<BindBySubscribeRequest>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Session Event Watcher")
             .spawn(async move {
-                let mut stream_handler = StreamBinder::new(repo.clone());
                 let notifier = Notifier { repository: repo };
                 let table = Box::new(HashMapTable::new());
                 loop {
@@ -67,7 +72,7 @@ impl EventHandler {
                                         session_id,
                                         table.as_ref(),
                                         &notifier,
-                                        &mut stream_handler,
+                                        &stream_binder_sender,
                                         handler,
                                     )
                                     .await;

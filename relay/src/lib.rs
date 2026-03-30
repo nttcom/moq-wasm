@@ -1,9 +1,15 @@
 pub mod modules; // modulesを公開
 
+use std::sync::Arc;
+
 use modules::event_handler::EventHandler;
+use modules::event_resolver::{stream_binder::StreamBinder, stream_runner::StreamTaskRunner};
+use modules::relay::{
+    cache::store::TrackCacheStore,
+    ingest::{receiver_registry::ReceiverRegistry, writer::CacheWriter},
+};
 use modules::session_handler::SessionHandler;
 use moqt::ServerConfig;
-use std::sync::Arc;
 
 use crate::modules::enums::MOQTMessageReceived;
 use crate::modules::session_repository::SessionRepository;
@@ -55,7 +61,12 @@ use tokio::sync::oneshot::Receiver; // Receiver for shutdown signal
 pub struct RelayServer {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     sender: UnboundedSender<MOQTMessageReceived>,
-    _manager: EventHandler,
+    stream_binder: StreamBinder,
+    ingest_receiver_registry: Arc<ReceiverRegistry>,
+    ingest_cache_writer: CacheWriter,
+    egress_stream_runner: Arc<StreamTaskRunner>,
+    cache_store: Arc<TrackCacheStore>,
+    manager: EventHandler,
     key_path: String,
     cert_path: String,
 }
@@ -65,13 +76,31 @@ impl RelayServer {
         let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MOQTMessageReceived>();
 
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let ingest_cache_writer = CacheWriter::start(cache_store.clone(), 1024);
+        let ingest_receiver_registry = Arc::new(ReceiverRegistry::new(ingest_cache_writer.sender()));
+        let egress_stream_runner = Arc::new(StreamTaskRunner::new());
+
+        let stream_binder = StreamBinder::new(
+            repo.clone(),
+            cache_store.clone(),
+            ingest_receiver_registry.clone(),
+            egress_stream_runner.clone(),
+        );
+        let stream_binder_sender = stream_binder.sender();
+
         // 共通のメッセージ処理ロジックを起動
-        let manager = EventHandler::run(repo.clone(), receiver);
+        let manager = EventHandler::run(repo.clone(), receiver, stream_binder_sender);
 
         Self {
             repo,
             sender,
-            _manager: manager,
+            stream_binder,
+            ingest_receiver_registry,
+            ingest_cache_writer,
+            egress_stream_runner,
+            cache_store,
+            manager,
             key_path: key_path.to_string(),
             cert_path: cert_path.to_string(),
         }
@@ -87,6 +116,20 @@ impl RelayServer {
         };
 
         SessionHandler::run::<T>(server_config, self.repo.clone(), self.sender.clone())
+    }
+}
+
+impl Drop for RelayServer {
+    fn drop(&mut self) {
+        drop(self.ingest_cache_writer.sender());
+        tracing::trace!(
+            manager_running = self.manager.is_running(),
+            binder_running = self.stream_binder.is_running(),
+            ingest_tracks = self.ingest_receiver_registry.track_count(),
+            egress_running = self.egress_stream_runner.is_running(),
+            cache_tracks = self.cache_store.len(),
+            "relay runtime is kept alive until server drop"
+        );
     }
 }
 
@@ -106,9 +149,10 @@ pub fn run_relay_server<T: moqt::TransportProtocol>(
         .spawn(async move {
             tracing::info!("Relay server started");
             let server = RelayServer::new(&key_path, &cert_path);
-            let _handler = server.spawn_transport::<T>(port);
+            let handler = server.spawn_transport::<T>(port);
 
-            let _ = shutdown_signal.await.ok();
+            shutdown_signal.await.ok();
+            drop(handler);
             tracing::info!("Relay server shutting down");
         })
         .unwrap()
