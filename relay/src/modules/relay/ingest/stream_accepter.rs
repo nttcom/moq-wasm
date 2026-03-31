@@ -1,11 +1,20 @@
 use std::sync::Arc;
 
+use tokio::sync::mpsc;
+
 use crate::modules::{
     core::{data_receiver::receiver::DataReceiver, subscription::Subscription},
-    event_resolver::stream_runner::StreamTaskRunner,
-    relay::{cache::store::TrackCacheStore, ingest::writer::CacheWriter},
+    relay::{
+        cache::store::TrackCacheStore,
+        caches::sender_map::SenderMap,
+        ingest::{
+            datagram_reader::{DatagramReader, DatagramReceiveStart},
+            stream_reader::{StreamOpened, StreamReader},
+            writer::CacheWriter,
+        },
+    },
     session_repository::SessionRepository,
-    types::{SessionId, TrackKey, compose_session_track_key},
+    types::{SessionId, compose_session_track_key},
 };
 
 pub(crate) struct IngestStartRequest {
@@ -13,60 +22,70 @@ pub(crate) struct IngestStartRequest {
     pub(crate) subscription: Box<dyn Subscription>,
 }
 
-pub(crate) struct IngestStartResult {
-    pub(crate) track_key: TrackKey,
-}
-
 pub(crate) struct IngestCoordinator {
+    command_sender: mpsc::Sender<IngestStartRequest>,
     command_runner: tokio::task::JoinHandle<()>,
-    cache_writer: CacheWriter,
-    stream_runner: Arc<StreamTaskRunner>,
+    _cache_writer: CacheWriter,
+    _stream_reader: StreamReader,
+    _datagram_reader: DatagramReader,
 }
 
 impl IngestCoordinator {
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
+        sender_map: Arc<SenderMap>,
     ) -> Self {
-        let cache_writer = CacheWriter::start(cache_store, transport_notifier, 1024);
-        let stream_runner = Arc::new(StreamTaskRunner::new());
+        let cache_writer = CacheWriter::start(cache_store, sender_map, 1024);
+        let event_sender = cache_writer.sender();
 
-        let (command_sender, mut command_receiver) =
-            tokio::sync::mpsc::channel::<IngestStartRequest>(512);
-        let session_repo_for_runner = session_repo.clone();
+        let (stream_tx, stream_rx) = mpsc::channel::<StreamOpened>(64);
+        let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveStart>(64);
+        let stream_reader = StreamReader::run(stream_rx, event_sender.clone());
+        let datagram_reader = DatagramReader::run(datagram_rx, event_sender);
+
+        let (command_sender, mut command_receiver) = mpsc::channel::<IngestStartRequest>(512);
+        let session_repo_for_runner = session_repo;
 
         let command_runner = tokio::spawn(async move {
             let mut join_set = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
                     Some(command) = command_receiver.recv() => {
-                        let track_key = compose_session_track_key(command.publisher_session_id, command.subscription.track_alias());
+                        let track_key = compose_session_track_key(
+                            command.publisher_session_id,
+                            command.subscription.track_alias(),
+                        );
                         let Some(subscriber) = session_repo_for_runner.lock().await.subscriber(command.publisher_session_id) else {
-                            tracing::debug!(
-                                track_key,
-                                "publisher session not found for subscription"
-                            );
+                            tracing::debug!(track_key, "publisher session not found for subscription");
                             continue;
                         };
+                        let stream_tx = stream_tx.clone();
+                        let datagram_tx = datagram_tx.clone();
                         join_set.spawn(async move {
                             let mut subscription = command.subscription;
                             let mut subscriber = subscriber;
                             loop {
                                 let Ok(receiver) = subscriber.create_data_receiver(subscription.as_mut()).await else {
-                                    tracing::debug!(
-                                            track_key,
-                                            "failed to create data receiver for subscription"
-                                        );
-                                        return;
+                                    tracing::debug!(track_key, "failed to create data receiver for subscription");
+                                    return;
                                 };
                                 match receiver {
                                     DataReceiver::Stream(stream_receiver) => {
-                                        // send stream
-                                        // loop
+                                        if stream_tx
+                                            .send(StreamOpened { track_key, receiver: stream_receiver })
+                                            .await
+                                            .is_err()
+                                        {
+                                            return;
+                                        }
+                                        // loop: 次のStreamを待つ
                                     }
                                     DataReceiver::Datagram(datagram_receiver) => {
-                                        // send datagram
-                                        // break
+                                        let _ = datagram_tx
+                                            .send(DatagramReceiveStart { track_key, receiver: datagram_receiver })
+                                            .await;
+                                        break;
                                     }
                                 }
                             }
@@ -82,16 +101,29 @@ impl IngestCoordinator {
         });
 
         Self {
+            command_sender,
             command_runner,
-            cache_writer,
-            stream_runner,
+            _cache_writer: cache_writer,
+            _stream_reader: stream_reader,
+            _datagram_reader: datagram_reader,
         }
+    }
+
+    pub(crate) fn sender(&self) -> mpsc::Sender<IngestStartRequest> {
+        self.command_sender.clone()
+    }
+
+    pub(crate) fn is_running(&self) -> bool {
+        !self.command_runner.is_finished()
+    }
+
+    pub(crate) fn track_count(&self) -> usize {
+        0
     }
 }
 
 impl Drop for IngestCoordinator {
     fn drop(&mut self) {
-        drop(self.cache_writer.sender());
         self.command_runner.abort();
     }
 }

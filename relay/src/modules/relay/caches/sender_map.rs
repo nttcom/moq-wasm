@@ -1,3 +1,7 @@
+use dashmap::DashMap;
+
+use crate::modules::{relay::caches::latest_info::LatestInfo, types::TrackKey};
+
 pub(crate) struct SenderMap {
     map: DashMap<TrackKey, tokio::sync::broadcast::Sender<LatestInfo>>,
 }
@@ -18,12 +22,5 @@ impl SenderMap {
             .entry(track_key)
             .or_insert_with(|| tokio::sync::broadcast::channel(16).0);
         self.map.get(&track_key).unwrap().clone()
-    }
-
-    pub(crate) fn get_receiver(
-        &self,
-        track_key: &TrackKey,
-    ) -> Option<tokio::sync::broadcast::Receiver<LatestInfo>> {
-        self.map.get(track_key).map(|sender| sender.subscribe())
     }
 }

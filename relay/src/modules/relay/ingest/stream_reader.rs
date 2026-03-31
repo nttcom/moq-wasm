@@ -8,7 +8,7 @@ use crate::modules::{
 
 pub(crate) struct StreamOpened {
     pub(crate) track_key: TrackKey,
-    pub(crate) stream_receiver: Box<dyn StreamReceiver>,
+    pub(crate) receiver: Box<dyn StreamReceiver>,
 }
 
 pub(crate) struct StreamReader {
@@ -17,73 +17,70 @@ pub(crate) struct StreamReader {
 
 impl StreamReader {
     pub(crate) fn run(
-        mut receiver: tokio::sync::mpsc::Receiver<StreamOpened>,
-        sender: mpsc::Sender<ReceivedEvent>,
+        mut rx: mpsc::Receiver<StreamOpened>,
+        event_sender: mpsc::Sender<ReceivedEvent>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
-                    Some(command) = receiver.recv() => {
-                        let track_key = command.track_key;
-                        let stream_receiver = command.stream_receiver;
-                        joinset.spawn(Self::loop_receive(track_key, stream_receiver, sender.clone()));
+                    Some(cmd) = rx.recv() => {
+                        joinset.spawn(Self::read_loop(
+                            cmd.track_key,
+                            cmd.receiver,
+                            event_sender.clone(),
+                        ));
                     }
-                    Some(_) = joinset.join_next() => {
-                        tracing::debug!("stream receive task ended");
+                    Some(result) = joinset.join_next() => {
+                        if let Err(e) = result {
+                            tracing::error!("stream read task panicked: {:?}", e);
+                        }
                     }
+                    else => break,
                 }
             }
         });
         Self { join_handle }
     }
 
-    async fn loop_receive(
+    async fn read_loop(
         track_key: TrackKey,
-        mut stream_receiver: Box<dyn StreamReceiver>,
-        sender: mpsc::Sender<ReceivedEvent>,
+        mut receiver: Box<dyn StreamReceiver>,
+        event_sender: mpsc::Sender<ReceivedEvent>,
     ) {
-        let mut group_id = 0;
-        while let Ok(object) = stream_receiver.receive_object().await {
-            match object {
-                DataObject::SubgroupHeader(_) => {
-                    group_id = object.group_id().unwrap();
-                    if sender
-                        .send(ReceivedEvent::StreamOpened {
-                            track_key,
-                            group_id,
-                            object,
-                        })
-                        .await
-                        .is_err()
-                    {
+        let mut group_id = 0u64;
+        loop {
+            match receiver.receive_object().await {
+                Ok(DataObject::SubgroupHeader(header)) => {
+                    group_id = header.group_id;
+                    let event = ReceivedEvent::StreamOpened {
+                        track_key,
+                        group_id,
+                        object: DataObject::SubgroupHeader(header),
+                    };
+                    if event_sender.send(event).await.is_err() {
                         return;
                     }
                 }
-                DataObject::SubgroupObject(_) => {
-                    if sender
-                        .send(ReceivedEvent::Object {
-                            track_key,
-                            group_id,
-                            object,
-                        })
-                        .await
-                        .is_err()
-                    {
+                Ok(object) => {
+                    let event = ReceivedEvent::Object { track_key, group_id, object };
+                    if event_sender.send(event).await.is_err() {
                         return;
                     }
                 }
-                DataObject::ObjectDatagram(_) => {
-                    unreachable!("stream should not receive datagram object");
+                Err(_) => {
+                    let _ = event_sender
+                        .send(ReceivedEvent::EndOfGroup { track_key, group_id })
+                        .await;
+                    return;
                 }
             }
         }
-        tracing::debug!(track_key, group_id, "stream receiver ended");
-        let _ = sender
-            .send(ReceivedEvent::EndOfGroup {
-                track_key,
-                group_id,
-            })
-            .await;
+    }
+}
+
+impl Drop for StreamReader {
+    fn drop(&mut self) {
+        self.join_handle.abort();
     }
 }
