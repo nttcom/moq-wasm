@@ -58,13 +58,16 @@ impl SessionRepository {
                             break;
                         }
                         let event = event.unwrap();
-                        let disconnected = matches!(event, SessionEvent::Disconnected());
+                        let should_stop = matches!(
+                            event,
+                            SessionEvent::Disconnected() | SessionEvent::ProtocolViolation()
+                        );
                         let session_event = MOQTSessionEventResolver::resolve(session_id, event);
                         if let Err(err) = event_sender.send(session_event) {
                             tracing::error!("Failed to forward session event: {}", err);
                             break;
                         }
-                        if disconnected {
+                        if should_stop {
                             break;
                         }
                     } else {

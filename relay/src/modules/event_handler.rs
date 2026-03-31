@@ -77,7 +77,11 @@ impl EventHandler {
                                 table.remove_session(session_id).await;
                                 notifier.repository.lock().await.remove(session_id);
                             }
-                            MOQTMessageReceived::ProtocolViolation() => todo!(),
+                            MOQTMessageReceived::ProtocolViolation(session_id) => {
+                                tracing::error!("Session protocol violation: {}", session_id);
+                                table.remove_session(session_id).await;
+                                notifier.repository.lock().await.remove(session_id);
+                            }
                         }
                     } else {
                         tracing::error!("Failed to receive session event");

@@ -126,5 +126,5 @@ pub(crate) enum MOQTMessageReceived {
     Publish(SessionId, Box<dyn PublishHandler>),
     Subscribe(SessionId, Box<dyn SubscribeHandler>),
     Disconnected(SessionId),
-    ProtocolViolation(),
+    ProtocolViolation(SessionId),
 }
