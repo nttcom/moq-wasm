@@ -5,7 +5,7 @@ use crate::modules::{
     enums::MOQTMessageReceived,
     relay::{
         egress::coordinator::EgressCommand,
-        ingest::coordinator::IngestCommand,
+        ingest::stream_accepter::IngestCommand,
     },
     sequences::{
         notifier::Notifier,

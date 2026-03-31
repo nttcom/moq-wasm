@@ -2,7 +2,7 @@ use crate::modules::{
     core::handler::subscribe::SubscribeHandler,
     relay::{
         egress::coordinator::{EgressCommand, EgressStartRequest},
-        ingest::coordinator::{IngestCommand, IngestStartRequest},
+        ingest::stream_accepter::{IngestCommand, IngestStartRequest},
     },
     sequences::{notifier::Notifier, tables::table::Table},
     types::SessionId,

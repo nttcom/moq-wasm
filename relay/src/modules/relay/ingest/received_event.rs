@@ -5,6 +5,7 @@ pub(crate) enum ReceivedEvent {
     StreamOpened {
         track_key: TrackKey,
         group_id: u64,
+        object: DataObject,
     },
     DatagramOpened {
         track_key: TrackKey,

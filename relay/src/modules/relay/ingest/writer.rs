@@ -26,6 +26,7 @@ impl CacheWriter {
                     ReceivedEvent::StreamOpened {
                         track_key,
                         group_id,
+                        object,
                     } => {
                         let cache = cache_store.get_or_create(track_key);
                         cache.ensure_group(group_id).await;
@@ -38,6 +39,7 @@ impl CacheWriter {
                         {
                             tracing::debug!(?error, track_key, "failed to notify stream transport");
                         }
+                        cache.append_object(track_key, group_id, object).await;
                     }
                     ReceivedEvent::DatagramOpened { track_key } => {
                         if let Err(error) = transport_notifier
