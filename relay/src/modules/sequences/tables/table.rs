@@ -9,6 +9,7 @@ pub(crate) trait Table: Send + Sync + 'static + Debug {
     fn new() -> Self
     where
         Self: Sized;
+    async fn remove_session(&self, session_id: SessionId);
     fn register_publish_namespace(&self, session_id: SessionId, track_namespace: String) -> bool;
     fn register_subscribe_namespace(&self, session_id: SessionId, track_namespace_prefix: String);
     async fn register_publish(&self, session_id: SessionId, handler: Arc<dyn PublishHandler>);
