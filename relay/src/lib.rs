@@ -5,7 +5,7 @@ use modules::session_handler::SessionHandler;
 use moqt::ServerConfig;
 use std::sync::Arc;
 
-use crate::modules::enums::MOQTMessageReceived;
+use crate::modules::enums::MoqtRelayEvent;
 use crate::modules::session_repository::SessionRepository;
 
 use console_subscriber::ConsoleLayer;
@@ -54,7 +54,7 @@ use tokio::sync::oneshot::Receiver; // Receiver for shutdown signal
 
 pub struct RelayServer {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-    sender: UnboundedSender<MOQTMessageReceived>,
+    sender: UnboundedSender<MoqtRelayEvent>,
     _manager: EventHandler,
     key_path: String,
     cert_path: String,
@@ -63,7 +63,7 @@ pub struct RelayServer {
 impl RelayServer {
     pub fn new(key_path: &str, cert_path: &str) -> Self {
         let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MOQTMessageReceived>();
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MoqtRelayEvent>();
 
         // 共通のメッセージ処理ロジックを起動
         let manager = EventHandler::run(repo.clone(), receiver);

@@ -120,7 +120,7 @@ impl ContentExists {
     }
 }
 
-pub(crate) enum MOQTMessageReceived {
+pub(crate) enum MoqtRelayEvent {
     PublishNameSpace(SessionId, Box<dyn PublishNamespaceHandler>),
     SubscribeNameSpace(SessionId, Box<dyn SubscribeNamespaceHandler>),
     Publish(SessionId, Box<dyn PublishHandler>),

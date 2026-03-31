@@ -6,8 +6,8 @@ use crate::modules::{
     core::{
         publisher::Publisher, session::Session, session_event::SessionEvent, subscriber::Subscriber,
     },
-    enums::MOQTMessageReceived,
-    event_resolver::moqt_session_event_resolver::MOQTSessionEventResolver,
+    enums::MoqtRelayEvent,
+    event_resolver::moqt_relay_event_resolver::MoqtRelayEventResolver,
     thread_manager::ThreadManager,
     types::SessionId,
 };
@@ -29,7 +29,7 @@ impl SessionRepository {
         &mut self,
         session_id: SessionId,
         session: Box<dyn Session>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<MoqtRelayEvent>,
     ) {
         let arc_session: Arc<dyn Session> = Arc::from(session);
         self.start_receive(session_id, Arc::downgrade(&arc_session), event_sender);
@@ -45,7 +45,7 @@ impl SessionRepository {
         &mut self,
         session_id: SessionId,
         session: Weak<dyn Session>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<MoqtRelayEvent>,
     ) {
         let join_handle = tokio::task::Builder::new()
             .name("Session Event Watcher")
@@ -63,8 +63,8 @@ impl SessionRepository {
                             event,
                             SessionEvent::Disconnected() | SessionEvent::ProtocolViolation()
                         );
-                        let session_event = MOQTSessionEventResolver::resolve(session_id, event);
-                        if let Err(err) = event_sender.send(session_event) {
+                        let relay_event = MoqtRelayEventResolver::resolve(session_id, event);
+                        if let Err(err) = event_sender.send(relay_event) {
                             tracing::error!("Failed to forward session event: {}", err);
                             break;
                         }
