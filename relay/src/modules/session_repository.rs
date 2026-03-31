@@ -52,12 +52,13 @@ impl SessionRepository {
             .spawn(async move {
                 loop {
                     if let Some(session) = session.upgrade() {
-                        let event = session.receive_session_event().await;
-                        if let Err(e) = event {
-                            tracing::error!("Failed to receive session event: {}", e);
-                            break;
-                        }
-                        let event = event.unwrap();
+                        let event = match session.receive_session_event().await {
+                            Ok(event) => event,
+                            Err(e) => {
+                                tracing::error!("Failed to receive session event: {}", e);
+                                break;
+                            }
+                        };
                         let should_stop = matches!(
                             event,
                             SessionEvent::Disconnected() | SessionEvent::ProtocolViolation()
