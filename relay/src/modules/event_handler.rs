@@ -3,10 +3,7 @@ use tokio::sync::mpsc;
 
 use crate::modules::{
     enums::MOQTMessageReceived,
-    relay::{
-        egress::coordinator::EgressCommand,
-        ingest::stream_accepter::IngestCommand,
-    },
+    relay::{egress::coordinator::EgressCommand, ingest::stream_accepter::IngestStartRequest},
     sequences::{
         notifier::Notifier,
         publish::Publish,
@@ -26,7 +23,7 @@ impl EventHandler {
     pub(crate) fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTMessageReceived>,
-        ingest_sender: mpsc::Sender<IngestCommand>,
+        ingest_sender: mpsc::Sender<IngestStartRequest>,
         egress_sender: mpsc::Sender<EgressCommand>,
     ) -> Self {
         let session_event_watcher = Self::create_pub_sub_event_watcher(
@@ -35,7 +32,9 @@ impl EventHandler {
             ingest_sender,
             egress_sender,
         );
-        Self { session_event_watcher }
+        Self {
+            session_event_watcher,
+        }
     }
 
     pub(crate) fn is_running(&self) -> bool {
@@ -45,7 +44,7 @@ impl EventHandler {
     fn create_pub_sub_event_watcher(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTMessageReceived>,
-        ingest_sender: mpsc::Sender<IngestCommand>,
+        ingest_sender: mpsc::Sender<IngestStartRequest>,
         egress_sender: mpsc::Sender<EgressCommand>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()

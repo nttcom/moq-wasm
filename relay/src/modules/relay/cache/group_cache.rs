@@ -4,6 +4,7 @@ use tokio::sync::RwLock;
 
 use crate::modules::core::data_object::DataObject;
 
+#[allow(dead_code)]
 pub(crate) struct GroupCache {
     objects: RwLock<Vec<Arc<DataObject>>>,
     end_of_group: RwLock<bool>,
@@ -31,18 +32,5 @@ impl GroupCache {
     pub(crate) async fn mark_end_of_group(&self) {
         let mut end_of_group = self.end_of_group.write().await;
         *end_of_group = true;
-    }
-
-    pub(crate) async fn is_closed(&self) -> bool {
-        let end_of_group = self.end_of_group.read().await;
-        *end_of_group
-    }
-
-    pub(crate) async fn index_of_object_id(&self, object_id: u64) -> Option<u64> {
-        let objects = self.objects.read().await;
-        objects
-            .iter()
-            .position(|object| object.object_id() == Some(object_id))
-            .map(|index| index as u64)
     }
 }

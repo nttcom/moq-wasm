@@ -2,10 +2,10 @@ use crate::modules::{
     core::handler::subscribe::SubscribeHandler,
     relay::{
         egress::coordinator::{EgressCommand, EgressStartRequest},
-        ingest::stream_accepter::{IngestCommand, IngestStartRequest},
+        ingest::stream_accepter::IngestStartRequest,
     },
     sequences::{notifier::Notifier, tables::table::Table},
-    types::SessionId,
+    types::{SessionId, compose_session_track_key},
 };
 
 pub(crate) struct Subscribe;
@@ -16,7 +16,7 @@ impl Subscribe {
         session_id: SessionId,
         table: &dyn Table,
         notifier: &Notifier,
-        ingest_sender: &tokio::sync::mpsc::Sender<IngestCommand>,
+        ingest_sender: &tokio::sync::mpsc::Sender<IngestStartRequest>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn SubscribeHandler>,
     ) {
@@ -42,7 +42,6 @@ impl Subscribe {
                 track_namespace,
                 track_name,
                 notifier,
-                table,
                 ingest_sender,
                 egress_sender,
                 handler.as_ref(),
@@ -61,33 +60,58 @@ impl Subscribe {
         track_namespace: &str,
         track_name: &str,
         notifier: &Notifier,
-        table: &dyn Table,
-        ingest_sender: &tokio::sync::mpsc::Sender<IngestCommand>,
+        ingest_sender: &tokio::sync::mpsc::Sender<IngestStartRequest>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &dyn SubscribeHandler,
     ) {
-        if let Ok(subscription) = notifier
+        let Ok(subscription) = notifier
             .subscribe(
                 pub_session_id,
                 track_namespace.to_string(),
                 track_name.to_string(),
             )
             .await
+        else {
+            tracing::warn!("Failed to send `SUBSCRIBE` to publisher. Session close.");
+            return;
+        };
+
+        let track_key = compose_session_track_key(pub_session_id, subscription.track_alias());
+        let expires = subscription.expires();
+        let content_exists = subscription.content_exists();
+
+        // ingest: upstream から受信してキャッシュに書き込む
+        if ingest_sender
+            .send(IngestStartRequest {
+                publisher_session_id: pub_session_id,
+                subscription,
+            })
+            .await
+            .is_err()
         {
-            let publisher_track_alias = subscription.track_alias();
-            tracing::info!("send `SUBSCRIBE_OK` ok");
-            if let Ok(subscriber_track_alias) = handler
-                .ok(subscription.expires(), subscription.content_exists())
-                .await
-            {
-                
-            } else {
-                tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
-                // TODO: send_unsubscribe
-                // TODO: close session
-            }
-        } else {
-            tracing::warn!("Failed to send `SUBSCRIBE_OK`. Session close.");
+            tracing::error!("Failed to send IngestStartRequest. Session close.");
+            return;
+        }
+
+        // subscriber に SUBSCRIBE_OK を返す
+        let Ok(subscriber_track_alias) = handler.ok(expires, content_exists).await else {
+            tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
+            // TODO: send_unsubscribe
+            // TODO: close session
+            return;
+        };
+
+        // egress: キャッシュから subscriber へ転送
+        if egress_sender
+            .send(EgressCommand::StartReader(EgressStartRequest {
+                subscriber_session_id: session_id,
+                track_key,
+                published_resources: handler.convert_into_publication(subscriber_track_alias),
+            }))
+            .await
+            .is_err()
+        {
+            tracing::error!("Failed to send EgressStartRequest. Session close.");
         }
     }
 

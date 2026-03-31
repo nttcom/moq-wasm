@@ -72,6 +72,7 @@ impl FilterType {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum GroupOrder {
     Publisher = 0x0,
@@ -80,6 +81,7 @@ pub(crate) enum GroupOrder {
 }
 
 impl GroupOrder {
+    #[allow(dead_code)]
     pub(crate) fn from(group_order: moqt::GroupOrder) -> Self {
         match group_order {
             moqt::GroupOrder::Publisher => Self::Publisher,

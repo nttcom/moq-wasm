@@ -5,6 +5,7 @@ use std::sync::Arc;
 use modules::event_handler::EventHandler;
 use modules::relay::{
     cache::store::TrackCacheStore,
+    caches::sender_map::SenderMap,
     egress::coordinator::EgressCoordinator,
     ingest::stream_accepter::IngestCoordinator,
 };
@@ -73,19 +74,18 @@ impl RelayServer {
     pub fn new(key_path: &str, cert_path: &str) -> Self {
         let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MOQTMessageReceived>();
-        let (transport_notification_sender, transport_notification_receiver) =
-            tokio::sync::mpsc::channel(1024);
 
         let cache_store = Arc::new(TrackCacheStore::new());
+        let sender_map = Arc::new(SenderMap::new());
         let ingest = IngestCoordinator::new(
             repo.clone(),
             cache_store.clone(),
-            transport_notification_sender,
+            sender_map.clone(),
         );
         let egress = EgressCoordinator::new(
             repo.clone(),
             cache_store.clone(),
-            transport_notification_receiver,
+            sender_map,
         );
 
         // 共通のメッセージ処理ロジックを起動
