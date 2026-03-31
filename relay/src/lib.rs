@@ -6,7 +6,7 @@ use modules::event_handler::EventHandler;
 use modules::relay::{
     cache::store::TrackCacheStore,
     egress::coordinator::EgressCoordinator,
-    ingest::coordinator::IngestCoordinator,
+    ingest::stream_accepter::IngestCoordinator,
 };
 use modules::session_handler::SessionHandler;
 use moqt::ServerConfig;
