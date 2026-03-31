@@ -17,8 +17,8 @@ impl ThreadManager {
     }
 
     pub(crate) fn remove(&mut self, session_id: &SessionId) {
-        if let Some(join_handle) = self.join_handles_map.remove(session_id) {
-            join_handle.1.abort();
+        if let Some((_removed_session_id, join_handle)) = self.join_handles_map.remove(session_id) {
+            join_handle.abort();
         }
     }
 }
