@@ -123,6 +123,10 @@ impl<T: TransportProtocol> Client<T> {
                             Self::create_stream(label.clone(), &publisher, publication, &runner)
                                 .await;
                         }
+                        moqt::SessionEvent::Disconnected() => {
+                            tracing::info!("Received: {} Disconnected", label);
+                            break;
+                        }
                         moqt::SessionEvent::ProtocolViolation() => {
                             tracing::info!("Received: {} ProtocolViolation", label);
                         }
