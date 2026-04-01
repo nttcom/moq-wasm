@@ -68,7 +68,7 @@ impl DatagramReader {
                             .send(LatestInfo::DatagramOpened { track_key, group_id });
                     }
                     let cache = cache_store.get_or_create(track_key);
-                    let offset = cache.append_object(track_key, group_id, object).await;
+                    let offset = cache.append_object(group_id, object).await;
                     let _ = sender_map
                         .get_or_create(track_key)
                         .send(LatestInfo::LatestObject { track_key, group_id, offset });

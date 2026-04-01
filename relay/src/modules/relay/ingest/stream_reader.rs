@@ -62,19 +62,21 @@ impl StreamReader {
                 Ok(DataObject::SubgroupHeader(header)) => {
                     group_id = header.group_id;
                     let cache = cache_store.get_or_create(track_key);
-                    cache.append_object(track_key, group_id, DataObject::SubgroupHeader(header)).await;
+                    cache.append_object(group_id, DataObject::SubgroupHeader(header)).await;
                     let _ = sender_map
                         .get_or_create(track_key)
                         .send(LatestInfo::StreamOpened { track_key, group_id });
                 }
                 Ok(object) => {
                     let cache = cache_store.get_or_create(track_key);
-                    let offset = cache.append_object(track_key, group_id, object).await;
+                    let offset = cache.append_object(group_id, object).await;
                     let _ = sender_map
                         .get_or_create(track_key)
                         .send(LatestInfo::LatestObject { track_key, group_id, offset });
                 }
                 Err(_) => {
+                    let cache = cache_store.get_or_create(track_key);
+                    cache.close_group(group_id).await;
                     let _ = sender_map
                         .get_or_create(track_key)
                         .send(LatestInfo::EndOfGroup { track_key, group_id });
