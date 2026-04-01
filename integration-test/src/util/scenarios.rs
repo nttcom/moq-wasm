@@ -161,8 +161,8 @@ pub async fn serve_publisher_side(
                         send_datagram_objects(&publisher, &publication, 5).await?;
                     }
                     PublisherServeMode::StreamReopenFiveTimes => {
-                        for _ in 0..5 {
-                            send_stream_objects(&publisher, &publication, 0, 1).await?;
+                        for group_id in 0..5 {
+                            send_stream_objects(&publisher, &publication, group_id, 1).await?;
                         }
                     }
                 }
