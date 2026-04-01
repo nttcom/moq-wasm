@@ -1,8 +1,13 @@
+use std::sync::Arc;
+
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
     core::data_receiver::datagram_receiver::DatagramReceiver,
-    relay::ingest::received_event::ReceivedEvent,
+    relay::{
+        cache::store::TrackCacheStore,
+        caches::{latest_info::LatestInfo, sender_map::SenderMap},
+    },
     types::TrackKey,
 };
 
@@ -18,21 +23,19 @@ pub(crate) struct DatagramReader {
 impl DatagramReader {
     pub(crate) fn run(
         mut rx: mpsc::Receiver<DatagramReceiveStart>,
-        event_sender: mpsc::Sender<ReceivedEvent>,
+        cache_store: Arc<TrackCacheStore>,
+        sender_map: Arc<SenderMap>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
                     Some(cmd) = rx.recv() => {
-                        let track_key = cmd.track_key;
-                        let _ = event_sender
-                            .send(ReceivedEvent::DatagramOpened { track_key, group_id: 0 })
-                            .await;
                         joinset.spawn(Self::read_loop(
-                            track_key,
+                            cmd.track_key,
                             cmd.receiver,
-                            event_sender.clone(),
+                            cache_store.clone(),
+                            sender_map.clone(),
                         ));
                     }
                     Some(result) = joinset.join_next() => {
@@ -50,29 +53,28 @@ impl DatagramReader {
     async fn read_loop(
         track_key: TrackKey,
         mut receiver: Box<dyn DatagramReceiver>,
-        event_sender: mpsc::Sender<ReceivedEvent>,
+        cache_store: Arc<TrackCacheStore>,
+        sender_map: Arc<SenderMap>,
     ) {
-        let mut group_id = 0u64;
+        let mut current_group_id: Option<u64> = None;
         loop {
             match receiver.receive_object().await {
                 Ok(object) => {
-                    let new_group_id = object.group_id().unwrap_or(group_id);
-                    if new_group_id != group_id {
-                        group_id = new_group_id;
-                        let ev = ReceivedEvent::DatagramOpened { track_key, group_id };
-                        if event_sender.send(ev).await.is_err() {
-                            return;
-                        }
+                    let group_id = object.group_id().or(current_group_id).unwrap_or(0);
+                    if current_group_id != Some(group_id) {
+                        current_group_id = Some(group_id);
+                        let _ = sender_map
+                            .get_or_create(track_key)
+                            .send(LatestInfo::DatagramOpened { track_key, group_id });
                     }
-                    let event = ReceivedEvent::Object { track_key, group_id, object };
-                    if event_sender.send(event).await.is_err() {
-                        return;
-                    }
+                    let cache = cache_store.get_or_create(track_key);
+                    let offset = cache.append_object(track_key, group_id, object).await;
+                    let _ = sender_map
+                        .get_or_create(track_key)
+                        .send(LatestInfo::LatestObject { track_key, group_id, offset });
                 }
                 Err(_) => {
-                    let _ = event_sender
-                        .send(ReceivedEvent::DatagramClosed { track_key })
-                        .await;
+                    tracing::debug!(track_key, "datagram receiver ended");
                     return;
                 }
             }

@@ -1,8 +1,13 @@
+use std::sync::Arc;
+
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
     core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
-    relay::ingest::received_event::ReceivedEvent,
+    relay::{
+        cache::store::TrackCacheStore,
+        caches::{latest_info::LatestInfo, sender_map::SenderMap},
+    },
     types::TrackKey,
 };
 
@@ -18,7 +23,8 @@ pub(crate) struct StreamReader {
 impl StreamReader {
     pub(crate) fn run(
         mut rx: mpsc::Receiver<StreamOpened>,
-        event_sender: mpsc::Sender<ReceivedEvent>,
+        cache_store: Arc<TrackCacheStore>,
+        sender_map: Arc<SenderMap>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
@@ -28,7 +34,8 @@ impl StreamReader {
                         joinset.spawn(Self::read_loop(
                             cmd.track_key,
                             cmd.receiver,
-                            event_sender.clone(),
+                            cache_store.clone(),
+                            sender_map.clone(),
                         ));
                     }
                     Some(result) = joinset.join_next() => {
@@ -46,32 +53,31 @@ impl StreamReader {
     async fn read_loop(
         track_key: TrackKey,
         mut receiver: Box<dyn StreamReceiver>,
-        event_sender: mpsc::Sender<ReceivedEvent>,
+        cache_store: Arc<TrackCacheStore>,
+        sender_map: Arc<SenderMap>,
     ) {
         let mut group_id = 0u64;
         loop {
             match receiver.receive_object().await {
                 Ok(DataObject::SubgroupHeader(header)) => {
                     group_id = header.group_id;
-                    let event = ReceivedEvent::StreamOpened {
-                        track_key,
-                        group_id,
-                        object: DataObject::SubgroupHeader(header),
-                    };
-                    if event_sender.send(event).await.is_err() {
-                        return;
-                    }
+                    let cache = cache_store.get_or_create(track_key);
+                    cache.append_object(track_key, group_id, DataObject::SubgroupHeader(header)).await;
+                    let _ = sender_map
+                        .get_or_create(track_key)
+                        .send(LatestInfo::StreamOpened { track_key, group_id });
                 }
                 Ok(object) => {
-                    let event = ReceivedEvent::Object { track_key, group_id, object };
-                    if event_sender.send(event).await.is_err() {
-                        return;
-                    }
+                    let cache = cache_store.get_or_create(track_key);
+                    let offset = cache.append_object(track_key, group_id, object).await;
+                    let _ = sender_map
+                        .get_or_create(track_key)
+                        .send(LatestInfo::LatestObject { track_key, group_id, offset });
                 }
                 Err(_) => {
-                    let _ = event_sender
-                        .send(ReceivedEvent::EndOfGroup { track_key, group_id })
-                        .await;
+                    let _ = sender_map
+                        .get_or_create(track_key)
+                        .send(LatestInfo::EndOfGroup { track_key, group_id });
                     return;
                 }
             }

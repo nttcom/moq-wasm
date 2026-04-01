@@ -93,12 +93,12 @@ impl EgressCoordinator {
         };
 
         let cache = cache_store.get_or_create(request.track_key);
-        let latest_info_receiver = sender_map.get_or_create(request.track_key).subscribe();
+        let latest_info_sender = sender_map.get_or_create(request.track_key);
 
         let runner = EgressRunner::new(
             request.track_key,
             cache,
-            latest_info_receiver,
+            latest_info_sender,
             publisher,
             request.published_resources,
         );
