@@ -57,11 +57,12 @@ impl TrackCache {
         group.get(index).await
     }
 
-    pub(crate) async fn is_group_closed(&self, group_id: u64) -> bool {
-        let group = self.groups.read().await.get(&group_id).cloned();
-        match group {
-            Some(g) => g.is_closed().await,
-            None => false,
-        }
+    pub(crate) async fn get_object_or_wait(
+        &self,
+        group_id: u64,
+        index: u64,
+    ) -> Option<Arc<DataObject>> {
+        let group = self.groups.read().await.get(&group_id).cloned()?;
+        group.get_or_wait(index).await
     }
 }

@@ -186,23 +186,16 @@ impl EgressRunner {
         };
         let mut next_index = cache_start;
 
-        // キャッシュドレイン: グループがクローズされるまで待機しつつ全オブジェクトを送信
+        // キャッシュドレイン: グループがクローズされるまで全オブジェクトを待機しながら送信
         loop {
-            match cache.get_object(group_id, next_index).await {
+            match cache.get_object_or_wait(group_id, next_index).await {
                 Some(object) => {
                     if sender.send_object((*object).clone()).await.is_err() {
                         return;
                     }
                     next_index += 1;
                 }
-                None => {
-                    if cache.is_group_closed(group_id).await {
-                        // グループ終了確定 → broadcast ループへ移行
-                        break;
-                    }
-                    // まだ書き込まれていない可能性 → broadcast で補完
-                    break;
-                }
+                None => break, // グループクローズ確定
             }
         }
 
