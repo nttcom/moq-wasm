@@ -10,7 +10,6 @@ use crate::modules::{
         ingest::{
             datagram_reader::{DatagramReader, DatagramReceiveStart},
             stream_reader::{StreamOpened, StreamReader},
-            writer::CacheWriter,
         },
     },
     session_repository::SessionRepository,
@@ -25,7 +24,6 @@ pub(crate) struct IngestStartRequest {
 pub(crate) struct IngestCoordinator {
     command_sender: mpsc::Sender<IngestStartRequest>,
     command_runner: tokio::task::JoinHandle<()>,
-    _cache_writer: CacheWriter,
     _stream_reader: StreamReader,
     _datagram_reader: DatagramReader,
 }
@@ -36,13 +34,10 @@ impl IngestCoordinator {
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
     ) -> Self {
-        let cache_writer = CacheWriter::start(cache_store, sender_map, 1024);
-        let event_sender = cache_writer.sender();
-
         let (stream_tx, stream_rx) = mpsc::channel::<StreamOpened>(64);
         let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveStart>(64);
-        let stream_reader = StreamReader::run(stream_rx, event_sender.clone());
-        let datagram_reader = DatagramReader::run(datagram_rx, event_sender);
+        let stream_reader = StreamReader::run(stream_rx, cache_store.clone(), sender_map.clone());
+        let datagram_reader = DatagramReader::run(datagram_rx, cache_store, sender_map);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngestStartRequest>(512);
         let session_repo_for_runner = session_repo;
@@ -103,7 +98,6 @@ impl IngestCoordinator {
         Self {
             command_sender,
             command_runner,
-            _cache_writer: cache_writer,
             _stream_reader: stream_reader,
             _datagram_reader: datagram_reader,
         }
