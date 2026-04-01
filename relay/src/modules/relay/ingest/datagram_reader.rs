@@ -63,15 +63,23 @@ impl DatagramReader {
                     let group_id = object.group_id().or(current_group_id).unwrap_or(0);
                     if current_group_id != Some(group_id) {
                         current_group_id = Some(group_id);
-                        let _ = sender_map
-                            .get_or_create(track_key)
-                            .send(LatestInfo::DatagramOpened { track_key, group_id });
+                        let _ =
+                            sender_map
+                                .get_or_create(track_key)
+                                .send(LatestInfo::DatagramOpened {
+                                    track_key,
+                                    group_id,
+                                });
                     }
                     let cache = cache_store.get_or_create(track_key);
                     let offset = cache.append_object(group_id, object).await;
                     let _ = sender_map
                         .get_or_create(track_key)
-                        .send(LatestInfo::LatestObject { track_key, group_id, offset });
+                        .send(LatestInfo::LatestObject {
+                            track_key,
+                            group_id,
+                            offset,
+                        });
                 }
                 Err(_) => {
                     tracing::debug!(track_key, "datagram receiver ended");
