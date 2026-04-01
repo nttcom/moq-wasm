@@ -5,7 +5,6 @@ use tokio::sync::RwLock;
 use crate::modules::{
     core::data_object::DataObject,
     relay::{cache::group_cache::GroupCache, types::CacheLocation},
-    types::TrackKey,
 };
 
 pub(crate) struct TrackCache {
@@ -32,13 +31,7 @@ impl TrackCache {
             .clone()
     }
 
-    #[allow(dead_code)]
-    pub(crate) async fn append_object(
-        &self,
-        _track_key: TrackKey,
-        group_id: u64,
-        object: DataObject,
-    ) -> u64 {
+    pub(crate) async fn append_object(&self, group_id: u64, object: DataObject) -> u64 {
         let group = self.ensure_group(group_id).await;
         let object = Arc::new(object);
         let index = group.append(object).await;
@@ -46,8 +39,7 @@ impl TrackCache {
         index
     }
 
-    #[allow(dead_code)]
-    pub(crate) async fn close_group(&self, _track_key: TrackKey, group_id: u64) {
+    pub(crate) async fn close_group(&self, group_id: u64) {
         let group = self.ensure_group(group_id).await;
         group.mark_end_of_group().await;
     }
@@ -63,5 +55,13 @@ impl TrackCache {
     pub(crate) async fn get_object(&self, group_id: u64, index: u64) -> Option<Arc<DataObject>> {
         let group = self.groups.read().await.get(&group_id).cloned()?;
         group.get(index).await
+    }
+
+    pub(crate) async fn is_group_closed(&self, group_id: u64) -> bool {
+        let group = self.groups.read().await.get(&group_id).cloned();
+        match group {
+            Some(g) => g.is_closed().await,
+            None => false,
+        }
     }
 }
