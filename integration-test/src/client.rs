@@ -88,14 +88,13 @@ impl<T: TransportProtocol> Client<T> {
                                 label,
                                 &publish_namespace_handler.track_namespace
                             );
-                            if let Some(sender) = &notification_sender {
-                                if sender
+                            if let Some(sender) = &notification_sender
+                                && sender
                                     .send(publish_namespace_handler.track_namespace.clone())
                                     .is_err()
                                 {
                                     tracing::error!("Failed to send notification");
                                 }
-                            }
                             let _ = publish_namespace_handler.ok().await;
                         }
                         moqt::SessionEvent::SubscribeNameSpace(subscribe_namespace_handler) => {
