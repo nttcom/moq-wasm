@@ -1,6 +1,6 @@
 use dashmap::DashMap;
 
-use crate::modules::{relay::caches::latest_info::LatestInfo, types::TrackKey};
+use crate::modules::{relay::notifications::latest_info::LatestInfo, types::TrackKey};
 
 pub(crate) struct SenderMap {
     map: DashMap<TrackKey, tokio::sync::broadcast::Sender<LatestInfo>>,

@@ -6,27 +6,30 @@ use crate::modules::{
     enums::FilterType,
     relay::{
         cache::track_cache::TrackCache,
-        caches::{delivery_type_map::DeliveryTypeMap, latest_info::LatestInfo},
+        notifications::{
+            delivery_type_map::{DeliveryType, DeliveryTypeMap},
+            latest_info::LatestInfo,
+        },
     },
     types::TrackKey,
 };
 
 /// GroupSender へ送るグループ送信指示
-pub(crate) struct GroupSendRequest {
+pub(crate) struct GroupSendTask {
     pub(crate) group_id: u64,
     pub(crate) start_offset: u64,
     pub(crate) is_stream: bool,
 }
 
 /// LatestInfo を監視して「どのグループをいつ送るか」を決定し、
-/// GroupSender へ GroupSendRequest を送信する。
+/// GroupSender へ GroupSendTask を送信する。
 pub(crate) struct EgressScheduler {
     cache: Arc<TrackCache>,
     latest_info_sender: broadcast::Sender<LatestInfo>,
     delivery_type_map: Arc<DeliveryTypeMap>,
     track_key: TrackKey,
     filter_type: FilterType,
-    sender: mpsc::Sender<GroupSendRequest>,
+    sender: mpsc::Sender<GroupSendTask>,
 }
 
 impl EgressScheduler {
@@ -36,7 +39,7 @@ impl EgressScheduler {
         latest_info_sender: broadcast::Sender<LatestInfo>,
         delivery_type_map: Arc<DeliveryTypeMap>,
         filter_type: FilterType,
-        sender: mpsc::Sender<GroupSendRequest>,
+        sender: mpsc::Sender<GroupSendTask>,
     ) -> Self {
         Self {
             track_key,
@@ -61,13 +64,14 @@ impl EgressScheduler {
         let mut next_absolute_group: Option<u64> = None;
 
         if is_absolute {
-            let Some(is_stream) = self.delivery_type_map.is_stream(self.track_key) else {
+            let Some(delivery_type) = self.delivery_type_map.delivery_type(self.track_key) else {
                 tracing::error!(
                     track_key = self.track_key,
                     "delivery type unknown for absolute egress"
                 );
                 return;
             };
+            let is_stream = matches!(delivery_type, DeliveryType::Stream);
             let Some(next) = self
                 .schedule_groups_from(start_group_id, start_offset, is_stream)
                 .await
@@ -141,7 +145,7 @@ impl EgressScheduler {
             };
             let _ = self
                 .sender
-                .send(GroupSendRequest {
+                .send(GroupSendTask {
                     group_id,
                     start_offset: offset,
                     is_stream,
@@ -163,7 +167,7 @@ impl EgressScheduler {
         is_stream: bool,
     ) -> Option<u64> {
         self.sender
-            .send(GroupSendRequest {
+            .send(GroupSendTask {
                 group_id: from_group_id,
                 start_offset: first_offset,
                 is_stream,
@@ -175,7 +179,7 @@ impl EgressScheduler {
         while self.cache.has_group(next).await {
             let _ = self
                 .sender
-                .send(GroupSendRequest {
+                .send(GroupSendTask {
                     group_id: next,
                     start_offset: 0,
                     is_stream,

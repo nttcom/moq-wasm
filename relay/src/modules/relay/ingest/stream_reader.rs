@@ -6,7 +6,7 @@ use crate::modules::{
     core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
     relay::{
         cache::store::TrackCacheStore,
-        caches::{
+        notifications::{
             delivery_type_map::DeliveryTypeMap, latest_info::LatestInfo, sender_map::SenderMap,
         },
     },

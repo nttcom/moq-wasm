@@ -6,7 +6,7 @@ use crate::modules::{
     core::{published_resource::PublishedResource, publisher::Publisher},
     relay::{
         cache::track_cache::TrackCache,
-        caches::{delivery_type_map::DeliveryTypeMap, latest_info::LatestInfo},
+        notifications::{delivery_type_map::DeliveryTypeMap, latest_info::LatestInfo},
     },
     types::TrackKey,
 };
