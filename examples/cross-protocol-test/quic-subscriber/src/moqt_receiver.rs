@@ -54,7 +54,7 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
     };
 
     info!(namespace, track_name, "subscribing");
-    let subscription = session
+    let mut subscription = session
         .subscriber()
         .subscribe(namespace.to_string(), track_name.to_string(), option)
         .await
@@ -63,7 +63,7 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
     info!("waiting for data stream");
     let receiver = session
         .subscriber()
-        .accept_data_receiver(&subscription)
+        .accept_data_receiver(&mut subscription)
         .await
         .context("failed to accept data receiver")?;
 
