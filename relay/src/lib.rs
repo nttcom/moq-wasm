@@ -5,7 +5,10 @@ use std::sync::Arc;
 use modules::event_handler::EventHandler;
 use modules::relay::{
     cache::store::TrackCacheStore,
-    caches::sender_map::SenderMap,
+    caches::{
+        delivery_type_map::DeliveryTypeMap,
+        sender_map::SenderMap,
+    },
     egress::coordinator::EgressCoordinator,
     ingest::stream_accepter::IngestCoordinator,
 };
@@ -77,15 +80,18 @@ impl RelayServer {
 
         let cache_store = Arc::new(TrackCacheStore::new());
         let sender_map = Arc::new(SenderMap::new());
+        let delivery_type_map = Arc::new(DeliveryTypeMap::new());
         let ingest = IngestCoordinator::new(
             repo.clone(),
             cache_store.clone(),
             sender_map.clone(),
+            delivery_type_map.clone(),
         );
         let egress = EgressCoordinator::new(
             repo.clone(),
             cache_store.clone(),
             sender_map,
+            delivery_type_map,
         );
 
         // 共通のメッセージ処理ロジックを起動
