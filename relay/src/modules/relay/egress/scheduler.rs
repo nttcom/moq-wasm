@@ -21,10 +21,10 @@ pub(crate) struct GroupSendRequest {
 /// LatestInfo を監視して「どのグループをいつ送るか」を決定し、
 /// GroupSender へ GroupSendRequest を送信する。
 pub(crate) struct EgressScheduler {
-    track_key: TrackKey,
     cache: Arc<TrackCache>,
     latest_info_sender: broadcast::Sender<LatestInfo>,
     delivery_type_map: Arc<DeliveryTypeMap>,
+    track_key: TrackKey,
     filter_type: FilterType,
     tx: mpsc::Sender<GroupSendRequest>,
 }
@@ -80,10 +80,7 @@ impl EgressScheduler {
 
         loop {
             match receiver.recv().await {
-                Ok(LatestInfo::StreamOpened {
-                    track_key,
-                    group_id,
-                }) if track_key == self.track_key => {
+                Ok(LatestInfo::StreamOpened { group_id }) => {
                     next_absolute_group = self
                         .on_group_opened(
                             group_id,
@@ -95,10 +92,7 @@ impl EgressScheduler {
                         )
                         .await;
                 }
-                Ok(LatestInfo::DatagramOpened {
-                    track_key,
-                    group_id,
-                }) if track_key == self.track_key => {
+                Ok(LatestInfo::DatagramOpened { group_id }) => {
                     next_absolute_group = self
                         .on_group_opened(
                             group_id,

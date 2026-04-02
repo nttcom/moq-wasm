@@ -74,23 +74,15 @@ impl DatagramReader {
                         }
                         current_group_id = Some(group_id);
                         delivery_type_map.set_datagram(track_key);
-                        let _ =
-                            sender_map
-                                .get_or_create(track_key)
-                                .send(LatestInfo::DatagramOpened {
-                                    track_key,
-                                    group_id,
-                                });
+                        let _ = sender_map
+                            .get_or_create(track_key)
+                            .send(LatestInfo::DatagramOpened { group_id });
                     }
                     let cache = cache_store.get_or_create(track_key);
                     let offset = cache.append_object(group_id, object).await;
                     let _ = sender_map
                         .get_or_create(track_key)
-                        .send(LatestInfo::LatestObject {
-                            track_key,
-                            group_id,
-                            offset,
-                        });
+                        .send(LatestInfo::LatestObject { group_id, offset });
                 }
                 Err(_) => {
                     // 最後のグループを確実にクローズする

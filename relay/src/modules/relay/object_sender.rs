@@ -25,7 +25,6 @@ impl ObjectSender {
         };
         match info {
             LatestInfo::LatestObject {
-                track_key,
                 group_id,
                 offset,
             } => {
@@ -38,8 +37,7 @@ impl ObjectSender {
                     return;
                 }
                 tracing::debug!(
-                    "Received latest object info: track_key={}, group_id={}, offset={}",
-                    track_key,
+                    "Received latest object info: group_id={}, offset={}",
                     group_id,
                     offset
                 );
@@ -57,15 +55,8 @@ impl ObjectSender {
                     tracing::warn!("No object found at offset {} in group {}", offset, group_id);
                 }
             }
-            LatestInfo::EndOfGroup {
-                track_key,
-                group_id,
-            } => {
-                tracing::info!(
-                    "Received end of group info: track_key={}, group_id={}",
-                    track_key,
-                    group_id
-                );
+            LatestInfo::EndOfGroup { group_id } => {
+                tracing::info!("Received end of group info: group_id={}", group_id);
             }
         }
     }
