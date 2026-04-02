@@ -24,7 +24,7 @@ pub(crate) struct StreamReader {
 
 impl StreamReader {
     pub(crate) fn run(
-        mut rx: mpsc::Receiver<StreamOpened>,
+        mut receiver: mpsc::Receiver<StreamOpened>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
         delivery_type_map: Arc<DeliveryTypeMap>,
@@ -33,7 +33,7 @@ impl StreamReader {
             let mut joinset = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
-                    Some(cmd) = rx.recv() => {
+                    Some(cmd) = receiver.recv() => {
                         joinset.spawn(Self::read_loop(
                             cmd.track_key,
                             cmd.receiver,

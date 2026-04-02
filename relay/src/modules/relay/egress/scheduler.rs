@@ -26,7 +26,7 @@ pub(crate) struct EgressScheduler {
     delivery_type_map: Arc<DeliveryTypeMap>,
     track_key: TrackKey,
     filter_type: FilterType,
-    tx: mpsc::Sender<GroupSendRequest>,
+    sender: mpsc::Sender<GroupSendRequest>,
 }
 
 impl EgressScheduler {
@@ -36,7 +36,7 @@ impl EgressScheduler {
         latest_info_sender: broadcast::Sender<LatestInfo>,
         delivery_type_map: Arc<DeliveryTypeMap>,
         filter_type: FilterType,
-        tx: mpsc::Sender<GroupSendRequest>,
+        sender: mpsc::Sender<GroupSendRequest>,
     ) -> Self {
         Self {
             track_key,
@@ -44,7 +44,7 @@ impl EgressScheduler {
             latest_info_sender,
             delivery_type_map,
             filter_type,
-            tx,
+            sender,
         }
     }
 
@@ -140,7 +140,7 @@ impl EgressScheduler {
                 0
             };
             let _ = self
-                .tx
+                .sender
                 .send(GroupSendRequest {
                     group_id,
                     start_offset: offset,
@@ -162,7 +162,7 @@ impl EgressScheduler {
         first_offset: u64,
         is_stream: bool,
     ) -> Option<u64> {
-        self.tx
+        self.sender
             .send(GroupSendRequest {
                 group_id: from_group_id,
                 start_offset: first_offset,
@@ -174,7 +174,7 @@ impl EgressScheduler {
         let mut next = from_group_id + 1;
         while self.cache.has_group(next).await {
             let _ = self
-                .tx
+                .sender
                 .send(GroupSendRequest {
                     group_id: next,
                     start_offset: 0,

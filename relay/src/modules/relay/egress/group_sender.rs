@@ -14,7 +14,7 @@ pub(crate) struct GroupSender {
     cache: Arc<TrackCache>,
     publisher: Box<dyn Publisher>,
     published_resource: PublishedResource,
-    rx: mpsc::Receiver<GroupSendRequest>,
+    receiver: mpsc::Receiver<GroupSendRequest>,
 }
 
 impl GroupSender {
@@ -22,13 +22,13 @@ impl GroupSender {
         cache: Arc<TrackCache>,
         publisher: Box<dyn Publisher>,
         published_resource: PublishedResource,
-        rx: mpsc::Receiver<GroupSendRequest>,
+        receiver: mpsc::Receiver<GroupSendRequest>,
     ) -> Self {
         Self {
             cache,
             publisher,
             published_resource,
-            rx,
+            receiver,
         }
     }
 
@@ -38,7 +38,7 @@ impl GroupSender {
 
         loop {
             tokio::select! {
-                Some(req) = self.rx.recv() => {
+                Some(req) = self.receiver.recv() => {
                     if let Some(sender) = self.new_sender(req.is_stream, subscriber_track_alias).await {
                         joinset.spawn(Self::send_task(
                             req.group_id,
