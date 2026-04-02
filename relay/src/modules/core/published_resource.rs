@@ -1,4 +1,4 @@
-use crate::modules::enums::{FilterType, GroupOrder};
+use crate::modules::enums::FilterType;
 
 pub(crate) struct PublishedResource {
     published_resource: moqt::PublishedResource,
@@ -15,10 +15,6 @@ impl PublishedResource {
 
     pub(crate) fn track_alias(&self) -> u64 {
         self.published_resource.track_alias
-    }
-
-    pub(crate) fn group_order(&self) -> GroupOrder {
-        GroupOrder::from(self.published_resource.group_order)
     }
 
     pub(crate) fn filter_type(&self) -> FilterType {

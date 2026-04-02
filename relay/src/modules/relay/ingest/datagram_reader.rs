@@ -79,10 +79,10 @@ impl DatagramReader {
                             .send(LatestInfo::DatagramOpened { group_id });
                     }
                     let cache = cache_store.get_or_create(track_key);
-                    let offset = cache.append_object(group_id, object).await;
+                    cache.append_object(group_id, object).await;
                     let _ = sender_map
                         .get_or_create(track_key)
-                        .send(LatestInfo::LatestObject { group_id, offset });
+                        .send(LatestInfo::LatestObject);
                 }
                 Err(_) => {
                     // 最後のグループを確実にクローズする

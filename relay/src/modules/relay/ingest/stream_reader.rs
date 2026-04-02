@@ -75,17 +75,17 @@ impl StreamReader {
                 }
                 Ok(object) => {
                     let cache = cache_store.get_or_create(track_key);
-                    let offset = cache.append_object(group_id, object).await;
+                    cache.append_object(group_id, object).await;
                     let _ = sender_map
                         .get_or_create(track_key)
-                        .send(LatestInfo::LatestObject { group_id, offset });
+                        .send(LatestInfo::LatestObject);
                 }
                 Err(_) => {
                     let cache = cache_store.get_or_create(track_key);
                     cache.close_group(group_id).await;
                     let _ = sender_map
                         .get_or_create(track_key)
-                        .send(LatestInfo::EndOfGroup { group_id });
+                        .send(LatestInfo::EndOfGroup);
                     return;
                 }
             }

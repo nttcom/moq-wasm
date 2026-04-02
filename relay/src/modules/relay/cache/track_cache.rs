@@ -52,11 +52,6 @@ impl TrackCache {
         self.groups.read().await.keys().next_back().copied()
     }
 
-    pub(crate) async fn get_object(&self, group_id: u64, index: u64) -> Option<Arc<DataObject>> {
-        let group = self.groups.read().await.get(&group_id).cloned()?;
-        group.get(index).await
-    }
-
     pub(crate) async fn get_object_or_wait(
         &self,
         group_id: u64,
