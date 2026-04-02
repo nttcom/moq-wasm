@@ -6,7 +6,10 @@ use crate::modules::{
     core::{data_receiver::receiver::DataReceiver, subscription::Subscription},
     relay::{
         cache::store::TrackCacheStore,
-        caches::sender_map::SenderMap,
+        caches::{
+            delivery_type_map::DeliveryTypeMap,
+            sender_map::SenderMap,
+        },
         ingest::{
             datagram_reader::{DatagramReader, DatagramReceiveStart},
             stream_reader::{StreamOpened, StreamReader},
@@ -33,11 +36,12 @@ impl IngestCoordinator {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
+        delivery_type_map: Arc<DeliveryTypeMap>,
     ) -> Self {
         let (stream_tx, stream_rx) = mpsc::channel::<StreamOpened>(64);
         let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveStart>(64);
-        let stream_reader = StreamReader::run(stream_rx, cache_store.clone(), sender_map.clone());
-        let datagram_reader = DatagramReader::run(datagram_rx, cache_store, sender_map);
+        let stream_reader = StreamReader::run(stream_rx, cache_store.clone(), sender_map.clone(), delivery_type_map.clone());
+        let datagram_reader = DatagramReader::run(datagram_rx, cache_store, sender_map, delivery_type_map);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngestStartRequest>(512);
         let session_repo_for_runner = session_repo;

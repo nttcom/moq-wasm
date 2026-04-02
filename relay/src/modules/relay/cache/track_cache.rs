@@ -65,4 +65,8 @@ impl TrackCache {
         let group = self.groups.read().await.get(&group_id).cloned()?;
         group.get_or_wait(index).await
     }
+
+    pub(crate) async fn has_group(&self, group_id: u64) -> bool {
+        self.groups.read().await.contains_key(&group_id)
+    }
 }

@@ -6,7 +6,8 @@ use crate::modules::{
     core::{data_sender::DataSender, published_resource::PublishedResource, publisher::Publisher},
     enums::FilterType,
     relay::{
-        cache::track_cache::TrackCache, caches::latest_info::LatestInfo, egress::msg::EgressMsg,
+        cache::track_cache::TrackCache,
+        caches::{delivery_type_map::DeliveryTypeMap, latest_info::LatestInfo},
     },
     types::TrackKey,
 };
@@ -15,6 +16,7 @@ pub(crate) struct EgressRunner {
     track_key: TrackKey,
     cache: Arc<TrackCache>,
     latest_info_sender: broadcast::Sender<LatestInfo>,
+    delivery_type_map: Arc<DeliveryTypeMap>,
     publisher: Box<dyn Publisher>,
     published_resource: PublishedResource,
 }
@@ -24,6 +26,7 @@ impl EgressRunner {
         track_key: TrackKey,
         cache: Arc<TrackCache>,
         latest_info_sender: broadcast::Sender<LatestInfo>,
+        delivery_type_map: Arc<DeliveryTypeMap>,
         publisher: Box<dyn Publisher>,
         published_resource: PublishedResource,
     ) -> Self {
@@ -31,6 +34,7 @@ impl EgressRunner {
             track_key,
             cache,
             latest_info_sender,
+            delivery_type_map,
             publisher,
             published_resource,
         }
@@ -39,47 +43,54 @@ impl EgressRunner {
     pub(crate) async fn run(self) -> anyhow::Result<()> {
         let filter_type = self.published_resource.filter_type();
         let subscriber_track_alias = self.published_resource.track_alias();
-        let (egress_tx, _) = broadcast::channel::<EgressMsg>(256);
-        let mut joinset = JoinSet::<()>::new();
-        let mut datagram_spawned = false;
+        let mut joinset = JoinSet::<Option<u64>>::new();
 
-        match &filter_type {
-            FilterType::AbsoluteStart { location } | FilterType::AbsoluteRange { location, .. } => {
-                // 指定位置からどの filter_type でもストリームを即座に開通してドレイン
-                let start_group_id = location.group_id;
-                let start_offset = location.object_id;
-                match self
-                    .publisher
-                    .new_stream(&self.published_resource, subscriber_track_alias)
-                    .await
-                {
-                    Ok(stream_sender) => {
-                        let rx = egress_tx.subscribe();
-                        let cache = self.cache.clone();
-                        joinset.spawn(Self::stream_send_task(
-                            start_group_id,
-                            start_group_id,
-                            start_offset,
-                            cache,
-                            stream_sender,
-                            rx,
-                        ));
-                    }
-                    Err(e) => {
-                        tracing::error!(?e, "failed to open stream for absolute egress");
-                        return Ok(());
-                    }
+        let (start_group_id, start_offset) = Self::resolve_start(&self.cache, &filter_type).await;
+        // eager spawn より前に subscribe してイベントを取りこぼさないようにする
+        let mut latest_info_receiver = self.latest_info_sender.subscribe();
+
+        let is_absolute = matches!(
+            filter_type,
+            FilterType::AbsoluteStart { .. } | FilterType::AbsoluteRange { .. }
+        );
+        // Absolute 用: 次にスポーンすべきグループ ID
+        let mut next_absolute_group: Option<u64> = None;
+
+        if is_absolute {
+            let Some(is_stream) = self.delivery_type_map.is_stream(self.track_key) else {
+                tracing::error!(
+                    track_key = self.track_key,
+                    "delivery type unknown for absolute egress"
+                );
+                return Ok(());
+            };
+
+            // start_group をスポーン
+            match self.new_sender(is_stream, subscriber_track_alias).await {
+                Some(sender) => {
+                    joinset.spawn(Self::stream_send_task(
+                        start_group_id,
+                        start_offset,
+                        self.cache.clone(),
+                        sender,
+                    ));
+                }
+                None => {
+                    tracing::error!("failed to open sender for absolute egress start group");
+                    return Ok(());
                 }
             }
-            FilterType::LatestGroup | FilterType::LatestObject => {
-                // LatestInfo を待ってからストリームを開通する（下のループで処理）
+
+            // キャッシュに既に存在する後続グループを即座に並列スポーン
+            let mut next = start_group_id + 1;
+            while self.cache.has_group(next).await {
+                if let Some(sender) = self.new_sender(is_stream, subscriber_track_alias).await {
+                    joinset.spawn(Self::stream_send_task(next, 0, self.cache.clone(), sender));
+                }
+                next += 1;
             }
+            next_absolute_group = Some(next);
         }
-
-        // 起動時の start 位置 (LatestGroup/LatestObject 用)
-        let (start_group_id, start_offset) = Self::resolve_start(&self.cache, &filter_type).await;
-
-        let mut latest_info_receiver = self.latest_info_sender.subscribe();
 
         loop {
             tokio::select! {
@@ -89,51 +100,90 @@ impl EgressRunner {
                             if track_key != self.track_key {
                                 continue;
                             }
-                            match self
-                                .publisher
-                                .new_stream(&self.published_resource, subscriber_track_alias)
-                                .await
-                            {
-                                Ok(stream_sender) => {
-                                    let rx = egress_tx.subscribe();
-                                    let cache = self.cache.clone();
+                            if is_absolute {
+                                // Absolute: 次に期待するグループが到着したときのみスポーン
+                                if next_absolute_group == Some(group_id) {
+                                    if let Ok(sender) = self
+                                        .publisher
+                                        .new_stream(&self.published_resource, subscriber_track_alias)
+                                        .await
+                                    {
+                                        joinset.spawn(Self::stream_send_task(
+                                            group_id, 0, self.cache.clone(), sender,
+                                        ));
+                                    }
+                                    // キャッシュ内の更なる後続グループも即座にスポーン
+                                    let mut next = group_id + 1;
+                                    while self.cache.has_group(next).await {
+                                        if let Ok(sender) = self
+                                            .publisher
+                                            .new_stream(&self.published_resource, subscriber_track_alias)
+                                            .await
+                                        {
+                                            joinset.spawn(Self::stream_send_task(
+                                                next, 0, self.cache.clone(), sender,
+                                            ));
+                                        }
+                                        next += 1;
+                                    }
+                                    next_absolute_group = Some(next);
+                                }
+                            } else {
+                                // LatestGroup/LatestObject
+                                let offset =
+                                    if group_id == start_group_id { start_offset } else { 0 };
+                                match self
+                                    .publisher
+                                    .new_stream(&self.published_resource, subscriber_track_alias)
+                                    .await
+                                {
+                                    Ok(sender) => {
+                                        joinset.spawn(Self::stream_send_task(
+                                            group_id, offset, self.cache.clone(), sender,
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(?e, "failed to open stream for egress");
+                                    }
+                                }
+                            }
+                        }
+                        Ok(LatestInfo::DatagramOpened { track_key, group_id }) => {
+                            if track_key != self.track_key {
+                                continue;
+                            }
+                            if is_absolute {
+                                // Absolute: 次に期待するグループが到着したときのみスポーン
+                                if next_absolute_group == Some(group_id) {
+                                    let sender =
+                                        self.publisher.new_datagram(&self.published_resource);
                                     joinset.spawn(Self::stream_send_task(
-                                        group_id,
-                                        start_group_id,
-                                        start_offset,
-                                        cache,
-                                        stream_sender,
-                                        rx,
+                                        group_id, 0, self.cache.clone(), sender,
                                     ));
+                                    // キャッシュ内の更なる後続グループも即座にスポーン
+                                    let mut next = group_id + 1;
+                                    while self.cache.has_group(next).await {
+                                        let sender =
+                                            self.publisher.new_datagram(&self.published_resource);
+                                        joinset.spawn(Self::stream_send_task(
+                                            next, 0, self.cache.clone(), sender,
+                                        ));
+                                        next += 1;
+                                    }
+                                    next_absolute_group = Some(next);
                                 }
-                                Err(e) => {
-                                    tracing::error!(?e, "failed to open stream for egress");
-                                }
+                            } else {
+                                // LatestGroup/LatestObject
+                                let offset =
+                                    if group_id == start_group_id { start_offset } else { 0 };
+                                let sender =
+                                    self.publisher.new_datagram(&self.published_resource);
+                                joinset.spawn(Self::stream_send_task(
+                                    group_id, offset, self.cache.clone(), sender,
+                                ));
                             }
                         }
-                        Ok(LatestInfo::DatagramOpened { track_key, .. }) => {
-                            if track_key != self.track_key || datagram_spawned {
-                                continue;
-                            }
-                            datagram_spawned = true;
-                            let datagram_sender =
-                                self.publisher.new_datagram(&self.published_resource);
-                            let rx = egress_tx.subscribe();
-                            let cache = self.cache.clone();
-                            joinset.spawn(Self::datagram_send_task(datagram_sender, rx, cache));
-                        }
-                        Ok(LatestInfo::LatestObject { track_key, group_id, offset }) => {
-                            if track_key != self.track_key {
-                                continue;
-                            }
-                            let _ = egress_tx.send(EgressMsg::Object { group_id, offset });
-                        }
-                        Ok(LatestInfo::EndOfGroup { track_key, group_id }) => {
-                            if track_key != self.track_key {
-                                continue;
-                            }
-                            let _ = egress_tx.send(EgressMsg::Close { group_id });
-                        }
+                        Ok(LatestInfo::LatestObject { .. } | LatestInfo::EndOfGroup { .. }) => {}
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             tracing::warn!(n, "latest_info_receiver lagged");
                         }
@@ -151,6 +201,29 @@ impl EgressRunner {
         Ok(())
     }
 
+    /// stream / datagram に応じた DataSender を生成する
+    async fn new_sender(
+        &self,
+        is_stream: bool,
+        subscriber_track_alias: u64,
+    ) -> Option<Box<dyn DataSender>> {
+        if is_stream {
+            match self
+                .publisher
+                .new_stream(&self.published_resource, subscriber_track_alias)
+                .await
+            {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::error!(?e, "failed to open stream sender");
+                    None
+                }
+            }
+        } else {
+            Some(self.publisher.new_datagram(&self.published_resource))
+        }
+    }
+
     async fn resolve_start(cache: &Arc<TrackCache>, filter_type: &FilterType) -> (u64, u64) {
         match filter_type {
             FilterType::LatestGroup => {
@@ -166,96 +239,28 @@ impl EgressRunner {
         }
     }
 
-    /// stream 送信スレッド
+    /// グループ内の全オブジェクトを送信するタスク（stream・datagram 共通）
     ///
-    /// 起動直後はキャッシュ内の既存データを先に送信し、
-    /// 以降は broadcast::Receiver<EgressMsg> をリッスンする。
-    /// ドレイン済み offset 未満の Object はスキップして重複を防ぐ。
+    /// get_object_or_wait でグループがクローズされるまで待機しながらオブジェクトを送信する。
+    /// stream の場合は QUIC ストリームが、datagram の場合は個別データグラムが送信される。
     async fn stream_send_task(
         group_id: u64,
-        start_group_id: u64,
         start_offset: u64,
         cache: Arc<TrackCache>,
         mut sender: Box<dyn DataSender>,
-        mut receiver: broadcast::Receiver<EgressMsg>,
-    ) {
-        let cache_start = if group_id == start_group_id {
-            start_offset
-        } else {
-            0
-        };
-        let mut next_index = cache_start;
-
-        // キャッシュドレイン: グループがクローズされるまで全オブジェクトを待機しながら送信
+    ) -> Option<u64> {
+        let mut next_index = start_offset;
         loop {
             match cache.get_object_or_wait(group_id, next_index).await {
                 Some(object) => {
                     if sender.send_object((*object).clone()).await.is_err() {
-                        return;
+                        return Some(group_id);
                     }
                     next_index += 1;
                 }
-                None => break, // グループクローズ確定
+                None => break,
             }
         }
-
-        // broadcast をリッスンして以降のオブジェクトを受信
-        loop {
-            match receiver.recv().await {
-                Ok(EgressMsg::Object {
-                    group_id: gid,
-                    offset,
-                }) if gid == group_id => {
-                    // ドレイン済み offset はスキップ（重複防止）
-                    if offset < next_index {
-                        continue;
-                    }
-                    match cache.get_object(group_id, offset).await {
-                        Some(object) => {
-                            if sender.send_object((*object).clone()).await.is_err() {
-                                return;
-                            }
-                            next_index = offset + 1;
-                        }
-                        None => {
-                            tracing::warn!(group_id, offset, "cache miss in stream_send_task");
-                        }
-                    }
-                }
-                Ok(EgressMsg::Object { .. }) => {}
-                Ok(EgressMsg::Close { group_id: gid }) if gid == group_id => return,
-                Ok(EgressMsg::Close { .. }) => {}
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(group_id, n, "egress stream receiver lagged");
-                }
-                Err(broadcast::error::RecvError::Closed) => return,
-            }
-        }
-    }
-
-    /// datagram 送信スレッド
-    ///
-    /// DatagramOpened は初回のみ。以降は Object をキャッシュから引いて送信し続ける。
-    async fn datagram_send_task(
-        mut sender: Box<dyn DataSender>,
-        mut receiver: broadcast::Receiver<EgressMsg>,
-        cache: Arc<TrackCache>,
-    ) {
-        loop {
-            match receiver.recv().await {
-                Ok(EgressMsg::Object { group_id, offset }) => {
-                    if let Some(object) = cache.get_object(group_id, offset).await {
-                        if sender.send_object((*object).clone()).await.is_err() {
-                            return;
-                        }
-                    }
-                }
-                Ok(EgressMsg::Close { .. }) => {}
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(n, "egress datagram receiver lagged");
-                }
-                Err(broadcast::error::RecvError::Closed) => return,
-            }
-        }
+        Some(group_id)
     }
 }

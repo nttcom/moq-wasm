@@ -5,7 +5,9 @@ use tokio::{sync::mpsc, task::JoinSet};
 use crate::modules::{
     core::published_resource::PublishedResource,
     relay::{
-        cache::store::TrackCacheStore, caches::sender_map::SenderMap, egress::runner::EgressRunner,
+        cache::store::TrackCacheStore,
+        caches::{delivery_type_map::DeliveryTypeMap, sender_map::SenderMap},
+        egress::runner::EgressRunner,
     },
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},
@@ -31,6 +33,7 @@ impl EgressCoordinator {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
+        delivery_type_map: Arc<DeliveryTypeMap>,
     ) -> Self {
         let (command_sender, mut command_receiver) = mpsc::channel::<EgressCommand>(512);
 
@@ -46,6 +49,7 @@ impl EgressCoordinator {
                                     session_repo.clone(),
                                     cache_store.clone(),
                                     sender_map.clone(),
+                                    delivery_type_map.clone(),
                                     request,
                                     &mut joinset,
                                 )
@@ -80,6 +84,7 @@ impl EgressCoordinator {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
+        delivery_type_map: Arc<DeliveryTypeMap>,
         request: EgressStartRequest,
         joinset: &mut JoinSet<()>,
     ) {
@@ -99,6 +104,7 @@ impl EgressCoordinator {
             request.track_key,
             cache,
             latest_info_sender,
+            delivery_type_map,
             publisher,
             request.published_resources,
         );

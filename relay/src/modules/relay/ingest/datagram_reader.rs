@@ -6,7 +6,9 @@ use crate::modules::{
     core::data_receiver::datagram_receiver::DatagramReceiver,
     relay::{
         cache::store::TrackCacheStore,
-        caches::{latest_info::LatestInfo, sender_map::SenderMap},
+        caches::{
+            delivery_type_map::DeliveryTypeMap, latest_info::LatestInfo, sender_map::SenderMap,
+        },
     },
     types::TrackKey,
 };
@@ -25,6 +27,7 @@ impl DatagramReader {
         mut rx: mpsc::Receiver<DatagramReceiveStart>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
+        delivery_type_map: Arc<DeliveryTypeMap>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
@@ -36,6 +39,7 @@ impl DatagramReader {
                             cmd.receiver,
                             cache_store.clone(),
                             sender_map.clone(),
+                            delivery_type_map.clone(),
                         ));
                     }
                     Some(result) = joinset.join_next() => {
@@ -55,6 +59,7 @@ impl DatagramReader {
         mut receiver: Box<dyn DatagramReceiver>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
+        delivery_type_map: Arc<DeliveryTypeMap>,
     ) {
         let mut current_group_id: Option<u64> = None;
         loop {
@@ -62,7 +67,13 @@ impl DatagramReader {
                 Ok(object) => {
                     let group_id = object.group_id().or(current_group_id).unwrap_or(0);
                     if current_group_id != Some(group_id) {
+                        // 前グループをクローズして get_or_wait が終端を検知できるようにする
+                        if let Some(old_group) = current_group_id {
+                            let cache = cache_store.get_or_create(track_key);
+                            cache.close_group(old_group).await;
+                        }
                         current_group_id = Some(group_id);
+                        delivery_type_map.set_datagram(track_key);
                         let _ =
                             sender_map
                                 .get_or_create(track_key)
@@ -82,6 +93,11 @@ impl DatagramReader {
                         });
                 }
                 Err(_) => {
+                    // 最後のグループを確実にクローズする
+                    if let Some(group_id) = current_group_id {
+                        let cache = cache_store.get_or_create(track_key);
+                        cache.close_group(group_id).await;
+                    }
                     tracing::debug!(track_key, "datagram receiver ended");
                     return;
                 }
