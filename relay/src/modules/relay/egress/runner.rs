@@ -53,8 +53,12 @@ impl EgressRunner {
             filter_type,
             sender,
         );
-        let group_sender =
-            GroupSender::new(self.cache, self.publisher, self.published_resource, receiver);
+        let group_sender = GroupSender::new(
+            self.cache,
+            self.publisher,
+            self.published_resource,
+            receiver,
+        );
 
         tokio::join!(scheduler.run(), group_sender.run());
         Ok(())
