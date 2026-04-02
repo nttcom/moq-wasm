@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 
 use crate::modules::{
     enums::MOQTMessageReceived,
-    relay::{egress::coordinator::EgressCommand, ingest::stream_accepter::IngestStartRequest},
+    relay::{egress::coordinator::EgressCommand, ingest::ingest_coordinator::IngestStartRequest},
     sequences::{
         notifier::Notifier,
         publish::Publish,

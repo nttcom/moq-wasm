@@ -5,12 +5,12 @@ use std::sync::Arc;
 use modules::event_handler::EventHandler;
 use modules::relay::{
     cache::store::TrackCacheStore,
-    caches::{
+    notifications::{
         delivery_type_map::DeliveryTypeMap,
         sender_map::SenderMap,
     },
     egress::coordinator::EgressCoordinator,
-    ingest::stream_accepter::IngestCoordinator,
+    ingest::ingest_coordinator::IngestCoordinator,
 };
 use modules::session_handler::SessionHandler;
 use moqt::ServerConfig;

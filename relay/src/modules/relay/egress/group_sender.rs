@@ -7,14 +7,14 @@ use crate::modules::{
     relay::cache::track_cache::TrackCache,
 };
 
-use super::scheduler::GroupSendRequest;
+use super::scheduler::GroupSendTask;
 
-/// GroupSendRequest を受け取り、実際の送信タスクを起動・管理する。
+/// GroupSendTask を受け取り、実際の送信タスクを起動・管理する。
 pub(crate) struct GroupSender {
     cache: Arc<TrackCache>,
     publisher: Box<dyn Publisher>,
     published_resource: PublishedResource,
-    receiver: mpsc::Receiver<GroupSendRequest>,
+    receiver: mpsc::Receiver<GroupSendTask>,
 }
 
 impl GroupSender {
@@ -22,7 +22,7 @@ impl GroupSender {
         cache: Arc<TrackCache>,
         publisher: Box<dyn Publisher>,
         published_resource: PublishedResource,
-        receiver: mpsc::Receiver<GroupSendRequest>,
+        receiver: mpsc::Receiver<GroupSendTask>,
     ) -> Self {
         Self {
             cache,

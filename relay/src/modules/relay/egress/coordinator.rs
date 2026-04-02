@@ -6,8 +6,8 @@ use crate::modules::{
     core::published_resource::PublishedResource,
     relay::{
         cache::store::TrackCacheStore,
-        caches::{delivery_type_map::DeliveryTypeMap, sender_map::SenderMap},
         egress::runner::EgressRunner,
+        notifications::{delivery_type_map::DeliveryTypeMap, sender_map::SenderMap},
     },
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},

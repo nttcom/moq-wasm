@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
-    core::data_receiver::datagram_receiver::DatagramReceiver,
+    core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
     relay::{
         cache::store::TrackCacheStore,
         notifications::{
@@ -13,18 +13,18 @@ use crate::modules::{
     types::TrackKey,
 };
 
-pub(crate) struct DatagramReceiveStart {
+pub(crate) struct StreamReceiveStart {
     pub(crate) track_key: TrackKey,
-    pub(crate) receiver: Box<dyn DatagramReceiver>,
+    pub(crate) receiver: Box<dyn StreamReceiver>,
 }
 
-pub(crate) struct DatagramReader {
+pub(crate) struct StreamIngestTask {
     join_handle: JoinHandle<()>,
 }
 
-impl DatagramReader {
-    pub(crate) fn run(
-        mut receiver: mpsc::Receiver<DatagramReceiveStart>,
+impl StreamIngestTask {
+    pub(crate) fn new(
+        mut receiver: mpsc::Receiver<StreamReceiveStart>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
         delivery_type_map: Arc<DeliveryTypeMap>,
@@ -44,7 +44,7 @@ impl DatagramReader {
                     }
                     Some(result) = joinset.join_next() => {
                         if let Err(e) = result {
-                            tracing::error!("datagram read task panicked: {:?}", e);
+                            tracing::error!("stream read task panicked: {:?}", e);
                         }
                     }
                     else => break,
@@ -56,28 +56,24 @@ impl DatagramReader {
 
     async fn read_loop(
         track_key: TrackKey,
-        mut receiver: Box<dyn DatagramReceiver>,
+        mut receiver: Box<dyn StreamReceiver>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
         delivery_type_map: Arc<DeliveryTypeMap>,
     ) {
-        let mut current_group_id: Option<u64> = None;
+        let mut group_id = 0u64;
         loop {
             match receiver.receive_object().await {
+                Ok(DataObject::SubgroupHeader(header)) => {
+                    group_id = header.group_id;
+                    delivery_type_map.set_stream(track_key);
+                    let cache = cache_store.get_or_create(track_key);
+                    cache.append_object(group_id, DataObject::SubgroupHeader(header)).await;
+                    let _ = sender_map
+                        .get_or_create(track_key)
+                        .send(LatestInfo::StreamOpened { group_id });
+                }
                 Ok(object) => {
-                    let group_id = object.group_id().or(current_group_id).unwrap_or(0);
-                    if current_group_id != Some(group_id) {
-                        // 前グループをクローズして get_or_wait が終端を検知できるようにする
-                        if let Some(old_group) = current_group_id {
-                            let cache = cache_store.get_or_create(track_key);
-                            cache.close_group(old_group).await;
-                        }
-                        current_group_id = Some(group_id);
-                        delivery_type_map.set_datagram(track_key);
-                        let _ = sender_map
-                            .get_or_create(track_key)
-                            .send(LatestInfo::DatagramOpened { group_id });
-                    }
                     let cache = cache_store.get_or_create(track_key);
                     cache.append_object(group_id, object).await;
                     let _ = sender_map
@@ -85,12 +81,11 @@ impl DatagramReader {
                         .send(LatestInfo::LatestObject);
                 }
                 Err(_) => {
-                    // 最後のグループを確実にクローズする
-                    if let Some(group_id) = current_group_id {
-                        let cache = cache_store.get_or_create(track_key);
-                        cache.close_group(group_id).await;
-                    }
-                    tracing::debug!(track_key, "datagram receiver ended");
+                    let cache = cache_store.get_or_create(track_key);
+                    cache.close_group(group_id).await;
+                    let _ = sender_map
+                        .get_or_create(track_key)
+                        .send(LatestInfo::EndOfGroup);
                     return;
                 }
             }
@@ -98,7 +93,7 @@ impl DatagramReader {
     }
 }
 
-impl Drop for DatagramReader {
+impl Drop for StreamIngestTask {
     fn drop(&mut self) {
         self.join_handle.abort();
     }

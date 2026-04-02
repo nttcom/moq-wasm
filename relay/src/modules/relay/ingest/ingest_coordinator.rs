@@ -11,8 +11,8 @@ use crate::modules::{
             sender_map::SenderMap,
         },
         ingest::{
-            datagram_reader::{DatagramReader, DatagramReceiveStart},
-            stream_reader::{StreamOpened, StreamReader},
+            datagram_ingest_task::{DatagramIngestTask, DatagramReceiveStart},
+            stream_ingest_task::{StreamReceiveStart, StreamIngestTask},
         },
     },
     session_repository::SessionRepository,
@@ -27,8 +27,8 @@ pub(crate) struct IngestStartRequest {
 pub(crate) struct IngestCoordinator {
     command_sender: mpsc::Sender<IngestStartRequest>,
     command_runner: tokio::task::JoinHandle<()>,
-    _stream_reader: StreamReader,
-    _datagram_reader: DatagramReader,
+    _stream_task: StreamIngestTask,
+    _datagram_task: DatagramIngestTask,
 }
 
 impl IngestCoordinator {
@@ -38,10 +38,10 @@ impl IngestCoordinator {
         sender_map: Arc<SenderMap>,
         delivery_type_map: Arc<DeliveryTypeMap>,
     ) -> Self {
-        let (stream_tx, stream_rx) = mpsc::channel::<StreamOpened>(64);
+        let (stream_tx, stream_rx) = mpsc::channel::<StreamReceiveStart>(64);
         let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveStart>(64);
-        let stream_reader = StreamReader::run(stream_rx, cache_store.clone(), sender_map.clone(), delivery_type_map.clone());
-        let datagram_reader = DatagramReader::run(datagram_rx, cache_store, sender_map, delivery_type_map);
+        let stream_task = StreamIngestTask::new(stream_rx, cache_store.clone(), sender_map.clone(), delivery_type_map.clone());
+        let datagram_task = DatagramIngestTask::new(datagram_rx, cache_store, sender_map, delivery_type_map);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngestStartRequest>(512);
         let session_repo_for_runner = session_repo;
@@ -72,7 +72,7 @@ impl IngestCoordinator {
                                 match receiver {
                                     DataReceiver::Stream(stream_receiver) => {
                                         if stream_tx
-                                            .send(StreamOpened { track_key, receiver: stream_receiver })
+                                            .send(StreamReceiveStart { track_key, receiver: stream_receiver })
                                             .await
                                             .is_err()
                                         {
@@ -102,8 +102,8 @@ impl IngestCoordinator {
         Self {
             command_sender,
             command_runner,
-            _stream_reader: stream_reader,
-            _datagram_reader: datagram_reader,
+            _stream_task: stream_task,
+            _datagram_task: datagram_task,
         }
     }
 

@@ -18,12 +18,12 @@ pub(crate) struct DatagramReceiveStart {
     pub(crate) receiver: Box<dyn DatagramReceiver>,
 }
 
-pub(crate) struct DatagramReader {
+pub(crate) struct DatagramIngestTask {
     join_handle: JoinHandle<()>,
 }
 
-impl DatagramReader {
-    pub(crate) fn run(
+impl DatagramIngestTask {
+    pub(crate) fn new(
         mut receiver: mpsc::Receiver<DatagramReceiveStart>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
@@ -98,7 +98,7 @@ impl DatagramReader {
     }
 }
 
-impl Drop for DatagramReader {
+impl Drop for DatagramIngestTask {
     fn drop(&mut self) {
         self.join_handle.abort();
     }
