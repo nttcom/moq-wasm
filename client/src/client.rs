@@ -23,7 +23,7 @@ pub struct Client<T: TransportProtocol> {
     join_handle: tokio::task::JoinHandle<()>,
     track_alias: Arc<AtomicU64>,
     session: Arc<Session<T>>,
-    runner: StreamTaskRunner,
+    joinset: tokio::task::JoinSet<()>,
 }
 
 impl<T: TransportProtocol> Client<T> {
@@ -54,7 +54,7 @@ impl<T: TransportProtocol> Client<T> {
             join_handle,
             track_alias,
             session,
-            runner: StreamTaskRunner::new(),
+            joinset: tokio::task::JoinSet::new(),
         })
     }
 
@@ -111,8 +111,13 @@ impl<T: TransportProtocol> Client<T> {
                                 .ok(1000000, moqt::ContentExists::False)
                                 .await;
                             let publication = subscribe_handler.into_publication(track_alias);
-                            Self::create_stream(label.clone(), &session, publication, &runner)
-                                .await;
+                            Self::create_stream(
+                                label.clone(),
+                                session.clone(),
+                                publication,
+                                &runner,
+                            )
+                            .await;
                         }
                         moqt::SessionEvent::ProtocolViolation() => {
                             tracing::info!("Received: {} ProtocolViolation", label);
@@ -220,20 +225,20 @@ impl<T: TransportProtocol> Client<T> {
 
     async fn create_stream(
         label: String,
-        session: &Arc<Session<T>>,
+        session: Arc<Session<T>>,
         publication: moqt::PublishedResource,
         runner: &StreamTaskRunner,
     ) {
         tracing::info!("{} :create stream", label);
-        let mut stream = session
-            .publisher()
-            .create_stream(&publication)
-            .await
-            .unwrap();
         let task = async move {
             let mut group_id = 0;
             let mut id = 0;
             tracing::info!("{} :create stream start", label);
+            let mut stream = session
+                .publisher()
+                .create_stream(&publication)
+                .await
+                .unwrap();
             let mut header =
                 stream.create_header(group_id, moqt::SubgroupId::None, 128, false, false);
             loop {
@@ -252,6 +257,11 @@ impl<T: TransportProtocol> Client<T> {
                         if id == 10 {
                             id = 0;
                             group_id += 1;
+                            stream = session
+                                .publisher()
+                                .create_stream(&publication)
+                                .await
+                                .unwrap();
                             header = stream.create_header(
                                 group_id,
                                 moqt::SubgroupId::None,
@@ -310,12 +320,11 @@ impl<T: TransportProtocol> Client<T> {
 
     pub async fn active_subscribe(
         // pub(crate) -> pub
-        &self,
+        &mut self,
         label: String,
         track_namespace: String,
         track_name: String,
     ) {
-        let full_name = format!("{}/{}", track_namespace, track_name);
         let option = SubscribeOption {
             subscriber_priority: 128,
             group_order: moqt::GroupOrder::Ascending,
@@ -323,7 +332,6 @@ impl<T: TransportProtocol> Client<T> {
             filter_type: moqt::FilterType::LatestObject,
         };
         let mut subscriber = self.session.subscriber();
-        tracing::info!("{} :subscribe {}", label, full_name);
         let mut subscription = match subscriber
             .subscribe(track_namespace, track_name, option)
             .await
@@ -334,38 +342,37 @@ impl<T: TransportProtocol> Client<T> {
                 return;
             }
         };
-        let task = async move {
-            let receiver = match subscriber.accept_data_receiver(&mut subscription).await {
-                Ok(receiver) => receiver,
-                Err(e) => {
-                    tracing::error!("Failed to accept stream or datagram: {}", e);
-                    return;
+        loop {
+            tokio::select! {
+                Ok(result) = subscriber.accept_data_receiver(&mut subscription) => {
+                    match result {
+                        moqt::DataReceiver::Stream(mut stream) => {
+                            let label = label.clone();
+                            self.joinset.spawn(async move {
+                                while let Ok(result) = stream.receive().await {
+                                    tracing::info!("{} :active subscribe stream: {:?}", label, result);
+                                }
+                            });
+                        }
+                        moqt::DataReceiver::Datagram(mut datagram) => {
+                            let label = label.clone();
+                            self.joinset.spawn(async move {
+                                while let Ok(result) = datagram.receive().await {
+                                    tracing::info!("{} :active subscribe datagram: {:?}", label, result);
+                                }
+                            });
+                        },
+                    }
                 }
-            };
-            match receiver {
-                moqt::DataReceiver::Stream(mut stream) => loop {
-                    let result = match stream.receive().await {
-                        Ok(r) => r,
-                        Err(e) => {
-                            tracing::error!("Failed to receive: {}", e);
-                            break;
-                        }
-                    };
-                    tracing::info!("{} :subscribe stream: {:?}", label, result);
-                },
-                moqt::DataReceiver::Datagram(mut datagram) => loop {
-                    let result = match datagram.receive().await {
-                        Ok(r) => r,
-                        Err(e) => {
-                            tracing::error!("Failed to receive: {}", e);
-                            break;
-                        }
-                    };
-                    tracing::info!("{} :subscribe datagram: {:?}", label, result);
-                },
+                Ok(()) = tokio::signal::ctrl_c() => {
+                    tracing::info!("{} :active subscribe received shutdown signal", label);
+                    break;
+                }
+                Some(_) = self.joinset.join_next() => {
+                    tracing::info!("{} :active subscribe task finished", label);
+                }
             }
-        };
-        self.runner.add_task(Box::pin(task)).await;
+        }
     }
 }
 
