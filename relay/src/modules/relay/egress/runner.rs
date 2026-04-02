@@ -42,7 +42,7 @@ impl EgressRunner {
     }
 
     pub(crate) async fn run(self) -> anyhow::Result<()> {
-        let (tx, rx) = mpsc::channel(64);
+        let (sender, receiver) = mpsc::channel(64);
 
         let filter_type = self.published_resource.filter_type();
         let scheduler = EgressScheduler::new(
@@ -51,10 +51,10 @@ impl EgressRunner {
             self.latest_info_sender,
             self.delivery_type_map,
             filter_type,
-            tx,
+            sender,
         );
         let group_sender =
-            GroupSender::new(self.cache, self.publisher, self.published_resource, rx);
+            GroupSender::new(self.cache, self.publisher, self.published_resource, receiver);
 
         tokio::join!(scheduler.run(), group_sender.run());
         Ok(())
