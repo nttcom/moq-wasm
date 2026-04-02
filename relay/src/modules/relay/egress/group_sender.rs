@@ -89,16 +89,11 @@ impl GroupSender {
         mut sender: Box<dyn DataSender>,
     ) -> Option<u64> {
         let mut next_index = start_offset;
-        loop {
-            match cache.get_object_or_wait(group_id, next_index).await {
-                Some(object) => {
-                    if sender.send_object((*object).clone()).await.is_err() {
-                        return Some(group_id);
-                    }
-                    next_index += 1;
-                }
-                None => break,
+        while let Some(object) = cache.get_object_or_wait(group_id, next_index).await {
+            if sender.send_object((*object).clone()).await.is_err() {
+                return Some(group_id);
             }
+            next_index += 1;
         }
         Some(group_id)
     }

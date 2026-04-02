@@ -53,6 +53,7 @@ impl Subscribe {
         tracing::info!("SequenceHandler::subscribe: {} DONE", session_id);
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn relay_subscribe(
         &self,
         session_id: SessionId,
