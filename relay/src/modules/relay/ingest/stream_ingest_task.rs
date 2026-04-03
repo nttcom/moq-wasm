@@ -62,7 +62,9 @@ impl StreamIngestTask {
                 Ok(DataObject::SubgroupHeader(header)) => {
                     group_id = header.group_id;
                     let cache = cache_store.get_or_create(track_key);
-                    cache.append_object(group_id, DataObject::SubgroupHeader(header)).await;
+                    cache
+                        .append_object(group_id, DataObject::SubgroupHeader(header))
+                        .await;
                     let _ = sender_map
                         .get_or_create(track_key)
                         .send(LatestInfo::StreamOpened { group_id });
