@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use crate::modules::relay::{
-    cache::store::TrackCacheStore,
-    notifications::sender_map::SenderMap,
-};
+use crate::modules::relay::{cache::store::TrackCacheStore, notifications::sender_map::SenderMap};
 
 pub(crate) struct RelayStore {
     pub(crate) cache_store: Arc<TrackCacheStore>,

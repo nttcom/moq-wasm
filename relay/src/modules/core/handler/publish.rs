@@ -2,9 +2,7 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 
-use crate::modules::{
-    enums::{ContentExists, FilterType, GroupOrder},
-};
+use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
 
 pub(crate) struct SubscribeOption {
     pub(crate) subscriber_priority: u8,
