@@ -45,7 +45,6 @@ pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // ロギングの初期化 (必要であれば)
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .with_line_number(true)
@@ -57,20 +56,19 @@ async fn main() -> anyhow::Result<()> {
     let key_path = get_key_path().to_str().unwrap().to_string();
     let cert_path = get_cert_path().to_str().unwrap().to_string();
 
-    // RelayServerインスタンスを作成（リポジトリとイベントハンドラが内部で初期化される）
     let server = relay::RelayServer::new(&key_path, &cert_path);
 
-    // QUICサーバーを起動 (Port: 4434)
-    let _quic_handler = server.spawn_transport::<moqt::QUIC>(4434);
+    let quic_handler = server.spawn_transport::<moqt::QUIC>(4434);
 
-    // WebTransportサーバーを起動 (Port: 4433)
-    let _wt_handler = server.spawn_transport::<moqt::WEBTRANSPORT>(4433);
+    let wt_handler = server.spawn_transport::<moqt::WEBTRANSPORT>(4433);
 
     tracing::info!("Relay server started with QUIC (4434) and WebTransport (4433)");
     tracing::info!("Ctrl+C to shutdown");
 
     tokio::signal::ctrl_c().await?;
     tracing::info!("Shutdown signal received. Closing...");
+    drop(quic_handler);
+    drop(wt_handler);
 
     tracing::info!("Relay server gracefully shutdown.");
     Ok(())

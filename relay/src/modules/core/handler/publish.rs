@@ -2,10 +2,7 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 
-use crate::modules::{
-    core::subscription::Subscription,
-    enums::{ContentExists, FilterType, GroupOrder},
-};
+use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
 
 pub(crate) struct SubscribeOption {
     pub(crate) subscriber_priority: u8,
@@ -27,7 +24,6 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
     fn _max_cache_duration(&self) -> Option<u64>;
     async fn ok(&self, subscriber_priority: u8, filter_type: FilterType) -> anyhow::Result<()>;
     async fn _error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
-    fn convert_into_subscription(&self, expires: u64) -> Subscription;
 }
 
 #[async_trait]
@@ -66,9 +62,5 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
 
     async fn _error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()> {
         self.error(code, reason_phrase).await
-    }
-
-    fn convert_into_subscription(&self, expires: u64) -> Subscription {
-        Subscription::from(self.into_subscription(expires))
     }
 }

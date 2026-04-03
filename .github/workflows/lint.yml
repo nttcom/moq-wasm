@@ -13,7 +13,7 @@ jobs:
     container:
       image: rust:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install Clippy and Rustfmt
         run: |
           rustup component add clippy
@@ -47,7 +47,7 @@ jobs:
     container:
       image: rust:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install cargo-audit
         run: cargo install --locked cargo-audit
       - name: Run cargo audit
@@ -60,7 +60,7 @@ jobs:
       options: --security-opt seccomp=unconfined
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install FFmpeg build dependencies
         run: |
           apt-get update
@@ -83,7 +83,7 @@ jobs:
         run: |
           RUSTFLAGS="--cfg=web_sys_unstable_apis --cfg=tokio_unstable" cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
       - name: Upload to codecov.io
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238
         with:
           token: ${{secrets.CODECOV_TOKEN}}
           fail_ci_if_error: true
@@ -92,7 +92,7 @@ jobs:
     container:
       image: cimg/node:21.6.2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install Prettier
         run: npm install ./js
       - name: Check code formatting
