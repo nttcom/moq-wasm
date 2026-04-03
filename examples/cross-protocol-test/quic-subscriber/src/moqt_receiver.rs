@@ -69,7 +69,10 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
 
     match receiver {
         moqt::DataReceiver::Stream(mut factory) => {
-            let mut stream = factory.next().await.context("failed to get initial stream")?;
+            let mut stream = factory
+                .next()
+                .await
+                .context("failed to get initial stream")?;
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
             let mut init_written = false;
