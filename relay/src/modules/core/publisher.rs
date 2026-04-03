@@ -1,7 +1,11 @@
 use async_trait::async_trait;
 
 use crate::modules::core::{
-    data_sender::{DataSender, datagram_sender::DatagramSender, stream_sender::StreamSender},
+    data_sender::{
+        DataSender,
+        datagram_sender::DatagramSender,
+        stream_sender_factory::{ConcreteStreamSenderFactory, StreamSenderFactory},
+    },
     published_resource::PublishedResource,
 };
 
@@ -13,11 +17,10 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         track_namespace: String,
         track_name: String,
     ) -> anyhow::Result<PublishedResource>;
-    async fn new_stream(
+    fn new_stream_factory(
         &self,
         published_resource: &PublishedResource,
-        subscriber_track_alias: u64,
-    ) -> anyhow::Result<Box<dyn DataSender>>;
+    ) -> Box<dyn StreamSenderFactory>;
     fn new_datagram(&self, published_resource: &PublishedResource) -> Box<dyn DataSender>;
 }
 
@@ -37,17 +40,16 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         Ok(PublishedResource::from(result))
     }
 
-    async fn new_stream(
+    fn new_stream_factory(
         &self,
         published_resource: &PublishedResource,
-        subscriber_track_alias: u64,
-    ) -> anyhow::Result<Box<dyn DataSender>> {
-        let sender = self
-            .create_stream(published_resource.as_moqt())
-            .next()
-            .await?;
-        let sender = StreamSender::new(sender, subscriber_track_alias);
-        Ok(Box::new(sender))
+    ) -> Box<dyn StreamSenderFactory> {
+        let subscriber_track_alias = published_resource.track_alias();
+        let inner = self.create_stream(published_resource.as_moqt());
+        Box::new(ConcreteStreamSenderFactory::new(
+            inner,
+            subscriber_track_alias,
+        ))
     }
 
     fn new_datagram(&self, published_resource: &PublishedResource) -> Box<dyn DataSender> {

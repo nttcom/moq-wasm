@@ -60,27 +60,20 @@ impl IngestCoordinator {
                         join_set.spawn(async move {
                             let subscription = command.subscription;
                             let mut subscriber = subscriber;
-                            loop {
-                                let Ok(receiver) = subscriber.create_data_receiver(&subscription).await else {
-                                    tracing::debug!(track_key, "failed to create data receiver for subscription");
-                                    return;
-                                };
-                                match receiver {
-                                    DataReceiver::Stream(stream_receiver) => {
-                                        if stream_tx
-                                            .send(StreamReceiveStart { track_key, receiver: stream_receiver })
-                                            .await
-                                            .is_err()
-                                        {
-                                            return;
-                                        }
-                                    }
-                                    DataReceiver::Datagram(datagram_receiver) => {
-                                        let _ = datagram_tx
-                                            .send(DatagramReceiveStart { track_key, receiver: datagram_receiver })
-                                            .await;
-                                        break;
-                                    }
+                            let Ok(receiver) = subscriber.create_data_receiver(&subscription).await else {
+                                tracing::debug!(track_key, "failed to create data receiver for subscription");
+                                return;
+                            };
+                            match receiver {
+                                DataReceiver::Stream(factory) => {
+                                    let _ = stream_tx
+                                        .send(StreamReceiveStart { track_key, factory })
+                                        .await;
+                                }
+                                DataReceiver::Datagram(datagram_receiver) => {
+                                    let _ = datagram_tx
+                                        .send(DatagramReceiveStart { track_key, receiver: datagram_receiver })
+                                        .await;
                                 }
                             }
                         });

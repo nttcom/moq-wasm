@@ -3,7 +3,10 @@ use std::sync::Arc;
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
-    core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
+    core::{
+        data_object::DataObject,
+        data_receiver::stream_receiver::{StreamReceiver, StreamReceiverFactory},
+    },
     relay::{
         cache::store::TrackCacheStore,
         notifications::{latest_info::LatestInfo, sender_map::SenderMap},
@@ -13,7 +16,7 @@ use crate::modules::{
 
 pub(crate) struct StreamReceiveStart {
     pub(crate) track_key: TrackKey,
-    pub(crate) receiver: Box<dyn StreamReceiver>,
+    pub(crate) factory: Box<dyn StreamReceiverFactory>,
 }
 
 pub(crate) struct StreamIngestTask {
@@ -31,9 +34,9 @@ impl StreamIngestTask {
             loop {
                 tokio::select! {
                     Some(cmd) = receiver.recv() => {
-                        joinset.spawn(Self::read_loop(
+                        joinset.spawn(Self::factory_loop(
                             cmd.track_key,
-                            cmd.receiver,
+                            cmd.factory,
                             cache_store.clone(),
                             sender_map.clone(),
                         ));
@@ -50,11 +53,26 @@ impl StreamIngestTask {
         Self { join_handle }
     }
 
-    async fn read_loop(
+    async fn factory_loop(
         track_key: TrackKey,
-        mut receiver: Box<dyn StreamReceiver>,
+        mut factory: Box<dyn StreamReceiverFactory>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
+    ) {
+        loop {
+            let receiver = match factory.next().await {
+                Ok(r) => r,
+                Err(_) => return,
+            };
+            Self::read_stream(track_key, receiver, &cache_store, &sender_map).await;
+        }
+    }
+
+    async fn read_stream(
+        track_key: TrackKey,
+        mut receiver: Box<dyn StreamReceiver>,
+        cache_store: &Arc<TrackCacheStore>,
+        sender_map: &Arc<SenderMap>,
     ) {
         let mut group_id = 0u64;
         loop {

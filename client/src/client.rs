@@ -234,50 +234,33 @@ impl<T: TransportProtocol> Client<T> {
             let mut group_id = 0;
             let mut id = 0;
             tracing::info!("{} :create stream start", label);
-            let mut stream = session
-                .publisher()
-                .create_stream(&publication)
-                .next()
-                .await
-                .unwrap();
-            let mut header =
-                stream.create_header(group_id, moqt::SubgroupId::None, 128, false, false);
-            loop {
-                let format_text = format!("hello from {}! id: {}", label, id);
-                let data = moqt::SubgroupObject::new_payload(format_text.into());
-                let extension_headers = moqt::ExtensionHeaders {
-                    prior_group_id_gap: vec![],
-                    prior_object_id_gap: vec![],
-                    immutable_extensions: vec![],
-                };
-                let obj = stream.create_object_field(&header, id, extension_headers, data);
-                match stream.send(&header, obj).await {
-                    Ok(_) => {
-                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-                        id += 1;
-                        if id == 10 {
-                            id = 0;
-                            group_id += 1;
-                            stream = session
-                                .publisher()
-                                .create_stream(&publication)
-                                .next()
-                                .await
-                                .unwrap();
-                            header = stream.create_header(
-                                group_id,
-                                moqt::SubgroupId::None,
-                                128,
-                                false,
-                                false,
-                            );
+            let stream_factory = session.publisher().create_stream(&publication);
+            while let Ok(mut stream) = stream_factory.next().await {
+                tracing::info!("group_id={} :stream created", group_id);
+                let header =
+                    stream.create_header(group_id, moqt::SubgroupId::None, 128, false, false);
+                while id < 10 {
+                    let format_text = format!("hello from {}! id: {}", label, id);
+                    let data = moqt::SubgroupObject::new_payload(format_text.into());
+                    let extension_headers = moqt::ExtensionHeaders {
+                        prior_group_id_gap: vec![],
+                        prior_object_id_gap: vec![],
+                        immutable_extensions: vec![],
+                    };
+                    let obj = stream.create_object_field(&header, id, extension_headers, data);
+                    match stream.send(&header, obj).await {
+                        Ok(_) => {
+                            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                            id += 1;
+                        }
+                        Err(e) => {
+                            tracing::error!("failed to send: {}", e);
+                            break;
                         }
                     }
-                    Err(e) => {
-                        tracing::error!("failed to send: {}", e);
-                        break;
-                    }
                 }
+                group_id += 1;
+                id = 0;
             }
         };
         runner.add_task(Box::pin(task)).await;
@@ -351,7 +334,7 @@ impl<T: TransportProtocol> Client<T> {
                         moqt::DataReceiver::Stream(mut factory) => {
                             let label = label.clone();
                             self.joinset.spawn(async move {
-                                if let Ok(mut stream) = factory.next().await {
+                                while let Ok(mut stream) = factory.next().await {
                                     while let Ok(result) = stream.receive().await {
                                         tracing::info!("{} :active subscribe stream: {:?}", label, result);
                                     }

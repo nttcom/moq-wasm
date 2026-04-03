@@ -1,5 +1,6 @@
 pub(crate) mod datagram_sender;
 pub(crate) mod stream_sender;
+pub(crate) mod stream_sender_factory;
 
 use crate::modules::core::data_object::DataObject;
 

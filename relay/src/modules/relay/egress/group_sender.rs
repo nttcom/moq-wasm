@@ -3,7 +3,11 @@ use std::sync::Arc;
 use tokio::{sync::mpsc, task::JoinSet};
 
 use crate::modules::{
-    core::{data_sender::DataSender, published_resource::PublishedResource, publisher::Publisher},
+    core::{
+        data_sender::{DataSender, stream_sender_factory::StreamSenderFactory},
+        published_resource::PublishedResource,
+        publisher::Publisher,
+    },
     relay::cache::track_cache::TrackCache,
 };
 
@@ -33,13 +37,26 @@ impl GroupSender {
     }
 
     pub(crate) async fn run(mut self) {
-        let subscriber_track_alias = self.published_resource.track_alias();
+        let mut stream_factory: Option<Box<dyn StreamSenderFactory>> = None;
         let mut joinset = JoinSet::<Option<u64>>::new();
 
         loop {
             tokio::select! {
                 Some(req) = self.receiver.recv() => {
-                    if let Some(sender) = self.new_sender(req.is_stream, subscriber_track_alias).await {
+                    let sender = if req.is_stream {
+                        let factory = stream_factory
+                            .get_or_insert_with(|| self.publisher.new_stream_factory(&self.published_resource));
+                        match factory.next().await {
+                            Ok(s) => Some(s),
+                            Err(e) => {
+                                tracing::error!(?e, "failed to open stream sender");
+                                None
+                            }
+                        }
+                    } else {
+                        Some(self.publisher.new_datagram(&self.published_resource))
+                    };
+                    if let Some(sender) = sender {
                         joinset.spawn(Self::send_task(
                             req.group_id,
                             req.start_offset,
@@ -55,28 +72,6 @@ impl GroupSender {
                 }
                 else => break,
             }
-        }
-    }
-
-    async fn new_sender(
-        &self,
-        is_stream: bool,
-        subscriber_track_alias: u64,
-    ) -> Option<Box<dyn DataSender>> {
-        if is_stream {
-            match self
-                .publisher
-                .new_stream(&self.published_resource, subscriber_track_alias)
-                .await
-            {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    tracing::error!(?e, "failed to open stream sender");
-                    None
-                }
-            }
-        } else {
-            Some(self.publisher.new_datagram(&self.published_resource))
         }
     }
 
