@@ -13,9 +13,9 @@ use crate::modules::{
 use crate::relay_server::store::RelayStore;
 
 pub(crate) struct RelayRuntime {
-    ingest: IngestCoordinator,
-    egress: EgressCoordinator,
-    manager: EventHandler,
+    _ingest: IngestCoordinator,
+    _egress: EgressCoordinator,
+    _manager: EventHandler,
 }
 
 impl RelayRuntime {
@@ -40,11 +40,10 @@ impl RelayRuntime {
         (
             sender,
             Self {
-                ingest,
-                egress,
-                manager,
+                _ingest: ingest,
+                _egress: egress,
+                _manager: manager,
             },
         )
     }
-
 }
