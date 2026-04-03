@@ -28,13 +28,11 @@ impl RelayRuntime {
             repo.clone(),
             store.cache_store.clone(),
             store.sender_map.clone(),
-            store.delivery_type_map.clone(),
         );
         let egress = EgressCoordinator::new(
             repo.clone(),
             store.cache_store.clone(),
             store.sender_map.clone(),
-            store.delivery_type_map.clone(),
         );
         let manager = EventHandler::run(repo, receiver, ingest.sender(), egress.sender());
         (

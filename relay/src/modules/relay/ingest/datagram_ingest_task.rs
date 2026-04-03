@@ -6,9 +6,7 @@ use crate::modules::{
     core::data_receiver::datagram_receiver::DatagramReceiver,
     relay::{
         cache::store::TrackCacheStore,
-        notifications::{
-            delivery_type_map::DeliveryTypeMap, latest_info::LatestInfo, sender_map::SenderMap,
-        },
+        notifications::{latest_info::LatestInfo, sender_map::SenderMap},
     },
     types::TrackKey,
 };
@@ -27,7 +25,6 @@ impl DatagramIngestTask {
         mut receiver: mpsc::Receiver<DatagramReceiveStart>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
-        delivery_type_map: Arc<DeliveryTypeMap>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
@@ -39,7 +36,6 @@ impl DatagramIngestTask {
                             cmd.receiver,
                             cache_store.clone(),
                             sender_map.clone(),
-                            delivery_type_map.clone(),
                         ));
                     }
                     Some(result) = joinset.join_next() => {
@@ -59,7 +55,6 @@ impl DatagramIngestTask {
         mut receiver: Box<dyn DatagramReceiver>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
-        delivery_type_map: Arc<DeliveryTypeMap>,
     ) {
         let mut current_group_id: Option<u64> = None;
         loop {
@@ -73,7 +68,6 @@ impl DatagramIngestTask {
                             cache.close_group(old_group).await;
                         }
                         current_group_id = Some(group_id);
-                        delivery_type_map.set_datagram(track_key);
                         let _ = sender_map
                             .get_or_create(track_key)
                             .send(LatestInfo::DatagramOpened { group_id });

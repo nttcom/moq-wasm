@@ -10,7 +10,7 @@ use crate::modules::{
             datagram_ingest_task::{DatagramIngestTask, DatagramReceiveStart},
             stream_ingest_task::{StreamIngestTask, StreamReceiveStart},
         },
-        notifications::{delivery_type_map::DeliveryTypeMap, sender_map::SenderMap},
+        notifications::sender_map::SenderMap,
     },
     session_repository::SessionRepository,
     types::{SessionId, compose_session_track_key},
@@ -33,7 +33,6 @@ impl IngestCoordinator {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
-        delivery_type_map: Arc<DeliveryTypeMap>,
     ) -> Self {
         let (stream_tx, stream_rx) = mpsc::channel::<StreamReceiveStart>(64);
         let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveStart>(64);
@@ -41,10 +40,9 @@ impl IngestCoordinator {
             stream_rx,
             cache_store.clone(),
             sender_map.clone(),
-            delivery_type_map.clone(),
         );
         let datagram_task =
-            DatagramIngestTask::new(datagram_rx, cache_store, sender_map, delivery_type_map);
+            DatagramIngestTask::new(datagram_rx, cache_store, sender_map);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngestStartRequest>(512);
         let session_repo_for_runner = session_repo;
