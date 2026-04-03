@@ -121,7 +121,9 @@ impl TransportConnectionCreator for DualProtocolCreator {
             let session = request.ok().await.inspect_err(|e| {
                 tracing::error!("failed to establish WebTransport session: {:?}", e)
             })?;
-            Ok(DualConnection::WebTransport(Box::new(WtConnection::new(session))))
+            Ok(DualConnection::WebTransport(Box::new(WtConnection::new(
+                session,
+            ))))
         } else if alpn.as_slice() == b"moq-00" {
             // Raw QUIC
             Ok(DualConnection::Quic(QUICConnection::new(connection)))
