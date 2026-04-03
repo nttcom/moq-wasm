@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::modules::{
-    enums::FilterType,
+    enums::{FilterType, GroupOrder},
     relay::{cache::track_cache::TrackCache, notifications::latest_info::LatestInfo},
 };
 
@@ -20,6 +20,7 @@ pub(crate) struct EgressScheduler {
     cache: Arc<TrackCache>,
     latest_info_sender: broadcast::Sender<LatestInfo>,
     filter_type: FilterType,
+    group_order: GroupOrder,
     sender: mpsc::Sender<GroupSendTask>,
 }
 
@@ -28,12 +29,14 @@ impl EgressScheduler {
         cache: Arc<TrackCache>,
         latest_info_sender: broadcast::Sender<LatestInfo>,
         filter_type: FilterType,
+        group_order: GroupOrder,
         sender: mpsc::Sender<GroupSendTask>,
     ) -> Self {
         Self {
             cache,
             latest_info_sender,
             filter_type,
+            group_order,
             sender,
         }
     }
@@ -102,7 +105,13 @@ impl EgressScheduler {
         start_offset: u64,
     ) -> Option<u64> {
         if is_absolute {
-            if next_absolute_group != Some(group_id) {
+            // Descending: group_id >= next ならジャンプを許容して送信
+            // Ascending:  group_id == next のみ送信（ギャップを待つ）
+            let should_send = match self.group_order {
+                GroupOrder::Descending => group_id >= next_absolute_group.unwrap_or(0),
+                _ => next_absolute_group == Some(group_id),
+            };
+            if !should_send {
                 return next_absolute_group;
             }
             let offset = if group_id == start_group_id {
@@ -133,10 +142,11 @@ impl EgressScheduler {
         }
     }
 
-    /// from_group_id から連続するキャッシュ内グループ全てのスケジュールを送信する
+    /// from_group_id から連続するキャッシュ内グループをスケジュールする
     ///
+    /// - Ascending: キャッシュ内の後続グループを順番に全て送信
+    /// - Descending: from_group_id のみ送信（最新追従のためキャッシュスキャンなし）
     /// - from_group_id の送信に失敗した場合は None を返す
-    /// - 後続グループの失敗はスキップ（ベストエフォート）
     /// - 戻り値 Some(n) = 次に待つべき group_id
     async fn schedule_groups_from(
         &self,
@@ -152,6 +162,10 @@ impl EgressScheduler {
             })
             .await
             .ok()?;
+
+        if matches!(self.group_order, GroupOrder::Descending) {
+            return Some(from_group_id + 1);
+        }
 
         let mut next = from_group_id + 1;
         while self.cache.has_group(next).await {
