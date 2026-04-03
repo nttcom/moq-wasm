@@ -12,8 +12,8 @@ use crate::relay_server::{runtime::RelayRuntime, store::RelayStore};
 pub struct RelayServer {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     sender: UnboundedSender<MOQTMessageReceived>,
-    store: Arc<RelayStore>,
-    runtime: RelayRuntime,
+    _store: Arc<RelayStore>,
+    _runtime: RelayRuntime,
     key_path: String,
     cert_path: String,
 }
@@ -27,8 +27,8 @@ impl RelayServer {
         Self {
             repo,
             sender,
-            store,
-            runtime,
+            _store: store,
+            _runtime: runtime,
             key_path: key_path.to_string(),
             cert_path: cert_path.to_string(),
         }
