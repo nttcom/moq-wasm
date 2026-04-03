@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::bail;
 
 use crate::{
-    DataReceiver, DatagramReceiver, StreamDataReceiver, SubscribeOption, Subscription,
+    DatagramReceiver, StreamDataReceiver, SubscribeOption, Subscription,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -17,6 +17,11 @@ use crate::{
         protocol::TransportProtocol,
     },
 };
+
+pub enum DataReceiver<T: TransportProtocol> {
+    Stream(StreamDataReceiver<T>),
+    Datagram(DatagramReceiver<T>),
+}
 
 pub struct Subscriber<T: TransportProtocol> {
     pub(crate) session: Arc<SessionContext<T>>,
@@ -64,11 +69,11 @@ impl<T: TransportProtocol> Subscriber<T> {
     }
 
     pub async fn subscribe(
-        &self,
+        &mut self,
         track_namespace: String,
         track_name: String,
         option: SubscribeOption,
-    ) -> anyhow::Result<Subscription<T>> {
+    ) -> anyhow::Result<Subscription> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -104,7 +109,19 @@ impl<T: TransportProtocol> Subscriber<T> {
                     bail!("Protocol violation")
                 } else {
                     tracing::info!("Subscribe ok");
-                    Ok(Subscription::new(message, &self.session).await)
+                    let (sender, receiver) =
+                        tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
+                    self.session
+                        .notification_map
+                        .write()
+                        .await
+                        .insert(message.track_alias, sender);
+                    self.session
+                        .receiver_map
+                        .lock()
+                        .await
+                        .insert(message.track_alias, receiver);
+                    Ok(Subscription::new(message))
                 }
             }
             ResponseMessage::SubscribeError(_, _, _) => {
@@ -117,15 +134,16 @@ impl<T: TransportProtocol> Subscriber<T> {
 
     pub async fn accept_data_receiver(
         &mut self,
-        subscription: &mut Subscription<T>,
+        subscription: &Subscription,
     ) -> anyhow::Result<DataReceiver<T>> {
-        // Subscription always contains receiver at first.
-        // so we can safely unwrap here.
-        // Multiple datagram for same track_alias is not allowed, so after receiving datagram, we set receiver to None.
-        let stream_with_object = subscription
-            .receiver
-            .as_mut()
-            .unwrap()
+        let track_alias = subscription.track_alias;
+        let stream_with_object = self
+            .session
+            .receiver_map
+            .lock()
+            .await
+            .get_mut(&track_alias)
+            .ok_or_else(|| anyhow::anyhow!("No receiver for track_alias: {}", track_alias))?
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
@@ -135,7 +153,14 @@ impl<T: TransportProtocol> Subscriber<T> {
                 Ok(DataReceiver::Stream(data_receiver))
             }
             StreamWithObject::Datagram(object) => {
-                let receiver = subscription.receiver.take().unwrap();
+                // Datagram は1回限りなので map から除去する
+                let receiver = self
+                    .session
+                    .receiver_map
+                    .lock()
+                    .await
+                    .remove(&track_alias)
+                    .unwrap();
                 let data_receiver = DatagramReceiver::new(object, receiver).await;
                 Ok(DataReceiver::Datagram(data_receiver))
             }

@@ -6,14 +6,11 @@ use crate::modules::{
     core::{data_receiver::receiver::DataReceiver, subscription::Subscription},
     relay::{
         cache::store::TrackCacheStore,
-        notifications::{
-            delivery_type_map::DeliveryTypeMap,
-            sender_map::SenderMap,
-        },
         ingest::{
             datagram_reader::{DatagramReader, DatagramReceiveStart},
             stream_reader::{StreamOpened, StreamReader},
         },
+        notifications::{delivery_type_map::DeliveryTypeMap, sender_map::SenderMap},
     },
     session_repository::SessionRepository,
     types::{SessionId, compose_session_track_key},
@@ -21,7 +18,7 @@ use crate::modules::{
 
 pub(crate) struct IngestStartRequest {
     pub(crate) publisher_session_id: SessionId,
-    pub(crate) subscription: Box<dyn Subscription>,
+    pub(crate) subscription: Subscription,
 }
 
 pub(crate) struct IngestCoordinator {
@@ -40,8 +37,14 @@ impl IngestCoordinator {
     ) -> Self {
         let (stream_tx, stream_rx) = mpsc::channel::<StreamOpened>(64);
         let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveStart>(64);
-        let stream_reader = StreamReader::run(stream_rx, cache_store.clone(), sender_map.clone(), delivery_type_map.clone());
-        let datagram_reader = DatagramReader::run(datagram_rx, cache_store, sender_map, delivery_type_map);
+        let stream_reader = StreamReader::run(
+            stream_rx,
+            cache_store.clone(),
+            sender_map.clone(),
+            delivery_type_map.clone(),
+        );
+        let datagram_reader =
+            DatagramReader::run(datagram_rx, cache_store, sender_map, delivery_type_map);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngestStartRequest>(512);
         let session_repo_for_runner = session_repo;
@@ -62,10 +65,10 @@ impl IngestCoordinator {
                         let stream_tx = stream_tx.clone();
                         let datagram_tx = datagram_tx.clone();
                         join_set.spawn(async move {
-                            let mut subscription = command.subscription;
+                            let subscription = command.subscription;
                             let mut subscriber = subscriber;
                             loop {
-                                let Ok(receiver) = subscriber.create_data_receiver(subscription.as_mut()).await else {
+                                let Ok(receiver) = subscriber.create_data_receiver(&subscription).await else {
                                     tracing::debug!(track_key, "failed to create data receiver for subscription");
                                     return;
                                 };

@@ -82,8 +82,8 @@ impl Notifier {
         session_id: SessionId,
         track_namespace: String,
         track_name: String,
-    ) -> anyhow::Result<Box<dyn Subscription>> {
-        if let Some(subscriber) = self.repository.lock().await.subscriber(session_id) {
+    ) -> anyhow::Result<Subscription> {
+        if let Some(mut subscriber) = self.repository.lock().await.subscriber(session_id) {
             let option = SubscribeOption {
                 subscriber_priority: 128,
                 group_order: GroupOrder::Ascending,

@@ -25,6 +25,8 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
         tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
     pub(crate) notification_map:
         tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<StreamWithObject<T>>>>,
+    pub(crate) receiver_map:
+        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<StreamWithObject<T>>>>,
 }
 
 impl<T: TransportProtocol> SessionContext<T> {
@@ -42,6 +44,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
             notification_map: tokio::sync::RwLock::new(HashMap::new()),
+            receiver_map: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 

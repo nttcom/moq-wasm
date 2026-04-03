@@ -332,7 +332,7 @@ impl<T: TransportProtocol> Client<T> {
             filter_type: moqt::FilterType::LatestObject,
         };
         let mut subscriber = self.session.subscriber();
-        let mut subscription = match subscriber
+        let subscription = match subscriber
             .subscribe(track_namespace, track_name, option)
             .await
         {
@@ -344,7 +344,7 @@ impl<T: TransportProtocol> Client<T> {
         };
         loop {
             tokio::select! {
-                Ok(result) = subscriber.accept_data_receiver(&mut subscription) => {
+                Ok(result) = subscriber.accept_data_receiver(&subscription) => {
                     match result {
                         moqt::DataReceiver::Stream(mut stream) => {
                             let label = label.clone();
