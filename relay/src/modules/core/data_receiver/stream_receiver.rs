@@ -15,3 +15,15 @@ impl<T: moqt::TransportProtocol> StreamReceiver for moqt::StreamDataReceiver<T> 
         }
     }
 }
+
+#[async_trait::async_trait]
+pub(crate) trait StreamReceiverFactory: Send + 'static {
+    async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>>;
+}
+
+#[async_trait::async_trait]
+impl<T: moqt::TransportProtocol> StreamReceiverFactory for moqt::StreamDataReceiverFactory<T> {
+    async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>> {
+        Ok(Box::new(moqt::StreamDataReceiverFactory::next(self).await?))
+    }
+}

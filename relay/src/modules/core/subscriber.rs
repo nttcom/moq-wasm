@@ -48,10 +48,7 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
     ) -> anyhow::Result<DataReceiver> {
         let result = self.accept_data_receiver(subscription.as_moqt()).await?;
         match result {
-            moqt::DataReceiver::Stream(mut factory) => {
-                let stream = factory.next().await?;
-                Ok(DataReceiver::Stream(Box::new(stream)))
-            }
+            moqt::DataReceiver::Stream(factory) => Ok(DataReceiver::Stream(Box::new(factory))),
             moqt::DataReceiver::Datagram(inner) => Ok(DataReceiver::Datagram(Box::new(inner))),
         }
     }
