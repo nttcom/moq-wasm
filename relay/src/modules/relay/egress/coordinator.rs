@@ -97,10 +97,8 @@ impl EgressCoordinator {
         let latest_info_sender = sender_map.get_or_create(request.track_key);
 
         let runner = EgressRunner::new(
-            request.track_key,
             cache,
             latest_info_sender,
-            delivery_type_map,
             publisher,
             request.published_resources,
         );
