@@ -36,13 +36,8 @@ impl IngestCoordinator {
     ) -> Self {
         let (stream_tx, stream_rx) = mpsc::channel::<StreamReceiveStart>(64);
         let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveStart>(64);
-        let stream_task = StreamIngestTask::new(
-            stream_rx,
-            cache_store.clone(),
-            sender_map.clone(),
-        );
-        let datagram_task =
-            DatagramIngestTask::new(datagram_rx, cache_store, sender_map);
+        let stream_task = StreamIngestTask::new(stream_rx, cache_store.clone(), sender_map.clone());
+        let datagram_task = DatagramIngestTask::new(datagram_rx, cache_store, sender_map);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngestStartRequest>(512);
         let session_repo_for_runner = session_repo;
