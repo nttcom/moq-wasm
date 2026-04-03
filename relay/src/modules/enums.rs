@@ -30,8 +30,8 @@ impl Location {
 
 #[derive(Clone)]
 pub(crate) enum FilterType {
-    LatestGroup,
-    LatestObject,
+    NextGroupStart,
+    LargestObject,
     AbsoluteStart { location: Location },
     AbsoluteRange { location: Location, end_group: u64 },
 }
@@ -39,8 +39,8 @@ pub(crate) enum FilterType {
 impl FilterType {
     pub(crate) fn from(filter_type: moqt::FilterType) -> Self {
         match filter_type {
-            moqt::FilterType::LatestGroup => Self::LatestGroup,
-            moqt::FilterType::LatestObject => Self::LatestObject,
+            moqt::FilterType::NextGroupStart => Self::NextGroupStart,
+            moqt::FilterType::LargestObject => Self::LargestObject,
             moqt::FilterType::AbsoluteStart { location } => Self::AbsoluteStart {
                 location: Location::from(location),
             },
@@ -56,8 +56,8 @@ impl FilterType {
 
     pub(crate) fn as_moqt(&self) -> moqt::FilterType {
         match self {
-            FilterType::LatestGroup => moqt::FilterType::LatestGroup,
-            FilterType::LatestObject => moqt::FilterType::LatestObject,
+            FilterType::NextGroupStart => moqt::FilterType::NextGroupStart,
+            FilterType::LargestObject => moqt::FilterType::LargestObject,
             FilterType::AbsoluteStart { location } => moqt::FilterType::AbsoluteStart {
                 location: location.as_moqt(),
             },

@@ -94,7 +94,7 @@ impl<T: TransportProtocol> Client<T> {
                         moqt::SessionEvent::Publish(publish_handler) => {
                             tracing::info!("Received: {} Publish", label);
                             match publish_handler
-                                .ok(128, moqt::FilterType::LatestObject)
+                                .ok(128, moqt::FilterType::LargestObject)
                                 .await
                             {
                                 Ok(h) => h,
@@ -329,7 +329,7 @@ impl<T: TransportProtocol> Client<T> {
             subscriber_priority: 128,
             group_order: moqt::GroupOrder::Ascending,
             forward: true,
-            filter_type: moqt::FilterType::LatestObject,
+            filter_type: moqt::FilterType::LargestObject,
         };
         let mut subscriber = self.session.subscriber();
         let subscription = match subscriber
