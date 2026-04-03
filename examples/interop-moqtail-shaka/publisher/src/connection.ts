@@ -17,7 +17,7 @@ export async function createClient(opts?: {
 	onMessageSent?: MessageCallback;
 	onMessageReceived?: MessageCallback;
 }): Promise<MOQtailClient> {
-	const url = "https://localhost:4434";
+	const url = "https://localhost:4433";
 	const certHash = decodeCertHash(__CERT_HASH_BASE64__);
 	console.log("Connecting via WebTransport to", url);
 	console.log("Cert hash:", __CERT_HASH_BASE64__);
