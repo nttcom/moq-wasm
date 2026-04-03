@@ -1,4 +1,4 @@
-pub mod modules; // modulesを公開
+pub mod modules;
 mod relay_server;
 
 pub use relay_server::server::RelayServer;

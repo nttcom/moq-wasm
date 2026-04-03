@@ -78,7 +78,7 @@ impl DatagramReader {
                         .send(LatestInfo::LatestObject);
                 }
                 Err(_) => {
-                    // 最後のグループを確実にクローズする
+                    // Ensure the last group is closed before exiting.
                     if let Some(group_id) = current_group_id {
                         let cache = cache_store.get_or_create(track_key);
                         cache.close_group(group_id).await;

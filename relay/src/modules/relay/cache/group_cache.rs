@@ -33,11 +33,10 @@ impl GroupCache {
         objects.get(index as usize).cloned()
     }
 
-    /// index のオブジェクトが存在しない場合、append または mark_end_of_group が来るまで待機する。
-    /// グループがクローズされていれば None を返す。
+    /// Waits until the object at `index` is available, or returns `None` if the group is closed.
     pub(crate) async fn get_or_wait(&self, index: u64) -> Option<Arc<DataObject>> {
         loop {
-            // notified() は get() より先に作成してレースを防ぐ
+            // Create notified() before get() to avoid a race between the check and the wait.
             let notified = self.notify.notified();
             if let Some(obj) = self.get(index).await {
                 return Some(obj);

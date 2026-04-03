@@ -9,7 +9,7 @@ use crate::modules::{
 
 use super::scheduler::GroupSendTask;
 
-/// GroupSendTask を受け取り、実際の送信タスクを起動・管理する。
+/// Receives `GroupSendTask` entries and spawns per-group send tasks.
 pub(crate) struct GroupSender {
     cache: Arc<TrackCache>,
     publisher: Box<dyn Publisher>,
@@ -58,7 +58,6 @@ impl GroupSender {
         }
     }
 
-    /// stream / datagram に応じた DataSender を生成する
     async fn new_sender(
         &self,
         is_stream: bool,
@@ -81,7 +80,7 @@ impl GroupSender {
         }
     }
 
-    /// グループ内の全オブジェクトを送信するタスク（stream・datagram 共通）
+    /// Sends all objects in a group (shared between stream and datagram).
     async fn send_task(
         group_id: u64,
         start_offset: u64,
