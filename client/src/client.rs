@@ -29,7 +29,7 @@ pub struct Client<T: TransportProtocol> {
 impl<T: TransportProtocol> Client<T> {
     pub async fn new(cert_path: String, label: String) -> anyhow::Result<Self> {
         let endpoint = Endpoint::<T>::create_client_with_custom_cert(0, &cert_path)?;
-        let url = url::Url::from_str("moqt://localhost:4434")?; // ここも変更
+        let url = url::Url::from_str("moqt://localhost:4433")?;
         let host = url.host_str().unwrap();
         let remote_address = (host, url.port().unwrap_or(4433))
             .to_socket_addrs()?

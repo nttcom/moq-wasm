@@ -35,6 +35,7 @@ pub use modules::moqt::domains::session::Session;
 pub use modules::moqt::domains::subscriber::Subscriber;
 pub use modules::moqt::domains::subscription::DataReceiver;
 pub use modules::moqt::domains::subscription::Subscription;
+pub use modules::moqt::protocol::DUAL;
 pub use modules::moqt::protocol::QUIC;
 pub use modules::moqt::protocol::TransportProtocol;
 pub use modules::moqt::protocol::WEBTRANSPORT;

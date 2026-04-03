@@ -6,8 +6,8 @@ use super::wt_connection::WtConnection;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
 enum WtEndpoint {
-    Server(wtransport::Endpoint<wtransport::endpoint::endpoint_side::Server>),
-    Client(wtransport::Endpoint<wtransport::endpoint::endpoint_side::Client>),
+    Server(tokio::sync::Mutex<web_transport_quinn::Server>),
+    Client(web_transport_quinn::Client),
 }
 
 pub struct WtConnectionCreator {
@@ -19,47 +19,24 @@ impl TransportConnectionCreator for WtConnectionCreator {
     type Connection = WtConnection;
 
     fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
-        use wtransport::tls::rustls;
-
-        let tls_config = if verify_certificate {
-            let mut roots = rustls::RootCertStore::empty();
-            for cert in rustls_native_certs::load_native_certs().unwrap() {
-                roots.add(cert).unwrap();
-            }
-            rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth()
+        let client = if verify_certificate {
+            web_transport_quinn::ClientBuilder::new().with_system_roots()?
         } else {
-            // Currently quinn and wtransport share the same rustls version,
-            // so we reuse the QUIC SkipVerification to avoid duplication.
-            // If their rustls versions diverge, this may need a separate implementation.
-            rustls::ClientConfig::builder()
+            web_transport_quinn::ClientBuilder::new()
                 .dangerous()
-                .with_custom_certificate_verifier(std::sync::Arc::new(
-                    crate::modules::transport::quic::skip_certd_validation::SkipVerification,
-                ))
-                .with_no_client_auth()
+                .with_no_certificate_verification()?
         };
-        let mut tls_config = tls_config;
-        tls_config.alpn_protocols = vec![wtransport::tls::WEBTRANSPORT_ALPN.to_vec()];
 
-        let config = wtransport::ClientConfig::builder()
-            .with_bind_default()
-            .with_custom_tls(tls_config)
-            .build();
-
-        let endpoint = wtransport::Endpoint::client(config)?;
         tracing::info!("Client ready! for WebTransport port: {}", port_num);
 
         Ok(WtConnectionCreator {
-            endpoint: WtEndpoint::Client(endpoint),
+            endpoint: WtEndpoint::Client(client),
         })
     }
 
     fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
         use std::fs::File;
         use std::io::BufReader;
-        use wtransport::tls::rustls;
 
         // 証明書を読み込む
         let cert_file = File::open(custom_cert_path)
@@ -69,30 +46,13 @@ impl TransportConnectionCreator for WtConnectionCreator {
             .collect::<Result<Vec<_>, _>>()
             .inspect_err(|e| tracing::error!("Parsing certificate failed: {:?}", e))?;
 
-        // 自己署名証明書を信頼するrustls ClientConfigを作る
-        let mut roots = rustls::RootCertStore::empty();
-        for cert in certs {
-            roots
-                .add(cert)
-                .inspect_err(|e| tracing::error!("Adding certificate failed: {:?}", e))?;
-        }
-        let mut tls_config = rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        tls_config.alpn_protocols = vec![wtransport::tls::WEBTRANSPORT_ALPN.to_vec()];
+        // 自己署名証明書を信頼するクライアントを作る
+        let client = web_transport_quinn::ClientBuilder::new().with_server_certificates(certs)?;
 
-        // wtransportのクライアント設定を組み立てる
-        let config = wtransport::ClientConfig::builder()
-            .with_bind_default()
-            .with_custom_tls(tls_config)
-            .build();
-
-        // クライアントEndpointを作る
-        let endpoint = wtransport::Endpoint::client(config)?;
         tracing::info!("Client ready! for WebTransport port: {}", port_num);
 
         Ok(WtConnectionCreator {
-            endpoint: WtEndpoint::Client(endpoint),
+            endpoint: WtEndpoint::Client(client),
         })
     }
 
@@ -100,7 +60,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         cert_path: &str,
         key_path: &str,
         port_num: u16,
-        keep_alive_sec: u64,
+        _keep_alive_sec: u64,
     ) -> anyhow::Result<Self> {
         use std::fs::File;
         use std::io::BufReader;
@@ -109,9 +69,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         let cert_file = File::open(cert_path)
             .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?;
         let mut cert_reader = BufReader::new(cert_file);
-        let certs: Vec<wtransport::tls::Certificate> = rustls_pemfile::certs(&mut cert_reader)
-            .filter_map(|c| c.ok())
-            .map(|der| wtransport::tls::Certificate::from_der(der.as_ref().to_vec()))
+        let certs: Vec<_> = rustls_pemfile::certs(&mut cert_reader)
             .collect::<Result<Vec<_>, _>>()
             .inspect_err(|e| tracing::error!("Parsing certificates failed: {:?}", e))?;
 
@@ -119,25 +77,18 @@ impl TransportConnectionCreator for WtConnectionCreator {
         let key_file = File::open(key_path)
             .inspect_err(|e| tracing::error!("Opening key file failed: {:?}", e))?;
         let mut key_reader = BufReader::new(key_file);
-        let key_der = rustls_pemfile::private_key(&mut key_reader)?
+        let key = rustls_pemfile::private_key(&mut key_reader)?
             .ok_or_else(|| anyhow::anyhow!("No private key found"))?;
-        let private_key =
-            wtransport::tls::PrivateKey::from_der_pkcs8(key_der.secret_der().to_vec());
 
-        let identity =
-            wtransport::Identity::new(wtransport::tls::CertificateChain::new(certs), private_key);
+        let addr: SocketAddr = format!("[::]:{}", port_num).parse()?;
+        let server = web_transport_quinn::ServerBuilder::new()
+            .with_addr(addr)
+            .with_certificate(certs, key)?;
 
-        let config = wtransport::ServerConfig::builder()
-            .with_bind_default(port_num)
-            .with_identity(identity)
-            .keep_alive_interval(Some(std::time::Duration::from_secs(keep_alive_sec)))
-            .build();
-
-        let endpoint = wtransport::Endpoint::server(config)?;
         tracing::info!("Server ready! for WebTransport port: {}", port_num);
 
         Ok(WtConnectionCreator {
-            endpoint: WtEndpoint::Server(endpoint),
+            endpoint: WtEndpoint::Server(tokio::sync::Mutex::new(server)),
         })
     }
 
@@ -146,43 +97,41 @@ impl TransportConnectionCreator for WtConnectionCreator {
         remote_address: SocketAddr,
         host: &str,
     ) -> anyhow::Result<Self::Connection> {
-        let ep = match &self.endpoint {
-            WtEndpoint::Client(ep) => ep,
+        let client = match &self.endpoint {
+            WtEndpoint::Client(c) => c,
             WtEndpoint::Server(_) => {
                 anyhow::bail!("Cannot create_new_transport on a server endpoint")
             }
         };
-        let url = format!("https://{}:{}", host, remote_address.port());
+        let url: url::Url = format!("https://{}:{}", host, remote_address.port()).parse()?;
 
-        let connection = ep
+        let session = client
             .connect(url)
             .await
             .inspect_err(|e| tracing::error!("failed to connect: {:?}", e))?;
 
-        Ok(WtConnection::new(connection))
+        Ok(WtConnection::new(session))
     }
 
     async fn accept_new_transport(&mut self) -> anyhow::Result<Self::Connection> {
-        let ep = match &self.endpoint {
-            WtEndpoint::Server(ep) => ep,
+        let server = match &self.endpoint {
+            WtEndpoint::Server(s) => s,
             WtEndpoint::Client(_) => {
                 anyhow::bail!("Cannot accept_new_transport on a client endpoint")
             }
         };
-        // クライアントの接続を待つ
-        let incoming_session = ep.accept().await;
 
-        // セッションリクエストを待つ
-        let session_request = incoming_session
-            .await
-            .inspect_err(|e| tracing::error!("failed to accept session: {:?}", e))?;
+        // クライアントの接続を待つ
+        let Some(request) = server.lock().await.accept().await else {
+            anyhow::bail!("Server endpoint closed");
+        };
 
         // リクエストを受け入れてセッションを確立する
-        let connection = session_request
-            .accept()
+        let session = request
+            .ok()
             .await
-            .inspect_err(|e| tracing::error!("failed to establish connection: {:?}", e))?;
+            .inspect_err(|e| tracing::error!("failed to establish session: {:?}", e))?;
 
-        Ok(WtConnection::new(connection))
+        Ok(WtConnection::new(session))
     }
 }
