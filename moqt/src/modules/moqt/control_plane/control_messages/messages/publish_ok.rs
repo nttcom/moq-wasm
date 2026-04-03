@@ -156,7 +156,7 @@ mod tests {
                 forward: true,
                 subscriber_priority: 0,
                 group_order: GroupOrder::Ascending, // Ascending
-                filter_type: FilterType::LatestGroup,
+                filter_type: FilterType::NextGroupStart,
                 delivery_timeout: Some(1000),
             };
 

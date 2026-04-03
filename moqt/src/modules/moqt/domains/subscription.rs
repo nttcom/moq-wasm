@@ -1,15 +1,11 @@
 use crate::{
-    DatagramReceiver, GroupOrder, StreamDataReceiver, TransportProtocol,
+    GroupOrder,
     modules::moqt::control_plane::control_messages::messages::{
         parameters::content_exists::ContentExists, subscribe_ok::SubscribeOk,
     },
 };
 
-pub enum DataReceiver<T: TransportProtocol> {
-    Stream(StreamDataReceiver<T>),
-    Datagram(DatagramReceiver<T>),
-}
-
+#[derive(Debug)]
 pub struct Subscription {
     pub track_alias: u64,
     pub expires: u64,

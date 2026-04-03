@@ -1,49 +1,28 @@
-use std::sync::Arc;
-
 use crate::{
     TransportProtocol,
-    modules::{
-        moqt::{
-            data_plane::{
-                object::{
-                    extension_headers::ExtensionHeaders,
-                    subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
-                },
-                streams::stream::stream_sender::StreamSender,
-            },
-            domains::session_context::SessionContext,
+    modules::moqt::data_plane::{
+        object::{
+            extension_headers::ExtensionHeaders,
+            subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
         },
-        transport::transport_connection::TransportConnection,
+        streams::stream::stream_sender::StreamSender,
     },
 };
 
 pub struct StreamDataSender<T: TransportProtocol> {
-    session_context: Arc<SessionContext<T>>,
     stream_sender: StreamSender<T>,
     track_alias: u64,
     subgroup_header: Option<SubgroupHeader>,
 }
 
 impl<T: TransportProtocol> StreamDataSender<T> {
-    async fn create_sender(
-        session_context: &Arc<SessionContext<T>>,
-    ) -> anyhow::Result<StreamSender<T>> {
-        let stream = session_context.transport_connection.open_uni().await?;
-        let stream_sender = StreamSender::new(stream);
-        Ok(stream_sender)
-    }
-
-    pub(crate) async fn new(
-        track_alias: u64,
-        session_context: Arc<SessionContext<T>>,
-    ) -> anyhow::Result<Self> {
-        let stream_sender = Self::create_sender(&session_context).await?;
-        Ok(Self {
-            session_context,
+    pub(crate) fn new(track_alias: u64, send_stream: T::SendStream) -> Self {
+        let stream_sender = StreamSender::new(send_stream);
+        Self {
             stream_sender,
             track_alias,
             subgroup_header: None,
-        })
+        }
     }
 
     pub fn create_header(
@@ -81,27 +60,34 @@ impl<T: TransportProtocol> StreamDataSender<T> {
 
     pub async fn send(
         &mut self,
-        header: SubgroupHeader,
+        header: &SubgroupHeader,
         data: SubgroupObjectField,
     ) -> anyhow::Result<()> {
+        if header.track_alias != self.track_alias {
+            anyhow::bail!(
+                "track_alias mismatch: expected {}, got {}",
+                self.track_alias,
+                header.track_alias
+            );
+        }
         if self.subgroup_header.is_none() {
             tracing::debug!("Sending new subgroup header: {:?}", header);
             let encoded_header = header.encode();
             self.stream_sender.send(&encoded_header).await?;
-            self.subgroup_header = Some(header);
-        } else if self.subgroup_header.as_ref().unwrap() != &header {
-            tracing::debug!(
-                "Subgroup header changed. Sending new subgroup header: {:?}",
-                header
+            self.subgroup_header = Some(header.clone());
+        } else if header.group_id != self.subgroup_header.as_ref().unwrap().group_id {
+            anyhow::bail!(
+                "group_id mismatch: expected {}, got {}",
+                self.subgroup_header.as_ref().unwrap().group_id,
+                header.group_id
             );
-            self.stream_sender.close().await?;
-            self.stream_sender = Self::create_sender(&self.session_context).await?;
-            let encoded_header = header.encode();
-            self.stream_sender.send(&encoded_header).await?;
-            self.subgroup_header = Some(header);
         }
         tracing::debug!("Sending subgroup object");
         let bytes = data.encode();
         self.stream_sender.send(&bytes).await
+    }
+
+    pub async fn close(&mut self) -> anyhow::Result<()> {
+        self.stream_sender.close().await
     }
 }

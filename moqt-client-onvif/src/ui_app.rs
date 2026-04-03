@@ -1,0 +1,64 @@
+use crate::app_config::Target;
+use crate::ptz_worker::Controller;
+use crate::rtsp_stream::Stream;
+use crate::ui_ptz::Controls;
+use crate::ui_video::VideoView;
+use anyhow::{anyhow, Result};
+use eframe::egui;
+
+pub fn run(target: Target) -> Result<()> {
+    let controller = Controller::new(target.clone())?;
+    let video = Stream::new(target)?;
+    let options = eframe::NativeOptions::default();
+    eframe::run_native(
+        "moqt-client-onvif PTZ",
+        options,
+        Box::new(|_| Box::new(PtzApp::new(controller, video))),
+    )
+    .map_err(|err| anyhow!("failed to start GUI: {err}"))?;
+    Ok(())
+}
+
+struct PtzApp {
+    controller: Controller,
+    ptz_error: Option<String>,
+    video: VideoView,
+    controls: Controls,
+}
+
+impl PtzApp {
+    fn new(controller: Controller, video: Stream) -> Self {
+        Self {
+            controller,
+            ptz_error: None,
+            video: VideoView::new(video),
+            controls: Controls::new(),
+        }
+    }
+}
+
+impl eframe::App for PtzApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(err) = self.controller.try_recv_error() {
+            self.ptz_error = Some(err);
+        }
+        if let Some(state) = self.controller.try_recv_state() {
+            self.controls.set_state(state);
+        }
+        self.video.update(ctx);
+        egui::TopBottomPanel::bottom("ptz_controls")
+            .resizable(false)
+            .show(ctx, |ui| {
+                if let Some(command) = self.controls.ui(ui) {
+                    self.controller.send(command);
+                }
+                if let Some(err) = &self.ptz_error {
+                    ui.add_space(8.0);
+                    ui.label(format!("PTZ error: {err}"));
+                }
+            });
+        egui::CentralPanel::default().show(ctx, |ui| {
+            self.video.show(ui);
+        });
+    }
+}

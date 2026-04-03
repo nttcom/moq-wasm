@@ -5,7 +5,7 @@ use super::{
     data_streams::{
         datagram::{forwarder::DatagramObjectForwarder, receiver::DatagramObjectReceiver},
         subgroup_stream::{
-            forwarder::SubgroupStreamObjectForwarder,
+            forwarder::{SubgroupForwarderError, SubgroupStreamObjectForwarder},
             receiver::SubgroupStreamObjectReceiver,
             uni_stream::{UniRecvStream, UniSendStream},
         },
@@ -198,7 +198,7 @@ async fn spawn_subgroup_stream_object_forwarder_thread(
                 let stream = UniSendStream::new(stable_id, stream_id, send_stream);
                 let senders = client.lock().await.senders();
 
-                let mut stream_object_forwarder = SubgroupStreamObjectForwarder::init(
+                let mut stream_object_forwarder = match SubgroupStreamObjectForwarder::init(
                     stream,
                     subscribe_id,
                     client,
@@ -207,7 +207,16 @@ async fn spawn_subgroup_stream_object_forwarder_thread(
                 )
                 .instrument(session_span.clone())
                 .await
-                .unwrap();
+                {
+                    Ok(forwarder) => forwarder,
+                    Err(err) => {
+                        tracing::warn!(
+                            "Skip subgroup forwarder start because initialization failed: {:?}",
+                            err
+                        );
+                        return;
+                    }
+                };
 
                 match stream_object_forwarder
                     .start()
@@ -215,9 +224,37 @@ async fn spawn_subgroup_stream_object_forwarder_thread(
                     .await
                 {
                     Ok(_) => {}
-                    Err(e) => {
+                    Err(SubgroupForwarderError::CacheMissing) => {
+                        tracing::warn!(
+                            "StreamObjectForwarder: Cache missing: finish forwarder worker and stream"
+                        );
+                    }
+                    Err(SubgroupForwarderError::SendFailed(e)) => {
                         let code = TerminationErrorCode::InternalError;
-                        let reason = format!("StreamObjectForwarder: {:?}", e);
+                        let reason = format!("StreamObjectForwarder send failed: {:?}", e);
+
+                        tracing::error!(reason);
+
+                        let _ = senders
+                            .close_session_tx()
+                            .send((u8::from(code) as u64, reason.to_string()))
+                            .await;
+                    }
+                    Err(SubgroupForwarderError::ForwardingPreferenceMismatch) => {
+                        let code = TerminationErrorCode::InternalError;
+                        let reason =
+                            "StreamObjectForwarder forwarding preference mismatch".to_string();
+
+                        tracing::error!(reason);
+
+                        let _ = senders
+                            .close_session_tx()
+                            .send((u8::from(code) as u64, reason.clone()))
+                            .await;
+                    }
+                    Err(SubgroupForwarderError::Other(err)) => {
+                        let code = TerminationErrorCode::InternalError;
+                        let reason = format!("StreamObjectForwarder: {:?}", err);
 
                         tracing::error!(reason);
 
@@ -296,10 +333,19 @@ async fn spawn_datagram_object_forwarder_thread(
             async move {
                 let senders = client.lock().await.senders();
                 let mut datagram_object_forwarder =
-                    DatagramObjectForwarder::init(session, subscribe_id, client)
+                    match DatagramObjectForwarder::init(session, subscribe_id, client)
                         .instrument(session_span.clone())
                         .await
-                        .unwrap();
+                    {
+                        Ok(forwarder) => forwarder,
+                        Err(err) => {
+                            tracing::warn!(
+                                "Skip datagram forwarder start because initialization failed: {:?}",
+                                err
+                            );
+                            return;
+                        }
+                    };
 
                 match datagram_object_forwarder
                     .start()

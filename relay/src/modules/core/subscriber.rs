@@ -1,10 +1,7 @@
 use async_trait::async_trait;
 
 use crate::modules::core::{
-    data_receiver::{
-        DataReceiver, datagram_receiver::DatagramReceiver, stream_receiver::StreamReceiver,
-    },
-    handler::publish::SubscribeOption,
+    data_receiver::receiver::DataReceiver, handler::publish::SubscribeOption,
     subscription::Subscription,
 };
 
@@ -12,15 +9,15 @@ use crate::modules::core::{
 pub(crate) trait Subscriber: 'static + Send + Sync {
     async fn _send_subscribe_namespace(&self, namespaces: String) -> anyhow::Result<()>;
     async fn send_subscribe(
-        &self,
+        &mut self,
         track_namespace: String,
         track_name: String,
         option: SubscribeOption,
     ) -> anyhow::Result<Subscription>;
     async fn create_data_receiver(
-        &self,
-        subscription: Subscription,
-    ) -> anyhow::Result<Box<dyn DataReceiver>>;
+        &mut self,
+        subscription: &Subscription,
+    ) -> anyhow::Result<DataReceiver>;
 }
 
 #[async_trait]
@@ -30,7 +27,7 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
     }
 
     async fn send_subscribe(
-        &self,
+        &mut self,
         track_namespace: String,
         track_name: String,
         option: SubscribeOption,
@@ -41,24 +38,18 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
             forward: option.forward,
             filter_type: option.filter_type.as_moqt(),
         };
-        let subscription = self.subscribe(track_namespace, track_name, option).await?;
-        Ok(Subscription::from(subscription))
+        let moqt_sub = self.subscribe(track_namespace, track_name, option).await?;
+        Ok(Subscription::from(moqt_sub))
     }
 
     async fn create_data_receiver(
-        &self,
-        subscription: Subscription,
-    ) -> anyhow::Result<Box<dyn DataReceiver>> {
+        &mut self,
+        subscription: &Subscription,
+    ) -> anyhow::Result<DataReceiver> {
         let result = self.accept_data_receiver(subscription.as_moqt()).await?;
         match result {
-            moqt::DataReceiver::Stream(inner) => {
-                let receiver = StreamReceiver::new(inner);
-                Ok(Box::new(receiver))
-            }
-            moqt::DataReceiver::Datagram(inner) => {
-                let receiver = DatagramReceiver::new(inner);
-                Ok(Box::new(receiver))
-            }
+            moqt::DataReceiver::Stream(factory) => Ok(DataReceiver::Stream(Box::new(factory))),
+            moqt::DataReceiver::Datagram(inner) => Ok(DataReceiver::Datagram(Box::new(inner))),
         }
     }
 }

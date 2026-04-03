@@ -1,29 +1,31 @@
 use std::{
     net::ToSocketAddrs,
     str::FromStr,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, atomic::AtomicU64},
 };
 
-use anyhow::bail;
-use moqt::{DatagramField, Endpoint, QUIC, Session, SubscribeOption};
 use crate::stream_runner::StreamTaskRunner;
+use anyhow::bail;
+use moqt::{DatagramField, Endpoint, Session, TransportProtocol};
 use tokio::sync::mpsc::UnboundedSender;
 
-pub struct Client {
+pub struct Client<T: TransportProtocol> {
     label: String,
     join_handle: tokio::task::JoinHandle<()>,
     track_alias: Arc<AtomicU64>,
-    publisher: moqt::Publisher<moqt::QUIC>,
-    subscriber: moqt::Subscriber<moqt::QUIC>,
+    publisher: moqt::Publisher<T>,
+    subscriber: moqt::Subscriber<T>,
     runner: StreamTaskRunner,
 }
 
-impl Client {
-    pub async fn new(cert_path: String, port: u16, label: String, notification_sender: Option<UnboundedSender<String>>) -> anyhow::Result<Self> { // pub(crate) -> pub
-        let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
+impl<T: TransportProtocol> Client<T> {
+    pub async fn new(
+        cert_path: String,
+        port: u16,
+        label: String,
+        notification_sender: Option<UnboundedSender<String>>,
+    ) -> anyhow::Result<Self> {
+        let endpoint = Endpoint::<T>::create_client_with_custom_cert(0, &cert_path)?;
         let url_str = format!("moqt://localhost:{}", port);
         let url = url::Url::from_str(&url_str)?;
         let host = url.host_str().unwrap();
@@ -41,8 +43,13 @@ impl Client {
             }
         };
         let track_alias = Arc::new(AtomicU64::new(0));
-        let (publisher, subscriber) = session.create_publisher_subscriber_pair();
-        let join_handle = Self::create_receiver(label.clone(), session, track_alias.clone(), notification_sender);
+        let (publisher, subscriber) = session.publisher_subscriber_pair();
+        let join_handle = Self::create_receiver(
+            label.clone(),
+            session,
+            track_alias.clone(),
+            notification_sender,
+        );
 
         Ok(Self {
             label,
@@ -54,10 +61,11 @@ impl Client {
         })
     }
 
-    pub fn create_receiver( // pub(crate) -> pub
+    pub fn create_receiver(
+        // pub(crate) -> pub
         label: String,
-        session: Session<moqt::QUIC>,
-        track_alias: Arc<AtomicU64>,
+        session: Session<T>,
+        _track_alias: Arc<AtomicU64>,
         notification_sender: Option<UnboundedSender<String>>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
@@ -77,10 +85,12 @@ impl Client {
                                 label,
                                 &publish_namespace_handler.track_namespace
                             );
-                            if let Some(sender) = &notification_sender {
-                                if sender.send(publish_namespace_handler.track_namespace.clone()).is_err() {
-                                    tracing::error!("Failed to send notification");
-                                }
+                            if let Some(sender) = &notification_sender
+                                && sender
+                                    .send(publish_namespace_handler.track_namespace.clone())
+                                    .is_err()
+                            {
+                                tracing::error!("Failed to send notification");
                             }
                             let _ = publish_namespace_handler.ok().await;
                         }
@@ -95,7 +105,7 @@ impl Client {
                         moqt::SessionEvent::Publish(publish_handler) => {
                             tracing::info!("Received: {} Publish", label);
                             match publish_handler
-                                .ok(128, moqt::FilterType::LatestObject)
+                                .ok(128, moqt::FilterType::LargestObject)
                                 .await
                             {
                                 Ok(h) => h,
@@ -107,12 +117,20 @@ impl Client {
                         }
                         moqt::SessionEvent::Subscribe(subscribe_handler) => {
                             tracing::info!("Received: {} Subscribe", label);
-                            let track_alias = track_alias.load(Ordering::SeqCst);
-                            let _ = subscribe_handler
-                                .ok(track_alias, 1000000, moqt::ContentExists::False)
-                                .await;
+                            let track_alias = match subscribe_handler
+                                .ok(1000000, moqt::ContentExists::False)
+                                .await
+                            {
+                                Ok(track_alias) => track_alias,
+                                Err(e) => {
+                                    tracing::error!("Failed to send subscribe ok: {}", e);
+                                    continue;
+                                }
+                            };
                             let publication = subscribe_handler.into_publication(track_alias);
-                            Self::create_stream(label.clone(), publication, &runner).await;
+                            let publisher = session.publisher();
+                            Self::create_datagram(label.clone(), &publisher, publication, &runner)
+                                .await;
                         }
                         moqt::SessionEvent::ProtocolViolation() => {
                             tracing::info!("Received: {} ProtocolViolation", label);
@@ -123,88 +141,17 @@ impl Client {
             .unwrap()
     }
 
-    pub async fn publish_namespace(&self, track_namespace: String) -> anyhow::Result<()> { // pub(crate) -> pub
-        let result = self.publisher.publish_namespace(track_namespace).await;
-        if result.is_err() {
-            tracing::info!("{}: publish namespace error", self.label);
-            return Err(anyhow::anyhow!("Publish namespace error"));
-        } else {
-            tracing::info!("{}: publish namespace ok", self.label);
-        }
-        Ok(())
-    }
-
-    pub async fn subscribe_namespace(&self, track_namespace_prefix: String) -> anyhow::Result<()> { // pub(crate) -> pub
-        let result = self
-            .subscriber
-            .subscribe_namespace(track_namespace_prefix)
-            .await;
-        if result.is_err() {
-            tracing::info!("{}: subscribe namespace error", self.label);
-            return Err(anyhow::anyhow!("Subscribe namespace error"));
-        } else {
-            tracing::info!("{}: subscribe namespace ok", self.label);
-        }
-        Ok(())
-    }
-
-    pub async fn publish(&self, track_namespace: String, track_name: String) { // pub(crate) -> pub
-        let option = moqt::PublishOption::default();
-        let pub_result = self
-            .publisher
-            .publish(track_namespace, track_name, option)
-            .await;
-        if let Ok(p) = pub_result {
-            tracing::info!("{}: publish ok", self.label);
-            self.track_alias
-                .fetch_add(p.track_alias, std::sync::atomic::Ordering::SeqCst);
-        } else {
-            tracing::error!("{}: publish error", self.label);
-        }
-    }
-
-    async fn subscribe(
+    async fn create_datagram(
         label: String,
-        publish_handler: moqt::PublishHandler<moqt::QUIC>,
+        publisher: &moqt::Publisher<T>,
+        publication: moqt::PublishedResource,
         runner: &StreamTaskRunner,
     ) {
-        let full_name = format!(
-            "{}/{}",
-            publish_handler.track_namespace, publish_handler.track_name
-        );
-        let task = async move {
-            tracing::info!("{} :subscribe {}", label, full_name);
-            let subscription = publish_handler.into_subscription(0);
-            let mut receiver = match subscription.accept_data_receiver().await {
-                Ok(receiver) => receiver,
-                Err(_) => {
-                    tracing::error!("Failed to accept stream or datagram");
-                    return;
-                }
-            };
-            loop {
-                let result = receiver.receive().await;
-                if let Err(e) = result {
-                    tracing::error!("Failed to receive: {}", e);
-                    break;
-                }
-                let object = result.unwrap();
-                tracing::info!("{} :subscribe datagram: {:?}", label, object);
-            }
-        };
-        runner.add_task(Box::pin(task)).await;
-    }
-
-    async fn create_stream(
-        label: String,
-        publication: moqt::PublishedResource<moqt::QUIC>,
-        runner: &StreamTaskRunner,
-    ) {
-        tracing::info!("{} :create stream", label);
-        let mut datagram = publication.create_datagram();
+        tracing::info!("{} :create datagram", label);
+        let mut datagram = publisher.create_datagram(&publication);
         let task = async move {
             let mut id = 0;
-            tracing::info!("{} :create stream start", label);
+            tracing::info!("{} :create datagram start", label);
             loop {
                 let format_text = format!("hello from {}! id: {}", label, id);
                 let data = DatagramField::to_bytes(format_text);
@@ -213,7 +160,7 @@ impl Client {
                     publisher_priority: 128,
                     payload: data,
                 };
-                let obj = moqt::DataObject::to_object_datagram(publication.track_alias, id, field);
+                let obj = datagram.create_object_datagram(id, field);
                 match datagram.send(obj).await {
                     Ok(_) => {
                         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
@@ -229,54 +176,65 @@ impl Client {
         runner.add_task(Box::pin(task)).await;
     }
 
-    pub async fn active_subscribe( // pub(crate) -> pub
+    pub async fn publish_namespace(&self, track_namespace: String) -> anyhow::Result<()> {
+        // pub(crate) -> pub
+        let result = self.publisher.publish_namespace(track_namespace).await;
+        if result.is_err() {
+            tracing::info!("{}: publish namespace error", self.label);
+            return Err(anyhow::anyhow!("Publish namespace error"));
+        } else {
+            tracing::info!("{}: publish namespace ok", self.label);
+        }
+        Ok(())
+    }
+
+    pub async fn subscribe_namespace(&self, track_namespace_prefix: String) -> anyhow::Result<()> {
+        // pub(crate) -> pub
+        let result = self
+            .subscriber
+            .subscribe_namespace(track_namespace_prefix)
+            .await;
+        if result.is_err() {
+            tracing::info!("{}: subscribe namespace error", self.label);
+            return Err(anyhow::anyhow!("Subscribe namespace error"));
+        } else {
+            tracing::info!("{}: subscribe namespace ok", self.label);
+        }
+        Ok(())
+    }
+
+    pub async fn publish(&self, track_namespace: String, track_name: String) {
+        // pub(crate) -> pub
+        let option = moqt::PublishOption::default();
+        let pub_result = self
+            .publisher
+            .publish(track_namespace, track_name, option)
+            .await;
+        if let Ok(p) = pub_result {
+            tracing::info!("{}: publish ok", self.label);
+            self.track_alias
+                .fetch_add(p.track_alias, std::sync::atomic::Ordering::SeqCst);
+        } else {
+            tracing::error!("{}: publish error", self.label);
+        }
+    }
+
+    pub async fn active_subscribe(
+        // pub(crate) -> pub
         &self,
         label: String,
         track_namespace: String,
         track_name: String,
     ) {
-        let full_name = format!("{}/{}", track_namespace, track_name);
-        let option = SubscribeOption {
-            subscriber_priority: 128,
-            group_order: moqt::GroupOrder::Ascending,
-            forward: true,
-            filter_type: moqt::FilterType::LatestObject,
-        };
-        tracing::info!("{} :subscribe {}", label, full_name);
-        let subscription = match self
-            .subscriber
-            .subscribe(track_namespace, track_name, option)
-            .await
-        {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("Failed to subscribe: {}", e);
-                return;
-            }
-        };
-        let task = async move {
-            let mut receiver = match subscription.accept_data_receiver().await {
-                Ok(receiver) => receiver,
-                Err(e) => {
-                    tracing::error!("Failed to accept stream or datagram: {}", e);
-                    return;
-                }
-            };
-            loop {
-                let result = receiver.receive().await;
-                if let Err(e) = result {
-                    tracing::error!("Failed to receive: {}", e);
-                    break;
-                }
-                let object = result.unwrap();
-                tracing::info!("{} :subscribe datagram: {:?}", label, object);
-            }
-        };
-        self.runner.add_task(Box::pin(task)).await;
+        let _ = (&self.runner, track_namespace, track_name);
+        tracing::warn!(
+            "{} :active_subscribe is not used in current scenarios",
+            label
+        );
     }
 }
 
-impl Drop for Client {
+impl<T: TransportProtocol> Drop for Client<T> {
     fn drop(&mut self) {
         tracing::info!("Client has been dropped.");
         self.join_handle.abort();

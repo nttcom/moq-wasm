@@ -14,10 +14,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rs/toolchain@63eb9591781c46a70274cb3ebdf190fce92702e8
         with:
           toolchain: stable
           target: wasm32-unknown-unknown
@@ -29,12 +29,12 @@ jobs:
 
       # 3. wasm-pack build
       - name: Build wasm with wasm-pack
-        run: wasm-pack build moqt-client-sample --target web --out-dir=js/pkg --features web_sys_unstable_apis
+        run: wasm-pack build moqt-client-wasm --target web --out-dir=js/pkg --features web_sys_unstable_apis
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 18
+          node-version: 22
 
       - name: Install dependencies
         run: npm ci
@@ -45,7 +45,7 @@ jobs:
         working-directory: js
 
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@e9c66a37f080288a11235e32cbe2dc5fb3a679cc
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: js/dist

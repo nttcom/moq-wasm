@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::bail;
-use moqt::{DatagramField, Endpoint, QUIC, Session, SubscribeOption};
+use moqt::{DatagramField, Endpoint, Session, SubscribeOption, TransportProtocol};
 
 use crate::stream_runner::StreamTaskRunner;
 
@@ -18,20 +18,17 @@ use crate::stream_runner::StreamTaskRunner;
 // We can remove the dead code when we have implemented the test cases that use these functionalities.
 
 #[allow(dead_code)]
-pub struct Client {
-    // pub(crate) -> pub
+pub struct Client<T: TransportProtocol> {
     label: String,
     join_handle: tokio::task::JoinHandle<()>,
     track_alias: Arc<AtomicU64>,
-    publisher: Arc<moqt::Publisher<moqt::QUIC>>,
-    subscriber: Arc<moqt::Subscriber<moqt::QUIC>>,
-    runner: StreamTaskRunner,
+    session: Arc<Session<T>>,
+    joinset: tokio::task::JoinSet<()>,
 }
 
-impl Client {
+impl<T: TransportProtocol> Client<T> {
     pub async fn new(cert_path: String, label: String) -> anyhow::Result<Self> {
-        // pub(crate) -> pub
-        let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, &cert_path)?;
+        let endpoint = Endpoint::<T>::create_client_with_custom_cert(0, &cert_path)?;
         let url = url::Url::from_str("moqt://localhost:4434")?; // ここも変更
         let host = url.host_str().unwrap();
         let remote_address = (host, url.port().unwrap_or(4433))
@@ -48,31 +45,23 @@ impl Client {
             }
         };
         let track_alias = Arc::new(AtomicU64::new(0));
-        let (publisher, subscriber) = session.publisher_subscriber_pair();
-        let publisher = Arc::new(publisher);
-        let subscriber = Arc::new(subscriber);
-        let join_handle = Self::create_receiver(
-            label.clone(),
-            publisher.clone(),
-            session,
-            track_alias.clone(),
-        );
+        let session = Arc::new(session);
+        let join_handle =
+            Self::create_receiver(label.clone(), session.clone(), track_alias.clone());
 
         Ok(Self {
             label,
             join_handle,
             track_alias,
-            publisher,
-            subscriber,
-            runner: StreamTaskRunner::new(),
+            session,
+            joinset: tokio::task::JoinSet::new(),
         })
     }
 
     pub fn create_receiver(
         // pub(crate) -> pub
         label: String,
-        publisher: Arc<moqt::Publisher<moqt::QUIC>>,
-        session: Session<moqt::QUIC>,
+        session: Arc<Session<T>>,
         track_alias: Arc<AtomicU64>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
@@ -105,7 +94,7 @@ impl Client {
                         moqt::SessionEvent::Publish(publish_handler) => {
                             tracing::info!("Received: {} Publish", label);
                             match publish_handler
-                                .ok(128, moqt::FilterType::LatestObject)
+                                .ok(128, moqt::FilterType::LargestObject)
                                 .await
                             {
                                 Ok(h) => h,
@@ -122,8 +111,13 @@ impl Client {
                                 .ok(1000000, moqt::ContentExists::False)
                                 .await;
                             let publication = subscribe_handler.into_publication(track_alias);
-                            Self::create_stream(label.clone(), &publisher, publication, &runner)
-                                .await;
+                            Self::create_stream(
+                                label.clone(),
+                                session.clone(),
+                                publication,
+                                &runner,
+                            )
+                            .await;
                         }
                         moqt::SessionEvent::ProtocolViolation() => {
                             tracing::info!("Received: {} ProtocolViolation", label);
@@ -136,7 +130,11 @@ impl Client {
 
     pub async fn publish_namespace(&self, track_namespace: String) -> anyhow::Result<()> {
         // pub(crate) -> pub
-        let result = self.publisher.publish_namespace(track_namespace).await;
+        let result = self
+            .session
+            .publisher()
+            .publish_namespace(track_namespace)
+            .await;
         if result.is_err() {
             tracing::info!("{}: publish namespace error", self.label);
             return Err(anyhow::anyhow!("Publish namespace error"));
@@ -149,7 +147,8 @@ impl Client {
     pub async fn subscribe_namespace(&self, track_namespace_prefix: String) -> anyhow::Result<()> {
         // pub(crate) -> pub
         let result = self
-            .subscriber
+            .session
+            .subscriber()
             .subscribe_namespace(track_namespace_prefix)
             .await;
         if result.is_err() {
@@ -166,7 +165,8 @@ impl Client {
         // pub(crate) -> pub
         let option = moqt::PublishOption::default();
         let pub_result = self
-            .publisher
+            .session
+            .publisher()
             .publish(track_namespace, track_name, option)
             .await;
         if let Ok(p) = pub_result {
@@ -225,48 +225,42 @@ impl Client {
 
     async fn create_stream(
         label: String,
-        publisher: &moqt::Publisher<moqt::QUIC>,
+        session: Arc<Session<T>>,
         publication: moqt::PublishedResource,
         runner: &StreamTaskRunner,
     ) {
         tracing::info!("{} :create stream", label);
-        let mut stream = publisher.create_stream(&publication).await.unwrap();
         let task = async move {
             let mut group_id = 0;
             let mut id = 0;
             tracing::info!("{} :create stream start", label);
-            let mut header =
-                stream.create_header(group_id, moqt::SubgroupId::None, 128, false, false);
-            loop {
-                let format_text = format!("hello from {}! id: {}", label, id);
-                let data = moqt::SubgroupObject::new_payload(format_text.into());
-                let extension_headers = moqt::ExtensionHeaders {
-                    prior_group_id_gap: vec![],
-                    prior_object_id_gap: vec![],
-                    immutable_extensions: vec![],
-                };
-                let obj = stream.create_object_field(&header, id, extension_headers, data);
-                match stream.send(header.clone(), obj).await {
-                    Ok(_) => {
-                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-                        id += 1;
-                        if id == 10 {
-                            id = 0;
-                            group_id += 1;
-                            header = stream.create_header(
-                                group_id,
-                                moqt::SubgroupId::None,
-                                128,
-                                false,
-                                false,
-                            );
+            let stream_factory = session.publisher().create_stream(&publication);
+            while let Ok(mut stream) = stream_factory.next().await {
+                tracing::info!("group_id={} :stream created", group_id);
+                let header =
+                    stream.create_header(group_id, moqt::SubgroupId::None, 128, false, false);
+                while id < 10 {
+                    let format_text = format!("hello from {}! id: {}", label, id);
+                    let data = moqt::SubgroupObject::new_payload(format_text.into());
+                    let extension_headers = moqt::ExtensionHeaders {
+                        prior_group_id_gap: vec![],
+                        prior_object_id_gap: vec![],
+                        immutable_extensions: vec![],
+                    };
+                    let obj = stream.create_object_field(&header, id, extension_headers, data);
+                    match stream.send(&header, obj).await {
+                        Ok(_) => {
+                            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                            id += 1;
+                        }
+                        Err(e) => {
+                            tracing::error!("failed to send: {}", e);
+                            break;
                         }
                     }
-                    Err(e) => {
-                        tracing::error!("failed to send: {}", e);
-                        break;
-                    }
                 }
+                group_id += 1;
+                id = 0;
             }
         };
         runner.add_task(Box::pin(task)).await;
@@ -275,7 +269,7 @@ impl Client {
     #[allow(dead_code)]
     async fn create_datagram(
         label: String,
-        publisher: &moqt::Publisher<moqt::QUIC>,
+        publisher: &moqt::Publisher<T>,
         publication: moqt::PublishedResource,
         runner: &StreamTaskRunner,
     ) {
@@ -311,20 +305,18 @@ impl Client {
 
     pub async fn active_subscribe(
         // pub(crate) -> pub
-        &self,
+        &mut self,
         label: String,
         track_namespace: String,
         track_name: String,
     ) {
-        let full_name = format!("{}/{}", track_namespace, track_name);
         let option = SubscribeOption {
             subscriber_priority: 128,
             group_order: moqt::GroupOrder::Ascending,
             forward: true,
-            filter_type: moqt::FilterType::LatestObject,
+            filter_type: moqt::FilterType::LargestObject,
         };
-        let subscriber = self.subscriber.clone();
-        tracing::info!("{} :subscribe {}", label, full_name);
+        let mut subscriber = self.session.subscriber();
         let subscription = match subscriber
             .subscribe(track_namespace, track_name, option)
             .await
@@ -335,42 +327,43 @@ impl Client {
                 return;
             }
         };
-        let task = async move {
-            let receiver = match subscriber.accept_data_receiver(&subscription).await {
-                Ok(receiver) => receiver,
-                Err(e) => {
-                    tracing::error!("Failed to accept stream or datagram: {}", e);
-                    return;
+        loop {
+            tokio::select! {
+                Ok(result) = subscriber.accept_data_receiver(&subscription) => {
+                    match result {
+                        moqt::DataReceiver::Stream(mut factory) => {
+                            let label = label.clone();
+                            self.joinset.spawn(async move {
+                                while let Ok(mut stream) = factory.next().await {
+                                    while let Ok(result) = stream.receive().await {
+                                        tracing::info!("{} :active subscribe stream: {:?}", label, result);
+                                    }
+                                }
+                            });
+                        }
+                        moqt::DataReceiver::Datagram(mut datagram) => {
+                            let label = label.clone();
+                            self.joinset.spawn(async move {
+                                while let Ok(result) = datagram.receive().await {
+                                    tracing::info!("{} :active subscribe datagram: {:?}", label, result);
+                                }
+                            });
+                        },
+                    }
                 }
-            };
-            match receiver {
-                moqt::DataReceiver::Stream(mut stream) => loop {
-                    let result = match stream.receive().await {
-                        Ok(r) => r,
-                        Err(e) => {
-                            tracing::error!("Failed to receive: {}", e);
-                            break;
-                        }
-                    };
-                    tracing::info!("{} :subscribe stream: {:?}", label, result);
-                },
-                moqt::DataReceiver::Datagram(mut datagram) => loop {
-                    let result = match datagram.receive().await {
-                        Ok(r) => r,
-                        Err(e) => {
-                            tracing::error!("Failed to receive: {}", e);
-                            break;
-                        }
-                    };
-                    tracing::info!("{} :subscribe datagram: {:?}", label, result);
-                },
+                Ok(()) = tokio::signal::ctrl_c() => {
+                    tracing::info!("{} :active subscribe received shutdown signal", label);
+                    break;
+                }
+                Some(_) = self.joinset.join_next() => {
+                    tracing::info!("{} :active subscribe task finished", label);
+                }
             }
-        };
-        self.runner.add_task(Box::pin(task)).await;
+        }
     }
 }
 
-impl Drop for Client {
+impl<T: TransportProtocol> Drop for Client<T> {
     fn drop(&mut self) {
         tracing::info!("Client dropped.");
         self.join_handle.abort();
