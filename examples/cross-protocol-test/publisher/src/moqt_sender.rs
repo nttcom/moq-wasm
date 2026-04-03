@@ -58,7 +58,7 @@ pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDa
                         continue;
                     };
                     let publication = handler.into_publication(0);
-                    let stream = match pub_clone.create_stream(&publication).await {
+                    let stream = match pub_clone.create_stream(&publication).next().await {
                         Ok(s) => s,
                         Err(e) => {
                             tracing::error!("failed to create stream: {}", e);

@@ -237,6 +237,7 @@ impl<T: TransportProtocol> Client<T> {
             let mut stream = session
                 .publisher()
                 .create_stream(&publication)
+                .next()
                 .await
                 .unwrap();
             let mut header =
@@ -260,6 +261,7 @@ impl<T: TransportProtocol> Client<T> {
                             stream = session
                                 .publisher()
                                 .create_stream(&publication)
+                                .next()
                                 .await
                                 .unwrap();
                             header = stream.create_header(
@@ -346,11 +348,13 @@ impl<T: TransportProtocol> Client<T> {
             tokio::select! {
                 Ok(result) = subscriber.accept_data_receiver(&subscription) => {
                     match result {
-                        moqt::DataReceiver::Stream(mut stream) => {
+                        moqt::DataReceiver::Stream(mut factory) => {
                             let label = label.clone();
                             self.joinset.spawn(async move {
-                                while let Ok(result) = stream.receive().await {
-                                    tracing::info!("{} :active subscribe stream: {:?}", label, result);
+                                if let Ok(mut stream) = factory.next().await {
+                                    while let Ok(result) = stream.receive().await {
+                                        tracing::info!("{} :active subscribe stream: {:?}", label, result);
+                                    }
                                 }
                             });
                         }
