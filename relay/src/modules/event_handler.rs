@@ -37,10 +37,6 @@ impl EventHandler {
         }
     }
 
-    pub(crate) fn is_running(&self) -> bool {
-        !self.session_event_watcher.is_finished()
-    }
-
     fn create_pub_sub_event_watcher(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTMessageReceived>,

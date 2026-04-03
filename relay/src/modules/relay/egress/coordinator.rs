@@ -76,10 +76,6 @@ impl EgressCoordinator {
         self.command_sender.clone()
     }
 
-    pub(crate) fn is_running(&self) -> bool {
-        !self.command_runner.is_finished()
-    }
-
     async fn spawn_runner(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
