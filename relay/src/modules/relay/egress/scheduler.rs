@@ -7,15 +7,15 @@ use crate::modules::{
     relay::{cache::track_cache::TrackCache, notifications::latest_info::LatestInfo},
 };
 
-/// GroupSender へ送るグループ送信指示
+/// Instruction sent to `GroupSender` to transmit a group.
 pub(crate) struct GroupSendTask {
     pub(crate) group_id: u64,
     pub(crate) start_offset: u64,
     pub(crate) is_stream: bool,
 }
 
-/// LatestInfo を監視して「どのグループをいつ送るか」を決定し、
-/// GroupSender へ GroupSendTask を送信する。
+/// Watches `LatestInfo` events and decides which groups to schedule and when,
+/// forwarding `GroupSendTask` entries to `GroupSender`.
 pub(crate) struct EgressScheduler {
     cache: Arc<TrackCache>,
     latest_info_sender: broadcast::Sender<LatestInfo>,
@@ -44,7 +44,7 @@ impl EgressScheduler {
     pub(crate) async fn run(self) {
         let (start_group_id, start_offset) =
             Self::resolve_start(&self.cache, &self.filter_type).await;
-        // eager schedule より前に subscribe してイベントを取りこぼさないようにする
+        // Subscribe before the initial schedule so no events are missed.
         let mut receiver = self.latest_info_sender.subscribe();
 
         let is_absolute = matches!(
@@ -54,7 +54,7 @@ impl EgressScheduler {
         let mut next_absolute_group: Option<u64> = None;
 
         if is_absolute {
-            // 指定 group_id が届くまで待機するだけ。送信は on_group_opened で行う。
+            // Just record the target group_id and wait; sending is handled in on_group_opened.
             next_absolute_group = Some(start_group_id);
         }
 
@@ -93,8 +93,8 @@ impl EgressScheduler {
         }
     }
 
-    /// グループ到着時の統一ハンドラ（StreamOpened / DatagramOpened 共通）
-    /// 戻り値 = 更新後の next_absolute_group
+    /// Unified handler for group-arrival events (StreamOpened / DatagramOpened).
+    /// Returns the updated `next_absolute_group`.
     async fn on_group_opened(
         &self,
         group_id: u64,
@@ -105,8 +105,8 @@ impl EgressScheduler {
         start_offset: u64,
     ) -> Option<u64> {
         if is_absolute {
-            // Descending: group_id >= next ならジャンプを許容して送信
-            // Ascending:  group_id == next のみ送信（ギャップを待つ）
+            // Descending: allow jumping ahead — send if group_id >= next.
+            // Ascending:  send only when group_id == next (wait for gap to be filled).
             let should_send = match self.group_order {
                 GroupOrder::Descending => group_id >= next_absolute_group.unwrap_or(0),
                 _ => next_absolute_group == Some(group_id),
@@ -142,12 +142,12 @@ impl EgressScheduler {
         }
     }
 
-    /// from_group_id から連続するキャッシュ内グループをスケジュールする
+    /// Schedules groups starting from `from_group_id`.
     ///
-    /// - Ascending: キャッシュ内の後続グループを順番に全て送信
-    /// - Descending: from_group_id のみ送信（最新追従のためキャッシュスキャンなし）
-    /// - from_group_id の送信に失敗した場合は None を返す
-    /// - 戻り値 Some(n) = 次に待つべき group_id
+    /// - Ascending: sends all consecutive cached groups in order.
+    /// - Descending: sends only `from_group_id` (no cache scan; always follows latest).
+    /// - Returns `None` if sending `from_group_id` fails.
+    /// - Returns `Some(n)` where `n` is the next group_id to wait for.
     async fn schedule_groups_from(
         &self,
         from_group_id: u64,

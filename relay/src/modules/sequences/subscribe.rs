@@ -81,7 +81,6 @@ impl Subscribe {
         let expires = subscription.expires();
         let content_exists = subscription.content_exists();
 
-        // ingest: upstream から受信してキャッシュに書き込む
         if ingest_sender
             .send(IngestStartRequest {
                 publisher_session_id: pub_session_id,
@@ -94,7 +93,6 @@ impl Subscribe {
             return;
         }
 
-        // subscriber に SUBSCRIBE_OK を返す
         let Ok(subscriber_track_alias) = handler.ok(expires, content_exists).await else {
             tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
             // TODO: send_unsubscribe
@@ -102,7 +100,6 @@ impl Subscribe {
             return;
         };
 
-        // egress: キャッシュから subscriber へ転送
         if egress_sender
             .send(EgressCommand::StartReader(EgressStartRequest {
                 subscriber_session_id: session_id,

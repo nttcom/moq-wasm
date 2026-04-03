@@ -74,7 +74,6 @@ impl IngestCoordinator {
                                         {
                                             return;
                                         }
-                                        // loop: 次のStreamを待つ
                                     }
                                     DataReceiver::Datagram(datagram_receiver) => {
                                         let _ = datagram_tx

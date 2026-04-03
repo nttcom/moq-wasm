@@ -62,7 +62,7 @@ impl DatagramIngestTask {
                 Ok(object) => {
                     let group_id = object.group_id().or(current_group_id).unwrap_or(0);
                     if current_group_id != Some(group_id) {
-                        // 前グループをクローズして get_or_wait が終端を検知できるようにする
+                        // Close the previous group so get_or_wait can detect the end.
                         if let Some(old_group) = current_group_id {
                             let cache = cache_store.get_or_create(track_key);
                             cache.close_group(old_group).await;
@@ -79,7 +79,7 @@ impl DatagramIngestTask {
                         .send(LatestInfo::LatestObject);
                 }
                 Err(_) => {
-                    // 最後のグループを確実にクローズする
+                    // Ensure the last group is closed before exiting.
                     if let Some(group_id) = current_group_id {
                         let cache = cache_store.get_or_create(track_key);
                         cache.close_group(group_id).await;
