@@ -1,0 +1,17 @@
+{
+  "name": "browser-subscriber",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "moqtail": "^0.7.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.8",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

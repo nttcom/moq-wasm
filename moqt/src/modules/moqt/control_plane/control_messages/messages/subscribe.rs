@@ -145,7 +145,7 @@ mod tests {
             let subscriber_priority = 0;
             let group_order = GroupOrder::Ascending;
             let forward = false;
-            let filter_type = FilterType::LatestGroup;
+            let filter_type = FilterType::NextGroupStart;
 
             let subscribe = Subscribe {
                 request_id,
@@ -311,7 +311,7 @@ mod tests {
             let subscriber_priority = 0;
             let group_order = GroupOrder::Ascending;
             let forward = true;
-            let filter_type = FilterType::LatestGroup;
+            let filter_type = FilterType::NextGroupStart;
             let expected_subscribe = Subscribe {
                 request_id,
                 track_namespace,

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use moqt::{Endpoint, QUIC};
+use moqt::{Endpoint, TransportProtocol};
 
 use crate::modules::{
     enums::MOQTMessageReceived, session_repository::SessionRepository, types::generate_session_id,
@@ -11,27 +11,20 @@ pub struct SessionHandler {
 }
 
 impl SessionHandler {
-    pub fn run(
-        config: moqt::ServerConfig, // ここを変更
+    pub(crate) fn run<T: TransportProtocol>(
+        config: moqt::ServerConfig,
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
     ) -> Self {
-        // let config = moqt::ServerConfig { // このブロックは削除
-        //     port: 4434,
-        //     cert_path,
-        //     key_path,
-        //     keep_alive_interval_sec: 15,
-        // };
-        let endpoint =
-            Endpoint::<QUIC>::create_server(&config) // 修正
-                .inspect_err(|e| tracing::error!("failed to create server: {}", e))
-                .unwrap();
-        let join_handle = Self::create_joinhandle(endpoint, repo, session_event_sender);
+        let endpoint = Endpoint::<T>::create_server(&config)
+            .inspect_err(|e| tracing::error!("failed to create server: {}", e))
+            .unwrap();
+        let join_handle = Self::create_joinhandle::<T>(endpoint, repo, session_event_sender);
         Self { join_handle }
     }
 
-    fn create_joinhandle(
-        mut endpoint: Endpoint<QUIC>,
+    fn create_joinhandle<T: TransportProtocol>(
+        mut endpoint: Endpoint<T>,
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
     ) -> tokio::task::JoinHandle<()> {
