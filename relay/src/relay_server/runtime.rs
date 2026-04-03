@@ -47,19 +47,4 @@ impl RelayRuntime {
         )
     }
 
-    pub(crate) fn is_ingest_running(&self) -> bool {
-        self.ingest.is_running()
-    }
-
-    pub(crate) fn ingest_track_count(&self) -> usize {
-        self.ingest.track_count()
-    }
-
-    pub(crate) fn is_egress_running(&self) -> bool {
-        self.egress.is_running()
-    }
-
-    pub(crate) fn is_manager_running(&self) -> bool {
-        self.manager.is_running()
-    }
 }

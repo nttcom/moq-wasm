@@ -46,16 +46,3 @@ impl RelayServer {
         SessionHandler::run::<T>(server_config, self.repo.clone(), self.sender.clone())
     }
 }
-
-impl Drop for RelayServer {
-    fn drop(&mut self) {
-        tracing::trace!(
-            manager_running = self.runtime.is_manager_running(),
-            ingest_running = self.runtime.is_ingest_running(),
-            ingest_tracks = self.runtime.ingest_track_count(),
-            egress_running = self.runtime.is_egress_running(),
-            cache_tracks = self.store.cache_store.len(),
-            "relay runtime is kept alive until server drop"
-        );
-    }
-}

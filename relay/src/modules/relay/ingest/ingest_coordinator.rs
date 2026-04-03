@@ -113,14 +113,6 @@ impl IngestCoordinator {
     pub(crate) fn sender(&self) -> mpsc::Sender<IngestStartRequest> {
         self.command_sender.clone()
     }
-
-    pub(crate) fn is_running(&self) -> bool {
-        !self.command_runner.is_finished()
-    }
-
-    pub(crate) fn track_count(&self) -> usize {
-        0
-    }
 }
 
 impl Drop for IngestCoordinator {
