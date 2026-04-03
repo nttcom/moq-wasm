@@ -50,7 +50,7 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
         subscriber_priority: 128,
         group_order: GroupOrder::Ascending,
         forward: true,
-        filter_type: FilterType::LatestGroup,
+        filter_type: FilterType::NextGroupStart,
     };
 
     info!(namespace, track_name, "subscribing");

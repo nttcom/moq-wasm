@@ -192,11 +192,11 @@ impl EgressScheduler {
 
     async fn resolve_start(cache: &Arc<TrackCache>, filter_type: &FilterType) -> (u64, u64) {
         match filter_type {
-            FilterType::LatestGroup => {
+            FilterType::NextGroupStart => {
                 let group_id = cache.latest_group_id().await.unwrap_or(0);
                 (group_id, 0)
             }
-            FilterType::LatestObject => {
+            FilterType::LargestObject => {
                 let loc = cache.latest_location().await;
                 loc.map(|l| (l.group_id, l.index)).unwrap_or((0, 0))
             }

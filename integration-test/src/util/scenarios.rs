@@ -175,7 +175,7 @@ pub async fn serve_publisher_side(
                 let _ = handler.ok().await;
             }
             moqt::SessionEvent::Publish(handler) => {
-                let _ = handler.ok(128, moqt::FilterType::LatestObject).await;
+                let _ = handler.ok(128, moqt::FilterType::LargestObject).await;
             }
             moqt::SessionEvent::ProtocolViolation() => {
                 bail!("publisher-side session protocol violation")
@@ -189,7 +189,7 @@ fn subscribe_option() -> moqt::SubscribeOption {
         subscriber_priority: 128,
         group_order: moqt::GroupOrder::Ascending,
         forward: true,
-        filter_type: moqt::FilterType::LatestObject,
+        filter_type: moqt::FilterType::LargestObject,
     }
 }
 

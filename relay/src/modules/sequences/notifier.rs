@@ -88,7 +88,7 @@ impl Notifier {
                 subscriber_priority: 128,
                 group_order: GroupOrder::Ascending,
                 forward: true,
-                filter_type: FilterType::LatestObject,
+                filter_type: FilterType::LargestObject,
             };
             subscriber
                 .send_subscribe(track_namespace, track_name, option)

@@ -1,10 +1,7 @@
 use std::{
     net::ToSocketAddrs,
     str::FromStr,
-    sync::{
-        Arc,
-        atomic::AtomicU64,
-    },
+    sync::{Arc, atomic::AtomicU64},
 };
 
 use crate::stream_runner::StreamTaskRunner;
@@ -92,9 +89,9 @@ impl<T: TransportProtocol> Client<T> {
                                 && sender
                                     .send(publish_namespace_handler.track_namespace.clone())
                                     .is_err()
-                                {
-                                    tracing::error!("Failed to send notification");
-                                }
+                            {
+                                tracing::error!("Failed to send notification");
+                            }
                             let _ = publish_namespace_handler.ok().await;
                         }
                         moqt::SessionEvent::SubscribeNameSpace(subscribe_namespace_handler) => {
@@ -108,7 +105,7 @@ impl<T: TransportProtocol> Client<T> {
                         moqt::SessionEvent::Publish(publish_handler) => {
                             tracing::info!("Received: {} Publish", label);
                             match publish_handler
-                                .ok(128, moqt::FilterType::LatestObject)
+                                .ok(128, moqt::FilterType::LargestObject)
                                 .await
                             {
                                 Ok(h) => h,
@@ -230,7 +227,10 @@ impl<T: TransportProtocol> Client<T> {
         track_name: String,
     ) {
         let _ = (&self.runner, track_namespace, track_name);
-        tracing::warn!("{} :active_subscribe is not used in current scenarios", label);
+        tracing::warn!(
+            "{} :active_subscribe is not used in current scenarios",
+            label
+        );
     }
 }
 
