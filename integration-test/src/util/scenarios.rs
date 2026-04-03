@@ -198,19 +198,17 @@ pub async fn assert_receive_stream_objects(
     track_name: &str,
     expected_objects: usize,
 ) -> Result<()> {
-    let mut subscription = subscriber
+    let subscription = subscriber
         .subscribe(
             TEST_TRACK_NAMESPACE.to_string(),
             track_name.to_string(),
             subscribe_option(),
         )
         .await?;
-    let receiver = tokio::time::timeout(
-        TEST_TIMEOUT,
-        subscriber.accept_data_receiver(&mut subscription),
-    )
-    .await
-    .context("timed out waiting stream data receiver")??;
+    let receiver =
+        tokio::time::timeout(TEST_TIMEOUT, subscriber.accept_data_receiver(&subscription))
+            .await
+            .context("timed out waiting stream data receiver")??;
 
     match receiver {
         moqt::DataReceiver::Stream(mut stream) => {
@@ -237,19 +235,17 @@ pub async fn assert_receive_datagram_objects(
     track_name: &str,
     expected_objects: usize,
 ) -> Result<()> {
-    let mut subscription = subscriber
+    let subscription = subscriber
         .subscribe(
             TEST_TRACK_NAMESPACE.to_string(),
             track_name.to_string(),
             subscribe_option(),
         )
         .await?;
-    let receiver = tokio::time::timeout(
-        TEST_TIMEOUT,
-        subscriber.accept_data_receiver(&mut subscription),
-    )
-    .await
-    .context("timed out waiting datagram data receiver")??;
+    let receiver =
+        tokio::time::timeout(TEST_TIMEOUT, subscriber.accept_data_receiver(&subscription))
+            .await
+            .context("timed out waiting datagram data receiver")??;
 
     match receiver {
         moqt::DataReceiver::Datagram(mut datagram) => {
@@ -271,7 +267,7 @@ pub async fn assert_receive_reopened_streams(
     track_name: &str,
     expected_stream_count: usize,
 ) -> Result<()> {
-    let mut subscription = subscriber
+    let subscription = subscriber
         .subscribe(
             TEST_TRACK_NAMESPACE.to_string(),
             track_name.to_string(),
@@ -280,12 +276,10 @@ pub async fn assert_receive_reopened_streams(
         .await?;
 
     for _ in 0..expected_stream_count {
-        let receiver = tokio::time::timeout(
-            TEST_TIMEOUT,
-            subscriber.accept_data_receiver(&mut subscription),
-        )
-        .await
-        .context("timed out waiting reopened stream receiver")??;
+        let receiver =
+            tokio::time::timeout(TEST_TIMEOUT, subscriber.accept_data_receiver(&subscription))
+                .await
+                .context("timed out waiting reopened stream receiver")??;
 
         match receiver {
             moqt::DataReceiver::Stream(mut stream) => {

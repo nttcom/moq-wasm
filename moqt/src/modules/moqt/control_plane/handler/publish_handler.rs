@@ -77,20 +77,24 @@ impl<T: TransportProtocol> PublishHandler<T> {
             .await
     }
 
-    pub async fn into_subscription(&self, expires: u64) -> Subscription<T> {
+    pub async fn into_subscription(&self, expires: u64) -> Subscription {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
         self.session_context
             .notification_map
             .write()
             .await
             .insert(self.track_alias, sender);
+        self.session_context
+            .receiver_map
+            .lock()
+            .await
+            .insert(self.track_alias, receiver);
         Subscription {
             track_alias: self.track_alias,
             expires,
             group_order: self.group_order,
             content_exists: self.content_exists,
             delivery_timeout: self.delivery_timeout,
-            receiver: Some(receiver),
         }
     }
 }

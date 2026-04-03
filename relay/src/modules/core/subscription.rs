@@ -1,28 +1,29 @@
-use std::any::Any;
-
 use crate::modules::enums::ContentExists;
 
-pub trait Subscription: 'static + Send + Sync {
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn track_alias(&self) -> u64;
-    fn expires(&self) -> u64;
-    fn content_exists(&self) -> ContentExists;
+pub struct Subscription {
+    inner: moqt::Subscription,
 }
 
-impl<T: moqt::TransportProtocol> Subscription for moqt::Subscription<T> {
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
+impl Subscription {
+    pub(crate) fn as_moqt(&self) -> &moqt::Subscription {
+        &self.inner
     }
 
-    fn track_alias(&self) -> u64 {
-        self.track_alias
+    pub(crate) fn track_alias(&self) -> u64 {
+        self.inner.track_alias
     }
 
-    fn expires(&self) -> u64 {
-        self.expires
+    pub(crate) fn expires(&self) -> u64 {
+        self.inner.expires
     }
 
-    fn content_exists(&self) -> ContentExists {
-        ContentExists::from(self.content_exists)
+    pub(crate) fn content_exists(&self) -> ContentExists {
+        ContentExists::from(self.inner.content_exists)
+    }
+}
+
+impl From<moqt::Subscription> for Subscription {
+    fn from(inner: moqt::Subscription) -> Self {
+        Self { inner }
     }
 }
