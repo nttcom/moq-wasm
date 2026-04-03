@@ -6,9 +6,7 @@ use crate::modules::{
     core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
     relay::{
         cache::store::TrackCacheStore,
-        notifications::{
-            delivery_type_map::DeliveryTypeMap, latest_info::LatestInfo, sender_map::SenderMap,
-        },
+        notifications::{latest_info::LatestInfo, sender_map::SenderMap},
     },
     types::TrackKey,
 };
@@ -27,7 +25,6 @@ impl StreamIngestTask {
         mut receiver: mpsc::Receiver<StreamReceiveStart>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
-        delivery_type_map: Arc<DeliveryTypeMap>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
@@ -39,7 +36,6 @@ impl StreamIngestTask {
                             cmd.receiver,
                             cache_store.clone(),
                             sender_map.clone(),
-                            delivery_type_map.clone(),
                         ));
                     }
                     Some(result) = joinset.join_next() => {
@@ -59,14 +55,12 @@ impl StreamIngestTask {
         mut receiver: Box<dyn StreamReceiver>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
-        delivery_type_map: Arc<DeliveryTypeMap>,
     ) {
         let mut group_id = 0u64;
         loop {
             match receiver.receive_object().await {
                 Ok(DataObject::SubgroupHeader(header)) => {
                     group_id = header.group_id;
-                    delivery_type_map.set_stream(track_key);
                     let cache = cache_store.get_or_create(track_key);
                     cache.append_object(group_id, DataObject::SubgroupHeader(header)).await;
                     let _ = sender_map

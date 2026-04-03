@@ -5,9 +5,8 @@ use tokio::{sync::mpsc, task::JoinSet};
 use crate::modules::{
     core::published_resource::PublishedResource,
     relay::{
-        cache::store::TrackCacheStore,
-        egress::runner::EgressRunner,
-        notifications::{delivery_type_map::DeliveryTypeMap, sender_map::SenderMap},
+        cache::store::TrackCacheStore, egress::runner::EgressRunner,
+        notifications::sender_map::SenderMap,
     },
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},
@@ -33,7 +32,6 @@ impl EgressCoordinator {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
-        delivery_type_map: Arc<DeliveryTypeMap>,
     ) -> Self {
         let (command_sender, mut command_receiver) = mpsc::channel::<EgressCommand>(512);
 
@@ -49,7 +47,6 @@ impl EgressCoordinator {
                                     session_repo.clone(),
                                     cache_store.clone(),
                                     sender_map.clone(),
-                                    delivery_type_map.clone(),
                                     request,
                                     &mut joinset,
                                 )
@@ -80,7 +77,6 @@ impl EgressCoordinator {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<SenderMap>,
-        delivery_type_map: Arc<DeliveryTypeMap>,
         request: EgressStartRequest,
         joinset: &mut JoinSet<()>,
     ) {
