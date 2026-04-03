@@ -35,10 +35,12 @@ impl EgressRunner {
         let (sender, receiver) = mpsc::channel(64);
 
         let filter_type = self.published_resource.filter_type();
+        let group_order = self.published_resource.group_order();
         let scheduler = EgressScheduler::new(
             self.cache.clone(),
             self.latest_info_sender,
             filter_type,
+            group_order,
             sender,
         );
         let group_sender = GroupSender::new(
