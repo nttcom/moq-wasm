@@ -4,14 +4,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::modules::{
     enums::FilterType,
-    relay::{
-        cache::track_cache::TrackCache,
-        notifications::{
-            delivery_type_map::{DeliveryType, DeliveryTypeMap},
-            latest_info::LatestInfo,
-        },
-    },
-    types::TrackKey,
+    relay::{cache::track_cache::TrackCache, notifications::latest_info::LatestInfo},
 };
 
 /// GroupSender へ送るグループ送信指示
@@ -26,26 +19,20 @@ pub(crate) struct GroupSendTask {
 pub(crate) struct EgressScheduler {
     cache: Arc<TrackCache>,
     latest_info_sender: broadcast::Sender<LatestInfo>,
-    delivery_type_map: Arc<DeliveryTypeMap>,
-    track_key: TrackKey,
     filter_type: FilterType,
     sender: mpsc::Sender<GroupSendTask>,
 }
 
 impl EgressScheduler {
     pub(crate) fn new(
-        track_key: TrackKey,
         cache: Arc<TrackCache>,
         latest_info_sender: broadcast::Sender<LatestInfo>,
-        delivery_type_map: Arc<DeliveryTypeMap>,
         filter_type: FilterType,
         sender: mpsc::Sender<GroupSendTask>,
     ) -> Self {
         Self {
-            track_key,
             cache,
             latest_info_sender,
-            delivery_type_map,
             filter_type,
             sender,
         }
@@ -64,22 +51,8 @@ impl EgressScheduler {
         let mut next_absolute_group: Option<u64> = None;
 
         if is_absolute {
-            let Some(delivery_type) = self.delivery_type_map.delivery_type(self.track_key) else {
-                tracing::error!(
-                    track_key = self.track_key,
-                    "delivery type unknown for absolute egress"
-                );
-                return;
-            };
-            let is_stream = matches!(delivery_type, DeliveryType::Stream);
-            let Some(next) = self
-                .schedule_groups_from(start_group_id, start_offset, is_stream)
-                .await
-            else {
-                tracing::error!("failed to schedule absolute egress start group");
-                return;
-            };
-            next_absolute_group = Some(next);
+            // 指定 group_id が届くまで待機するだけ。送信は on_group_opened で行う。
+            next_absolute_group = Some(start_group_id);
         }
 
         loop {
@@ -132,8 +105,13 @@ impl EgressScheduler {
             if next_absolute_group != Some(group_id) {
                 return next_absolute_group;
             }
+            let offset = if group_id == start_group_id {
+                start_offset
+            } else {
+                0
+            };
             let next = self
-                .schedule_groups_from(group_id, 0, is_stream)
+                .schedule_groups_from(group_id, offset, is_stream)
                 .await
                 .unwrap_or(group_id + 1);
             Some(next)
