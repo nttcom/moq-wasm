@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::bail;
 
 use crate::{
-    DatagramReceiver, StreamDataReceiver, SubscribeOption, Subscription,
+    DatagramReceiver, SubscribeOption, Subscription,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -13,13 +13,17 @@ use crate::{
             enums::ResponseMessage,
             threads::enums::StreamWithObject,
         },
+        data_plane::streams::stream::{
+            stream_data_receiver::StreamDataReceiver,
+            stream_data_receiver_factory::StreamDataReceiverFactory,
+        },
         domains::session_context::SessionContext,
         protocol::TransportProtocol,
     },
 };
 
 pub enum DataReceiver<T: TransportProtocol> {
-    Stream(StreamDataReceiver<T>),
+    Stream(StreamDataReceiverFactory<T>),
     Datagram(DatagramReceiver<T>),
 }
 
@@ -149,8 +153,19 @@ impl<T: TransportProtocol> Subscriber<T> {
             .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
         match stream_with_object {
             StreamWithObject::StreamHeader { stream, header } => {
-                let data_receiver = StreamDataReceiver::new(stream, header).await?;
-                Ok(DataReceiver::Stream(data_receiver))
+                let first = StreamDataReceiver::new(stream, header).await?;
+                let rest = self
+                    .session
+                    .receiver_map
+                    .lock()
+                    .await
+                    .remove(&track_alias)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("receiver already removed for track_alias: {}", track_alias)
+                    })?;
+                Ok(DataReceiver::Stream(StreamDataReceiverFactory::new(
+                    first, rest,
+                )))
             }
             StreamWithObject::Datagram(object) => {
                 // Datagram は1回限りなので map から除去する

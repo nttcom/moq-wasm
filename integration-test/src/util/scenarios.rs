@@ -104,7 +104,7 @@ async fn send_stream_objects(
     group_id: u64,
     object_count: u64,
 ) -> Result<()> {
-    let mut stream = publisher.create_stream(publication).await?;
+    let mut stream = publisher.create_stream(publication).next().await?;
     let header = stream.create_header(group_id, moqt::SubgroupId::None, 128, false, false);
     for object_id in 0..object_count {
         let payload =
@@ -211,7 +211,11 @@ pub async fn assert_receive_stream_objects(
             .context("timed out waiting stream data receiver")??;
 
     match receiver {
-        moqt::DataReceiver::Stream(mut stream) => {
+        moqt::DataReceiver::Stream(mut factory) => {
+            let mut stream = factory
+                .next()
+                .await
+                .context("failed to get initial stream")?;
             let mut object_count = 0usize;
             while object_count < expected_objects {
                 let subgroup = tokio::time::timeout(TEST_TIMEOUT, stream.receive())
@@ -275,14 +279,15 @@ pub async fn assert_receive_reopened_streams(
         )
         .await?;
 
-    for _ in 0..expected_stream_count {
-        let receiver =
-            tokio::time::timeout(TEST_TIMEOUT, subscriber.accept_data_receiver(&subscription))
-                .await
-                .context("timed out waiting reopened stream receiver")??;
+    let receiver =
+        tokio::time::timeout(TEST_TIMEOUT, subscriber.accept_data_receiver(&subscription))
+            .await
+            .context("timed out waiting reopened stream receiver")??;
 
-        match receiver {
-            moqt::DataReceiver::Stream(mut stream) => {
+    match receiver {
+        moqt::DataReceiver::Stream(mut factory) => {
+            for _ in 0..expected_stream_count {
+                let mut stream = factory.next().await.context("failed to get stream")?;
                 let first = tokio::time::timeout(TEST_TIMEOUT, stream.receive())
                     .await
                     .context("timed out waiting stream header")??;
@@ -307,10 +312,10 @@ pub async fn assert_receive_reopened_streams(
                     }
                 }
             }
-            moqt::DataReceiver::Datagram(_) => {
-                bail!("expected stream receiver but got datagram receiver")
-            }
+            Ok(())
+        }
+        moqt::DataReceiver::Datagram(_) => {
+            bail!("expected stream receiver but got datagram receiver")
         }
     }
-    Ok(())
 }

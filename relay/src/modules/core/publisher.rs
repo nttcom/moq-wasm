@@ -42,7 +42,10 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         published_resource: &PublishedResource,
         subscriber_track_alias: u64,
     ) -> anyhow::Result<Box<dyn DataSender>> {
-        let sender = self.create_stream(published_resource.as_moqt()).await?;
+        let sender = self
+            .create_stream(published_resource.as_moqt())
+            .next()
+            .await?;
         let sender = StreamSender::new(sender, subscriber_track_alias);
         Ok(Box::new(sender))
     }

@@ -1,19 +1,11 @@
-use std::sync::Arc;
-
 use crate::{
     TransportProtocol,
-    modules::{
-        moqt::{
-            data_plane::{
-                object::{
-                    extension_headers::ExtensionHeaders,
-                    subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
-                },
-                streams::stream::stream_sender::StreamSender,
-            },
-            domains::session_context::SessionContext,
+    modules::moqt::data_plane::{
+        object::{
+            extension_headers::ExtensionHeaders,
+            subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
         },
-        transport::transport_connection::TransportConnection,
+        streams::stream::stream_sender::StreamSender,
     },
 };
 
@@ -24,17 +16,13 @@ pub struct StreamDataSender<T: TransportProtocol> {
 }
 
 impl<T: TransportProtocol> StreamDataSender<T> {
-    pub(crate) async fn new(
-        track_alias: u64,
-        session_context: Arc<SessionContext<T>>,
-    ) -> anyhow::Result<Self> {
-        let stream = session_context.transport_connection.open_uni().await?;
-        let stream_sender = StreamSender::new(stream);
-        Ok(Self {
+    pub(crate) fn new(track_alias: u64, send_stream: T::SendStream) -> Self {
+        let stream_sender = StreamSender::new(send_stream);
+        Self {
             stream_sender,
             track_alias,
             subgroup_header: None,
-        })
+        }
     }
 
     pub fn create_header(
@@ -75,11 +63,24 @@ impl<T: TransportProtocol> StreamDataSender<T> {
         header: &SubgroupHeader,
         data: SubgroupObjectField,
     ) -> anyhow::Result<()> {
+        if header.track_alias != self.track_alias {
+            anyhow::bail!(
+                "track_alias mismatch: expected {}, got {}",
+                self.track_alias,
+                header.track_alias
+            );
+        }
         if self.subgroup_header.is_none() {
             tracing::debug!("Sending new subgroup header: {:?}", header);
             let encoded_header = header.encode();
             self.stream_sender.send(&encoded_header).await?;
             self.subgroup_header = Some(header.clone());
+        } else if header.group_id != self.subgroup_header.as_ref().unwrap().group_id {
+            anyhow::bail!(
+                "group_id mismatch: expected {}, got {}",
+                self.subgroup_header.as_ref().unwrap().group_id,
+                header.group_id
+            );
         }
         tracing::debug!("Sending subgroup object");
         let bytes = data.encode();
