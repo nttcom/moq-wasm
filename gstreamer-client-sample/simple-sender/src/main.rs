@@ -9,7 +9,7 @@ mod moqt_client;
 
 // `use_datagram` フラグが **指定されていない** 時（＝デフォルト）
 #[cfg(not(feature = "use_datagram"))]
-type StreamType = moqt::StreamDataSender<moqt::QUIC>;
+type StreamType = moqt::StreamDataSenderFactory<moqt::QUIC>;
 
 // `use_datagram` フラグが **指定されている** 時
 #[cfg(feature = "use_datagram")]
@@ -25,8 +25,7 @@ fn main() {
     let cert_path = "/Users/gazzy/Project/moq-wasm/keys/cert.pem";
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
-        let (stream_sender, mut stream_receiver) =
-            tokio::sync::mpsc::channel::<StreamType>(100);
+        let (stream_sender, mut stream_receiver) = tokio::sync::mpsc::channel::<StreamType>(100);
         let (data_sender, data_receiver) =
             tokio::sync::mpsc::channel::<gstreamer_sender::SendData>(100);
 

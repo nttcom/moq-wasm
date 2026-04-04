@@ -10,7 +10,7 @@ use crate::media_send_thread::MediaSendThread;
 use crate::{audio_sender::AudioSender, video_sender::VideoSender};
 
 #[cfg(not(feature = "use_datagram"))]
-type StreamType = moqt::StreamDataSender<moqt::QUIC>;
+type StreamType = moqt::StreamDataSenderFactory<moqt::QUIC>;
 
 #[cfg(feature = "use_datagram")]
 type StreamType = moqt::DatagramSender<moqt::QUIC>;

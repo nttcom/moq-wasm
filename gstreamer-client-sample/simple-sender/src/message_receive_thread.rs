@@ -35,10 +35,10 @@ impl MessageReceiveThread {
                     moqt::SessionEvent::Publish(publish_handler) => {
                         tracing::info!("Received! Publish");
                         match publish_handler
-                            .ok(128, moqt::FilterType::LatestObject)
+                            .ok(128, moqt::FilterType::LargestObject)
                             .await
                         {
-                            Ok(h) => h,
+                            Ok(()) => {}
                             Err(_) => {
                                 tracing::error!("failed to send");
                                 return;
@@ -47,10 +47,17 @@ impl MessageReceiveThread {
                     }
                     moqt::SessionEvent::Subscribe(subscribe_handler) => {
                         tracing::info!("Received! Subscribe");
-                        let _ = subscribe_handler
+                        let track_alias = match subscribe_handler
                             .ok(1000000, moqt::ContentExists::False)
-                            .await;
-                        let published_resource = subscribe_handler.into_publication(0);
+                            .await
+                        {
+                            Ok(alias) => alias,
+                            Err(e) => {
+                                tracing::error!("failed to send subscribe ok: {}", e);
+                                return;
+                            }
+                        };
+                        let published_resource = subscribe_handler.into_publication(track_alias);
                         let stream = Self::stream(session.clone(), &published_resource)
                             .await
                             .expect("failed to create stream");
@@ -70,7 +77,7 @@ impl MessageReceiveThread {
     ) -> anyhow::Result<StreamType> {
         #[cfg(not(feature = "use_datagram"))]
         {
-            session.publisher().create_stream(published_resource).await
+            Ok(session.publisher().create_stream(published_resource))
         }
         #[cfg(feature = "use_datagram")]
         {
