@@ -40,10 +40,10 @@ impl MessageReceiveThread {
                     moqt::SessionEvent::Publish(publish_handler) => {
                         tracing::info!("Received! Publish");
                         match publish_handler
-                            .ok(128, moqt::FilterType::LatestObject)
+                            .ok(128, moqt::FilterType::LargestObject)
                             .await
                         {
-                            Ok(h) => h,
+                            Ok(()) => {}
                             Err(_) => {
                                 tracing::error!("failed to send");
                                 return;
@@ -85,7 +85,7 @@ impl MessageReceiveThread {
     ) -> anyhow::Result<StreamType> {
         #[cfg(not(feature = "use_datagram"))]
         {
-            session.publisher().create_stream(published_resource).await
+            Ok(session.publisher().create_stream(published_resource))
         }
         #[cfg(feature = "use_datagram")]
         {

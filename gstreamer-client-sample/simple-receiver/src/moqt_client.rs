@@ -53,7 +53,7 @@ impl MOQTClient {
         track_name: &str,
         subscribe_options: moqt::SubscribeOption,
     ) -> anyhow::Result<moqt::DataReceiver<moqt::QUIC>> {
-        let subscriber = self.session.subscriber();
+        let mut subscriber = self.session.subscriber();
         let subscription = subscriber
             .subscribe(
                 track_namespace.to_string(),
