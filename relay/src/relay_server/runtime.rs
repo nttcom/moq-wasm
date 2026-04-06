@@ -6,14 +6,14 @@ use crate::modules::{
     enums::MOQTMessageReceived,
     event_handler::EventHandler,
     relay::{
-        egress::coordinator::EgressCoordinator, ingest::ingest_coordinator::IngestCoordinator,
+        egress::coordinator::EgressCoordinator, ingress::ingress_coordinator::IngressCoordinator,
     },
     session_repository::SessionRepository,
 };
 use crate::relay_server::store::RelayStore;
 
 pub(crate) struct RelayRuntime {
-    _ingest: IngestCoordinator,
+    _ingress: IngressCoordinator,
     _egress: EgressCoordinator,
     _manager: EventHandler,
 }
@@ -24,7 +24,7 @@ impl RelayRuntime {
         store: &Arc<RelayStore>,
     ) -> (UnboundedSender<MOQTMessageReceived>, Self) {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MOQTMessageReceived>();
-        let ingest = IngestCoordinator::new(
+        let ingress = IngressCoordinator::new(
             repo.clone(),
             store.cache_store.clone(),
             store.sender_map.clone(),
@@ -34,11 +34,11 @@ impl RelayRuntime {
             store.cache_store.clone(),
             store.sender_map.clone(),
         );
-        let manager = EventHandler::run(repo, receiver, ingest.sender(), egress.sender());
+        let manager = EventHandler::run(repo, receiver, ingress.sender(), egress.sender());
         (
             sender,
             Self {
-                _ingest: ingest,
+                _ingress: ingress,
                 _egress: egress,
                 _manager: manager,
             },
