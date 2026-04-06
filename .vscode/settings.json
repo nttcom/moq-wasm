@@ -21,5 +21,13 @@
     "PKG_CONFIG": "/opt/homebrew/bin/pkg-config",
     "PKG_CONFIG_PATH": "/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/ffmpeg/lib/pkgconfig"
   },
-  "rust-analyzer.cargo.features": ["web_sys_unstable_apis"]
+  "rust-analyzer.cargo.features": [
+    // "web_sys_unstable_apis"
+  ],
+  "rust-analyzer.linkedProjects": [
+    "Cargo.toml",
+    "moqt/Cargo.toml",
+    "client/Cargo.toml",
+    "relay/Cargo.toml"
+  ]
 }
