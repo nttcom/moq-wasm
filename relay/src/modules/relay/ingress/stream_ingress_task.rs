@@ -6,7 +6,7 @@ use crate::modules::{
     core::data_receiver::stream_receiver::StreamReceiverFactory,
     relay::{
         cache::store::TrackCacheStore,
-        ingest::stream_reader::{StreamOpened, StreamReader},
+        ingress::stream_reader::{StreamOpened, StreamReader},
         notifications::sender_map::SenderMap,
     },
     types::TrackKey,
@@ -17,12 +17,12 @@ pub(crate) struct StreamReceiveStart {
     pub(crate) factory: Box<dyn StreamReceiverFactory>,
 }
 
-pub(crate) struct StreamIngestTask {
+pub(crate) struct StreamIngressTask {
     join_handle: JoinHandle<()>,
     _stream_reader: StreamReader,
 }
 
-impl StreamIngestTask {
+impl StreamIngressTask {
     pub(crate) fn new(
         mut receiver: mpsc::Receiver<StreamReceiveStart>,
         cache_store: Arc<TrackCacheStore>,
@@ -81,7 +81,7 @@ impl StreamIngestTask {
     }
 }
 
-impl Drop for StreamIngestTask {
+impl Drop for StreamIngressTask {
     fn drop(&mut self) {
         self.join_handle.abort();
     }
