@@ -1,6 +1,10 @@
 use std::fmt::Debug;
 
 use crate::modules::transport::{
+    dual::{
+        dual_connection::DualConnection, dual_connection_creator::DualProtocolCreator,
+        dual_receive_stream::DualReceiveStream, dual_send_stream::DualSendStream,
+    },
     quic::{
         quic_connection::QUICConnection, quic_connection_creator::QUICConnectionCreator,
         quic_receive_stream::QUICReceiveStream, quic_send_stream::QUICSendStream,
@@ -45,4 +49,15 @@ impl TransportProtocol for WEBTRANSPORT {
     type Connection = WtConnection;
     type SendStream = WtSendStream;
     type ReceiveStream = WtReceiveStream;
+}
+
+#[allow(warnings)]
+#[derive(Debug)]
+pub struct DUAL;
+
+impl TransportProtocol for DUAL {
+    type ConnectionCreator = DualProtocolCreator;
+    type Connection = DualConnection;
+    type SendStream = DualSendStream;
+    type ReceiveStream = DualReceiveStream;
 }

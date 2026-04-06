@@ -14,7 +14,7 @@ pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDa
         verify_certificate: false,
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
-    let url = url::Url::from_str("moqt://localhost:4434")?;
+    let url = url::Url::from_str("moqt://localhost:4433")?;
     let host = url.host_str().unwrap();
     let remote_address = (host, url.port().unwrap())
         .to_socket_addrs()?
