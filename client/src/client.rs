@@ -240,7 +240,18 @@ impl<T: TransportProtocol> Client<T> {
                 let header =
                     stream.create_header(group_id, moqt::SubgroupId::None, 128, false, false);
                 while id < 10 {
-                    let format_text = format!("hello from {}! id: {}", label, id);
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap();
+                    let total_secs = now.as_secs();
+                    let hh = (total_secs / 3600) % 24;
+                    let mm = (total_secs % 3600) / 60;
+                    let ss = total_secs % 60;
+                    let ms = now.subsec_millis();
+                    let format_text = format!(
+                        "hello from {}! id: {} ts: {:02}:{:02}:{:02}.{:03}",
+                        label, id, hh, mm, ss, ms
+                    );
                     let data = moqt::SubgroupObject::new_payload(format_text.into());
                     let extension_headers = moqt::ExtensionHeaders {
                         prior_group_id_gap: vec![],
@@ -280,7 +291,18 @@ impl<T: TransportProtocol> Client<T> {
             let mut id = 0;
             tracing::info!("{} :create datagram start", label);
             loop {
-                let format_text = format!("hello from {}! id: {}", label, id);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap();
+                let total_secs = now.as_secs();
+                let hh = (total_secs / 3600) % 24;
+                let mm = (total_secs % 3600) / 60;
+                let ss = total_secs % 60;
+                let ms = now.subsec_millis();
+                let format_text = format!(
+                    "hello from {}! id: {} ts: {:02}:{:02}:{:02}.{:03}",
+                    label, id, hh, mm, ss, ms
+                );
                 let data = DatagramField::to_bytes(format_text);
                 let field = DatagramField::Payload0x00 {
                     object_id: id,
