@@ -7,7 +7,7 @@ use crate::modules::{
     relay::{
         cache::store::TrackCacheStore,
         ingest::{
-            datagram_ingest_task::{DatagramIngestTask, DatagramReceiveStart},
+            datagram_reader::{DatagramReader, DatagramReceiveStart},
             stream_ingest_task::{StreamIngestTask, StreamReceiveStart},
         },
         notifications::sender_map::SenderMap,
@@ -25,7 +25,7 @@ pub(crate) struct IngestCoordinator {
     command_sender: mpsc::Sender<IngestStartRequest>,
     command_runner: tokio::task::JoinHandle<()>,
     _stream_task: StreamIngestTask,
-    _datagram_task: DatagramIngestTask,
+    _datagram_reader: DatagramReader,
 }
 
 impl IngestCoordinator {
@@ -37,7 +37,7 @@ impl IngestCoordinator {
         let (stream_tx, stream_rx) = mpsc::channel::<StreamReceiveStart>(64);
         let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveStart>(64);
         let stream_task = StreamIngestTask::new(stream_rx, cache_store.clone(), sender_map.clone());
-        let datagram_task = DatagramIngestTask::new(datagram_rx, cache_store, sender_map);
+        let datagram_reader = DatagramReader::run(datagram_rx, cache_store, sender_map);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngestStartRequest>(512);
         let session_repo_for_runner = session_repo;
@@ -91,7 +91,7 @@ impl IngestCoordinator {
             command_sender,
             command_runner,
             _stream_task: stream_task,
-            _datagram_task: datagram_task,
+            _datagram_reader: datagram_reader,
         }
     }
 
