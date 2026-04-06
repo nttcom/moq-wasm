@@ -82,12 +82,11 @@ impl MediaSendThread {
                     });
                 }
 
-                if let Some(tx) = current_group_tx.as_ref() {
-                    if let Err(e) = tx.send(data).await {
+                if let Some(tx) = current_group_tx.as_ref()
+                    && let Err(e) = tx.send(data).await {
                         tracing::error!("Failed to forward data to group task: {}", e);
                         break;
                     }
-                }
             }
 
             // 残グループタスクの完了を待つ
