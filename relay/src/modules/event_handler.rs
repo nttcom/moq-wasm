@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::modules::{
-    enums::MOQTMessageReceived,
+    enums::MoqtRelayEvent,
     event_resolver::stream_binder::StreamBinder,
     sequences::{
         notifier::Notifier,
@@ -21,9 +21,9 @@ pub(crate) struct EventHandler {
 impl EventHandler {
     pub(crate) fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        session_receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTMessageReceived>,
+        relay_event_receiver: tokio::sync::mpsc::UnboundedReceiver<MoqtRelayEvent>,
     ) -> Self {
-        let session_event_watcher = Self::create_pub_sub_event_watcher(repo, session_receiver);
+        let session_event_watcher = Self::create_pub_sub_event_watcher(repo, relay_event_receiver);
         Self {
             session_event_watcher,
         }
@@ -31,7 +31,7 @@ impl EventHandler {
 
     fn create_pub_sub_event_watcher(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        mut receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTMessageReceived>,
+        mut receiver: tokio::sync::mpsc::UnboundedReceiver<MoqtRelayEvent>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Session Event Watcher")
@@ -42,25 +42,25 @@ impl EventHandler {
                 loop {
                     if let Some(event) = receiver.recv().await {
                         match event {
-                            MOQTMessageReceived::PublishNameSpace(session_id, handler) => {
+                            MoqtRelayEvent::PublishNameSpace(session_id, handler) => {
                                 let publish_ns = PublishNamespace {};
                                 publish_ns
                                     .handle(session_id, table.as_ref(), &notifier, handler.as_ref())
                                     .await;
                             }
-                            MOQTMessageReceived::SubscribeNameSpace(session_id, handler) => {
+                            MoqtRelayEvent::SubscribeNameSpace(session_id, handler) => {
                                 let subscribe_ns = SubscribeNameSpace {};
                                 subscribe_ns
                                     .handle(session_id, table.as_ref(), &notifier, handler.as_ref())
                                     .await;
                             }
-                            MOQTMessageReceived::Publish(session_id, handler) => {
+                            MoqtRelayEvent::Publish(session_id, handler) => {
                                 let publish = Publish {};
                                 publish
                                     .handle(session_id, table.as_ref(), &notifier, handler)
                                     .await;
                             }
-                            MOQTMessageReceived::Subscribe(session_id, handler) => {
+                            MoqtRelayEvent::Subscribe(session_id, handler) => {
                                 let subscribe = Subscribe {};
                                 subscribe
                                     .handle(
@@ -72,12 +72,12 @@ impl EventHandler {
                                     )
                                     .await;
                             }
-                            MOQTMessageReceived::Disconnected(session_id) => {
+                            MoqtRelayEvent::Disconnected(session_id) => {
                                 tracing::info!("Session disconnected: {}", session_id);
                                 table.remove_session(session_id).await;
                                 notifier.repository.lock().await.remove(session_id);
                             }
-                            MOQTMessageReceived::ProtocolViolation(session_id) => {
+                            MoqtRelayEvent::ProtocolViolation(session_id) => {
                                 tracing::error!("Session protocol violation: {}", session_id);
                                 table.remove_session(session_id).await;
                                 notifier.repository.lock().await.remove(session_id);
