@@ -6,9 +6,9 @@ use crate::modules::{
     core::{data_receiver::receiver::DataReceiver, subscription::Subscription},
     relay::{
         cache::store::TrackCacheStore,
-        ingest::{
+        ingress::{
             datagram_reader::{DatagramReader, DatagramReceiveStart},
-            stream_ingest_task::{StreamIngestTask, StreamReceiveStart},
+            stream_ingress_task::{StreamIngressTask, StreamReceiveStart},
         },
         notifications::sender_map::SenderMap,
     },
@@ -16,19 +16,19 @@ use crate::modules::{
     types::{SessionId, compose_session_track_key},
 };
 
-pub(crate) struct IngestStartRequest {
+pub(crate) struct IngressStartRequest {
     pub(crate) publisher_session_id: SessionId,
     pub(crate) subscription: Subscription,
 }
 
-pub(crate) struct IngestCoordinator {
-    command_sender: mpsc::Sender<IngestStartRequest>,
+pub(crate) struct IngressCoordinator {
+    command_sender: mpsc::Sender<IngressStartRequest>,
     command_runner: tokio::task::JoinHandle<()>,
-    _stream_task: StreamIngestTask,
+    _stream_task: StreamIngressTask,
     _datagram_reader: DatagramReader,
 }
 
-impl IngestCoordinator {
+impl IngressCoordinator {
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
@@ -36,10 +36,11 @@ impl IngestCoordinator {
     ) -> Self {
         let (stream_tx, stream_rx) = mpsc::channel::<StreamReceiveStart>(64);
         let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveStart>(64);
-        let stream_task = StreamIngestTask::new(stream_rx, cache_store.clone(), sender_map.clone());
+        let stream_task =
+            StreamIngressTask::new(stream_rx, cache_store.clone(), sender_map.clone());
         let datagram_reader = DatagramReader::run(datagram_rx, cache_store, sender_map);
 
-        let (command_sender, mut command_receiver) = mpsc::channel::<IngestStartRequest>(512);
+        let (command_sender, mut command_receiver) = mpsc::channel::<IngressStartRequest>(512);
         let session_repo_for_runner = session_repo;
 
         let command_runner = tokio::spawn(async move {
@@ -80,7 +81,7 @@ impl IngestCoordinator {
                     }
                     Some(join_result) = join_set.join_next() => {
                         if let Err(error) = join_result {
-                            tracing::debug!(?error, "a task in ingest coordinator failed");
+                            tracing::debug!(?error, "a task in ingress coordinator failed");
                         }
                     }
                 }
@@ -95,12 +96,12 @@ impl IngestCoordinator {
         }
     }
 
-    pub(crate) fn sender(&self) -> mpsc::Sender<IngestStartRequest> {
+    pub(crate) fn sender(&self) -> mpsc::Sender<IngressStartRequest> {
         self.command_sender.clone()
     }
 }
 
-impl Drop for IngestCoordinator {
+impl Drop for IngressCoordinator {
     fn drop(&mut self) {
         self.command_runner.abort();
     }

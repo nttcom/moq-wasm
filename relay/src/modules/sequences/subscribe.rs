@@ -2,7 +2,7 @@ use crate::modules::{
     core::handler::subscribe::SubscribeHandler,
     relay::{
         egress::coordinator::{EgressCommand, EgressStartRequest},
-        ingest::ingest_coordinator::IngestStartRequest,
+        ingress::ingress_coordinator::IngressStartRequest,
     },
     sequences::{notifier::Notifier, tables::table::Table},
     types::{SessionId, compose_session_track_key},
@@ -16,7 +16,7 @@ impl Subscribe {
         session_id: SessionId,
         table: &dyn Table,
         notifier: &Notifier,
-        ingest_sender: &tokio::sync::mpsc::Sender<IngestStartRequest>,
+        ingress_sender: &tokio::sync::mpsc::Sender<IngressStartRequest>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn SubscribeHandler>,
     ) {
@@ -42,7 +42,7 @@ impl Subscribe {
                 track_namespace,
                 track_name,
                 notifier,
-                ingest_sender,
+                ingress_sender,
                 egress_sender,
                 handler.as_ref(),
             )
@@ -61,7 +61,7 @@ impl Subscribe {
         track_namespace: &str,
         track_name: &str,
         notifier: &Notifier,
-        ingest_sender: &tokio::sync::mpsc::Sender<IngestStartRequest>,
+        ingress_sender: &tokio::sync::mpsc::Sender<IngressStartRequest>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &dyn SubscribeHandler,
     ) {
@@ -81,15 +81,15 @@ impl Subscribe {
         let expires = subscription.expires();
         let content_exists = subscription.content_exists();
 
-        if ingest_sender
-            .send(IngestStartRequest {
+        if ingress_sender
+            .send(IngressStartRequest {
                 publisher_session_id: pub_session_id,
                 subscription,
             })
             .await
             .is_err()
         {
-            tracing::error!("Failed to send IngestStartRequest. Session close.");
+            tracing::error!("Failed to send IngressStartRequest. Session close.");
             return;
         }
 
