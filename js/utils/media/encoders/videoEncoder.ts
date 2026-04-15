@@ -209,11 +209,11 @@ function buildConfigFromMessage(config: {
 
 function buildDefaultConfig(): VideoEncoderConfig {
   return buildConfigFromMessage({
-    codec: 'avc1.640028',
+    codec: 'vp8',
     width: 1280,
     height: 720,
     bitrate: 1_000_000,
     framerate: 30,
-    hardwareAcceleration: 'prefer-hardware'
+    hardwareAcceleration: 'prefer-software'
   })
 }
