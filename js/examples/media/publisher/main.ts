@@ -8,11 +8,17 @@ import { sendVideoChunkViaMoqt } from '../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../utils/media/audioTransport'
 import { KEYFRAME_INTERVAL } from '../../../utils/media/constants'
 import { MEDIA_AUDIO_PROFILES, MEDIA_CATALOG_TRACK_NAME, MEDIA_VIDEO_PROFILES, buildMediaCatalogJson } from '../catalog'
+import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../common'
 
 let mediaStream: MediaStream | null = null
 const moqtClient = new MoqtClientWrapper()
 const transportState = new MediaTransportState()
 const catalogAliases = new Set<string>()
+const activeSubscriberTracks = new Set<string>()
+let handlersInitialized = false
+let publishingStarted = false
+let firstVideoChunkSent = false
+let firstAudioChunkSent = false
 
 function ensureClient(): MOQTClient {
   const client = moqtClient.getRawClient()
@@ -22,21 +28,69 @@ function ensureClient(): MOQTClient {
   return client
 }
 
+function setConnectionStatus(text: string): void {
+  setStatusText('publisher-connection-status', text)
+}
+
+function setSetupStatus(text: string): void {
+  setStatusText('publisher-setup-status', text)
+}
+
+function setAnnounceStatus(text: string): void {
+  setStatusText('publisher-announce-status', text)
+}
+
+function setCaptureStatus(text: string): void {
+  setStatusText('publisher-capture-status', text)
+}
+
+function setSendStatus(text: string): void {
+  setStatusText('publisher-send-status', text)
+}
+
+function initializeStatuses(): void {
+  setConnectionStatus('Not connected')
+  setSetupStatus('Setup not sent')
+  setAnnounceStatus('Announce not sent')
+  setCaptureStatus('Capture idle')
+  setSendStatus('Waiting for subscribers')
+}
+
 function setUpStartGetUserMediaButton() {
   const startGetUserMediaBtn = document.getElementById('startGetUserMediaBtn') as HTMLButtonElement
-  startGetUserMediaBtn.addEventListener('click', async () => {
+  const getSampleVideoBtn = document.getElementById('getSampleVideo') as HTMLButtonElement
+
+  const startCapture = async (source: 'camera' | 'sample') => {
+    setCaptureStatus(`Requesting ${source === 'sample' ? 'sample media' : 'camera and microphone'}`)
     const constraints = {
       audio: true,
       video: {
-        width: { exact: 1920 },
-        height: { exact: 1080 }
-        //   width: 3840,
-        //   height: 2160,
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
       }
     }
-    mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
-    const video = document.getElementById('video') as HTMLVideoElement
-    video.srcObject = mediaStream
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
+      const video = document.getElementById('video') as HTMLVideoElement
+      video.srcObject = mediaStream
+      const [videoTrack] = mediaStream.getVideoTracks()
+      const settings = videoTrack?.getSettings() ?? {}
+      const dimensions =
+        typeof settings.width === 'number' && typeof settings.height === 'number'
+          ? `${settings.width}x${settings.height}`
+          : 'unknown resolution'
+      setCaptureStatus(`Media ready (${source}): ${dimensions}`)
+    } catch (error) {
+      setCaptureStatus(`getUserMedia failed: ${getErrorMessage(error)}`)
+      throw error
+    }
+  }
+
+  startGetUserMediaBtn.addEventListener('click', async () => {
+    await startCapture('camera')
+  })
+  getSampleVideoBtn.addEventListener('click', async () => {
+    await startCapture('sample')
   })
 }
 
@@ -74,13 +128,6 @@ type AudioEncoderWorkerMessage =
       captureTimestampMicros?: number
     }
   | { type: 'bitrate'; media: 'audio'; kbps: number }
-
-function parseTrackNamespace(raw: string): string[] {
-  return raw
-    .split('/')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-}
 
 function getForwardingPreference(form: HTMLFormElement): string {
   return (Array.from(form['forwarding-preference']) as HTMLInputElement[]).filter((elem) => elem.checked)[0].value
@@ -121,6 +168,7 @@ async function sendCatalog(client: MOQTClient, trackAlias: bigint, trackNamespac
   await client.sendSubgroupStreamHeaderMessage(trackAlias, 0n, 0n, 0)
   await client.sendSubgroupStreamObject(trackAlias, 0n, 0n, 0n, undefined, payload, undefined)
   catalogAliases.add(aliasKey)
+  setSendStatus(`Catalog served: ${trackNamespace.join('/')}/${MEDIA_CATALOG_TRACK_NAME}`)
   console.info('[MediaPublisher] sent catalog', { trackAlias: aliasKey, trackNamespace })
 }
 
@@ -133,6 +181,7 @@ function sendSetupButtonClickHandler(): void {
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
 
     await moqtClient.sendSetupMessage(versions, maxSubscribeId)
+    setSetupStatus('Setup acknowledged')
   })
 }
 
@@ -143,6 +192,7 @@ function sendAnnounceButtonClickHandler(): void {
     const trackNamespace = parseTrackNamespace(form['announce-track-namespace'].value)
 
     await moqtClient.announce(trackNamespace, AUTH_INFO)
+    setAnnounceStatus(`Announced: ${trackNamespace.join('/')}`)
   })
 }
 
@@ -151,16 +201,24 @@ function sendSubgroupObjectButtonClickHandler(): void {
   sendSubgroupObjectBtn.addEventListener('click', async () => {
     console.log('clicked sendSubgroupObjectBtn')
     if (mediaStream == null) {
+      setSendStatus('Media stream is not ready')
       console.error('mediaStream is null')
+      return
+    }
+    if (publishingStarted) {
+      setSendStatus('Publishing already started')
       return
     }
     let client: MOQTClient
     try {
       client = ensureClient()
     } catch (error) {
+      setSendStatus(`Publish failed: ${getErrorMessage(error)}`)
       console.error(error)
       return
     }
+    publishingStarted = true
+    setSendStatus('Publishing started')
 
     videoEncoderWorker.onmessage = async (event: MessageEvent<VideoEncoderWorkerMessage>) => {
       const data = event.data
@@ -179,6 +237,10 @@ function sendSubgroupObjectButtonClickHandler(): void {
       const trackAliases = getVideoTrackAliases(client, trackNamespace)
       if (!trackAliases.length) {
         return
+      }
+      if (!firstVideoChunkSent) {
+        firstVideoChunkSent = true
+        setSendStatus('Streaming video chunks')
       }
 
       await sendVideoChunkViaMoqt({
@@ -204,6 +266,10 @@ function sendSubgroupObjectButtonClickHandler(): void {
         const trackAliases = getAudioTrackAliases(client, trackNamespace, context.trackName)
         if (!trackAliases.length) {
           return
+        }
+        if (!firstAudioChunkSent) {
+          firstAudioChunkSent = true
+          setSendStatus('Streaming video and audio chunks')
         }
         await sendAudioChunkViaMoqt({
           chunk,
@@ -239,14 +305,19 @@ function sendSubgroupObjectButtonClickHandler(): void {
 }
 
 function setupButtonClickHandler(): void {
+  if (handlersInitialized) {
+    return
+  }
   sendSetupButtonClickHandler()
   sendAnnounceButtonClickHandler()
   sendSubgroupObjectButtonClickHandler()
+  handlersInitialized = true
 }
 
 function setupClientCallbacks(): void {
   moqtClient.setOnServerSetupHandler((serverSetup: any) => {
     console.log({ serverSetup })
+    setSetupStatus('Setup acknowledged')
   })
 
   moqtClient.setOnAnnounceHandler(async (announceMessage) => {
@@ -270,6 +341,7 @@ function setupClientCallbacks(): void {
 
     if (isSuccess) {
       if (!namespaceMatched) {
+        setSendStatus(`Rejected subscribe: unknown namespace ${requestedNamespace.join('/')}`)
         await respondError(404n, 'unknown namespace')
         return
       }
@@ -281,13 +353,17 @@ function setupClientCallbacks(): void {
       }
       if (isVideoTrack(trackName) || isAudioTrack(trackName)) {
         await respondOk(0n, AUTH_INFO, forwardingPreference)
+        activeSubscriberTracks.add(trackName)
+        setSendStatus(`Subscriber ready: ${Array.from(activeSubscriberTracks).sort().join(', ')}`)
         return
       }
+      setSendStatus(`Rejected subscribe: unknown track ${trackName}`)
       await respondError(404n, 'unknown track')
       return
     }
 
     const reasonPhrase = `subscribe error: code=${code}`
+    setSendStatus(reasonPhrase)
     await respondError(BigInt(code), reasonPhrase)
   })
 }
@@ -297,12 +373,24 @@ function setupCloseButtonHandler(): void {
   closeBtn.addEventListener('click', async () => {
     await moqtClient.disconnect()
     catalogAliases.clear()
+    activeSubscriberTracks.clear()
+    mediaStream = null
+    publishingStarted = false
+    firstVideoChunkSent = false
+    firstAudioChunkSent = false
+    setConnectionStatus('Disconnected')
+    setSetupStatus('Setup not sent')
+    setAnnounceStatus('Announce not sent')
+    setCaptureStatus('Capture idle')
+    setSendStatus('Waiting for subscribers')
   })
 }
 
 setUpStartGetUserMediaButton()
 setupClientCallbacks()
 setupCloseButtonHandler()
+initializeMediaExamplePage('announce-track-namespace')
+initializeStatuses()
 
 const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {
@@ -311,5 +399,11 @@ connectBtn.addEventListener('click', async () => {
 
   await moqtClient.connect(url, { sendSetup: false })
   catalogAliases.clear()
+  activeSubscriberTracks.clear()
+  publishingStarted = false
+  firstVideoChunkSent = false
+  firstAudioChunkSent = false
   setupButtonClickHandler()
+  setConnectionStatus(`Connected: ${url}`)
+  setSendStatus('Waiting for subscribers')
 })
