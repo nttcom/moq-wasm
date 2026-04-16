@@ -131,8 +131,6 @@ make chrome
 make chrome:linux
 ```
 
-`make chrome:linux` auto-detects `google-chrome`, `google-chrome-stable`, `chromium`, or `chromium-browser`, computes the SPKI pin from `moqt-server-sample/keys/cert.pem`, and launches Chromium with the local WebTransport / fake-media flags. If auto-detection fails, set `CHROME_BIN=/path/to/chrome`.
-
 ### One-command Linux setup for media E2E
 
 The automated Media Publisher → Subscriber E2E flow is supported on Linux.
