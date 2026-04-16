@@ -154,6 +154,8 @@ node scripts/run-media-e2e.mjs
 
 This command starts `moqt-server-sample`, starts the Vite server for `js`, runs the Playwright E2E for the Media Publisher / Subscriber examples, and cleans up the child processes.
 
+GitHub Actions also runs the same Linux media E2E flow in `.github/workflows/media-e2e.yml`.
+
 The Playwright test itself can also be run directly:
 
 ```shell
