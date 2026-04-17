@@ -15,9 +15,12 @@ impl<T: moqt::TransportProtocol> StreamReceiver<T> {
     }
 
     async fn receive(&mut self) -> anyhow::Result<DataObject> {
-        let object = self.inner.receive().await?;
+        let object: moqt::Subgroup = self.inner.receive().await?;
         match object {
-            moqt::Subgroup::Header(header) => Ok(DataObject::SubgroupHeader(header)),
+            moqt::Subgroup::Header(header) => {
+                tracing::debug!(subgroup_header = ?header, "Received subgroup header");
+                Ok(DataObject::SubgroupHeader(header))
+            }
             moqt::Subgroup::Object(field) => Ok(DataObject::SubgroupObject(field)),
         }
     }

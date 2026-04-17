@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use tracing::Instrument;
+
 use crate::modules::{
     core::{published_resource::PublishedResource, subscription::Subscription},
     event_resolver::stream_runner::StreamTaskRunner,
@@ -23,6 +25,17 @@ impl StreamBinder {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.stream_binder.bind_by_subscribe",
+        skip_all,
+        fields(
+            subscriber_session_id = %subscriber_session_id,
+            publisher_session_id = %publisher_session_id,
+            track_alias = subscription.track_alias(),
+            published_track_alias = published_resources.track_alias(),
+        )
+    )]
     pub(crate) async fn bind_by_subscribe(
         &self,
         subscriber_session_id: SessionId,
@@ -30,25 +43,36 @@ impl StreamBinder {
         publisher_session_id: SessionId,
         published_resources: PublishedResource,
     ) {
-        tracing::info!("bind by subscribe");
         let relay_manager = self.relay_manager.clone();
-        let publisher = self
-            .session_repo
-            .lock()
-            .await
-            .publisher(subscriber_session_id)
-            .await;
-        let subscriber = self
-            .session_repo
-            .lock()
-            .await
-            .subscriber(publisher_session_id)
-            .await;
-        if publisher.is_none() || subscriber.is_none() {
-            tracing::error!("Publisher or Subscriber session not found.");
+        let (
+            data_sender_session,
+            data_receiver_session,
+            subscriber_session_span,
+            publisher_session_span,
+        ) = {
+            let repo = self.session_repo.lock().await;
+            (
+                repo.publisher(subscriber_session_id).await,
+                repo.subscriber(publisher_session_id).await,
+                repo.session_span(subscriber_session_id),
+                repo.session_span(publisher_session_id),
+            )
+        };
+        if data_sender_session.is_none()
+            || data_receiver_session.is_none()
+            || subscriber_session_span.is_none()
+            || publisher_session_span.is_none()
+        {
+            tracing::error!("Publisher, Subscriber, or session span not found.");
             return;
         }
-        let (publisher, subscriber) = (publisher.unwrap(), subscriber.unwrap());
+        let (publisher, subscriber) =
+            (data_sender_session.unwrap(), data_receiver_session.unwrap());
+        let (subscriber_session_span, publisher_session_span) = (
+            subscriber_session_span.unwrap(),
+            publisher_session_span.unwrap(),
+        );
+        let task_span = tracing::Span::current();
         let task = async move {
             tracing::info!(
                 "start relay task: track_alias={}",
@@ -85,14 +109,22 @@ impl StreamBinder {
             let track_key = compose_session_track_key(publisher_session_id, track_alias);
             relay.add_object_sender(
                 publisher_session_id,
+                subscriber_session_id,
                 track_alias,
                 sender,
                 published_resources.group_order(),
                 published_resources.filter_type(),
+                &subscriber_session_span,
             );
-            relay.add_object_receiver(publisher_session_id, receiver);
+            relay.add_object_receiver(
+                publisher_session_id,
+                subscriber_session_id,
+                receiver,
+                &publisher_session_span,
+            );
             relay_manager.relay_map.insert(track_key, relay);
-        };
+        }
+        .instrument(task_span);
         self.stream_runner.add_task(Box::pin(task)).await;
     }
 }

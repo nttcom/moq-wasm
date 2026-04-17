@@ -6,25 +6,55 @@ use crate::modules::{
     sequences::{notifier::Notifier, tables::table::Table},
     types::SessionId,
 };
+use tracing::Span;
 
 pub(crate) struct Publish;
 
 impl Publish {
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.publish",
+        skip_all,
+        parent = session_span,
+        fields(session_id = %session_id)
+    )]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
+        session_span: &Span,
         table: &dyn Table,
         notifier: &Notifier,
         handler: Box<dyn PublishHandler>,
     ) {
-        tracing::info!("SequenceHandler::publish: {}", session_id);
+        let track_namespace = handler.track_namespace().to_string();
+        let track_name = handler.track_name().to_string();
+        let track_alias = handler.track_alias();
+        tracing::info!(
+            session_id = %session_id,
+            track_namespace = %track_namespace,
+            track_name = %track_name,
+            track_alias = %track_alias,
+            "SequenceHandler::publish"
+        );
         self.broadcast_to_subscribers(session_id, notifier, table, handler.as_ref())
             .await;
         self.register_if_response_succeeded(session_id, table, handler)
             .await;
-        tracing::info!("SequenceHandler::publish: {} DONE", session_id);
+        tracing::info!(
+            session_id = %session_id,
+            track_namespace = %track_namespace,
+            track_name = %track_name,
+            track_alias = %track_alias,
+            "SequenceHandler::publish DONE"
+        );
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.publish.broadcast_to_subscribers",
+        skip_all,
+        fields(publisher_session_id = %publisher_session_id, track_namespace = %handler.track_namespace(), track_name = %handler.track_name())
+    )]
     async fn broadcast_to_subscribers(
         &self,
         publisher_session_id: SessionId,
@@ -76,6 +106,12 @@ impl Publish {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.publish.register_if_response_succeeded",
+        skip_all,
+        fields(session_id = %session_id)
+    )]
     async fn register_if_response_succeeded(
         &self,
         session_id: SessionId,

@@ -1,5 +1,7 @@
 use std::pin::Pin;
 
+use tracing::Instrument;
+
 pub(crate) struct StreamTaskRunner {
     sender: tokio::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     join_handle: tokio::task::JoinHandle<()>,
@@ -26,6 +28,7 @@ impl StreamTaskRunner {
                 loop {
                     tokio::select! {
                         Some(task) = receiver.recv() => {
+                            let task = task.instrument(tracing::Span::current());
                             join_set.spawn(task);
                         }
                         Some(_) = join_set.join_next() => {

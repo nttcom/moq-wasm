@@ -61,7 +61,7 @@ impl<T: TransportProtocol> SessionContext<T> {
 
 impl<T: TransportProtocol> Drop for SessionContext<T> {
     fn drop(&mut self) {
-        tracing::info!("Session dropped.");
+        tracing::info!("SessionContext dropped.");
         // send goaway
     }
 }
