@@ -13,7 +13,7 @@ impl ObjectSender {
         sender: &mut dyn DataSender,
         cache: &Arc<dyn Cache>,
         group_id: u64,
-    ) {
+    ) -> bool {
         let group = cache.get_group(group_id).await;
         for object in group.read().await.iter() {
             match sender.send_object((**object).clone()).await {
@@ -22,16 +22,19 @@ impl ObjectSender {
                 }
                 Err(e) => {
                     tracing::warn!("Failed to send latest object: {}", e);
+                    return false;
                 }
             }
         }
+
+        true
     }
 
     pub(crate) async fn send_latest_object(
         &self,
         sender: &mut dyn DataSender,
         receiver: &mut tokio::sync::broadcast::Receiver<Arc<DataObject>>,
-    ) {
+    ) -> bool {
         let object = receiver.recv().await;
         if let Ok(object) = object {
             match sender.send_object((*object).clone()).await {
@@ -40,11 +43,15 @@ impl ObjectSender {
                 }
                 Err(e) => {
                     tracing::warn!("Failed to send latest object: {}", e);
+                    return false;
                 }
             }
         } else {
             tracing::warn!("Failed to receive latest object");
+            return false;
         }
+
+        true
     }
 
     pub(crate) async fn send_absolute_start(
@@ -54,7 +61,7 @@ impl ObjectSender {
         group_id: u64,
         object_id: u64,
         is_reverse: bool,
-    ) {
+    ) -> bool {
         let group = cache.get_group(group_id).await;
         let frames = group.read().await;
         let mut start_flag = false;
@@ -71,6 +78,7 @@ impl ObjectSender {
                         }
                         Err(e) => {
                             tracing::warn!("Failed to send latest object: {}", e);
+                            return false;
                         }
                     }
                 }
@@ -87,10 +95,13 @@ impl ObjectSender {
                         }
                         Err(e) => {
                             tracing::warn!("Failed to send latest object: {}", e);
+                            return false;
                         }
                     }
                 }
             }
         };
+
+        true
     }
 }

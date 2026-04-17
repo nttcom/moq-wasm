@@ -122,9 +122,18 @@ impl StreamBinder {
                 receiver,
                 &publisher_session_span,
             );
-            relay_manager.relay_map.insert(track_key, relay);
+            relay_manager.insert(
+                track_key,
+                publisher_session_id,
+                subscriber_session_id,
+                relay,
+            );
         }
         .instrument(task_span);
         self.stream_runner.add_task(Box::pin(task)).await;
+    }
+
+    pub(crate) fn remove_session(&self, session_id: SessionId) {
+        self.relay_manager.remove_session(session_id);
     }
 }

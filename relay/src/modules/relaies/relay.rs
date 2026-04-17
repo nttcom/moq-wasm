@@ -119,19 +119,25 @@ impl Relay {
                                 let _ = recv.recv().await;
                             }
                             start_group_id = cache.get_latest_group_id();
-                            object_sender
+                            if !object_sender
                                 .send_latest_group(datagram_sender.as_mut(), &cache, start_group_id)
-                                .await;
+                                .await
+                            {
+                                break;
+                            }
                         }
                         FilterType::LatestObject => {
                             if let Some(ref mut recv) = receiver {
-                                object_sender
+                                if !object_sender
                                     .send_latest_object(datagram_sender.as_mut(), recv)
-                                    .await;
+                                    .await
+                                {
+                                    break;
+                                }
                             }
                         }
                         FilterType::AbsoluteStart { .. } => {
-                            object_sender
+                            if !object_sender
                                 .send_absolute_start(
                                     datagram_sender.as_mut(),
                                     &cache,
@@ -139,13 +145,16 @@ impl Relay {
                                     start_object_id,
                                     group_order == GroupOrder::Descending,
                                 )
-                                .await;
+                                .await
+                            {
+                                break;
+                            }
                         }
                         FilterType::AbsoluteRange {
                             location: _,
                             end_group,
                         } => {
-                            object_sender
+                            if !object_sender
                                 .send_absolute_start(
                                     datagram_sender.as_mut(),
                                     &cache,
@@ -153,7 +162,10 @@ impl Relay {
                                     start_object_id,
                                     group_order == GroupOrder::Descending,
                                 )
-                                .await;
+                                .await
+                            {
+                                break;
+                            }
                             if start_group_id == end_group {
                                 break;
                             }

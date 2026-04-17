@@ -121,6 +121,7 @@ impl EventHandler {
                                 async {
                                     tracing::info!("Session disconnected: {}", session_id);
                                     table.remove_session(session_id).await;
+                                    stream_handler.remove_session(session_id);
                                     notifier.repository.lock().await.remove(session_id);
                                 }
                                 .instrument(disconnected_span)
@@ -135,6 +136,7 @@ impl EventHandler {
                                 async {
                                     tracing::error!("Session protocol violation: {}", session_id);
                                     table.remove_session(session_id).await;
+                                    stream_handler.remove_session(session_id);
                                     notifier.repository.lock().await.remove(session_id);
                                 }
                                 .instrument(protocol_violation_span)
