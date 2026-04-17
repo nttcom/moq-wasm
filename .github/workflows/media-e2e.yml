@@ -19,6 +19,7 @@ on:
     branches:
       - master
       - draft-*
+      - example-e2e-ci
     paths:
       - ".github/workflows/media-e2e.yml"
       - "README.md"
