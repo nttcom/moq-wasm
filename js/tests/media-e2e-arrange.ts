@@ -3,10 +3,14 @@ import { MEDIA_PUBLISHER_PATH, MEDIA_SUBSCRIBER_PATH } from '../playwright.helpe
 
 const moqtUrl = process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 const namespace = process.env.MEDIA_E2E_NAMESPACE ?? 'e2e/moqt-media'
+const videoCodec = process.env.MEDIA_E2E_VIDEO_CODEC ?? 'vp8'
+const videoEncoderHardwareAcceleration = process.env.MEDIA_E2E_VIDEO_HARDWARE_ACCELERATION ?? 'prefer-software'
 
 export const mediaE2EConfig = {
   moqtUrl,
-  namespace
+  namespace,
+  videoCodec,
+  videoEncoderHardwareAcceleration
 }
 
 export interface PublisherPageModel {
@@ -50,7 +54,9 @@ export interface MediaE2ESession {
 function buildPagePath(path: string): string {
   const params = new URLSearchParams({
     moqtUrl,
-    trackNamespace: namespace
+    trackNamespace: namespace,
+    videoCodec,
+    videoEncoderHardwareAcceleration
   })
   return `${path}?${params.toString()}`
 }

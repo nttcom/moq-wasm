@@ -4,9 +4,9 @@ import { AUTH_INFO } from './const'
 import { getFormElement } from './utils'
 import { summarizeLocHeader } from '../../../utils/media/locSummary'
 import {
-  MEDIA_DEFAULT_VIDEO_CODEC,
   extractCatalogAudioTracks,
   extractCatalogVideoTracks,
+  getResolvedMediaVideoCodec,
   type MediaCatalogTrack
 } from '../catalog'
 import { initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../common'
@@ -116,7 +116,7 @@ function setSelectedCatalogTrack(kind: 'video' | 'audio', trackName: string | nu
   }
   const track = catalogVideoTracks.find((entry) => entry.name === trackName)
   if (trackName) {
-    videoDecoderWorker.postMessage({ type: 'catalog', codec: track?.codec ?? MEDIA_DEFAULT_VIDEO_CODEC })
+    videoDecoderWorker.postMessage({ type: 'catalog', codec: track?.codec ?? getResolvedMediaVideoCodec() })
   }
 }
 
