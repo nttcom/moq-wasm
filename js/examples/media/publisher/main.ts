@@ -7,8 +7,19 @@ import { MediaTransportState } from '../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt } from '../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../utils/media/audioTransport'
 import { KEYFRAME_INTERVAL } from '../../../utils/media/constants'
-import { MEDIA_AUDIO_PROFILES, MEDIA_CATALOG_TRACK_NAME, MEDIA_VIDEO_PROFILES, buildMediaCatalogJson } from '../catalog'
-import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../common'
+import {
+  MEDIA_AUDIO_PROFILES,
+  MEDIA_CATALOG_TRACK_NAME,
+  buildMediaCatalogJson,
+  getMediaVideoProfiles
+} from '../catalog'
+import {
+  getErrorMessage,
+  getMediaVideoEncodingOverrides,
+  initializeMediaExamplePage,
+  parseTrackNamespace,
+  setStatusText
+} from '../common'
 
 let mediaStream: MediaStream | null = null
 const moqtClient = new MoqtClientWrapper()
@@ -138,7 +149,7 @@ function isCatalogTrack(trackName: string): boolean {
 }
 
 function isVideoTrack(trackName: string): boolean {
-  return MEDIA_VIDEO_PROFILES.some((profile) => profile.trackName === trackName)
+  return getMediaVideoProfiles().some((profile) => profile.trackName === trackName)
 }
 
 function isAudioTrack(trackName: string): boolean {
@@ -147,12 +158,32 @@ function isAudioTrack(trackName: string): boolean {
 
 function getVideoTrackAliases(client: MOQTClient, trackNamespace: string[]): bigint[] {
   const aliases = new Set<string>()
-  for (const profile of MEDIA_VIDEO_PROFILES) {
+  for (const profile of getMediaVideoProfiles()) {
     for (const alias of client.getTrackSubscribers(trackNamespace, profile.trackName)) {
       aliases.add(alias.toString())
     }
   }
   return Array.from(aliases, (alias) => BigInt(alias))
+}
+
+function configureVideoEncoderForCurrentPage(videoTrack: MediaStreamTrack): void {
+  const { codec, hardwareAcceleration } = getMediaVideoEncodingOverrides()
+  if (!codec && !hardwareAcceleration) {
+    return
+  }
+
+  const settings = videoTrack.getSettings()
+  videoEncoderWorker.postMessage({
+    type: 'encoderConfig',
+    config: {
+      codec: codec ?? 'avc1.640028',
+      width: typeof settings.width === 'number' ? settings.width : 1280,
+      height: typeof settings.height === 'number' ? settings.height : 720,
+      bitrate: 1_000_000,
+      framerate: typeof settings.frameRate === 'number' ? settings.frameRate : 30,
+      hardwareAcceleration
+    }
+  })
 }
 
 function getAudioTrackAliases(client: MOQTClient, trackNamespace: string[], trackName: string): bigint[] {
@@ -283,6 +314,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
     }
 
     const [videoTrack] = mediaStream.getVideoTracks()
+    configureVideoEncoderForCurrentPage(videoTrack)
     const videoProcessor = new MediaStreamTrackProcessor({ track: videoTrack })
     const videoStream = videoProcessor.readable
     videoEncoderWorker.postMessage({
