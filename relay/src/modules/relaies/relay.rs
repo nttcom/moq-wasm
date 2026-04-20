@@ -119,25 +119,27 @@ impl Relay {
                                 let _ = recv.recv().await;
                             }
                             start_group_id = cache.get_latest_group_id();
-                            if !object_sender
+                            if let Err(e) = object_sender
                                 .send_latest_group(datagram_sender.as_mut(), &cache, start_group_id)
                                 .await
                             {
+                                tracing::warn!("Failed to send latest group: {}", e);
                                 break;
                             }
                         }
                         FilterType::LatestObject => {
                             if let Some(ref mut recv) = receiver {
-                                if !object_sender
+                                if let Err(e) = object_sender
                                     .send_latest_object(datagram_sender.as_mut(), recv)
                                     .await
                                 {
+                                    tracing::warn!("Failed to send latest object: {}", e);
                                     break;
                                 }
                             }
                         }
                         FilterType::AbsoluteStart { .. } => {
-                            if !object_sender
+                            if let Err(e) = object_sender
                                 .send_absolute_start(
                                     datagram_sender.as_mut(),
                                     &cache,
@@ -147,6 +149,7 @@ impl Relay {
                                 )
                                 .await
                             {
+                                tracing::warn!("Failed to send absolute start: {}", e);
                                 break;
                             }
                         }
@@ -154,7 +157,7 @@ impl Relay {
                             location: _,
                             end_group,
                         } => {
-                            if !object_sender
+                            if let Err(e) = object_sender
                                 .send_absolute_start(
                                     datagram_sender.as_mut(),
                                     &cache,
@@ -164,6 +167,7 @@ impl Relay {
                                 )
                                 .await
                             {
+                                tracing::warn!("Failed to send absolute range: {}", e);
                                 break;
                             }
                             if start_group_id == end_group {

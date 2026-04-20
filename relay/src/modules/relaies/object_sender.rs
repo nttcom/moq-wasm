@@ -13,45 +13,31 @@ impl ObjectSender {
         sender: &mut dyn DataSender,
         cache: &Arc<dyn Cache>,
         group_id: u64,
-    ) -> bool {
+    ) -> anyhow::Result<()> {
         let group = cache.get_group(group_id).await;
         for object in group.read().await.iter() {
-            match sender.send_object((**object).clone()).await {
-                Ok(_) => {
-                    tracing::debug!("Latest object sent successfully");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to send latest object: {}", e);
-                    return false;
-                }
-            }
+            sender.send_object((**object).clone()).await.inspect(|_| {
+                tracing::debug!("Latest object sent successfully");
+            })?;
         }
 
-        true
+        Ok(())
     }
 
     pub(crate) async fn send_latest_object(
         &self,
         sender: &mut dyn DataSender,
         receiver: &mut tokio::sync::broadcast::Receiver<Arc<DataObject>>,
-    ) -> bool {
-        let object = receiver.recv().await;
-        if let Ok(object) = object {
-            match sender.send_object((*object).clone()).await {
-                Ok(_) => {
-                    tracing::debug!("Latest object sent successfully");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to send latest object: {}", e);
-                    return false;
-                }
-            }
-        } else {
-            tracing::warn!("Failed to receive latest object");
-            return false;
-        }
+    ) -> anyhow::Result<()> {
+        let object = receiver
+            .recv()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to receive latest object: {}", e))?;
+        sender.send_object((*object).clone()).await.inspect(|_| {
+            tracing::debug!("Latest object sent successfully");
+        })?;
 
-        true
+        Ok(())
     }
 
     pub(crate) async fn send_absolute_start(
@@ -61,7 +47,7 @@ impl ObjectSender {
         group_id: u64,
         object_id: u64,
         is_reverse: bool,
-    ) -> bool {
+    ) -> anyhow::Result<()> {
         let group = cache.get_group(group_id).await;
         let frames = group.read().await;
         let mut start_flag = false;
@@ -72,15 +58,9 @@ impl ObjectSender {
                     start_flag = true;
                 }
                 if start_flag {
-                    match sender.send_object((**object).clone()).await {
-                        Ok(_) => {
-                            tracing::debug!("Latest object sent successfully");
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to send latest object: {}", e);
-                            return false;
-                        }
-                    }
+                    sender.send_object((**object).clone()).await.inspect(|_| {
+                        tracing::debug!("Latest object sent successfully");
+                    })?;
                 }
             }
         } else {
@@ -89,19 +69,13 @@ impl ObjectSender {
                     start_flag = true;
                 }
                 if start_flag {
-                    match sender.send_object((**object).clone()).await {
-                        Ok(_) => {
-                            tracing::debug!("Latest object sent successfully");
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to send latest object: {}", e);
-                            return false;
-                        }
-                    }
+                    sender.send_object((**object).clone()).await.inspect(|_| {
+                        tracing::debug!("Latest object sent successfully");
+                    })?;
                 }
             }
         };
 
-        true
+        Ok(())
     }
 }
