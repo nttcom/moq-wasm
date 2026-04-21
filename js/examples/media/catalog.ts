@@ -1,3 +1,5 @@
+import { getMediaVideoEncodingOverrides } from './common'
+
 export const MEDIA_CATALOG_TRACK_NAME = 'catalog'
 export const MEDIA_AUDIO_TRACK_NAME = 'audio'
 
@@ -11,10 +13,10 @@ export type MediaVideoProfile = {
 
 export const MEDIA_DEFAULT_VIDEO_CODEC = 'avc1.640032'
 
-export const MEDIA_VIDEO_PROFILES: MediaVideoProfile[] = [
-  { trackName: 'video_1080p', label: '1080p', codec: MEDIA_DEFAULT_VIDEO_CODEC, width: 1920, height: 1080 },
-  { trackName: 'video_720p', label: '720p', codec: MEDIA_DEFAULT_VIDEO_CODEC, width: 1280, height: 720 },
-  { trackName: 'video_480p', label: '480p', codec: MEDIA_DEFAULT_VIDEO_CODEC, width: 854, height: 480 }
+const MEDIA_VIDEO_PROFILE_LAYOUTS: Omit<MediaVideoProfile, 'codec'>[] = [
+  { trackName: 'video_1080p', label: '1080p', width: 1920, height: 1080 },
+  { trackName: 'video_720p', label: '720p', width: 1280, height: 720 },
+  { trackName: 'video_480p', label: '480p', width: 854, height: 480 }
 ]
 
 export type MediaAudioProfile = {
@@ -89,9 +91,21 @@ export type MediaCatalogTrack = {
   height?: number
 }
 
+export function getResolvedMediaVideoCodec(): string {
+  return getMediaVideoEncodingOverrides().codec ?? MEDIA_DEFAULT_VIDEO_CODEC
+}
+
+export function getMediaVideoProfiles(): MediaVideoProfile[] {
+  const codec = getResolvedMediaVideoCodec()
+  return MEDIA_VIDEO_PROFILE_LAYOUTS.map((profile) => ({
+    ...profile,
+    codec
+  }))
+}
+
 export function buildMediaCatalogJson(trackNamespace: string[]): string {
   const namespace = trackNamespace.length > 0 ? trackNamespace.join('/') : undefined
-  const videoTracks: MsfTrack[] = MEDIA_VIDEO_PROFILES.map((profile) => ({
+  const videoTracks: MsfTrack[] = getMediaVideoProfiles().map((profile) => ({
     namespace,
     name: profile.trackName,
     packaging: 'loc',

@@ -472,6 +472,34 @@ button:active {
   background: rgba(255, 255, 255, 0.7);
 }
 
+.status-list {
+  display: grid;
+  gap: 10px;
+}
+
+.status-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(16, 42, 42, 0.04);
+}
+
+.status-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.status-value {
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
 video,
 audio {
   width: 100%;

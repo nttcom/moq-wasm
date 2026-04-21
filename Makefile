@@ -64,6 +64,10 @@ ffmpeg-rtmp-local-sub:
 chrome:
 	./scripts/chrome_mac.sh
 
+.PHONY: chrome chrome\:linux
+chrome\:linux:
+	./scripts/chrome_linux.sh
+
 onvif:
 	@if [ -z "$(ONVIF_IP)" ] || [ -z "$(ONVIF_USERNAME)" ] || [ -z "$(ONVIF_PASSWORD)" ]; then \
 		echo "ONVIF_IP/ONVIF_USERNAME/ONVIF_PASSWORD are required (set in .env or environment)"; \

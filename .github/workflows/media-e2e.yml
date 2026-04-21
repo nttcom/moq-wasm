@@ -1,0 +1,94 @@
+name: Media E2E
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/media-e2e.yml"
+      - "README.md"
+      - "scripts/setup-media-e2e.mjs"
+      - "scripts/run-media-e2e.mjs"
+      - "scripts/media-e2e-helpers.mjs"
+      - "scripts/chrome_linux.sh"
+      - "js/**"
+      - "moqt-client-wasm/**"
+      - "moqt-server-sample/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain"
+  push:
+    branches:
+      - master
+      - draft-*
+      - example-e2e-ci
+    paths:
+      - ".github/workflows/media-e2e.yml"
+      - "README.md"
+      - "scripts/setup-media-e2e.mjs"
+      - "scripts/run-media-e2e.mjs"
+      - "scripts/media-e2e-helpers.mjs"
+      - "scripts/chrome_linux.sh"
+      - "js/**"
+      - "moqt-client-wasm/**"
+      - "moqt-server-sample/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  media-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        # actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 = v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Setup Node.js
+        # actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 = v4.4.0
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: js/package-lock.json
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.92.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Prepare media E2E environment
+        run: node scripts/setup-media-e2e.mjs
+
+      - name: Install Playwright Linux dependencies
+        working-directory: js
+        run: npx playwright install --with-deps chromium
+
+      - name: Run media E2E
+        env:
+          CI: "true"
+        run: node scripts/run-media-e2e.mjs
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        # actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 = v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: media-e2e-artifacts
+          path: |
+            js/test-results
+            js/playwright-report
+          if-no-files-found: ignore
