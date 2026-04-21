@@ -4,8 +4,7 @@ use moqt::ServerConfig;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::modules::{
-    enums::MoqtRelayEvent, session_handler::SessionHandler,
-    session_repository::SessionRepository,
+    enums::MoqtRelayEvent, session_handler::SessionHandler, session_repository::SessionRepository,
 };
 use crate::relay_server::{runtime::RelayRuntime, store::RelayStore};
 

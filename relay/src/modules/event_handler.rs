@@ -3,7 +3,9 @@ use tokio::sync::mpsc;
 
 use crate::modules::{
     enums::MoqtRelayEvent,
-    relay::{egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressStartRequest},
+    relay::{
+        egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressStartRequest,
+    },
     sequences::{
         notifier::Notifier,
         publish::Publish,
