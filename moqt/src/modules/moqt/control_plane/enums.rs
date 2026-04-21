@@ -22,6 +22,7 @@ pub enum SessionEvent<T: TransportProtocol> {
     SubscribeNameSpace(SubscribeNamespaceHandler<T>),
     Publish(PublishHandler<T>),
     Subscribe(SubscribeHandler<T>),
+    Disconnected(),
     ProtocolViolation(),
 }
 

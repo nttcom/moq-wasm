@@ -119,6 +119,10 @@ impl<T: TransportProtocol> Client<T> {
                             )
                             .await;
                         }
+                        moqt::SessionEvent::Disconnected() => {
+                            tracing::info!("Received: {} Disconnected", label);
+                            break;
+                        }
                         moqt::SessionEvent::ProtocolViolation() => {
                             tracing::info!("Received: {} ProtocolViolation", label);
                         }

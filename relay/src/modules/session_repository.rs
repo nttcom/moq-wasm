@@ -3,9 +3,11 @@ use std::sync::{Arc, Weak};
 use dashmap::DashMap;
 
 use crate::modules::{
-    core::{publisher::Publisher, session::Session, subscriber::Subscriber},
-    enums::MOQTMessageReceived,
-    event_resolver::moqt_session_event_resolver::MOQTSessionEventResolver,
+    core::{
+        publisher::Publisher, session::Session, session_event::SessionEvent, subscriber::Subscriber,
+    },
+    enums::MoqtRelayEvent,
+    event_resolver::moqt_relay_event_resolver::MoqtRelayEventResolver,
     thread_manager::ThreadManager,
     types::SessionId,
 };
@@ -27,32 +29,48 @@ impl SessionRepository {
         &mut self,
         session_id: SessionId,
         session: Box<dyn Session>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<MoqtRelayEvent>,
     ) {
         let arc_session: Arc<dyn Session> = Arc::from(session);
         self.start_receive(session_id, Arc::downgrade(&arc_session), event_sender);
         self.sessions.insert(session_id, arc_session);
     }
 
+    pub(crate) fn remove(&mut self, session_id: SessionId) {
+        self.sessions.remove(&session_id);
+        self.thread_manager.remove(&session_id);
+    }
+
     fn start_receive(
         &mut self,
         session_id: SessionId,
         session: Weak<dyn Session>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<MOQTMessageReceived>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<MoqtRelayEvent>,
     ) {
         let join_handle = tokio::task::Builder::new()
             .name("Session Event Watcher")
             .spawn(async move {
                 loop {
                     if let Some(session) = session.upgrade() {
-                        let event = session.receive_session_event().await;
-                        if let Err(e) = event {
-                            tracing::error!("Failed to receive session event: {}", e);
+                        let event = match session.receive_session_event().await {
+                            Ok(event) => event,
+                            Err(e) => {
+                                tracing::error!("Failed to receive session event: {}", e);
+                                break;
+                            }
+                        };
+                        let should_stop = matches!(
+                            event,
+                            SessionEvent::Disconnected() | SessionEvent::ProtocolViolation()
+                        );
+                        let relay_event = MoqtRelayEventResolver::resolve(session_id, event);
+                        if let Err(err) = event_sender.send(relay_event) {
+                            tracing::error!("Failed to forward session event: {}", err);
                             break;
                         }
-                        let session_event =
-                            MOQTSessionEventResolver::resolve(session_id, event.unwrap());
-                        event_sender.send(session_event).unwrap();
+                        if should_stop {
+                            break;
+                        }
                     } else {
                         tracing::error!("Session dropped.");
                         break;
