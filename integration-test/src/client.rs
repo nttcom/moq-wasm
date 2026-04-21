@@ -104,16 +104,16 @@ impl<T: TransportProtocol> Client<T> {
                         }
                         moqt::SessionEvent::Publish(publish_handler) => {
                             tracing::info!("Received: {} Publish", label);
-                            match publish_handler
-                                .ok(128, moqt::FilterType::LargestObject)
+                            let _subscription = match publish_handler
+                                .ok(128, moqt::FilterType::LargestObject, 0)
                                 .await
                             {
-                                Ok(h) => h,
+                                Ok(subscription) => subscription,
                                 Err(_) => {
                                     tracing::error!("failed to send");
                                     return;
                                 }
-                            }
+                            };
                         }
                         moqt::SessionEvent::Subscribe(subscribe_handler) => {
                             tracing::info!("Received: {} Subscribe", label);

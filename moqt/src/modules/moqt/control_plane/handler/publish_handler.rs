@@ -49,7 +49,12 @@ impl<T: TransportProtocol> PublishHandler<T> {
         }
     }
 
-    pub async fn ok(&self, subscriber_priority: u8, filter_type: FilterType) -> anyhow::Result<()> {
+    pub async fn ok(
+        &self,
+        subscriber_priority: u8,
+        filter_type: FilterType,
+        expires: u64,
+    ) -> anyhow::Result<Subscription> {
         let publish_ok = PublishOk {
             request_id: self.request_id,
             forward: self.forward,
@@ -61,7 +66,26 @@ impl<T: TransportProtocol> PublishHandler<T> {
         self.session_context
             .send_stream
             .send(ControlMessageType::PublishOk, publish_ok.encode())
+            .await?;
+
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
+        self.session_context
+            .notification_map
+            .write()
             .await
+            .insert(self.track_alias, sender);
+        self.session_context
+            .receiver_map
+            .lock()
+            .await
+            .insert(self.track_alias, receiver);
+        Ok(Subscription {
+            track_alias: self.track_alias,
+            expires,
+            group_order: self.group_order,
+            content_exists: self.content_exists,
+            delivery_timeout: self.delivery_timeout,
+        })
     }
 
     pub async fn error(&self, error_code: u64, reason_phrase: String) -> anyhow::Result<()> {
@@ -75,26 +99,5 @@ impl<T: TransportProtocol> PublishHandler<T> {
             .send_stream
             .send(ControlMessageType::PublishError, err.encode())
             .await
-    }
-
-    pub async fn into_subscription(&self, expires: u64) -> Subscription {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
-        self.session_context
-            .notification_map
-            .write()
-            .await
-            .insert(self.track_alias, sender);
-        self.session_context
-            .receiver_map
-            .lock()
-            .await
-            .insert(self.track_alias, receiver);
-        Subscription {
-            track_alias: self.track_alias,
-            expires,
-            group_order: self.group_order,
-            content_exists: self.content_exists,
-            delivery_timeout: self.delivery_timeout,
-        }
     }
 }
