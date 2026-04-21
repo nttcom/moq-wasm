@@ -23,13 +23,12 @@ impl EventHandler {
     pub(crate) fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         relay_event_receiver: tokio::sync::mpsc::UnboundedReceiver<MoqtRelayEvent>,
-        session_receiver: tokio::sync::mpsc::UnboundedReceiver<MOQTMessageReceived>,
         ingress_sender: mpsc::Sender<IngressStartRequest>,
         egress_sender: mpsc::Sender<EgressCommand>,
     ) -> Self {
         let session_event_watcher = Self::create_pub_sub_event_watcher(
             repo,
-            session_receiver,
+            relay_event_receiver,
             ingress_sender,
             egress_sender,
         );

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::modules::{
-    enums::MOQTMessageReceived,
+    enums::MoqtRelayEvent,
     event_handler::EventHandler,
     relay::{
         egress::coordinator::EgressCoordinator, ingress::ingress_coordinator::IngressCoordinator,
@@ -22,8 +22,8 @@ impl RelayRuntime {
     pub(crate) fn new(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         store: &Arc<RelayStore>,
-    ) -> (UnboundedSender<MOQTMessageReceived>, Self) {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MOQTMessageReceived>();
+    ) -> (UnboundedSender<MoqtRelayEvent>, Self) {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MoqtRelayEvent>();
         let ingress = IngressCoordinator::new(
             repo.clone(),
             store.cache_store.clone(),
