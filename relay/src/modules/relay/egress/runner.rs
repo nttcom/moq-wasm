@@ -4,14 +4,14 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::modules::{
     core::{published_resource::PublishedResource, publisher::Publisher},
-    relay::{cache::track_cache::TrackCache, notifications::latest_info::LatestInfo},
+    relay::{cache::track_cache::TrackCache, notifications::track_event::TrackEvent},
 };
 
 use super::{group_sender::GroupSender, scheduler::EgressScheduler};
 
 pub(crate) struct EgressRunner {
     cache: Arc<TrackCache>,
-    latest_info_sender: broadcast::Sender<LatestInfo>,
+    latest_info_sender: broadcast::Sender<TrackEvent>,
     publisher: Box<dyn Publisher>,
     published_resource: PublishedResource,
 }
@@ -19,7 +19,7 @@ pub(crate) struct EgressRunner {
 impl EgressRunner {
     pub(crate) fn new(
         cache: Arc<TrackCache>,
-        latest_info_sender: broadcast::Sender<LatestInfo>,
+        latest_info_sender: broadcast::Sender<TrackEvent>,
         publisher: Box<dyn Publisher>,
         published_resource: PublishedResource,
     ) -> Self {

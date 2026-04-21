@@ -4,7 +4,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::modules::{
     enums::{FilterType, GroupOrder},
-    relay::{cache::track_cache::TrackCache, notifications::latest_info::LatestInfo},
+    relay::{cache::track_cache::TrackCache, notifications::track_event::TrackEvent},
 };
 
 /// Instruction sent to `GroupSender` to transmit a group.
@@ -18,7 +18,7 @@ pub(crate) struct GroupSendTask {
 /// forwarding `GroupSendTask` entries to `GroupSender`.
 pub(crate) struct EgressScheduler {
     cache: Arc<TrackCache>,
-    latest_info_sender: broadcast::Sender<LatestInfo>,
+    latest_info_sender: broadcast::Sender<TrackEvent>,
     filter_type: FilterType,
     group_order: GroupOrder,
     sender: mpsc::Sender<GroupSendTask>,
@@ -27,7 +27,7 @@ pub(crate) struct EgressScheduler {
 impl EgressScheduler {
     pub(crate) fn new(
         cache: Arc<TrackCache>,
-        latest_info_sender: broadcast::Sender<LatestInfo>,
+        latest_info_sender: broadcast::Sender<TrackEvent>,
         filter_type: FilterType,
         group_order: GroupOrder,
         sender: mpsc::Sender<GroupSendTask>,
@@ -60,7 +60,7 @@ impl EgressScheduler {
 
         loop {
             match receiver.recv().await {
-                Ok(LatestInfo::StreamOpened { group_id }) => {
+                Ok(TrackEvent::StreamOpened { group_id }) => {
                     next_absolute_group = self
                         .on_group_opened(
                             group_id,
@@ -72,7 +72,7 @@ impl EgressScheduler {
                         )
                         .await;
                 }
-                Ok(LatestInfo::DatagramOpened { group_id }) => {
+                Ok(TrackEvent::DatagramOpened { group_id }) => {
                     next_absolute_group = self
                         .on_group_opened(
                             group_id,

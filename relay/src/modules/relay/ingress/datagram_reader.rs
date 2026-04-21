@@ -6,7 +6,7 @@ use crate::modules::{
     core::data_receiver::datagram_receiver::DatagramReceiver,
     relay::{
         cache::store::TrackCacheStore,
-        notifications::{latest_info::LatestInfo, sender_map::SenderMap},
+        notifications::{track_event::TrackEvent, sender_map::SenderMap},
     },
     types::TrackKey,
 };
@@ -69,13 +69,13 @@ impl DatagramReader {
                         current_group_id = Some(group_id);
                         let _ = sender_map
                             .get_or_create(track_key)
-                            .send(LatestInfo::DatagramOpened { group_id });
+                            .send(TrackEvent::DatagramOpened { group_id });
                     }
                     let cache = cache_store.get_or_create(track_key);
                     cache.append_object(group_id, object).await;
                     let _ = sender_map
                         .get_or_create(track_key)
-                        .send(LatestInfo::LatestObject);
+                        .send(TrackEvent::LatestObject);
                 }
                 Err(_) => {
                     // Ensure the last group is closed before exiting.

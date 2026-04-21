@@ -6,7 +6,7 @@ use crate::modules::{
     core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
     relay::{
         cache::store::TrackCacheStore,
-        notifications::{latest_info::LatestInfo, sender_map::SenderMap},
+        notifications::{track_event::TrackEvent, sender_map::SenderMap},
     },
     types::TrackKey,
 };
@@ -62,24 +62,26 @@ impl StreamReader {
                 Ok(DataObject::SubgroupHeader(header)) => {
                     group_id = header.group_id;
                     let cache = cache_store.get_or_create(track_key);
-                    cache.append_object(group_id, DataObject::SubgroupHeader(header)).await;
+                    cache
+                        .append_object(group_id, DataObject::SubgroupHeader(header))
+                        .await;
                     let _ = sender_map
                         .get_or_create(track_key)
-                        .send(LatestInfo::StreamOpened { group_id });
+                        .send(TrackEvent::StreamOpened { group_id });
                 }
                 Ok(object) => {
                     let cache = cache_store.get_or_create(track_key);
                     cache.append_object(group_id, object).await;
                     let _ = sender_map
                         .get_or_create(track_key)
-                        .send(LatestInfo::LatestObject);
+                        .send(TrackEvent::LatestObject);
                 }
                 Err(_) => {
                     let cache = cache_store.get_or_create(track_key);
                     cache.close_group(group_id).await;
                     let _ = sender_map
                         .get_or_create(track_key)
-                        .send(LatestInfo::EndOfGroup);
+                        .send(TrackEvent::EndOfGroup);
                     return;
                 }
             }

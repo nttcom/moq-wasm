@@ -1,9 +1,9 @@
 use dashmap::DashMap;
 
-use crate::modules::{relay::notifications::latest_info::LatestInfo, types::TrackKey};
+use crate::modules::{relay::notifications::track_event::TrackEvent, types::TrackKey};
 
 pub(crate) struct SenderMap {
-    map: DashMap<TrackKey, tokio::sync::broadcast::Sender<LatestInfo>>,
+    map: DashMap<TrackKey, tokio::sync::broadcast::Sender<TrackEvent>>,
 }
 
 impl SenderMap {
@@ -16,7 +16,7 @@ impl SenderMap {
     pub(crate) fn get_or_create(
         &self,
         track_key: TrackKey,
-    ) -> tokio::sync::broadcast::Sender<LatestInfo> {
+    ) -> tokio::sync::broadcast::Sender<TrackEvent> {
         let _ = self
             .map
             .entry(track_key)
