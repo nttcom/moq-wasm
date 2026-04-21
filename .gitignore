@@ -27,7 +27,7 @@ moqt-ingest-gateway/recordings/
 log/*
 
 /.env
-
+test-results
 
 
 cargo-flamegraph.trace/*
