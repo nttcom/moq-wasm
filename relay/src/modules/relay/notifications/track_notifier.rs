@@ -2,11 +2,11 @@ use dashmap::DashMap;
 
 use crate::modules::{relay::notifications::track_event::TrackEvent, types::TrackKey};
 
-pub(crate) struct SenderMap {
+pub(crate) struct TrackNotifier {
     map: DashMap<TrackKey, tokio::sync::broadcast::Sender<TrackEvent>>,
 }
 
-impl SenderMap {
+impl TrackNotifier {
     pub(crate) fn new() -> Self {
         Self {
             map: DashMap::new(),

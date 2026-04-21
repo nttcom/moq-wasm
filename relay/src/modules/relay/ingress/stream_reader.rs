@@ -6,7 +6,7 @@ use crate::modules::{
     core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
     relay::{
         cache::store::TrackCacheStore,
-        notifications::{sender_map::SenderMap, track_event::TrackEvent},
+        notifications::{track_notifier::TrackNotifier, track_event::TrackEvent},
     },
     types::TrackKey,
 };
@@ -24,7 +24,7 @@ impl StreamReader {
     pub(crate) fn run(
         mut receiver: mpsc::Receiver<StreamOpened>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<SenderMap>,
+        sender_map: Arc<TrackNotifier>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
@@ -54,7 +54,7 @@ impl StreamReader {
         track_key: TrackKey,
         mut receiver: Box<dyn StreamReceiver>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<SenderMap>,
+        sender_map: Arc<TrackNotifier>,
     ) {
         let mut group_id = 0u64;
         loop {

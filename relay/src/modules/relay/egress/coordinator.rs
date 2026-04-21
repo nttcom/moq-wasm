@@ -6,7 +6,7 @@ use crate::modules::{
     core::published_resource::PublishedResource,
     relay::{
         cache::store::TrackCacheStore, egress::runner::EgressRunner,
-        notifications::sender_map::SenderMap,
+        notifications::track_notifier::TrackNotifier,
     },
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},
@@ -31,7 +31,7 @@ impl EgressCoordinator {
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<SenderMap>,
+        sender_map: Arc<TrackNotifier>,
     ) -> Self {
         let (command_sender, mut command_receiver) = mpsc::channel::<EgressCommand>(512);
 
@@ -76,7 +76,7 @@ impl EgressCoordinator {
     async fn spawn_runner(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<SenderMap>,
+        sender_map: Arc<TrackNotifier>,
         request: EgressStartRequest,
         joinset: &mut JoinSet<()>,
     ) {

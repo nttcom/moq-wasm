@@ -7,7 +7,7 @@ use crate::modules::{
     relay::{
         cache::store::TrackCacheStore,
         ingress::stream_reader::{StreamOpened, StreamReader},
-        notifications::sender_map::SenderMap,
+        notifications::track_notifier::TrackNotifier,
     },
     types::TrackKey,
 };
@@ -26,7 +26,7 @@ impl StreamIngressTask {
     pub(crate) fn new(
         mut receiver: mpsc::Receiver<StreamReceiveStart>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<SenderMap>,
+        sender_map: Arc<TrackNotifier>,
     ) -> Self {
         let (opened_tx, opened_rx) = mpsc::channel::<StreamOpened>(64);
         let stream_reader = StreamReader::run(opened_rx, cache_store, sender_map);

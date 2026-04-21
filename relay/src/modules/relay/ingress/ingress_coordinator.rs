@@ -10,7 +10,7 @@ use crate::modules::{
             datagram_reader::{DatagramReader, DatagramReceiveStart},
             stream_ingress_task::{StreamIngressTask, StreamReceiveStart},
         },
-        notifications::sender_map::SenderMap,
+        notifications::track_notifier::TrackNotifier,
     },
     session_repository::SessionRepository,
     types::{SessionId, compose_session_track_key},
@@ -32,7 +32,7 @@ impl IngressCoordinator {
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<SenderMap>,
+        sender_map: Arc<TrackNotifier>,
     ) -> Self {
         let (stream_tx, stream_rx) = mpsc::channel::<StreamReceiveStart>(64);
         let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveStart>(64);
