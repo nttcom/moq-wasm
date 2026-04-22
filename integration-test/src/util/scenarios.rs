@@ -104,13 +104,14 @@ async fn send_stream_objects(
     group_id: u64,
     object_count: u64,
 ) -> Result<()> {
-    let mut stream = publisher.create_stream(publication).next().await?;
+    let stream = publisher.create_stream(publication).next().await?;
     let header = stream.create_header(group_id, moqt::SubgroupId::None, 128, false, false);
+    let mut stream = stream.send_header(header).await?;
     for object_id in 0..object_count {
         let payload =
             moqt::SubgroupObject::new_payload(Bytes::from(format!("stream-object-{}", object_id)));
-        let object = stream.create_object_field(&header, object_id, extension_headers(), payload);
-        stream.send(&header, object).await?;
+        let object = stream.create_object_field(object_id, extension_headers(), payload);
+        stream.send(object).await?;
     }
     Ok(())
 }

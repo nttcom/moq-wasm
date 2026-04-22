@@ -3,7 +3,7 @@ mod moqt_sender;
 
 use anyhow::{Result, bail};
 use bytes::Bytes;
-use moqt::{ExtensionHeaders, QUIC, StreamDataSender, SubgroupId, SubgroupObject};
+use moqt::{ExtensionHeaders, QUIC, StreamDataSenderFactory, SubgroupId, SubgroupObject};
 use tokio::sync::mpsc;
 use tracing::info;
 
@@ -74,7 +74,7 @@ async fn read_segments(tx: mpsc::Sender<Segment>) -> Result<()> {
 }
 
 async fn send_segments(
-    mut stream: StreamDataSender<QUIC>,
+    stream_factory: StreamDataSenderFactory<QUIC>,
     mut rx: mpsc::Receiver<Segment>,
 ) -> Result<()> {
     let mut group_id: u64 = 0;
@@ -86,25 +86,26 @@ async fn send_segments(
             immutable_extensions: vec![],
         };
 
-        let header = stream.create_header(group_id, SubgroupId::None, 128, false, false);
+        // グループごとに新しいストリームを開く
+        let uninit = stream_factory.next().await?;
+        let header = uninit.create_header(group_id, SubgroupId::None, 128, false, false);
+        let mut stream = uninit.send_header(header).await?;
 
         // Object 0: init segment
         let obj0 = stream.create_object_field(
-            &header,
             0,
             ext.clone(),
             SubgroupObject::new_payload(Bytes::from(segment.init_segment)),
         );
-        stream.send(&header, obj0).await?;
+        stream.send(obj0).await?;
 
         // Object 1: media segment (moof + mdat)
         let obj1 = stream.create_object_field(
-            &header,
             1,
             ext,
             SubgroupObject::new_payload(Bytes::from(segment.media_segment)),
         );
-        stream.send(&header, obj1).await?;
+        stream.send(obj1).await?;
 
         info!(group_id, "group sent");
         group_id += 1;
@@ -131,7 +132,7 @@ async fn main() -> Result<()> {
     info!(namespace, "using namespace");
 
     // MoQT 接続 → subscriber 待ち
-    let stream = moqt_sender::connect_and_wait_for_subscriber(&namespace).await?;
+    let factory = moqt_sender::connect_and_wait_for_subscriber(&namespace).await?;
 
     // subscriber が来てから ffmpeg を起動
     let (tx, rx) = mpsc::channel::<Segment>(4);
@@ -143,7 +144,7 @@ async fn main() -> Result<()> {
 
     // 送信タスク
     let send_handle = tokio::spawn(async move {
-        if let Err(e) = send_segments(stream, rx).await {
+        if let Err(e) = send_segments(factory, rx).await {
             tracing::error!("send error: {}", e);
         }
     });
