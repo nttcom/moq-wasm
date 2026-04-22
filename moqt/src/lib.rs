@@ -27,6 +27,8 @@ pub use modules::moqt::data_plane::streams::stream::stream_data_receiver::Subgro
 pub use modules::moqt::data_plane::streams::stream::stream_data_receiver_factory::StreamDataReceiverFactory;
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender::HeaderSent;
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender::StreamDataSender;
+pub use modules::moqt::data_plane::streams::stream::stream_data_sender::SubgroupHeaderSender;
+pub use modules::moqt::data_plane::streams::stream::stream_data_sender::SubgroupObjectSender;
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender::Uninitialized;
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender_factory::StreamDataSenderFactory;
 pub use modules::moqt::domains::endpoint::ClientConfig;

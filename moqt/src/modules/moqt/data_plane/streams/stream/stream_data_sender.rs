@@ -16,6 +16,9 @@ pub struct Uninitialized;
 /// Typestate: header has been sent.
 pub struct HeaderSent;
 
+pub type SubgroupHeaderSender<T> = StreamDataSender<T, Uninitialized>;
+pub type SubgroupObjectSender<T> = StreamDataSender<T, HeaderSent>;
+
 /// Handles sending data on a subgroup stream.
 ///
 /// In the `S = Uninitialized` state a header can be created and sent.

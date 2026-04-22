@@ -1,11 +1,10 @@
 use crate::modules::core::{data_object::DataObject, data_sender::DataSender};
 
-/// `StreamDataSender` の状態を保持する内部 enum。
-/// `send_header` が self を消費して状態遷移するため、
-/// `Option` で包んで `take()` できるようにしている。
+/// Internal enum that holds the `StreamDataSender` across its typestate transitions.
+/// Since `send_header` consumes `self`, we wrap it in `Option` to allow `take()`.
 enum SenderInner<T: moqt::TransportProtocol> {
-    Uninitialized(moqt::StreamDataSender<T, moqt::Uninitialized>),
-    HeaderSent(moqt::StreamDataSender<T, moqt::HeaderSent>),
+    Uninitialized(moqt::SubgroupHeaderSender<T>),
+    HeaderSent(moqt::SubgroupObjectSender<T>),
 }
 
 pub(crate) struct StreamSender<T: moqt::TransportProtocol> {
@@ -14,10 +13,7 @@ pub(crate) struct StreamSender<T: moqt::TransportProtocol> {
 }
 
 impl<T: moqt::TransportProtocol> StreamSender<T> {
-    pub(crate) fn new(
-        inner: moqt::StreamDataSender<T, moqt::Uninitialized>,
-        subscriber_track_alias: u64,
-    ) -> Self {
+    pub(crate) fn new(inner: moqt::SubgroupHeaderSender<T>, subscriber_track_alias: u64) -> Self {
         Self {
             inner: Some(SenderInner::Uninitialized(inner)),
             subscriber_track_alias,
