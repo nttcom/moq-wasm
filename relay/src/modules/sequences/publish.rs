@@ -85,7 +85,7 @@ impl Publish {
         // TODO:
         // Send ok or error failed then close session.
         // forward: true case. prepare to accept stream/datagram before it returns the result.
-        match handler.ok(128, FilterType::LatestObject).await {
+        match handler.ok(128, FilterType::LargestObject, 0).await {
             Ok(()) => table.register_publish(session_id, Arc::from(handler)).await,
             Err(_) => tracing::error!("failed to accept publish. close session."),
         }

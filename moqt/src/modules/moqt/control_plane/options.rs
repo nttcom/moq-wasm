@@ -32,7 +32,7 @@ impl Default for SubscribeOption {
             subscriber_priority: 128,
             group_order: GroupOrder::Ascending,
             forward: true,
-            filter_type: FilterType::LatestObject,
+            filter_type: FilterType::LargestObject,
         }
     }
 }

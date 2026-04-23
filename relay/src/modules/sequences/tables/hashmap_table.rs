@@ -228,10 +228,7 @@ impl Table for HashMapTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::{
-        core::subscription::Subscription,
-        enums::{ContentExists, FilterType, GroupOrder},
-    };
+    use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
 
     #[derive(Debug)]
     struct StubPublishHandler {
@@ -282,22 +279,13 @@ mod tests {
             &self,
             _subscriber_priority: u8,
             _filter_type: FilterType,
+            _expires: u64,
         ) -> anyhow::Result<()> {
             Ok(())
         }
 
         async fn _error(&self, _code: u64, _reason_phrase: String) -> anyhow::Result<()> {
             Ok(())
-        }
-
-        fn convert_into_subscription(&self, expires: u64) -> Subscription {
-            Subscription::from(moqt::Subscription {
-                track_alias: self.track_alias,
-                expires,
-                group_order: moqt::GroupOrder::Ascending,
-                content_exists: moqt::ContentExists::False,
-                delivery_timeout: None,
-            })
         }
     }
 

@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) type SessionId = u64;
+pub(crate) type TrackKey = u128;
 
 static LAST_SESSION_ID: AtomicU64 = AtomicU64::new(0);
 
