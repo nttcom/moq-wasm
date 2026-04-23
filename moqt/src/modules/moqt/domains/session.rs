@@ -6,8 +6,9 @@ use crate::Publisher;
 use crate::Subscriber;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::control_plane::threads::control_message_receive_thread::ControlMessageReceiveThread;
-use crate::modules::moqt::control_plane::threads::datagram_receive_thread::DatagramReceiveThread;
-use crate::modules::moqt::data_plane::streams::stream::stream_receiver::BiStreamReceiver;
+use crate::modules::moqt::data_plane::datagram::receive_thread::DatagramReceiveThread;
+use crate::modules::moqt::data_plane::stream::receive_thread::StreamReceiveThread;
+use crate::modules::moqt::data_plane::stream::receiver::BiStreamReceiver;
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::transport::transport_connection::TransportConnection;
@@ -17,6 +18,7 @@ pub struct Session<T: TransportProtocol> {
     event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent<T>>>,
     message_receive_join_handle: tokio::task::JoinHandle<()>,
     datagram_receive_thread: tokio::task::JoinHandle<()>,
+    stream_receive_thread: tokio::task::JoinHandle<()>,
     close_watch_join_handle: tokio::task::JoinHandle<()>,
 }
 
@@ -30,6 +32,7 @@ impl<T: TransportProtocol> Session<T> {
         let message_receive_join_handle =
             ControlMessageReceiveThread::run(receive_stream, Arc::downgrade(&inner));
         let datagram_receive_thread = DatagramReceiveThread::run(inner.clone());
+        let stream_receive_thread = StreamReceiveThread::run(inner.clone());
         let close_watch_join_handle = Self::spawn_disconnect_notifier(inner.clone());
 
         Self {
@@ -37,6 +40,7 @@ impl<T: TransportProtocol> Session<T> {
             event_receiver: tokio::sync::Mutex::new(event_receiver),
             message_receive_join_handle,
             datagram_receive_thread,
+            stream_receive_thread,
             close_watch_join_handle,
         }
     }
@@ -88,6 +92,7 @@ impl<T: TransportProtocol> Drop for Session<T> {
         tracing::info!("Session dropped.");
         self.message_receive_join_handle.abort();
         self.datagram_receive_thread.abort();
+        self.stream_receive_thread.abort();
         self.close_watch_join_handle.abort();
     }
 }

@@ -11,11 +11,12 @@ use crate::{
                 messages::{subscribe::Subscribe, subscribe_namespace::SubscribeNamespace},
             },
             enums::ResponseMessage,
-            threads::enums::StreamWithObject,
         },
-        data_plane::streams::stream::{
-            stream_data_receiver::StreamDataReceiver,
-            stream_data_receiver_factory::StreamDataReceiverFactory,
+        data_plane::{
+            notification::StreamWithObject,
+            stream::{
+                data_receiver::StreamDataReceiver, data_receiver_factory::StreamDataReceiverFactory,
+            },
         },
         domains::session_context::SessionContext,
         protocol::TransportProtocol,

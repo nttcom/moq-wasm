@@ -14,7 +14,7 @@ use crate::{
             enums::ResponseMessage,
             options::PublishOption,
         },
-        data_plane::streams::stream::stream_data_sender_factory::StreamDataSenderFactory,
+        data_plane::stream::data_sender_factory::StreamDataSenderFactory,
         domains::{published_resource::PublishedResource, session_context::SessionContext},
         protocol::TransportProtocol,
     },

@@ -2,9 +2,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{
     TransportProtocol,
-    modules::moqt::{
-        control_plane::threads::enums::StreamWithObject,
-        data_plane::streams::stream::stream_data_receiver::StreamDataReceiver,
+    modules::moqt::data_plane::{
+        notification::StreamWithObject, stream::data_receiver::StreamDataReceiver,
     },
 };
 

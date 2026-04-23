@@ -6,11 +6,8 @@ use std::{
 use crate::{
     SessionEvent, TransportProtocol,
     modules::moqt::{
-        control_plane::{
-            enums::{RequestId, ResponseMessage},
-            threads::enums::StreamWithObject,
-        },
-        data_plane::streams::stream::bi_stream_sender::BiStreamSender,
+        control_plane::enums::{RequestId, ResponseMessage},
+        data_plane::{notification::StreamWithObject, stream::bi_stream_sender::BiStreamSender},
     },
 };
 

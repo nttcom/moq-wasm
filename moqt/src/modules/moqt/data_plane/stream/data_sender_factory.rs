@@ -4,7 +4,7 @@ use crate::{
     TransportProtocol,
     modules::{
         moqt::{
-            data_plane::streams::stream::stream_data_sender::StreamDataSender,
+            data_plane::stream::data_sender::StreamDataSender,
             domains::session_context::SessionContext,
         },
         transport::transport_connection::TransportConnection,

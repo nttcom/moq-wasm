@@ -12,9 +12,7 @@ use crate::{
                 subscribe_namespace_handler::SubscribeNamespaceHandler,
             },
         },
-        data_plane::streams::stream::{
-            received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
-        },
+        data_plane::stream::{received_message::ReceivedMessage, receiver::BiStreamReceiver},
         domains::session_context::SessionContext,
     },
 };

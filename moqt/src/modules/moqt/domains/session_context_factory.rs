@@ -13,9 +13,9 @@ use crate::{
                 },
             },
         },
-        data_plane::streams::stream::{
+        data_plane::stream::{
             bi_stream_sender::BiStreamSender, received_message::ReceivedMessage,
-            stream_receiver::BiStreamReceiver,
+            receiver::BiStreamReceiver,
         },
         domains::session_context::SessionContext,
     },

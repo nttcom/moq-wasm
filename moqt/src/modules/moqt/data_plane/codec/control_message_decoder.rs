@@ -15,7 +15,7 @@ use crate::modules::{
                 subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
             },
         },
-        data_plane::streams::stream::received_message::ReceivedMessage,
+        data_plane::stream::received_message::ReceivedMessage,
     },
 };
 

@@ -2,7 +2,7 @@ use crate::{
     TransportProtocol,
     modules::moqt::data_plane::{
         object::subgroup::{SubgroupHeader, SubgroupObjectField},
-        streams::stream::stream_receiver::UniStreamReceiver,
+        stream::receiver::UniStreamReceiver,
     },
 };
 

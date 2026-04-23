@@ -1,7 +1,7 @@
 use anyhow::bail;
 
 use crate::TransportProtocol;
-use crate::modules::moqt::control_plane::threads::enums::StreamWithObject;
+use crate::modules::moqt::data_plane::notification::StreamWithObject;
 use crate::modules::moqt::data_plane::object::object_datagram::ObjectDatagram;
 
 #[derive(Debug)]

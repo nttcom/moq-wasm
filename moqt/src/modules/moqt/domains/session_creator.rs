@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::modules::moqt::data_plane::codec::control_message_decoder::ControlMessageDecoder;
-use crate::modules::moqt::data_plane::streams::stream::stream_receiver::BiStreamReceiver;
+use crate::modules::moqt::data_plane::stream::receiver::BiStreamReceiver;
 use crate::modules::moqt::domains::session::Session;
 use crate::modules::moqt::domains::session_context_factory::SessionContextFactory;
 use crate::modules::moqt::protocol::TransportProtocol;

@@ -7,7 +7,7 @@ use crate::{
             extension_headers::ExtensionHeaders,
             subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
         },
-        streams::stream::stream_sender::StreamSender,
+        stream::sender::StreamSender,
     },
 };
 
@@ -64,8 +64,6 @@ impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
         )
     }
 
-    /// Sends the header on the stream and transitions to the `HeaderSent` state.
-    /// Use the returned sender for all subsequent object sends.
     pub async fn send_header(
         self,
         header: SubgroupHeader,
@@ -96,8 +94,6 @@ impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
 // ─── HeaderSent State ──────────────────────────────────────────────────────────
 
 impl<T: TransportProtocol> StreamDataSender<T, HeaderSent> {
-    /// Creates an object field.
-    /// The `message_type` is automatically inherited from the already-sent header.
     pub fn create_object_field(
         &self,
         object_id_delta: u64,
@@ -113,7 +109,6 @@ impl<T: TransportProtocol> StreamDataSender<T, HeaderSent> {
         }
     }
 
-    /// Sends an object on the stream.
     pub async fn send(&mut self, data: SubgroupObjectField) -> anyhow::Result<()> {
         tracing::debug!("Sending subgroup object");
         let bytes = data.encode();
