@@ -5,7 +5,7 @@ use dashmap::DashSet;
 use crate::modules::{core::handler::publish::PublishHandler, types::SessionId};
 
 #[async_trait::async_trait]
-pub(crate) trait Table: Send + Sync + 'static + Debug {
+pub(crate) trait RelayTable: Send + Sync + 'static + Debug {
     fn new() -> Self
     where
         Self: Sized;

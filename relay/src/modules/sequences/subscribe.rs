@@ -4,7 +4,7 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressStartRequest},
         ingress::ingress_coordinator::IngressStartRequest,
     },
-    sequences::{notifier::Notifier, tables::table::Table},
+    sequences::{notifier::SessionNotifier, tables::table::RelayTable},
     types::{SessionId, compose_session_track_key},
 };
 
@@ -14,8 +14,8 @@ impl Subscribe {
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
-        table: &dyn Table,
-        notifier: &Notifier,
+        table: &dyn RelayTable,
+        notifier: &SessionNotifier,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressStartRequest>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn SubscribeHandler>,
@@ -60,7 +60,7 @@ impl Subscribe {
         pub_session_id: SessionId,
         track_namespace: &str,
         track_name: &str,
-        notifier: &Notifier,
+        notifier: &SessionNotifier,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressStartRequest>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &dyn SubscribeHandler,

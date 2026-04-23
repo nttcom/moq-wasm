@@ -7,12 +7,12 @@ use crate::modules::{
         egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressStartRequest,
     },
     sequences::{
-        notifier::Notifier,
+        notifier::SessionNotifier,
         publish::Publish,
         publish_namespace::PublishNamespace,
         subscribe::Subscribe,
         subscribe_namespace::SubscribeNameSpace,
-        tables::{hashmap_table::HashMapTable, table::Table},
+        tables::{hashmap_table::HashMapTable, table::RelayTable},
     },
     session_repository::SessionRepository,
 };
@@ -48,7 +48,7 @@ impl EventHandler {
         tokio::task::Builder::new()
             .name("Session Event Watcher")
             .spawn(async move {
-                let notifier = Notifier { repository: repo };
+                let notifier = SessionNotifier { repository: repo };
                 let table = Box::new(HashMapTable::new());
                 loop {
                     if let Some(event) = receiver.recv().await {

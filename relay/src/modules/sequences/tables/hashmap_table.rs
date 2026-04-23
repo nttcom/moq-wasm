@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 
 use crate::modules::{
     core::handler::publish::PublishHandler,
-    sequences::tables::table::Table,
+    sequences::tables::table::RelayTable,
     types::{SessionId, TrackNamespace, TrackNamespacePrefix},
 };
 
@@ -25,7 +25,7 @@ pub(crate) struct HashMapTable {
 }
 
 #[async_trait::async_trait]
-impl Table for HashMapTable {
+impl RelayTable for HashMapTable {
     fn new() -> Self {
         Self {
             publisher_namespaces: DashMap::new(),

@@ -8,19 +8,19 @@ use crate::modules::{
     },
     enums::MoqtRelayEvent,
     event_resolver::moqt_relay_event_resolver::MoqtRelayEventResolver,
-    thread_manager::ThreadManager,
+    thread_manager::SessionTaskManager,
     types::SessionId,
 };
 
 pub(crate) struct SessionRepository {
-    thread_manager: ThreadManager,
+    thread_manager: SessionTaskManager,
     sessions: DashMap<SessionId, Arc<dyn Session>>,
 }
 
 impl SessionRepository {
     pub(crate) fn new() -> Self {
         Self {
-            thread_manager: ThreadManager::new(),
+            thread_manager: SessionTaskManager::new(),
             sessions: DashMap::new(),
         }
     }

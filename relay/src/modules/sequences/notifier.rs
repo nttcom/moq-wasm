@@ -7,11 +7,11 @@ use crate::modules::{
     types::SessionId,
 };
 
-pub(crate) struct Notifier {
+pub(crate) struct SessionNotifier {
     pub(crate) repository: Arc<tokio::sync::Mutex<SessionRepository>>,
 }
 
-impl Notifier {
+impl SessionNotifier {
     pub(crate) async fn publish_namespace(
         &self,
         session_id: SessionId,
