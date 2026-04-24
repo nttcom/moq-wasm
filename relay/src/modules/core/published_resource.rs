@@ -17,11 +17,11 @@ impl PublishedResource {
         self.published_resource.track_alias
     }
 
-    pub(crate) fn group_order(&self) -> GroupOrder {
-        GroupOrder::from(self.published_resource.group_order)
-    }
-
     pub(crate) fn filter_type(&self) -> FilterType {
         FilterType::from(self.published_resource.filter_type)
+    }
+
+    pub(crate) fn group_order(&self) -> GroupOrder {
+        GroupOrder::from(self.published_resource.group_order)
     }
 }

@@ -22,6 +22,11 @@ impl TransportConnection for QUICConnection {
     type SendStream = QUICSendStream;
     type ReceiveStream = QUICReceiveStream;
 
+    async fn closed(&self) {
+        let reason = self.connection.closed().await;
+        tracing::info!("QUIC connection closed: {:?}", reason);
+    }
+
     async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
         let (sender, receiver) = self.connection.open_bi().await?;
         let send_stream = QUICSendStream {

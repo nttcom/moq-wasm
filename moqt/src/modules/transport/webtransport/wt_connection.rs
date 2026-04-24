@@ -20,6 +20,11 @@ impl TransportConnection for WtConnection {
     type SendStream = WtSendStream;
     type ReceiveStream = WtReceiveStream;
 
+    async fn closed(&self) {
+        let reason = self.connection.closed().await;
+        tracing::info!("WebTransport connection closed: {:?}", reason);
+    }
+
     async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
         let (send, recv) = self.session.open_bi().await?;
         let stable_id = self.session.stable_id();

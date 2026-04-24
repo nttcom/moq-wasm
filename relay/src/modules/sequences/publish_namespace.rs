@@ -3,18 +3,32 @@ use crate::modules::{
     sequences::{notifier::Notifier, tables::table::Table},
     types::SessionId,
 };
+use tracing::Span;
 
 pub(crate) struct PublishNamespace;
 
 impl PublishNamespace {
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.publish_namespace",
+        skip_all,
+        parent = session_span,
+        fields(session_id = %session_id)
+    )]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
+        session_span: &Span,
         table: &dyn Table,
         notifier: &Notifier,
         handler: &dyn PublishNamespaceHandler,
     ) {
-        tracing::info!("SequenceHandler::publish namespace: {}", session_id);
+        let requested_track_namespace = handler.track_namespace();
+        tracing::info!(
+            session_id = %session_id,
+            track_namespace = %requested_track_namespace,
+            "SequenceHandler::PublishNamespace"
+        );
         let Some(track_namespace) = self.register(session_id, table, handler).await else {
             return;
         };
@@ -28,9 +42,14 @@ impl PublishNamespace {
             .await;
 
         self.response(handler).await;
-        tracing::info!("SequenceHandler::publish namespace: {} DONE", session_id);
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.publish_namespace.register",
+        skip_all,
+        fields(session_id = %session_id, track_namespace = %handler.track_namespace())
+    )]
     async fn register(
         &self,
         session_id: SessionId,
@@ -57,6 +76,12 @@ impl PublishNamespace {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.publish_namespace.notify_to_subscribers",
+        skip_all,
+        fields(track_namespace = %track_namespace)
+    )]
     async fn notify_to_subscribers(
         &self,
         track_namespace: &str,
@@ -81,9 +106,14 @@ impl PublishNamespace {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.publish_namespace.response",
+        skip_all
+    )]
     async fn response(&self, handler: &dyn PublishNamespaceHandler) {
         match handler.ok().await {
-            Ok(_) => tracing::info!("OK"),
+            Ok(_) => (),
             Err(e) => {
                 tracing::error!("Publish Namespace Error: {:?}", e);
             }

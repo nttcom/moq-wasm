@@ -54,23 +54,29 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
         subscriber_priority: 128,
         group_order: GroupOrder::Ascending,
         forward: true,
-        filter_type: FilterType::LatestGroup,
+        filter_type: FilterType::NextGroupStart,
     };
 
     info!(namespace, track_name, "subscribing");
-    let subscription = subscriber
+    let subscription = session
+        .subscriber()
         .subscribe(namespace.to_string(), track_name.to_string(), option)
         .await
         .context("failed to subscribe")?;
 
     info!("waiting for data stream");
-    let receiver = subscriber
+    let receiver = session
+        .subscriber()
         .accept_data_receiver(&subscription)
         .await
         .context("failed to accept data receiver")?;
 
     match receiver {
-        moqt::DataReceiver::Stream(mut stream) => {
+        moqt::DataReceiver::Stream(mut factory) => {
+            let mut stream = factory
+                .next()
+                .await
+                .context("failed to get initial stream")?;
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
             let mut init_written = false;

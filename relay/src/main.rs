@@ -4,6 +4,8 @@ use std::{
 };
 
 use rcgen::{CertifiedKey, generate_simple_self_signed};
+use tracing::Instrument;
+
 const CERT_DIR: &str = "keys";
 
 fn get_cert_path() -> PathBuf {
@@ -45,30 +47,69 @@ pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // ロギングの初期化 (必要であれば)
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_line_number(true)
-        .try_init()
-        .ok();
+    let _logging = relay::init_logging("relay")?;
+    let relay_span = tracing::info_span!(parent: None, "relay");
 
-    create_certs_for_test_if_needed()?;
+    async move {
+        let startup_span = tracing::info_span!("startup");
+        let (server, key_path, cert_path) = async move {
+            create_certs_for_test_if_needed()?;
 
-    let key_path = get_key_path().to_str().unwrap().to_string();
-    let cert_path = get_cert_path().to_str().unwrap().to_string();
+            let key_path = get_key_path().to_str().unwrap().to_string();
+            let cert_path = get_cert_path().to_str().unwrap().to_string();
 
-    // RelayServerインスタンスを作成（リポジトリとイベントハンドラが内部で初期化される）
-    let server = relay::RelayServer::new(&key_path, &cert_path);
+            let server = relay::RelayServer::new(&key_path, &cert_path);
+            anyhow::Ok((server, key_path, cert_path))
+        }
+        .instrument(startup_span)
+        .await?;
 
-    // QUIC + WebTransport を1ポートで起動
-    let _handler = server.spawn_transport::<moqt::DUAL>(4433);
+        let quic_handler = {
+            let quic_listener_span = tracing::info_span!("quic_listener", port = 4434);
+            async {
+                tracing::info!(
+                    key_path = %key_path,
+                    cert_path = %cert_path,
+                    "Starting QUIC listener"
+                );
+                server.spawn_transport::<moqt::QUIC>(4434)
+            }
+            .instrument(quic_listener_span)
+            .await
+        };
 
-    tracing::info!("Relay server started with QUIC + WebTransport (4433)");
-    tracing::info!("Ctrl+C to shutdown");
+        let wt_handler = {
+            let webtransport_listener_span =
+                tracing::info_span!("webtransport_listener", port = 4433);
+            async {
+                tracing::info!(
+                    key_path = %key_path,
+                    cert_path = %cert_path,
+                    "Starting WebTransport listener"
+                );
+                server.spawn_transport::<moqt::WEBTRANSPORT>(4433)
+            }
+            .instrument(webtransport_listener_span)
+            .await
+        };
 
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("Shutdown signal received. Closing...");
+        let (_server, _quic_handler, _wt_handler) = (server, quic_handler, wt_handler);
 
-    tracing::info!("Relay server gracefully shutdown.");
-    Ok(())
+        tracing::info!("Relay server started with QUIC (4434) and WebTransport (4433)");
+        tracing::info!("Ctrl+C to shutdown");
+
+        let shutdown_span = tracing::info_span!("shutdown");
+        async {
+            tokio::signal::ctrl_c().await?;
+            tracing::info!("Shutdown signal received. Closing...");
+            tracing::info!("Relay server gracefully shutdown.");
+            anyhow::Ok(())
+        }
+        .instrument(shutdown_span)
+        .await?;
+
+        Ok(())
+    }
+    .instrument(relay_span)
+    .await
 }

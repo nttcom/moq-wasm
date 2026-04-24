@@ -81,8 +81,8 @@ impl SessionContextFactory {
         let received_message = match receive_stream.receive().await {
             Some(Ok(b)) => b,
             _ => {
-                tracing::error!("Stream ended.");
-                anyhow::bail!("Stream ended.")
+                tracing::error!("Stream ended before receiving server setup.");
+                anyhow::bail!("Stream ended before receiving server setup.")
             }
         };
         match received_message {
@@ -104,12 +104,11 @@ impl SessionContextFactory {
         send_stream: &mut BiStreamSender<T>,
         receive_stream: &mut BiStreamReceiver<T>,
     ) -> anyhow::Result<()> {
-        tracing::info!("Waiting for server setup.");
         let received_message = match receive_stream.receive().await {
             Some(Ok(b)) => b,
             _ => {
-                tracing::error!("Stream ended.");
-                anyhow::bail!("Stream ended.")
+                tracing::error!("Stream ended before receiving client setup.");
+                anyhow::bail!("Stream ended before receiving client setup.")
             }
         };
         match received_message {
@@ -124,7 +123,6 @@ impl SessionContextFactory {
                 anyhow::bail!("Protocol violation.")
             }
         };
-        tracing::info!("Received client setup.");
         let setup_param = SetupParameter {
             path: None,
             max_request_id: 1000,

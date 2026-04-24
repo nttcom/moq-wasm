@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::bail;
 
 use crate::{
-    DatagramSender, StreamDataSender,
+    DatagramSender,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -14,6 +14,7 @@ use crate::{
             enums::ResponseMessage,
             options::PublishOption,
         },
+        data_plane::streams::stream::stream_data_sender_factory::StreamDataSenderFactory,
         domains::{published_resource::PublishedResource, session_context::SessionContext},
         protocol::TransportProtocol,
     },
@@ -47,7 +48,6 @@ impl<T: TransportProtocol> Publisher<T> {
                 publish_namespace.encode(),
             )
             .await?;
-        tracing::info!("Publish namespace request id: {}", request_id);
         let result = receiver.await;
         if let Err(e) = result {
             bail!("Failed to receive message: {}", e)
@@ -58,12 +58,10 @@ impl<T: TransportProtocol> Publisher<T> {
                 if request_id != response_request_id {
                     bail!("Protocol violation")
                 } else {
-                    tracing::info!("Publish namespace ok");
                     Ok(())
                 }
             }
             ResponseMessage::PublishNamespaceError(_, _, _) => {
-                tracing::info!("Publish namespace error");
                 bail!("Publish namespace error")
             }
             _ => bail!("Protocol violation"),
@@ -103,7 +101,6 @@ impl<T: TransportProtocol> Publisher<T> {
             .send_stream
             .send(ControlMessageType::Publish, bytes)
             .await?;
-        tracing::info!("Publish");
         let result = receiver.await;
         if let Err(e) = result {
             bail!("Failed to receive message: {}", e)
@@ -131,13 +128,11 @@ impl<T: TransportProtocol> Publisher<T> {
         }
     }
 
-    pub async fn create_stream(
+    pub fn create_stream(
         &self,
         published_resource: &PublishedResource,
-    ) -> anyhow::Result<StreamDataSender<T>> {
-        let stream_data_sender =
-            StreamDataSender::new(published_resource.track_alias, self.session.clone()).await?;
-        Ok(stream_data_sender)
+    ) -> StreamDataSenderFactory<T> {
+        StreamDataSenderFactory::new(published_resource.track_alias, self.session.clone())
     }
 
     pub fn create_datagram(&self, published_resource: &PublishedResource) -> DatagramSender<T> {

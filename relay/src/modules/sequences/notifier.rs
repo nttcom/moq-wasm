@@ -12,25 +12,24 @@ pub(crate) struct Notifier {
 }
 
 impl Notifier {
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.notifier.publish_namespace",
+        skip_all,
+        fields(session_id = %session_id, track_namespace = %track_namespace)
+    )]
     pub(crate) async fn publish_namespace(
         &self,
         session_id: SessionId,
         track_namespace: String,
     ) -> bool {
-        let publisher = self.repository.lock().await.publisher(session_id).await;
+        let publisher = self.repository.lock().await.publisher(session_id);
         if let Some(publisher) = publisher {
             match publisher
                 .send_publish_namespace(track_namespace.to_string())
                 .await
             {
-                Ok(_) => {
-                    tracing::info!(
-                        "Sent publish namespace '{}' to {}",
-                        track_namespace,
-                        session_id
-                    );
-                    true
-                }
+                Ok(_) => true,
                 Err(_) => {
                     tracing::error!("Failed to send publish namespace");
                     false
@@ -46,13 +45,19 @@ impl Notifier {
     //     todo!()
     // }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.notifier.publish",
+        skip_all,
+        fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
+    )]
     pub(crate) async fn publish(
         &self,
         session_id: SessionId,
         track_namespace: String,
         track_name: String,
     ) -> Option<u64> {
-        let publisher = self.repository.lock().await.publisher(session_id).await;
+        let publisher = self.repository.lock().await.publisher(session_id);
         if let Some(publisher) = publisher {
             match publisher
                 .send_publish(track_namespace.clone(), track_name)
@@ -60,7 +65,7 @@ impl Notifier {
             {
                 Ok(published_resource) => {
                     tracing::info!(
-                        "Sent publish namespace '{}' to {}",
+                        "Forwarded PUBLISH '{}' to session:{}",
                         track_namespace,
                         session_id
                     );
@@ -77,19 +82,30 @@ impl Notifier {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.notifier.subscribe",
+        skip_all,
+        fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
+    )]
     pub(crate) async fn subscribe(
         &self,
         session_id: SessionId,
         track_namespace: String,
         track_name: String,
     ) -> anyhow::Result<Subscription> {
-        if let Some(subscriber) = self.repository.lock().await.subscriber(session_id).await {
+        if let Some(mut subscriber) = self.repository.lock().await.subscriber(session_id) {
             let option = SubscribeOption {
                 subscriber_priority: 128,
                 group_order: GroupOrder::Ascending,
                 forward: true,
-                filter_type: FilterType::LatestObject,
+                filter_type: FilterType::LargestObject,
             };
+            tracing::info!(
+                "Forwarded SUBSCRIBE '{}' to session:{}",
+                track_namespace,
+                session_id
+            );
             subscriber
                 .send_subscribe(track_namespace, track_name, option)
                 .await

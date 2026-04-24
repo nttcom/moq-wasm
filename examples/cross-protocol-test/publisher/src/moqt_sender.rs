@@ -2,13 +2,15 @@ use std::net::ToSocketAddrs;
 use std::str::FromStr;
 
 use anyhow::{Context as _, Result};
-use moqt::{ClientConfig, ContentExists, Endpoint, QUIC, SessionEvent, StreamDataSender};
+use moqt::{ClientConfig, ContentExists, Endpoint, QUIC, SessionEvent, StreamDataSenderFactory};
 use tokio::sync::oneshot;
 use tracing::info;
 
-/// MoQT に接続し、namespace を publish し、StreamDataSender を返す。
+/// MoQT に接続し、namespace を publish し、StreamDataSenderFactory を返す。
 /// subscriber が来るまでイベントループで待機する。
-pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDataSender<QUIC>> {
+pub async fn connect_and_wait_for_subscriber(
+    namespace: &str,
+) -> Result<StreamDataSenderFactory<QUIC>> {
     let config = ClientConfig {
         port: 0,
         verify_certificate: false,
@@ -34,7 +36,7 @@ pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDa
         .context("failed to publish namespace")?;
     info!(namespace, "namespace published");
 
-    let (tx, rx) = oneshot::channel::<StreamDataSender<QUIC>>();
+    let (tx, rx) = oneshot::channel::<StreamDataSenderFactory<QUIC>>();
     let pub_clone = publisher.clone();
 
     // イベント処理タスク
@@ -60,15 +62,9 @@ pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDa
                         continue;
                     };
                     let publication = handler.into_publication(0);
-                    let stream = match pub_clone.create_stream(&publication).await {
-                        Ok(s) => s,
-                        Err(e) => {
-                            tracing::error!("failed to create stream: {}", e);
-                            continue;
-                        }
-                    };
+                    let factory = pub_clone.create_stream(&publication);
                     if let Some(tx) = tx.take() {
-                        let _ = tx.send(stream);
+                        let _ = tx.send(factory);
                     }
                 }
                 SessionEvent::ProtocolViolation() => {
@@ -81,9 +77,9 @@ pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDa
     });
 
     info!("waiting for subscriber...");
-    let stream = rx
+    let factory = rx
         .await
         .context("event task dropped before subscriber arrived")?;
-    info!("subscriber connected, stream ready");
-    Ok(stream)
+    info!("subscriber connected, factory ready");
+    Ok(factory)
 }
