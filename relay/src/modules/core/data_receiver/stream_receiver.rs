@@ -1,21 +1,14 @@
-use crate::modules::core::{data_object::DataObject, data_receiver::DataReceiver};
+use crate::modules::core::data_object::DataObject;
 
-#[derive(Debug)]
-pub(crate) struct StreamReceiver<T: moqt::TransportProtocol> {
-    inner: moqt::StreamDataReceiver<T>,
+#[async_trait::async_trait]
+pub(crate) trait StreamReceiver: Send + Sync + 'static {
+    async fn receive_object(&mut self) -> anyhow::Result<DataObject>;
 }
 
-impl<T: moqt::TransportProtocol> StreamReceiver<T> {
-    pub(crate) fn new(inner: moqt::StreamDataReceiver<T>) -> Self {
-        Self { inner }
-    }
-
-    fn track_alias(&self) -> u64 {
-        self.inner.track_alias
-    }
-
-    async fn receive(&mut self) -> anyhow::Result<DataObject> {
-        let object: moqt::Subgroup = self.inner.receive().await?;
+#[async_trait::async_trait]
+impl<T: moqt::TransportProtocol> StreamReceiver for moqt::StreamDataReceiver<T> {
+    async fn receive_object(&mut self) -> anyhow::Result<DataObject> {
+        let object = self.receive().await?;
         match object {
             moqt::Subgroup::Header(header) => {
                 tracing::debug!(subgroup_header = ?header, "Received subgroup header");
@@ -27,16 +20,13 @@ impl<T: moqt::TransportProtocol> StreamReceiver<T> {
 }
 
 #[async_trait::async_trait]
-impl<T: moqt::TransportProtocol> DataReceiver for StreamReceiver<T> {
-    fn get_track_alias(&self) -> u64 {
-        self.track_alias()
-    }
+pub(crate) trait StreamReceiverFactory: Send + 'static {
+    async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>>;
+}
 
-    fn datagram(&self) -> bool {
-        false
-    }
-
-    async fn receive_object(&mut self) -> anyhow::Result<DataObject> {
-        self.receive().await
+#[async_trait::async_trait]
+impl<T: moqt::TransportProtocol> StreamReceiverFactory for moqt::StreamDataReceiverFactory<T> {
+    async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>> {
+        Ok(Box::new(moqt::StreamDataReceiverFactory::next(self).await?))
     }
 }

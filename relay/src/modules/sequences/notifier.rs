@@ -23,7 +23,7 @@ impl Notifier {
         session_id: SessionId,
         track_namespace: String,
     ) -> bool {
-        let publisher = self.repository.lock().await.publisher(session_id).await;
+        let publisher = self.repository.lock().await.publisher(session_id);
         if let Some(publisher) = publisher {
             match publisher
                 .send_publish_namespace(track_namespace.to_string())
@@ -57,7 +57,7 @@ impl Notifier {
         track_namespace: String,
         track_name: String,
     ) -> Option<u64> {
-        let publisher = self.repository.lock().await.publisher(session_id).await;
+        let publisher = self.repository.lock().await.publisher(session_id);
         if let Some(publisher) = publisher {
             match publisher
                 .send_publish(track_namespace.clone(), track_name)
@@ -94,12 +94,12 @@ impl Notifier {
         track_namespace: String,
         track_name: String,
     ) -> anyhow::Result<Subscription> {
-        if let Some(subscriber) = self.repository.lock().await.subscriber(session_id).await {
+        if let Some(mut subscriber) = self.repository.lock().await.subscriber(session_id) {
             let option = SubscribeOption {
                 subscriber_priority: 128,
                 group_order: GroupOrder::Ascending,
                 forward: true,
-                filter_type: FilterType::LatestObject,
+                filter_type: FilterType::LargestObject,
             };
             tracing::info!(
                 "Forwarded SUBSCRIBE '{}' to session:{}",

@@ -1,36 +1,44 @@
 use crate::modules::core::{data_object::DataObject, data_sender::DataSender};
 
+/// Internal enum that holds the `StreamDataSender` across its typestate transitions.
+/// Since `send_header` consumes `self`, we wrap it in `Option` to allow `take()`.
+enum SenderInner<T: moqt::TransportProtocol> {
+    Uninitialized(moqt::SubgroupHeaderSender<T>),
+    HeaderSent(moqt::SubgroupObjectSender<T>),
+}
+
 pub(crate) struct StreamSender<T: moqt::TransportProtocol> {
-    inner: moqt::StreamDataSender<T>,
-    header: Option<moqt::SubgroupHeader>,
+    inner: Option<SenderInner<T>>,
     subscriber_track_alias: u64,
 }
 
 impl<T: moqt::TransportProtocol> StreamSender<T> {
-    pub(crate) fn new(inner: moqt::StreamDataSender<T>, subscriber_track_alias: u64) -> Self {
+    pub(crate) fn new(inner: moqt::SubgroupHeaderSender<T>, subscriber_track_alias: u64) -> Self {
         Self {
-            inner,
-            header: None,
+            inner: Some(SenderInner::Uninitialized(inner)),
             subscriber_track_alias,
         }
     }
 
-    fn set_header(&mut self, mut object: moqt::SubgroupHeader) -> anyhow::Result<()> {
-        object.track_alias = self.subscriber_track_alias;
-        self.header = Some(object);
-        Ok(())
-    }
-
     pub(crate) async fn send(&mut self, object: DataObject) -> anyhow::Result<()> {
         match object {
-            DataObject::SubgroupObject(field) => {
-                if let Some(header) = &self.header {
-                    self.inner.send(header.clone(), field).await
-                } else {
-                    Err(anyhow::anyhow!("Header not set for StreamSender"))
+            DataObject::SubgroupObject(field) => match self.inner.as_mut() {
+                Some(SenderInner::HeaderSent(sender)) => sender.send(field).await,
+                _ => Err(anyhow::anyhow!("Header not set for StreamSender")),
+            },
+            DataObject::SubgroupHeader(mut header) => {
+                header.track_alias = self.subscriber_track_alias;
+                match self.inner.take() {
+                    Some(SenderInner::Uninitialized(sender)) => {
+                        let sent = sender.send_header(header).await?;
+                        self.inner = Some(SenderInner::HeaderSent(sent));
+                        Ok(())
+                    }
+                    _ => Err(anyhow::anyhow!(
+                        "StreamSender already initialized or in invalid state"
+                    )),
                 }
             }
-            DataObject::SubgroupHeader(header) => self.set_header(header),
             _ => Err(anyhow::anyhow!("Invalid object type for StreamSender")),
         }
     }

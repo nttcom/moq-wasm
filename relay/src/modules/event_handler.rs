@@ -1,8 +1,11 @@
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use crate::modules::{
     enums::MoqtRelayEvent,
-    event_resolver::stream_binder::StreamBinder,
+    relay::{
+        egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressStartRequest,
+    },
     sequences::{
         notifier::Notifier,
         publish::Publish,
@@ -23,8 +26,15 @@ impl EventHandler {
     pub(crate) fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         relay_event_receiver: tokio::sync::mpsc::UnboundedReceiver<MoqtRelayEvent>,
+        ingress_sender: mpsc::Sender<IngressStartRequest>,
+        egress_sender: mpsc::Sender<EgressCommand>,
     ) -> Self {
-        let session_event_watcher = Self::create_pub_sub_event_watcher(repo, relay_event_receiver);
+        let session_event_watcher = Self::create_pub_sub_event_watcher(
+            repo,
+            relay_event_receiver,
+            ingress_sender,
+            egress_sender,
+        );
         Self {
             session_event_watcher,
         }
@@ -33,11 +43,12 @@ impl EventHandler {
     fn create_pub_sub_event_watcher(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<MoqtRelayEvent>,
+        ingress_sender: mpsc::Sender<IngressStartRequest>,
+        egress_sender: mpsc::Sender<EgressCommand>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Session Event Watcher")
             .spawn(async move {
-                let mut stream_handler = StreamBinder::new(repo.clone());
                 let notifier = Notifier {
                     repository: repo.clone(),
                 };
@@ -107,7 +118,8 @@ impl EventHandler {
                                         &session_span,
                                         table.as_ref(),
                                         &notifier,
-                                        &mut stream_handler,
+                                        &ingress_sender,
+                                        &egress_sender,
                                         handler,
                                     )
                                     .await;
@@ -121,7 +133,6 @@ impl EventHandler {
                                 async {
                                     tracing::info!("Session disconnected: {}", session_id);
                                     table.remove_session(session_id).await;
-                                    stream_handler.remove_session(session_id);
                                     notifier.repository.lock().await.remove(session_id);
                                 }
                                 .instrument(disconnected_span)
@@ -136,7 +147,6 @@ impl EventHandler {
                                 async {
                                     tracing::error!("Session protocol violation: {}", session_id);
                                     table.remove_session(session_id).await;
-                                    stream_handler.remove_session(session_id);
                                     notifier.repository.lock().await.remove(session_id);
                                 }
                                 .instrument(protocol_violation_span)

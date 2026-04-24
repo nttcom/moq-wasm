@@ -58,7 +58,6 @@ async fn main() -> anyhow::Result<()> {
             let key_path = get_key_path().to_str().unwrap().to_string();
             let cert_path = get_cert_path().to_str().unwrap().to_string();
 
-            // RelayServerインスタンスを作成（リポジトリとイベントハンドラが内部で初期化される）
             let server = relay::RelayServer::new(&key_path, &cert_path);
             anyhow::Ok((server, key_path, cert_path))
         }
