@@ -27,7 +27,7 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
     let session = connecting.await?;
 
     let (_publisher, subscriber) = session.publisher_subscriber_pair();
-    let subscriber = std::sync::Arc::new(subscriber);
+    let _subscriber = std::sync::Arc::new(subscriber);
     let session = std::sync::Arc::new(session);
 
     // イベント処理タスク
