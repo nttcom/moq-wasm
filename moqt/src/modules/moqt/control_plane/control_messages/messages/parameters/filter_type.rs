@@ -17,8 +17,8 @@ enum FilterTypeValue {
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum FilterType {
-    LatestObject,
-    LatestGroup,
+    LargestObject,
+    NextGroupStart,
     AbsoluteStart { location: Location },
     AbsoluteRange { location: Location, end_group: u64 },
 }
@@ -27,8 +27,8 @@ impl FilterType {
     pub fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let value = FilterTypeValue::try_from(bytes.get_u8()).ok()?;
         match value {
-            FilterTypeValue::LatestObject => Some(FilterType::LatestObject),
-            FilterTypeValue::LatestGroup => Some(FilterType::LatestGroup),
+            FilterTypeValue::LatestObject => Some(FilterType::LargestObject),
+            FilterTypeValue::LatestGroup => Some(FilterType::NextGroupStart),
             FilterTypeValue::AbsoluteStart => {
                 let start_location = Location::decode(bytes)?;
                 Some(FilterType::AbsoluteStart {
@@ -49,11 +49,11 @@ impl FilterType {
     pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         match self {
-            FilterType::LatestObject => {
+            FilterType::LargestObject => {
                 payload.put_u8(FilterTypeValue::LatestObject as u8);
                 payload
             }
-            FilterType::LatestGroup => {
+            FilterType::NextGroupStart => {
                 payload.put_u8(FilterTypeValue::LatestGroup as u8);
                 payload
             }

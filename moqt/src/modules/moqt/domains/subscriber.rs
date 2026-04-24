@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::bail;
 
 use crate::{
-    DataReceiver, DatagramReceiver, StreamDataReceiver, SubscribeOption, Subscription,
+    DatagramReceiver, SubscribeOption, Subscription,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -13,10 +13,19 @@ use crate::{
             enums::ResponseMessage,
             threads::enums::StreamWithObject,
         },
+        data_plane::streams::stream::{
+            stream_data_receiver::StreamDataReceiver,
+            stream_data_receiver_factory::StreamDataReceiverFactory,
+        },
         domains::session_context::SessionContext,
         protocol::TransportProtocol,
     },
 };
+
+pub enum DataReceiver<T: TransportProtocol> {
+    Stream(StreamDataReceiverFactory<T>),
+    Datagram(DatagramReceiver<T>),
+}
 
 pub struct Subscriber<T: TransportProtocol> {
     pub(crate) session: Arc<SessionContext<T>>,
@@ -43,7 +52,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         tracing::info!("Subscribe namespace");
         let result = receiver.await;
         if let Err(e) = result {
-            bail!("Failed to receive message: {}", e.to_string())
+            bail!("Failed to receive message: {}", e)
         }
         let response = result.unwrap();
         match response {
@@ -64,7 +73,7 @@ impl<T: TransportProtocol> Subscriber<T> {
     }
 
     pub async fn subscribe(
-        &self,
+        &mut self,
         track_namespace: String,
         track_name: String,
         option: SubscribeOption,
@@ -95,7 +104,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         tracing::info!("Subscribe");
         let result = receiver.await;
         if let Err(e) = result {
-            bail!("Failed to receive message: {}", e.to_string())
+            bail!("Failed to receive message: {}", e)
         }
         let response = result.unwrap();
         match response {
@@ -104,6 +113,18 @@ impl<T: TransportProtocol> Subscriber<T> {
                     bail!("Protocol violation")
                 } else {
                     tracing::info!("Subscribe ok");
+                    let (sender, receiver) =
+                        tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
+                    self.session
+                        .notification_map
+                        .write()
+                        .await
+                        .insert(message.track_alias, sender);
+                    self.session
+                        .receiver_map
+                        .lock()
+                        .await
+                        .insert(message.track_alias, receiver);
                     Ok(Subscription::new(message))
                 }
             }
@@ -116,25 +137,45 @@ impl<T: TransportProtocol> Subscriber<T> {
     }
 
     pub async fn accept_data_receiver(
-        &self,
+        &mut self,
         subscription: &Subscription,
     ) -> anyhow::Result<DataReceiver<T>> {
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
-        self.session
-            .notification_map
-            .write()
+        let track_alias = subscription.track_alias;
+        let stream_with_object = self
+            .session
+            .receiver_map
+            .lock()
             .await
-            .insert(subscription.track_alias, sender);
-        let result = receiver
+            .get_mut(&track_alias)
+            .ok_or_else(|| anyhow::anyhow!("No receiver for track_alias: {}", track_alias))?
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
-        match result {
+        match stream_with_object {
             StreamWithObject::StreamHeader { stream, header } => {
-                let data_receiver = StreamDataReceiver::new(receiver, stream, header).await?;
-                Ok(DataReceiver::Stream(data_receiver))
+                let first = StreamDataReceiver::new(stream, header).await?;
+                let rest = self
+                    .session
+                    .receiver_map
+                    .lock()
+                    .await
+                    .remove(&track_alias)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("receiver already removed for track_alias: {}", track_alias)
+                    })?;
+                Ok(DataReceiver::Stream(StreamDataReceiverFactory::new(
+                    first, rest,
+                )))
             }
             StreamWithObject::Datagram(object) => {
+                // Datagram は1回限りなので map から除去する
+                let receiver = self
+                    .session
+                    .receiver_map
+                    .lock()
+                    .await
+                    .remove(&track_alias)
+                    .unwrap();
                 let data_receiver = DatagramReceiver::new(object, receiver).await;
                 Ok(DataReceiver::Datagram(data_receiver))
             }

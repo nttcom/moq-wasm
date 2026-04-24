@@ -31,7 +31,7 @@ fn create_client_thread2(
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::task::spawn(async move {
         sleep(Duration::from_secs(5)).await;
-        let client = Client::<moqt::QUIC>::new(cert_path, "user2".to_string()).await?;
+        let mut client = Client::<moqt::QUIC>::new(cert_path, "user2".to_string()).await?;
         let _ = client.publish_namespace("room2/user2".to_string()).await;
         let _ = client.subscribe_namespace("room1".to_string()).await;
         client

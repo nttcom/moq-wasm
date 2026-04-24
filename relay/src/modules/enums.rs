@@ -6,6 +6,7 @@ use crate::modules::{
     types::SessionId,
 };
 
+#[derive(Clone)]
 pub(crate) struct Location {
     pub(crate) group_id: u64,
     pub(crate) object_id: u64,
@@ -27,9 +28,10 @@ impl Location {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum FilterType {
-    LatestGroup,
-    LatestObject,
+    NextGroupStart,
+    LargestObject,
     AbsoluteStart { location: Location },
     AbsoluteRange { location: Location, end_group: u64 },
 }
@@ -37,8 +39,8 @@ pub(crate) enum FilterType {
 impl FilterType {
     pub(crate) fn from(filter_type: moqt::FilterType) -> Self {
         match filter_type {
-            moqt::FilterType::LatestGroup => Self::LatestGroup,
-            moqt::FilterType::LatestObject => Self::LatestObject,
+            moqt::FilterType::NextGroupStart => Self::NextGroupStart,
+            moqt::FilterType::LargestObject => Self::LargestObject,
             moqt::FilterType::AbsoluteStart { location } => Self::AbsoluteStart {
                 location: Location::from(location),
             },
@@ -54,8 +56,8 @@ impl FilterType {
 
     pub(crate) fn as_moqt(&self) -> moqt::FilterType {
         match self {
-            FilterType::LatestGroup => moqt::FilterType::LatestGroup,
-            FilterType::LatestObject => moqt::FilterType::LatestObject,
+            FilterType::NextGroupStart => moqt::FilterType::NextGroupStart,
+            FilterType::LargestObject => moqt::FilterType::LargestObject,
             FilterType::AbsoluteStart { location } => moqt::FilterType::AbsoluteStart {
                 location: location.as_moqt(),
             },
@@ -70,6 +72,7 @@ impl FilterType {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum GroupOrder {
     Publisher = 0x0,
@@ -78,6 +81,7 @@ pub(crate) enum GroupOrder {
 }
 
 impl GroupOrder {
+    #[allow(dead_code)]
     pub(crate) fn from(group_order: moqt::GroupOrder) -> Self {
         match group_order {
             moqt::GroupOrder::Publisher => Self::Publisher,
@@ -120,10 +124,11 @@ impl ContentExists {
     }
 }
 
-pub(crate) enum MOQTMessageReceived {
+pub(crate) enum MoqtRelayEvent {
     PublishNameSpace(SessionId, Box<dyn PublishNamespaceHandler>),
     SubscribeNameSpace(SessionId, Box<dyn SubscribeNamespaceHandler>),
     Publish(SessionId, Box<dyn PublishHandler>),
     Subscribe(SessionId, Box<dyn SubscribeHandler>),
-    ProtocolViolation(),
+    Disconnected(SessionId),
+    ProtocolViolation(SessionId),
 }

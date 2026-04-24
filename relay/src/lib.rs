@@ -1,12 +1,8 @@
-pub mod modules; // modulesを公開
+pub mod modules;
+mod relay_server;
 
-use modules::event_handler::EventHandler;
-use modules::session_handler::SessionHandler;
-use moqt::ServerConfig;
-use std::sync::Arc;
-
-use crate::modules::enums::MOQTMessageReceived;
-use crate::modules::session_repository::SessionRepository;
+pub use relay_server::server::RelayServer;
+use tokio::sync::oneshot::Receiver;
 
 use console_subscriber::ConsoleLayer;
 use tracing_appender::rolling;
@@ -49,8 +45,6 @@ pub fn init_logging(log_level: String) {
         .init();
 }
 
-use tokio::sync::oneshot::Receiver; // Receiver for shutdown signal
-
 pub fn run_relay_server<T: moqt::TransportProtocol>(
     port: u16,
     shutdown_signal: Receiver<()>,
@@ -63,23 +57,15 @@ pub fn run_relay_server<T: moqt::TransportProtocol>(
     let cert_path = cert_path.to_string();
 
     tokio::task::Builder::new()
-        .name("Handler")
+        .name("RelayServer")
         .spawn(async move {
-            tracing::info!("Handler started");
-            let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
-            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<MOQTMessageReceived>();
+            tracing::info!("Relay server started");
+            let server = RelayServer::new(&key_path, &cert_path);
+            let handler = server.spawn_transport::<T>(port);
 
-            // ServerConfigのポートを動的に設定
-            let server_config = ServerConfig {
-                port, // 引数で渡されたポートを使用
-                cert_path: cert_path.clone(),
-                key_path: key_path.clone(),
-                keep_alive_interval_sec: 15,
-            };
-
-            let _handler = SessionHandler::run::<T>(server_config, repo.clone(), sender);
-            let _manager = EventHandler::run(repo, receiver);
-            let _ = shutdown_signal.await.ok(); // 関数の引数として受け取ったshutdown_signalを使用
+            shutdown_signal.await.ok();
+            drop(handler);
+            tracing::info!("Relay server shutting down");
         })
         .unwrap()
 }
