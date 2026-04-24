@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
 
     async move {
         let startup_span = tracing::info_span!("startup");
-        let (server, key_path, cert_path) = async move {
+        let (server, _key_path, _cert_path) = async move {
             create_certs_for_test_if_needed()?;
 
             let key_path = get_key_path().to_str().unwrap().to_string();
