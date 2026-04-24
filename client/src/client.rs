@@ -107,8 +107,13 @@ impl<T: TransportProtocol> Client<T> {
                                 .ok(1000000, moqt::ContentExists::False)
                                 .await;
                             let publication = subscribe_handler.into_publication(track_alias);
-                            Self::create_stream(_label.clone(), session.clone(), publication, &runner)
-                                .await;
+                            Self::create_stream(
+                                _label.clone(),
+                                session.clone(),
+                                publication,
+                                &runner,
+                            )
+                            .await;
                         }
                         moqt::SessionEvent::Unsubscribe(unsubscribe_handler) => {
                             tracing::info!(
