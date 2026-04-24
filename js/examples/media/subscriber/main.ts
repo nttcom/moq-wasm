@@ -42,6 +42,18 @@ let selectedAudioTrackName: string | null = null
 let audioPlaybackStarted = false
 let videoPlaybackStarted = false
 
+function shouldBypassJitterBuffer(): boolean {
+  const input = document.getElementById('bypass-jitter-buffer') as HTMLInputElement | null
+  return input?.checked ?? true
+}
+
+function applyDecoderWorkerConfig(): void {
+  const bypassJitterBuffer = shouldBypassJitterBuffer()
+  const config = { telemetryEnabled: true, bypassJitterBuffer }
+  audioDecoderWorker.postMessage({ type: 'config', config })
+  videoDecoderWorker.postMessage({ type: 'config', config })
+}
+
 function setPlaybackObjectStatus(kind: 'video' | 'audio', text: string): void {
   const element = document.getElementById(`${kind}-playback-object`)
   if (!element) {
@@ -203,6 +215,15 @@ function setupCatalogSelectionHandler(): void {
       setSelectedCatalogTrack('audio', value.length > 0 ? value : null)
     })
   }
+  const bypassInput = document.getElementById('bypass-jitter-buffer') as HTMLInputElement | null
+  if (bypassInput) {
+    bypassInput.addEventListener('change', () => {
+      applyDecoderWorkerConfig()
+      console.info('[MediaSubscriber] decoder config updated', {
+        bypassJitterBuffer: bypassInput.checked
+      })
+    })
+  }
 }
 
 function setupCatalogCallbacks(trackAlias: bigint): void {
@@ -303,7 +324,7 @@ function setupAudioDecoderWorker() {
   const audioStream = new MediaStream([audioGenerator])
   const audioElement = document.getElementById('audio') as HTMLAudioElement
   audioElement.srcObject = audioStream
-  audioDecoderWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
+  applyDecoderWorkerConfig()
   audioDecoderWorker.onmessage = async (event: MessageEvent<AudioDecoderWorkerMessage>) => {
     const data = event.data
     if (data.type === 'bufferedObject') {
@@ -331,7 +352,7 @@ function setupVideoDecoderWorker() {
   const videoStream = new MediaStream([videoGenerator])
   const videoElement = document.getElementById('video') as HTMLVideoElement
   videoElement.srcObject = videoStream
-  videoDecoderWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
+  applyDecoderWorkerConfig()
   videoDecoderWorker.onmessage = async (event: MessageEvent<VideoDecoderWorkerMessage>) => {
     const data = event.data
     if (data.type === 'bufferedObject') {
@@ -445,6 +466,7 @@ connectBtn.addEventListener('click', async () => {
 })
 
 setupButtonHandlers()
+applyDecoderWorkerConfig()
 renderCatalogTracks()
 setPlaybackObjectStatus('video', 'Waiting for objects')
 setPlaybackObjectStatus('audio', 'Waiting for objects')
