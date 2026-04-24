@@ -854,15 +854,7 @@ export class MediaPublisher {
           objectBytes: 0,
           objectCount: 0
         }
-        const sender: VideoChunkSender = async (
-          trackAlias,
-          groupId,
-          subgroupId,
-          objectId,
-          payload,
-          rawClient,
-          loc
-        ) => {
+        const sender: VideoChunkSender = async (trackAlias, groupId, subgroupId, objectId, payload, rawClient, loc) => {
           await this.sendVideoObjectForTrackContext(
             context,
             trackAlias,

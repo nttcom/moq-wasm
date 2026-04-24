@@ -56,9 +56,9 @@ impl<T: TransportProtocol> Client<T> {
 
     pub fn create_receiver(
         // pub(crate) -> pub
-        label: String,
+        _label: String,
         session: Arc<Session<T>>,
-        track_alias: Arc<AtomicU64>,
+        _track_alias: Arc<AtomicU64>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .spawn(async move {
@@ -74,7 +74,7 @@ impl<T: TransportProtocol> Client<T> {
                         moqt::SessionEvent::PublishNamespace(publish_namespace_handler) => {
                             tracing::info!(
                                 "Received: {} Publish Namespace: {}",
-                                label,
+                                _label,
                                 publish_namespace_handler.track_namespace
                             );
                             let _ = publish_namespace_handler.ok().await;
@@ -82,13 +82,13 @@ impl<T: TransportProtocol> Client<T> {
                         moqt::SessionEvent::SubscribeNameSpace(subscribe_namespace_handler) => {
                             tracing::info!(
                                 "Received: {} Subscribe Namespace: {}",
-                                label,
+                                _label,
                                 subscribe_namespace_handler.track_namespace_prefix
                             );
                             let _ = subscribe_namespace_handler.ok().await;
                         }
                         moqt::SessionEvent::Publish(publish_handler) => {
-                            tracing::info!("Received: {} Publish", label);
+                            tracing::info!("Received: {} Publish", _label);
                             let _subscription = match publish_handler
                                 .ok(128, moqt::FilterType::LargestObject, 0)
                                 .await
@@ -101,26 +101,28 @@ impl<T: TransportProtocol> Client<T> {
                             };
                         }
                         moqt::SessionEvent::Subscribe(subscribe_handler) => {
-                            tracing::info!("Received: {} Subscribe", label);
-                            let track_alias = track_alias.load(Ordering::SeqCst);
+                            tracing::info!("Received: {} Subscribe", _label);
+                            let track_alias = _track_alias.load(Ordering::SeqCst);
                             let _ = subscribe_handler
                                 .ok(1000000, moqt::ContentExists::False)
                                 .await;
                             let publication = subscribe_handler.into_publication(track_alias);
-                            Self::create_stream(
-                                label.clone(),
-                                session.clone(),
-                                publication,
-                                &runner,
-                            )
-                            .await;
+                            Self::create_stream(_label.clone(), session.clone(), publication, &runner)
+                                .await;
+                        }
+                        moqt::SessionEvent::Unsubscribe(unsubscribe_handler) => {
+                            tracing::info!(
+                                "Received: {} Unsubscribe {}",
+                                _label,
+                                unsubscribe_handler.subscribe_id()
+                            );
                         }
                         moqt::SessionEvent::Disconnected() => {
-                            tracing::info!("Received: {} Disconnected", label);
+                            tracing::info!("Received: {} Disconnected", _label);
                             break;
                         }
                         moqt::SessionEvent::ProtocolViolation() => {
-                            tracing::info!("Received: {} ProtocolViolation", label);
+                            tracing::info!("Received: {} ProtocolViolation", _label);
                         }
                     };
                 }

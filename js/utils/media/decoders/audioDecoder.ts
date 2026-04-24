@@ -86,10 +86,12 @@ type AudioWorkerMessage =
 
 self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
   if ((event.data as { type?: string }).type === 'config') {
-    const config = (event.data as {
-      type: 'config'
-      config: { mode?: string; telemetryEnabled?: boolean; bypassJitterBuffer?: boolean }
-    }).config
+    const config = (
+      event.data as {
+        type: 'config'
+        config: { mode?: string; telemetryEnabled?: boolean; bypassJitterBuffer?: boolean }
+      }
+    ).config
     telemetryEnabled = config.telemetryEnabled ?? telemetryEnabled
     bypassJitterBuffer = config.bypassJitterBuffer ?? bypassJitterBuffer
     if (config.mode === 'ordered' || config.mode === 'latest') {

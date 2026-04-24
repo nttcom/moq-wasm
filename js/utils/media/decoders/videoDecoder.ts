@@ -578,7 +578,8 @@ function enqueueOutputFrame(frame: VideoFrame): void {
     return
   }
   const receivedKey = `${meta.groupId.toString()}:${meta.objectId.toString()}`
-  const receivedMs = typeof meta.receivedMs === 'number' ? meta.receivedMs : receivedFrameTimes.get(receivedKey) ?? null
+  const receivedMs =
+    typeof meta.receivedMs === 'number' ? meta.receivedMs : (receivedFrameTimes.get(receivedKey) ?? null)
   if (receivedFrameTimes.has(receivedKey)) {
     receivedFrameTimes.delete(receivedKey)
   }
@@ -665,9 +666,7 @@ type DecoderControlMessage =
   | { type: 'catalog'; codec?: string; framerate?: number }
 type WorkerMessage = SubgroupWorkerMessage | DecoderControlMessage
 
-function isConfigMessage(
-  message: WorkerMessage
-): message is {
+function isConfigMessage(message: WorkerMessage): message is {
   type: 'config'
   config: VideoJitterBufferConfig & { telemetryEnabled?: boolean; bypassJitterBuffer?: boolean }
 } {
