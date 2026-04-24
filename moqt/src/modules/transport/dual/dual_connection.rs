@@ -81,4 +81,11 @@ impl TransportConnection for DualConnection {
             DualConnection::WebTransport(c) => c.receive_datagram().await,
         }
     }
+
+    async fn closed(&self) {
+        match self {
+            DualConnection::Quic(c) => c.closed().await,
+            DualConnection::WebTransport(c) => c.closed().await,
+        }
+    }
 }

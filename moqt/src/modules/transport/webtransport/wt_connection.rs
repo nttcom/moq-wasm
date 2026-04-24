@@ -21,7 +21,7 @@ impl TransportConnection for WtConnection {
     type ReceiveStream = WtReceiveStream;
 
     async fn closed(&self) {
-        let reason = self.connection.closed().await;
+        let reason = self.session.closed().await;
         tracing::info!("WebTransport connection closed: {:?}", reason);
     }
 
