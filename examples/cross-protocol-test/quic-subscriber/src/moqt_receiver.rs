@@ -15,7 +15,7 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
         verify_certificate: false,
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
-    let url = url::Url::from_str("moqt://localhost:4434")?;
+    let url = url::Url::from_str("moqt://localhost:4433")?;
     let host = url.host_str().unwrap();
     let remote_address = (host, url.port().unwrap())
         .to_socket_addrs()?
@@ -23,7 +23,11 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
         .context("failed to resolve address")?;
 
     info!(%remote_address, "connecting to relay via QUIC");
-    let session = endpoint.connect(remote_address, host).await?;
+    let connecting = endpoint.connect(remote_address, host).await?;
+    let session = connecting.await?;
+
+    let (_publisher, subscriber) = session.publisher_subscriber_pair();
+    let _subscriber = std::sync::Arc::new(subscriber);
     let session = std::sync::Arc::new(session);
 
     // イベント処理タスク

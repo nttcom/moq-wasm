@@ -1,3 +1,4 @@
+pub(crate) mod connecting;
 pub(crate) mod endpoint;
 pub(crate) mod published_resource;
 pub(crate) mod publisher;

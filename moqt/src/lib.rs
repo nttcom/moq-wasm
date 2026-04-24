@@ -31,6 +31,7 @@ pub use modules::moqt::data_plane::streams::stream::stream_data_sender::Subgroup
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender::SubgroupObjectSender;
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender::Uninitialized;
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender_factory::StreamDataSenderFactory;
+pub use modules::moqt::domains::connecting::Connecting;
 pub use modules::moqt::domains::endpoint::ClientConfig;
 pub use modules::moqt::domains::endpoint::Endpoint;
 pub use modules::moqt::domains::endpoint::ServerConfig;
@@ -40,6 +41,7 @@ pub use modules::moqt::domains::session::Session;
 pub use modules::moqt::domains::subscriber::DataReceiver;
 pub use modules::moqt::domains::subscriber::Subscriber;
 pub use modules::moqt::domains::subscription::Subscription;
+pub use modules::moqt::protocol::DUAL;
 pub use modules::moqt::protocol::QUIC;
 pub use modules::moqt::protocol::TransportProtocol;
 pub use modules::moqt::protocol::WEBTRANSPORT;

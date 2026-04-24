@@ -13,7 +13,7 @@ use crate::modules::transport::{
 pub struct WtReceiveStream {
     pub(crate) stable_id: usize,
     pub(crate) stream_id: u64,
-    pub(crate) recv_stream: wtransport::RecvStream,
+    pub(crate) recv_stream: web_transport_quinn::RecvStream,
 }
 
 #[async_trait]
@@ -34,7 +34,7 @@ impl TransportReceiveStream for WtReceiveStream {
                 std::io::ErrorKind::ConnectionReset => ReadError::Reset,
                 std::io::ErrorKind::ConnectionAborted => ReadError::ConnectionLost,
                 std::io::ErrorKind::UnexpectedEof => ReadError::Closed,
-                _ => todo!("handle other wtransport read errors: {:?}", e),
+                _ => todo!("handle other web-transport-quinn read errors: {:?}", e),
             })),
             Poll::Pending => Poll::Pending,
         }

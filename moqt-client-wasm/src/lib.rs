@@ -1089,7 +1089,7 @@ impl MOQTClient {
     async fn setup_transport(&self, transport: &WebTransport) -> Result<(), JsValue> {
         let callbacks = self.callbacks.clone();
         let transport_cell = self.transport.clone();
-        let closed_promise = transport.closed();
+        let closed_promise = transport.close();
         wasm_bindgen_futures::spawn_local(async move {
             let closed_result = JsFuture::from(closed_promise).await;
             transport_cell.borrow_mut().take();
