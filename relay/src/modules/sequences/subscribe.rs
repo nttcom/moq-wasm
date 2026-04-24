@@ -19,6 +19,7 @@ impl Subscribe {
         parent = session_span,
         fields(session_id = %session_id)
     )]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
