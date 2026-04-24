@@ -51,6 +51,8 @@ pub use modules::moqt::data_plane::streams::stream::stream_data_sender::Uninitia
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender_factory::StreamDataSenderFactory;
 #[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::connecting::Connecting;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::endpoint::ClientConfig;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::endpoint::Endpoint;
@@ -68,6 +70,8 @@ pub use modules::moqt::domains::subscriber::DataReceiver;
 pub use modules::moqt::domains::subscriber::Subscriber;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::subscription::Subscription;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::protocol::DUAL;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::protocol::QUIC;
 #[cfg(not(target_arch = "wasm32"))]

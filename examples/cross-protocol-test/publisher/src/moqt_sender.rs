@@ -16,7 +16,7 @@ pub async fn connect_and_wait_for_subscriber(
         verify_certificate: false,
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
-    let url = url::Url::from_str("moqt://localhost:4434")?;
+    let url = url::Url::from_str("moqt://localhost:4433")?;
     let host = url.host_str().unwrap();
     let remote_address = (host, url.port().unwrap())
         .to_socket_addrs()?
@@ -24,7 +24,9 @@ pub async fn connect_and_wait_for_subscriber(
         .context("failed to resolve address")?;
 
     info!(%remote_address, "connecting to relay");
-    let session = endpoint.connect(remote_address, host).await?;
+    let connecting = endpoint.connect(remote_address, host).await?;
+    let session = connecting.await?;
+
     let (publisher, _subscriber) = session.publisher_subscriber_pair();
     let publisher = std::sync::Arc::new(publisher);
 

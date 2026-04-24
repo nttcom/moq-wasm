@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use moqt::{Endpoint, TransportProtocol};
+use tracing::Instrument;
 
 use crate::modules::{
     enums::MoqtRelayEvent, session_repository::SessionRepository, types::generate_session_id,
@@ -31,22 +32,49 @@ impl SessionHandler {
         tokio::task::Builder::new()
             .spawn(async move {
                 loop {
-                    tracing::info!("accepting...");
-                    let session = match endpoint.accept().await.inspect_err(|e| {
-                        tracing::error!("failed to accept: {}", e);
-                    }) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                            break;
-                        }
-                    };
                     let session_id = generate_session_id();
-                    tracing::info!("Session ID: {}", session_id);
-                    repo.lock()
-                        .await
-                        .add(session_id, Box::new(session), relay_event_sender.clone())
-                        .await;
+                    let session_span =
+                        tracing::info_span!(parent: None, "MoQTSession", session_id = session_id);
+                    let Ok(connecting) = async {
+                        endpoint.accept().await.inspect_err(|e| {
+                            tracing::error!("failed to accept: {}", e);
+                        })
+                    }
+                    .instrument(session_span.clone())
+                    .await
+                    else {
+                        break;
+                    };
+                    let Ok(session) = async {
+                        connecting.await.inspect_err(|e| {
+                            tracing::error!("failed to accept: {}", e);
+                        })
+                    }
+                    .instrument(session_span.clone())
+                    .await
+                    else {
+                        break;
+                    };
+                    let session_add_span = tracing::info_span!(
+                        parent: &session_span,
+                        "relay.session_repository.add",
+                        session_id = session_id
+                    );
+
+                    async {
+                        tracing::info!("Session accepted");
+                        repo.lock()
+                            .await
+                            .add(
+                                session_id,
+                                Box::new(session),
+                                relay_event_sender.clone(),
+                                session_span.clone(),
+                            )
+                            .await;
+                    }
+                    .instrument(session_add_span)
+                    .await;
                 }
             })
             .unwrap()

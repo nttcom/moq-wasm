@@ -15,6 +15,7 @@ serde = { version = "1.0.188", features = ["derive"] }
 num_enum = "0.7.0"
 mockall="0.13.1"
 thiserror = "2.0.16"
+url = "2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 console-subscriber = "0.4"
@@ -27,6 +28,7 @@ tokio-util = "0.7.18"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 ttl_cache = "0.5.1"
+web-transport-quinn = { version = "0.11", default-features = false, features = ["ring"] }
 wtransport = { version = "0.6.1", features = ["quinn"] }
 
 [dev-dependencies]

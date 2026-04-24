@@ -4,6 +4,7 @@ use std::{
 };
 
 use rcgen::{CertifiedKey, generate_simple_self_signed};
+
 const CERT_DIR: &str = "keys";
 
 fn get_cert_path() -> PathBuf {
@@ -46,27 +47,20 @@ pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    relay::init_logging("info".to_string());
-
+    let _logging = relay::init_logging("relay")?;
     create_certs_for_test_if_needed()?;
 
     let key_path = get_key_path().to_str().unwrap().to_string();
     let cert_path = get_cert_path().to_str().unwrap().to_string();
 
     let server = relay::RelayServer::new(&key_path, &cert_path);
+    let _handler = server.spawn_transport::<moqt::DUAL>(4433);
 
-    let quic_handler = server.spawn_transport::<moqt::QUIC>(4434);
-
-    let wt_handler = server.spawn_transport::<moqt::WEBTRANSPORT>(4433);
-
-    tracing::info!("Relay server started with QUIC (4434) and WebTransport (4433)");
+    tracing::info!("Relay server started with QUIC + WebTransport (4433)");
     tracing::info!("Ctrl+C to shutdown");
 
     tokio::signal::ctrl_c().await?;
     tracing::info!("Shutdown signal received. Closing...");
-    drop(quic_handler);
-    drop(wt_handler);
-
     tracing::info!("Relay server gracefully shutdown.");
     Ok(())
 }

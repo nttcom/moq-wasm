@@ -7,24 +7,37 @@ use crate::modules::{
     sequences::{notifier::Notifier, tables::table::Table},
     types::{SessionId, compose_session_track_key},
 };
+use tracing::Span;
 
 pub(crate) struct Subscribe;
 
 impl Subscribe {
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.subscribe",
+        skip_all,
+        parent = session_span,
+        fields(session_id = %session_id)
+    )]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
+        session_span: &Span,
         table: &dyn Table,
         notifier: &Notifier,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressStartRequest>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn SubscribeHandler>,
     ) {
-        tracing::info!("SequenceHandler::subscribe: {}", session_id);
         let track_namespace = handler.track_namespace();
         let track_name = handler.track_name();
-        let full_track_namespace = format!("{}:{}", track_namespace, track_name);
-        tracing::debug!("New track '{}' is subscribed.", full_track_namespace,);
+        tracing::info!(
+            session_id = %session_id,
+            track_namespace = %track_namespace,
+            track_name = %track_name,
+            "SequenceHandler::subscribe"
+        );
 
         let active_publish = table
             .find_publish_handler_with(handler.track_namespace(), handler.track_name())
@@ -50,10 +63,15 @@ impl Subscribe {
         } else {
             self.response_error(handler.as_ref()).await;
         }
-        tracing::info!("SequenceHandler::subscribe: {} DONE", session_id);
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.subscribe.relay_subscribe",
+        skip_all,
+        fields(session_id = %session_id, pub_session_id = %pub_session_id, track_namespace = %track_namespace, track_name = %track_name)
+    )]
     async fn relay_subscribe(
         &self,
         session_id: SessionId,
@@ -113,6 +131,11 @@ impl Subscribe {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.subscribe.response_error",
+        skip_all
+    )]
     async fn response_error(&self, handler: &dyn SubscribeHandler) {
         let _ = handler
             .error(

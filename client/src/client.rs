@@ -7,7 +7,6 @@ use std::{
     },
 };
 
-use anyhow::bail;
 use moqt::{DatagramField, Endpoint, Session, SubscribeOption, TransportProtocol};
 
 use crate::stream_runner::StreamTaskRunner;
@@ -29,7 +28,7 @@ pub struct Client<T: TransportProtocol> {
 impl<T: TransportProtocol> Client<T> {
     pub async fn new(cert_path: String, label: String) -> anyhow::Result<Self> {
         let endpoint = Endpoint::<T>::create_client_with_custom_cert(0, &cert_path)?;
-        let url = url::Url::from_str("moqt://localhost:4434")?; // ここも変更
+        let url = url::Url::from_str("moqt://localhost:4433")?;
         let host = url.host_str().unwrap();
         let remote_address = (host, url.port().unwrap_or(4433))
             .to_socket_addrs()?
@@ -38,12 +37,9 @@ impl<T: TransportProtocol> Client<T> {
 
         tracing::info!("remote_address: {} host: {}", remote_address, host);
 
-        let session = match endpoint.connect(remote_address, host).await {
-            Ok(s) => s,
-            Err(e) => {
-                bail!("test failed: {:?}", e)
-            }
-        };
+        let connecting = endpoint.connect(remote_address, host).await?;
+        let session = connecting.await?;
+
         let track_alias = Arc::new(AtomicU64::new(0));
         let session = Arc::new(session);
         let join_handle =

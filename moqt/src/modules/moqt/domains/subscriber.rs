@@ -32,6 +32,12 @@ pub struct Subscriber<T: TransportProtocol> {
 }
 
 impl<T: TransportProtocol> Subscriber<T> {
+    #[tracing::instrument(
+        level = "info",
+        name = "moqt.subscriber.subscribe_namespace",
+        skip_all,
+        fields(namespace = %namespace)
+    )]
     pub async fn subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -72,6 +78,12 @@ impl<T: TransportProtocol> Subscriber<T> {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "moqt.subscriber.subscribe",
+        skip_all,
+        fields(track_namespace = %track_namespace, track_name = %track_name, subscriber_priority = option.subscriber_priority, forward = option.forward)
+    )]
     pub async fn subscribe(
         &mut self,
         track_namespace: String,
@@ -101,7 +113,6 @@ impl<T: TransportProtocol> Subscriber<T> {
             .send_stream
             .send(ControlMessageType::Subscribe, subscribe.encode())
             .await?;
-        tracing::info!("Subscribe");
         let result = receiver.await;
         if let Err(e) = result {
             bail!("Failed to receive message: {}", e)
@@ -136,6 +147,12 @@ impl<T: TransportProtocol> Subscriber<T> {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "moqt.subscriber.accept_data_receiver",
+        skip_all,
+        fields(track_alias = subscription.track_alias)
+    )]
     pub async fn accept_data_receiver(
         &mut self,
         subscription: &Subscription,

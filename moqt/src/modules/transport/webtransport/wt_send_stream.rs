@@ -8,7 +8,7 @@ use crate::modules::transport::transport_send_stream::TransportSendStream;
 pub struct WtSendStream {
     pub(crate) stable_id: usize,
     pub(crate) stream_id: u64,
-    pub(crate) send_stream: wtransport::SendStream,
+    pub(crate) send_stream: web_transport_quinn::SendStream,
 }
 
 #[async_trait]
@@ -18,6 +18,6 @@ impl TransportSendStream for WtSendStream {
     }
 
     async fn close(&mut self) -> anyhow::Result<()> {
-        Ok(self.send_stream.finish().await?)
+        Ok(self.send_stream.finish()?)
     }
 }

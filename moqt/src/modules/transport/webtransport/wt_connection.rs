@@ -6,12 +6,12 @@ use crate::modules::transport::transport_connection::TransportConnection;
 
 #[derive(Debug)]
 pub struct WtConnection {
-    connection: wtransport::Connection,
+    session: web_transport_quinn::Session,
 }
 
 impl WtConnection {
-    pub(crate) fn new(connection: wtransport::Connection) -> Self {
-        Self { connection }
+    pub(crate) fn new(session: web_transport_quinn::Session) -> Self {
+        Self { session }
     }
 }
 
@@ -21,64 +21,72 @@ impl TransportConnection for WtConnection {
     type ReceiveStream = WtReceiveStream;
 
     async fn closed(&self) {
-        let reason = self.connection.closed().await;
+        let reason = self.session.closed().await;
         tracing::info!("WebTransport connection closed: {:?}", reason);
     }
 
     async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
-        let (send, recv) = self.connection.open_bi().await?.await?;
+        let (send, recv) = self.session.open_bi().await?;
+        let stable_id = self.session.stable_id();
+        let stream_id = send.quic_id().index();
         let send_stream = WtSendStream {
-            stable_id: self.connection.stable_id(),
-            stream_id: recv.id().into_u64(),
+            stable_id,
+            stream_id,
             send_stream: send,
         };
         let receive_stream = WtReceiveStream {
-            stable_id: self.connection.stable_id(),
-            stream_id: recv.id().into_u64(),
+            stable_id,
+            stream_id,
             recv_stream: recv,
         };
         Ok((send_stream, receive_stream))
     }
 
     async fn accept_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
-        let (send, recv) = self.connection.accept_bi().await?;
+        let (send, recv) = self.session.accept_bi().await?;
+        let stable_id = self.session.stable_id();
+        let stream_id = send.quic_id().index();
         let send_stream = WtSendStream {
-            stable_id: self.connection.stable_id(),
-            stream_id: recv.id().into_u64(),
+            stable_id,
+            stream_id,
             send_stream: send,
         };
         let receive_stream = WtReceiveStream {
-            stable_id: self.connection.stable_id(),
-            stream_id: recv.id().into_u64(),
+            stable_id,
+            stream_id,
             recv_stream: recv,
         };
         Ok((send_stream, receive_stream))
     }
 
     async fn open_uni(&self) -> anyhow::Result<Self::SendStream> {
-        let send = self.connection.open_uni().await?.await?;
+        let send = self.session.open_uni().await?;
+        let stable_id = self.session.stable_id();
+        let stream_id = send.quic_id().index();
         Ok(WtSendStream {
-            stable_id: self.connection.stable_id(),
-            stream_id: send.id().into_u64(),
+            stable_id,
+            stream_id,
             send_stream: send,
         })
     }
 
     async fn accept_uni(&self) -> anyhow::Result<Self::ReceiveStream> {
-        let recv = self.connection.accept_uni().await?;
+        let recv = self.session.accept_uni().await?;
+        let stable_id = self.session.stable_id();
+        let stream_id = recv.quic_id().index();
         Ok(WtReceiveStream {
-            stable_id: self.connection.stable_id(),
-            stream_id: recv.id().into_u64(),
+            stable_id,
+            stream_id,
             recv_stream: recv,
         })
     }
 
     fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<()> {
-        Ok(self.connection.send_datagram(bytes)?)
+        Ok(self.session.send_datagram(bytes.freeze())?)
     }
 
     async fn receive_datagram(&self) -> anyhow::Result<bytes::BytesMut> {
-        match self.connection.receive_datagram().await {
+        match self.session.read_datagram().await {
             Ok(datagram) => Ok(bytes::BytesMut::from(&datagram[..])),
             Err(e) => {
                 tracing::error!("Failed to receive datagram: {:?}", e);
