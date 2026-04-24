@@ -8,7 +8,10 @@ use crate::{
         control_plane::{
             control_messages::{
                 control_message_type::ControlMessageType,
-                messages::{subscribe::Subscribe, subscribe_namespace::SubscribeNamespace},
+                messages::{
+                    subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
+                    unsubscribe::Unsubscribe,
+                },
             },
             enums::ResponseMessage,
             threads::enums::StreamWithObject,
@@ -145,6 +148,22 @@ impl<T: TransportProtocol> Subscriber<T> {
             }
             _ => bail!("Protocol violation"),
         }
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "moqt.subscriber.unsubscribe",
+        skip_all,
+        fields(subscribe_id = %subscribe_id)
+    )]
+    pub async fn unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()> {
+        let unsubscribe = Unsubscribe {
+            request_id: subscribe_id,
+        };
+        self.session
+            .send_stream
+            .send(ControlMessageType::UnSubscribe, unsubscribe.encode())
+            .await
     }
 
     #[tracing::instrument(

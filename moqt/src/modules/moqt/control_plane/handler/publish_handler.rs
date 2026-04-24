@@ -80,6 +80,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
             .await
             .insert(self.track_alias, receiver);
         Ok(Subscription {
+            request_id: self.request_id,
             track_alias: self.track_alias,
             expires,
             group_order: self.group_order,

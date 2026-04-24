@@ -80,6 +80,10 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
             .await
     }
 
+    pub fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
     pub fn into_publication(&self, track_alias: u64) -> PublishedResource {
         PublishedResource::from_subscribe_handler(track_alias, self)
     }

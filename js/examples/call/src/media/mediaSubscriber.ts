@@ -332,6 +332,7 @@ export class MediaSubscriber {
     worker.onmessage = async (event: MessageEvent) => {
       const data = event.data as
         | { type: 'audioData'; audioData: AudioData }
+        | { type: 'bufferedObject'; media: 'audio'; groupId: bigint; objectId: bigint }
         | { type: 'bitrate'; kbps: number }
         | { type: 'receiveLatency'; media: 'audio'; ms: number }
         | { type: 'renderingLatency'; media: 'audio'; ms: number }
@@ -360,6 +361,9 @@ export class MediaSubscriber {
           bufferedFrames: data.bufferedFrames,
           capacityFrames: data.capacityFrames
         })
+        return
+      }
+      if (data.type === 'bufferedObject') {
         return
       }
       const audioData = data.audioData

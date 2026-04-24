@@ -36,6 +36,9 @@ impl<T: moqt::TransportProtocol> Session for moqt::Session<T> {
             moqt::SessionEvent::Subscribe(subscribe_handler) => {
                 SessionEvent::Subscribe(Box::new(subscribe_handler))
             }
+            moqt::SessionEvent::Unsubscribe(unsubscribe_handler) => {
+                SessionEvent::Unsubscribe(Box::new(unsubscribe_handler))
+            }
             moqt::SessionEvent::Disconnected() => SessionEvent::Disconnected(),
             moqt::SessionEvent::ProtocolViolation() => SessionEvent::ProtocolViolation(),
         };

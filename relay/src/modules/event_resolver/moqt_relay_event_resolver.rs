@@ -13,6 +13,7 @@ impl MoqtRelayEventResolver {
             }
             SessionEvent::Publish(handler) => MoqtRelayEvent::Publish(session_id, handler),
             SessionEvent::Subscribe(handler) => MoqtRelayEvent::Subscribe(session_id, handler),
+            SessionEvent::Unsubscribe(handler) => MoqtRelayEvent::Unsubscribe(session_id, handler),
             SessionEvent::Disconnected() => MoqtRelayEvent::Disconnected(session_id),
             SessionEvent::ProtocolViolation() => MoqtRelayEvent::ProtocolViolation(session_id),
         }

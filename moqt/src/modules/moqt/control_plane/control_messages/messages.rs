@@ -10,3 +10,4 @@ pub mod server_setup;
 pub mod subscribe;
 pub mod subscribe_namespace;
 pub mod subscribe_ok;
+pub mod unsubscribe;

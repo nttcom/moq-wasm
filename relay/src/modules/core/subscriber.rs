@@ -14,6 +14,7 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         track_name: String,
         option: SubscribeOption,
     ) -> anyhow::Result<Subscription>;
+    async fn send_unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()>;
     async fn create_data_receiver(
         &mut self,
         subscription: &Subscription,
@@ -52,6 +53,16 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
         };
         let moqt_sub = self.subscribe(track_namespace, track_name, option).await?;
         Ok(Subscription::from(moqt_sub))
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.subscriber.send_unsubscribe",
+        skip_all,
+        fields(subscribe_id = %subscribe_id)
+    )]
+    async fn send_unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()> {
+        self.unsubscribe(subscribe_id).await
     }
 
     #[tracing::instrument(

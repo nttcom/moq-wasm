@@ -11,6 +11,7 @@ use crate::modules::moqt::{
             publish_namespace::PublishNamespace, publish_ok::PublishOk,
             request_error::RequestError, server_setup::ServerSetup, subscribe::Subscribe,
             subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
+            unsubscribe::Unsubscribe,
         },
     },
     data_plane::streams::stream::received_message::ReceivedMessage,
@@ -103,7 +104,16 @@ impl ControlMessageDecoder {
                 }
             }
             ControlMessageType::SubscribeUpdate => todo!(),
-            ControlMessageType::UnSubscribe => todo!(),
+            ControlMessageType::UnSubscribe => {
+                tracing::debug!("Event: Unsubscribe");
+                match Unsubscribe::decode(&mut cursor_buf) {
+                    Some(v) => ReceivedMessage::Unsubscribe(v),
+                    None => {
+                        tracing::error!("Protocol violation is detected.");
+                        ReceivedMessage::FatalError()
+                    }
+                }
+            }
             ControlMessageType::PublishDone => todo!(),
             ControlMessageType::Publish => {
                 tracing::debug!("Event: Publish");

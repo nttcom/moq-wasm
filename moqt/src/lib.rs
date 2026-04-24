@@ -16,6 +16,8 @@ pub use modules::moqt::control_plane::handler::subscribe_handler::SubscribeHandl
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::handler::subscribe_namespace_handler::SubscribeNamespaceHandler;
 #[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::control_plane::handler::unsubscribe_handler::UnsubscribeHandler;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::options::PublishOption;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::options::SubscribeOption;

@@ -13,6 +13,7 @@ use crate::modules::{
         subscribe::Subscribe,
         subscribe_namespace::SubscribeNameSpace,
         tables::{hashmap_table::HashMapTable, table::Table},
+        unsubscribe::Unsubscribe,
     },
     session_repository::SessionRepository,
 };
@@ -60,6 +61,7 @@ impl EventHandler {
                             | MoqtRelayEvent::SubscribeNameSpace(session_id, _)
                             | MoqtRelayEvent::Publish(session_id, _)
                             | MoqtRelayEvent::Subscribe(session_id, _)
+                            | MoqtRelayEvent::Unsubscribe(session_id, _)
                             | MoqtRelayEvent::Disconnected(session_id)
                             | MoqtRelayEvent::ProtocolViolation(session_id) => *session_id,
                         };
@@ -119,6 +121,19 @@ impl EventHandler {
                                         table.as_ref(),
                                         &notifier,
                                         &ingress_sender,
+                                        &egress_sender,
+                                        handler,
+                                    )
+                                    .await;
+                            }
+                            MoqtRelayEvent::Unsubscribe(session_id, handler) => {
+                                let unsubscribe = Unsubscribe {};
+                                unsubscribe
+                                    .handle(
+                                        session_id,
+                                        &session_span,
+                                        table.as_ref(),
+                                        &notifier,
                                         &egress_sender,
                                         handler,
                                     )

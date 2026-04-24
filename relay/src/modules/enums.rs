@@ -2,11 +2,12 @@ use crate::modules::{
     core::handler::{
         publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
         subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
+        unsubscribe::UnsubscribeHandler,
     },
     types::SessionId,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Location {
     pub(crate) group_id: u64,
     pub(crate) object_id: u64,
@@ -99,6 +100,7 @@ impl GroupOrder {
     }
 }
 
+#[derive(Clone, Debug)]
 pub(crate) enum ContentExists {
     False,
     True { location: Location },
@@ -129,6 +131,7 @@ pub(crate) enum MoqtRelayEvent {
     SubscribeNameSpace(SessionId, Box<dyn SubscribeNamespaceHandler>),
     Publish(SessionId, Box<dyn PublishHandler>),
     Subscribe(SessionId, Box<dyn SubscribeHandler>),
+    Unsubscribe(SessionId, Box<dyn UnsubscribeHandler>),
     Disconnected(SessionId),
     ProtocolViolation(SessionId),
 }

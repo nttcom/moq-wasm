@@ -4,7 +4,10 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressStartRequest},
         ingress::ingress_coordinator::IngressStartRequest,
     },
-    sequences::{notifier::Notifier, tables::table::Table},
+    sequences::{
+        notifier::Notifier,
+        tables::table::{ActiveUpstreamSubscription, Table, UpstreamSubscriptionKey},
+    },
     types::{SessionId, compose_session_track_key},
 };
 use tracing::Span;
@@ -54,6 +57,7 @@ impl Subscribe {
                 pub_session_id,
                 track_namespace,
                 track_name,
+                table,
                 notifier,
                 ingress_sender,
                 egress_sender,
@@ -78,54 +82,90 @@ impl Subscribe {
         pub_session_id: SessionId,
         track_namespace: &str,
         track_name: &str,
+        table: &dyn Table,
         notifier: &Notifier,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressStartRequest>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &dyn SubscribeHandler,
     ) {
-        let Ok(subscription) = notifier
-            .subscribe(
-                pub_session_id,
-                track_namespace.to_string(),
-                track_name.to_string(),
+        let upstream_key = UpstreamSubscriptionKey {
+            publisher_session_id: pub_session_id,
+            track_namespace: track_namespace.to_string(),
+            track_name: track_name.to_string(),
+        };
+        let maybe_active_upstream =
+            table.get_active_upstream_subscription(pub_session_id, track_namespace, track_name);
+
+        let active_upstream = if let Some(active_upstream) = maybe_active_upstream {
+            tracing::info!(
+                pub_session_id = %pub_session_id,
+                track_namespace = %track_namespace,
+                track_name = %track_name,
+                track_key = active_upstream.track_key,
+                downstream_subscriber_count = active_upstream.downstream_subscriber_count,
+                "reusing active upstream subscription"
+            );
+            active_upstream
+        } else {
+            let Ok(subscription) = notifier
+                .subscribe(
+                    pub_session_id,
+                    track_namespace.to_string(),
+                    track_name.to_string(),
+                )
+                .await
+            else {
+                tracing::warn!("Failed to send `SUBSCRIBE` to publisher. Session close.");
+                return;
+            };
+            tracing::info!(
+                pub_session_id = %pub_session_id,
+                track_namespace = %track_namespace,
+                track_name = %track_name,
+                track_alias = subscription.track_alias(),
+                expires = subscription.expires(),
+                "upstream subscribe ok received"
+            );
+
+            let track_key = compose_session_track_key(pub_session_id, subscription.track_alias());
+            let active_upstream = ActiveUpstreamSubscription {
+                upstream_subscribe_id: subscription.request_id(),
+                track_key,
+                expires: subscription.expires(),
+                content_exists: subscription.content_exists(),
+                downstream_subscriber_count: 0,
+            };
+            table.register_upstream_subscription(upstream_key.clone(), active_upstream.clone());
+
+            if ingress_sender
+                .send(IngressStartRequest {
+                    publisher_session_id: pub_session_id,
+                    subscription,
+                    parent_span: Span::current(),
+                })
+                .await
+                .is_err()
+            {
+                tracing::error!("Failed to send IngressStartRequest. Session close.");
+                return;
+            }
+            tracing::info!(
+                pub_session_id = %pub_session_id,
+                track_namespace = %track_namespace,
+                track_name = %track_name,
+                "ingress start request sent"
+            );
+
+            active_upstream
+        };
+
+        let Ok(subscriber_track_alias) = handler
+            .ok(
+                active_upstream.expires,
+                active_upstream.content_exists.clone(),
             )
             .await
         else {
-            tracing::warn!("Failed to send `SUBSCRIBE` to publisher. Session close.");
-            return;
-        };
-        tracing::info!(
-            pub_session_id = %pub_session_id,
-            track_namespace = %track_namespace,
-            track_name = %track_name,
-            track_alias = subscription.track_alias(),
-            expires = subscription.expires(),
-            "upstream subscribe ok received"
-        );
-
-        let track_key = compose_session_track_key(pub_session_id, subscription.track_alias());
-        let expires = subscription.expires();
-        let content_exists = subscription.content_exists();
-
-        if ingress_sender
-            .send(IngressStartRequest {
-                publisher_session_id: pub_session_id,
-                subscription,
-            })
-            .await
-            .is_err()
-        {
-            tracing::error!("Failed to send IngressStartRequest. Session close.");
-            return;
-        }
-        tracing::info!(
-            pub_session_id = %pub_session_id,
-            track_namespace = %track_namespace,
-            track_name = %track_name,
-            "ingress start request sent"
-        );
-
-        let Ok(subscriber_track_alias) = handler.ok(expires, content_exists).await else {
             tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
             // TODO: send_unsubscribe
             // TODO: close session
@@ -139,10 +179,17 @@ impl Subscribe {
             "downstream subscribe ok sent"
         );
 
+        if !table.register_downstream_subscription(session_id, handler.subscribe_id(), upstream_key)
+        {
+            tracing::error!("Failed to register downstream subscription.");
+            return;
+        }
+
         if egress_sender
             .send(EgressCommand::StartReader(EgressStartRequest {
                 subscriber_session_id: session_id,
-                track_key,
+                downstream_subscribe_id: handler.subscribe_id(),
+                track_key: active_upstream.track_key,
                 published_resources: handler.convert_into_publication(subscriber_track_alias),
             }))
             .await

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
+use tracing::{Instrument, Span};
 
 use crate::modules::{
     core::{data_receiver::receiver::DataReceiver, subscription::Subscription},
@@ -19,6 +20,7 @@ use crate::modules::{
 pub(crate) struct IngressStartRequest {
     pub(crate) publisher_session_id: SessionId,
     pub(crate) subscription: Subscription,
+    pub(crate) parent_span: Span,
 }
 
 pub(crate) struct IngressCoordinator {
@@ -58,6 +60,13 @@ impl IngressCoordinator {
                         };
                         let stream_tx = stream_tx.clone();
                         let datagram_tx = datagram_tx.clone();
+                        let create_receiver_span = tracing::info_span!(
+                            parent: &command.parent_span,
+                            "relay.ingress.create_data_receiver",
+                            publisher_session_id = command.publisher_session_id,
+                            track_key = track_key,
+                            track_alias = command.subscription.track_alias(),
+                        );
                         join_set.spawn(async move {
                             let subscription = command.subscription;
                             let mut subscriber = subscriber;
@@ -77,7 +86,7 @@ impl IngressCoordinator {
                                         .await;
                                 }
                             }
-                        });
+                        }.instrument(create_receiver_span));
                     }
                     Some(join_result) = join_set.join_next() => {
                         if let Err(error) = join_result {

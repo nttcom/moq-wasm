@@ -6,6 +6,7 @@ use crate::{
             publish_handler::PublishHandler, publish_namespace_handler::PublishNamespaceHandler,
             subscribe_handler::SubscribeHandler,
             subscribe_namespace_handler::SubscribeNamespaceHandler,
+            unsubscribe_handler::UnsubscribeHandler,
         },
     },
 };
@@ -22,6 +23,7 @@ pub enum SessionEvent<T: TransportProtocol> {
     SubscribeNameSpace(SubscribeNamespaceHandler<T>),
     Publish(PublishHandler<T>),
     Subscribe(SubscribeHandler<T>),
+    Unsubscribe(UnsubscribeHandler<T>),
     Disconnected(),
     ProtocolViolation(),
 }
