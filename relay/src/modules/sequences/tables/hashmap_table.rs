@@ -5,7 +5,9 @@ use tokio::sync::RwLock;
 
 use crate::modules::{
     core::handler::publish::PublishHandler,
-    sequences::tables::table::Table,
+    sequences::tables::table::{
+        ActiveUpstreamSubscription, RemovedDownstreamSubscription, Table, UpstreamSubscriptionKey,
+    },
     types::{SessionId, TrackNamespace, TrackNamespacePrefix},
 };
 
@@ -22,6 +24,9 @@ pub(crate) struct HashMapTable {
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashSet<SessionId>>,
     pub(crate) published_handlers: RwLock<Vec<(SessionId, Arc<dyn PublishHandler>)>>,
     pub(crate) track_alias_links: DashMap<(SessionId, u64, SessionId), u64>,
+    pub(crate) active_upstream_subscriptions:
+        DashMap<UpstreamSubscriptionKey, ActiveUpstreamSubscription>,
+    pub(crate) downstream_subscriptions: DashMap<(SessionId, u64), UpstreamSubscriptionKey>,
 }
 
 #[async_trait::async_trait]
@@ -32,6 +37,8 @@ impl Table for HashMapTable {
             subscriber_namespaces: DashMap::new(),
             published_handlers: RwLock::new(Vec::new()),
             track_alias_links: DashMap::new(),
+            active_upstream_subscriptions: DashMap::new(),
+            downstream_subscriptions: DashMap::new(),
         }
     }
 
@@ -86,6 +93,26 @@ impl Table for HashMapTable {
             .collect();
         for key in aliases_to_remove {
             self.track_alias_links.remove(&key);
+        }
+
+        let downstream_keys: Vec<_> = self
+            .downstream_subscriptions
+            .iter()
+            .filter_map(|entry| (entry.key().0 == session_id).then_some(*entry.key()))
+            .collect();
+        for key in downstream_keys {
+            let _ = self.remove_downstream_subscription(key.0, key.1);
+        }
+
+        let upstream_keys: Vec<_> = self
+            .active_upstream_subscriptions
+            .iter()
+            .filter_map(|entry| {
+                (entry.key().publisher_session_id == session_id).then_some(entry.key().clone())
+            })
+            .collect();
+        for key in upstream_keys {
+            self.active_upstream_subscriptions.remove(&key);
         }
     }
 
@@ -287,6 +314,73 @@ impl Table for HashMapTable {
                 subscriber_session_id,
             ))
             .map(|value| *value)
+    }
+
+    fn get_active_upstream_subscription(
+        &self,
+        publisher_session_id: SessionId,
+        track_namespace: &str,
+        track_name: &str,
+    ) -> Option<ActiveUpstreamSubscription> {
+        self.active_upstream_subscriptions
+            .get(&UpstreamSubscriptionKey {
+                publisher_session_id,
+                track_namespace: track_namespace.to_string(),
+                track_name: track_name.to_string(),
+            })
+            .map(|entry| entry.value().clone())
+    }
+
+    fn register_upstream_subscription(
+        &self,
+        key: UpstreamSubscriptionKey,
+        subscription: ActiveUpstreamSubscription,
+    ) {
+        self.active_upstream_subscriptions.insert(key, subscription);
+    }
+
+    fn register_downstream_subscription(
+        &self,
+        downstream_session_id: SessionId,
+        downstream_subscribe_id: u64,
+        upstream_key: UpstreamSubscriptionKey,
+    ) -> bool {
+        let Some(mut entry) = self.active_upstream_subscriptions.get_mut(&upstream_key) else {
+            return false;
+        };
+        entry.downstream_subscriber_count += 1;
+        drop(entry);
+
+        self.downstream_subscriptions.insert(
+            (downstream_session_id, downstream_subscribe_id),
+            upstream_key,
+        );
+        true
+    }
+
+    fn remove_downstream_subscription(
+        &self,
+        downstream_session_id: SessionId,
+        downstream_subscribe_id: u64,
+    ) -> Option<RemovedDownstreamSubscription> {
+        let (_, upstream_key) = self
+            .downstream_subscriptions
+            .remove(&(downstream_session_id, downstream_subscribe_id))?;
+        let mut entry = self.active_upstream_subscriptions.get_mut(&upstream_key)?;
+        if entry.downstream_subscriber_count > 0 {
+            entry.downstream_subscriber_count -= 1;
+        }
+        let removed = RemovedDownstreamSubscription {
+            upstream_key: upstream_key.clone(),
+            upstream_subscribe_id: entry.upstream_subscribe_id,
+            remaining_downstream_subscriber_count: entry.downstream_subscriber_count,
+        };
+        let should_remove = entry.downstream_subscriber_count == 0;
+        drop(entry);
+        if should_remove {
+            self.active_upstream_subscriptions.remove(&upstream_key);
+        }
+        Some(removed)
     }
 }
 

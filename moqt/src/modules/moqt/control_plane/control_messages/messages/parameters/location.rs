@@ -11,7 +11,7 @@ pub struct Location {
 }
 
 impl Location {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let group_id = buf.try_get_varint().log_context("location group id").ok()?;
         let object_id = buf
             .try_get_varint()
@@ -23,7 +23,7 @@ impl Location {
         })
     }
 
-    pub(crate) fn encode(&self) -> bytes::BytesMut {
+    pub fn encode(&self) -> bytes::BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.group_id);
         payload.put_varint(self.object_id);

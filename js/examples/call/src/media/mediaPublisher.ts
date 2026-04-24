@@ -3,7 +3,6 @@ import type { MOQTClient } from '../../../../pkg/moqt_client_wasm'
 import { MediaTransportState } from '../../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../../utils/media/audioTransport'
-import { serializeChunk } from '../../../../utils/media/chunk'
 import type { LocHeader } from '../../../../utils/media/loc'
 import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 import { DEFAULT_AUDIO_ENCODING_SETTINGS, type AudioEncodingSettings } from '../types/audioEncoding'
@@ -198,6 +197,14 @@ export class MediaPublisher {
 
   handleSubscribeDone(subscribeId: bigint): void {
     this.handleSubscriptionEnded('subscribe_done', subscribeId)
+  }
+
+  async dispose(): Promise<void> {
+    await this.stopCamera()
+    await this.stopScreenShare()
+    await this.stopAudio()
+    this.catalogGroupByAlias.clear()
+    this.handlers = {}
   }
 
   private handleSubscriptionEnded(type: 'unsubscribe' | 'subscribe_done', subscribeId: bigint): void {
@@ -847,23 +854,14 @@ export class MediaPublisher {
           objectBytes: 0,
           objectCount: 0
         }
-        const sender: VideoChunkSender = async (
-          trackAlias,
-          groupId,
-          subgroupId,
-          objectId,
-          videoChunk,
-          rawClient,
-          loc
-        ) => {
+        const sender: VideoChunkSender = async (trackAlias, groupId, subgroupId, objectId, payload, rawClient, loc) => {
           await this.sendVideoObjectForTrackContext(
             context,
             trackAlias,
             groupId,
             subgroupId,
             objectId,
-            videoChunk,
-            metadata,
+            payload,
             rawClient,
             loc,
             timingAcc
@@ -951,8 +949,7 @@ export class MediaPublisher {
     groupId: bigint,
     subgroupId: bigint,
     objectId: bigint,
-    chunk: EncodedVideoChunk,
-    metadata: EncodedVideoChunkMetadata | undefined,
+    payload: Uint8Array,
     client: MOQTClient,
     locHeader?: LocHeader,
     timingAcc?: VideoSendTimingAccumulator
@@ -967,33 +964,13 @@ export class MediaPublisher {
       }
     }
 
-    const decoderConfig = metadata?.decoderConfig as { codec?: string; avc?: { format?: 'annexb' | 'avc' } } | undefined
-    const avcFormat = context.config.codec.startsWith('avc')
-      ? ((decoderConfig?.avc?.format as 'annexb' | 'avc' | undefined) ?? 'annexb')
-      : undefined
-    const codec = decoderConfig?.codec ?? context.config.codec
-    const serializeStartedAtMs = performance.now()
-    const payload = serializeChunk(
-      {
-        type: chunk.type,
-        timestamp: chunk.timestamp,
-        duration: chunk.duration ?? null,
-        byteLength: chunk.byteLength,
-        copyTo: (dest) => chunk.copyTo(dest)
-      },
-      {
-        codec,
-        avcFormat
-      }
-    )
     if (timingAcc) {
-      timingAcc.serializeMs += Math.max(0, performance.now() - serializeStartedAtMs)
       timingAcc.objectBytes += payload.byteLength
       timingAcc.objectCount += 1
     }
 
     const objectSendStartedAtMs = performance.now()
-    await client.sendSubgroupStreamObject(trackAlias, groupId, subgroupId, objectId, undefined, payload, locHeader)
+    await client.sendSubgroupObject(trackAlias, groupId, subgroupId, objectId, undefined, payload, locHeader)
     if (timingAcc) {
       timingAcc.objectSendMs += Math.max(0, performance.now() - objectSendStartedAtMs)
     }
@@ -1307,7 +1284,7 @@ export class MediaPublisher {
       return
     }
     for (const alias of aliases) {
-      await client.sendSubgroupStreamObject(alias, currentGroupId, 0n, endObjectId, 3, new Uint8Array(0), undefined)
+      await client.sendSubgroupObject(alias, currentGroupId, 0n, endObjectId, 3, new Uint8Array(0), undefined)
     }
   }
 
@@ -1359,11 +1336,11 @@ export class MediaPublisher {
     this.catalogGroupByAlias.set(aliasKey, groupId)
 
     const payload = new TextEncoder().encode(buildCallCatalogJson(this.trackNamespace, this.catalogTracks))
-    await client.sendSubgroupStreamHeaderMessage(trackAlias, groupId, 0n, 0)
-    await client.sendSubgroupStreamObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
+    await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
+    await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
   }
 
   private async sendEndOfGroup(client: MOQTClient, trackAlias: bigint, groupId: bigint, endObjectId: bigint) {
-    await client.sendSubgroupStreamObject(trackAlias, groupId, 0n, endObjectId, 3, new Uint8Array(0), undefined)
+    await client.sendSubgroupObject(trackAlias, groupId, 0n, endObjectId, 3, new Uint8Array(0), undefined)
   }
 }

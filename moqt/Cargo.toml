@@ -7,26 +7,29 @@ edition = "2024"
 
 [dependencies]
 anyhow = { version = "1.0.75", features = ["backtrace"] }
-tokio = { version = "1.45.0", features = ["full", "tracing"] }
-tokio-util = "0.7.18"
-tokio-stream = "0.1.18"
-console-subscriber = "0.4"
 tracing = "0.1.37"
 once_cell = "1.21.3"
-tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
-quinn = "0.11.8"
-web-transport-quinn = { version = "0.11", default-features = false, features = ["ring"] }
 bytes = "1"
 async-trait = "0.1.74"
-ttl_cache = "0.5.1"
-tracing-appender = "0.2.3"
 serde = { version = "1.0.188", features = ["derive"] }
 num_enum = "0.7.0"
 mockall="0.13.1"
-rustls-native-certs="0.8.1"
-rustls-pemfile="2.2.0"
 thiserror = "2.0.16"
 url = "2"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+console-subscriber = "0.4"
+quinn = "0.11.8"
+rustls-native-certs = "0.8.1"
+rustls-pemfile = "2.2.0"
+tokio = { version = "1.45.0", features = ["full", "tracing"] }
+tokio-stream = "0.1.18"
+tokio-util = "0.7.18"
+tracing-appender = "0.2.3"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+ttl_cache = "0.5.1"
+web-transport-quinn = { version = "0.11", default-features = false, features = ["ring"] }
+wtransport = { version = "0.6.1", features = ["quinn"] }
 
 [dev-dependencies]
 rcgen = "0.14.3"

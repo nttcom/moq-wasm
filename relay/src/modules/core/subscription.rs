@@ -9,6 +9,10 @@ impl Subscription {
         &self.inner
     }
 
+    pub(crate) fn request_id(&self) -> u64 {
+        self.inner.request_id
+    }
+
     pub(crate) fn track_alias(&self) -> u64 {
         self.inner.track_alias
     }

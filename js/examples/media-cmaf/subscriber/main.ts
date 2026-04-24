@@ -553,6 +553,12 @@ const buildAudioMimeType = (codec: string): string => {
   return `audio/mp4; codecs="${codec}"`
 }
 
+const cloneBytes = (data: Uint8Array): Uint8Array<ArrayBuffer> => {
+  const cloned = new Uint8Array<ArrayBuffer>(new ArrayBuffer(data.byteLength))
+  cloned.set(data)
+  return cloned
+}
+
 const appendToVideo = (data: Uint8Array): void => {
   videoAppendQueue.push(data)
   flushVideoQueue()
@@ -565,7 +571,7 @@ const flushVideoQueue = (): void => {
   isVideoAppending = true
   const data = videoAppendQueue.shift()!
   try {
-    videoSourceBuffer.appendBuffer(data)
+    videoSourceBuffer.appendBuffer(cloneBytes(data))
   } catch (e) {
     isVideoAppending = false
     console.error('[CmafSubscriber] video appendBuffer failed', e)
@@ -584,7 +590,7 @@ const flushAudioQueue = (): void => {
   isAudioAppending = true
   const data = audioAppendQueue.shift()!
   try {
-    audioSourceBuffer.appendBuffer(data)
+    audioSourceBuffer.appendBuffer(cloneBytes(data))
   } catch (e) {
     isAudioAppending = false
     console.error('[CmafSubscriber] audio appendBuffer failed', e)
@@ -742,9 +748,9 @@ const sendSetupButtonClickHandler = (): void => {
   const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
   sendSetupBtn.addEventListener('click', async () => {
     const form = getFormElement()
-    const versions = toBigUint64Array('0xff00000A')
+    const versions = toBigUint64Array('0xff00000E')
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
-    await moqtClient.sendSetupMessage(versions, maxSubscribeId)
+    await moqtClient.sendClientSetup(versions, maxSubscribeId)
   })
 }
 
@@ -755,14 +761,18 @@ const sendCatalogSubscribeButtonClickHandler = (): void => {
     const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
     const catalogTrackName = form['catalog-track-name'].value.trim()
     const catalogSubscribeId = BigInt(form['catalog-subscribe-id'].value)
-    const catalogTrackAlias = BigInt(form['catalog-track-alias'].value)
-
     if (!catalogTrackName) {
       setCatalogTrackStatus('Catalog track is required')
       return
     }
+    const catalogTrackAlias = await moqtClient.subscribe(
+      catalogSubscribeId,
+      trackNamespace,
+      catalogTrackName,
+      AUTH_INFO
+    )
+    form['catalog-track-alias'].value = catalogTrackAlias.toString()
     setupCatalogCallbacks(catalogTrackAlias)
-    await moqtClient.subscribe(catalogSubscribeId, catalogTrackAlias, trackNamespace, catalogTrackName, AUTH_INFO)
     setCatalogTrackStatus(`Catalog subscribed: ${catalogTrackName}`)
   })
 }
@@ -774,9 +784,7 @@ const sendSubscribeButtonClickHandler = (): void => {
     const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
     const selectedVideoTrack = selectedVideoTrackName ?? ''
     const videoSubscribeId = BigInt(form['video-subscribe-id'].value)
-    const videoTrackAlias = BigInt(form['video-track-alias'].value)
     const audioSubscribeId = BigInt(form['audio-subscribe-id'].value)
-    const audioTrackAlias = BigInt(form['audio-track-alias'].value)
 
     if (!selectedVideoTrack) {
       setCatalogTrackStatus('Select a video track from catalog first')
@@ -792,10 +800,13 @@ const sendSubscribeButtonClickHandler = (): void => {
     }
 
     setupMediaSource(videoTrack.codec, audioTrack.codec)
+    const videoTrackAlias = await moqtClient.subscribe(videoSubscribeId, trackNamespace, selectedVideoTrack, AUTH_INFO)
+    form['video-track-alias'].value = videoTrackAlias.toString()
     setupVideoObjectCallbacks(videoTrackAlias)
+
+    const audioTrackAlias = await moqtClient.subscribe(audioSubscribeId, trackNamespace, audioTrack.name, AUTH_INFO)
+    form['audio-track-alias'].value = audioTrackAlias.toString()
     setupAudioObjectCallbacks(audioTrackAlias)
-    await moqtClient.subscribe(videoSubscribeId, videoTrackAlias, trackNamespace, selectedVideoTrack, AUTH_INFO)
-    await moqtClient.subscribe(audioSubscribeId, audioTrackAlias, trackNamespace, audioTrack.name, AUTH_INFO)
     setCatalogTrackStatus(`Subscribed video=${selectedVideoTrack} audio=${audioTrack.name}`)
   })
 }

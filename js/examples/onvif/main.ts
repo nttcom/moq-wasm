@@ -591,7 +591,8 @@ function setupVideoCallbacks(trackAlias: bigint): void {
       {
         groupId,
         subgroupStreamObject: {
-          objectId: subgroupStreamObject.objectId,
+          subgroupId: subgroupStreamObject.subgroupId,
+          objectIdDelta: subgroupStreamObject.objectIdDelta,
           objectPayloadLength: subgroupStreamObject.objectPayloadLength,
           objectPayload: payload,
           objectStatus: subgroupStreamObject.objectStatus,
@@ -944,7 +945,7 @@ async function sendCommand(command: CommandKind, row: HTMLElement): Promise<void
         : { type: command, pan, tilt, zoom, speed }
 
   const bytes = new TextEncoder().encode(JSON.stringify(payload))
-  await client.sendDatagramObject(commandTrackAlias, 0n, commandObjectId, 0, bytes)
+  await client.sendObjectDatagram(commandTrackAlias, 0n, commandObjectId, 0, bytes, undefined)
   commandObjectId += 1n
   updateStatus(`sent ${command}`, true)
 }
@@ -1037,15 +1038,15 @@ async function subscribeCatalog(): Promise<void> {
   const catalogTrack = (document.getElementById('catalog-track') as HTMLInputElement).value
   const authInfo = (document.getElementById('auth-info') as HTMLInputElement).value
   const catalogSubscribeId = parseBigInt((document.getElementById('catalog-subscribe-id') as HTMLInputElement).value)
-  const catalogAlias = parseBigInt((document.getElementById('catalog-track-alias') as HTMLInputElement).value)
 
   if (!subscribeNamespace.length) {
     updateStatus('namespace required', false)
     return
   }
 
+  const catalogAlias = await moqtClient.subscribe(catalogSubscribeId, subscribeNamespace, catalogTrack, authInfo)
+  ;(document.getElementById('catalog-track-alias') as HTMLInputElement).value = catalogAlias.toString()
   setupCatalogCallbacks(catalogAlias)
-  await moqtClient.subscribe(catalogSubscribeId, catalogAlias, subscribeNamespace, catalogTrack, authInfo)
   catalogTrackAlias = catalogAlias
   updateCatalogAlias(catalogTrackAlias)
   updateStatus('catalog subscribed', true)
@@ -1061,15 +1062,15 @@ async function subscribeSelectedVideo(): Promise<void> {
   const videoTrack = selectedVideoTrack?.trim() ?? ''
   const authInfo = (document.getElementById('auth-info') as HTMLInputElement).value
   const videoSubscribeId = parseBigInt((document.getElementById('video-subscribe-id') as HTMLInputElement).value)
-  const videoTrackAlias = parseBigInt((document.getElementById('video-track-alias') as HTMLInputElement).value)
 
   if (!subscribeNamespace.length || !videoTrack) {
     updateStatus('video track required', false)
     return
   }
 
+  const videoTrackAlias = await moqtClient.subscribe(videoSubscribeId, subscribeNamespace, videoTrack, authInfo)
+  ;(document.getElementById('video-track-alias') as HTMLInputElement).value = videoTrackAlias.toString()
   setupVideoCallbacks(videoTrackAlias)
-  await moqtClient.subscribe(videoSubscribeId, videoTrackAlias, subscribeNamespace, videoTrack, authInfo)
   videoSubscribed = true
   updateStatus(`video subscribed: ${videoTrack}`, true)
 }
@@ -1103,7 +1104,7 @@ async function connect(): Promise<void> {
     updateStatus('disconnected', false)
   })
 
-  await moqtClient.sendSetupMessage(new BigUint64Array([0xff00000an]), maxSubscribeId)
+  await moqtClient.sendClientSetup(new BigUint64Array([0xff00000en]), maxSubscribeId)
 
   moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
     if (!isSuccess) {
@@ -1116,12 +1117,11 @@ async function connect(): Promise<void> {
       return
     }
 
-    await respondOk(0n, authInfo, 'datagram')
-    commandTrackAlias = subscribe.trackAlias
+    commandTrackAlias = await respondOk(0n)
     updateCommandAlias(commandTrackAlias)
   })
 
-  await moqtClient.announce(publishNamespace, authInfo)
+  await moqtClient.publishNamespace(publishNamespace, authInfo)
   updateStatus('connected', true)
 }
 

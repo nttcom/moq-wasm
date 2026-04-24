@@ -53,9 +53,9 @@ export function deserializeChunk(payload: Uint8Array): DeserializedChunk {
   if (payload.byteLength < totalMetaLength) {
     throw new Error('Payload too small to contain metadata')
   }
-  const metaBytes = payload.slice(META_LENGTH_BYTES, META_LENGTH_BYTES + metaLength)
+  const metaBytes = payload.subarray(META_LENGTH_BYTES, META_LENGTH_BYTES + metaLength)
   const metadata = JSON.parse(new TextDecoder().decode(metaBytes)) as ChunkMetadata
-  const data = payload.slice(META_LENGTH_BYTES + metaLength)
+  const data = payload.subarray(META_LENGTH_BYTES + metaLength)
   return { metadata, data }
 }
 

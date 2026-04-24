@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
     core::published_resource::PublishedResource,
@@ -14,12 +14,17 @@ use crate::modules::{
 
 pub(crate) struct EgressStartRequest {
     pub(crate) subscriber_session_id: SessionId,
+    pub(crate) downstream_subscribe_id: u64,
     pub(crate) track_key: TrackKey,
     pub(crate) published_resources: PublishedResource,
 }
 
 pub(crate) enum EgressCommand {
     StartReader(EgressStartRequest),
+    StopReader {
+        subscriber_session_id: SessionId,
+        downstream_subscribe_id: u64,
+    },
 }
 
 pub(crate) struct EgressCoordinator {
@@ -36,30 +41,46 @@ impl EgressCoordinator {
         let (command_sender, mut command_receiver) = mpsc::channel::<EgressCommand>(512);
 
         let command_runner = tokio::spawn(async move {
-            let mut joinset = JoinSet::new();
+            let mut runners = HashMap::<(SessionId, u64), JoinHandle<()>>::new();
             loop {
-                tokio::select! {
-                    maybe_command = command_receiver.recv() => {
-                        let Some(command) = maybe_command else { break };
-                        match command {
-                            EgressCommand::StartReader(request) => {
-                                Self::spawn_runner(
-                                    session_repo.clone(),
-                                    cache_store.clone(),
-                                    sender_map.clone(),
-                                    request,
-                                    &mut joinset,
-                                )
-                                .await;
-                            }
+                let Some(command) = command_receiver.recv().await else {
+                    break;
+                };
+                match command {
+                    EgressCommand::StartReader(request) => {
+                        let runner_key = (
+                            request.subscriber_session_id,
+                            request.downstream_subscribe_id,
+                        );
+                        if let Some(existing) = runners.remove(&runner_key) {
+                            existing.abort();
+                        }
+                        if let Some(handle) = Self::spawn_runner(
+                            session_repo.clone(),
+                            cache_store.clone(),
+                            sender_map.clone(),
+                            request,
+                        )
+                        .await
+                        {
+                            runners.insert(runner_key, handle);
                         }
                     }
-                    Some(result) = joinset.join_next() => {
-                        if let Err(e) = result {
-                            tracing::error!("egress runner panicked: {:?}", e);
+                    EgressCommand::StopReader {
+                        subscriber_session_id,
+                        downstream_subscribe_id,
+                    } => {
+                        if let Some(handle) =
+                            runners.remove(&(subscriber_session_id, downstream_subscribe_id))
+                        {
+                            handle.abort();
                         }
                     }
                 }
+            }
+
+            for (_, handle) in runners {
+                handle.abort();
             }
         });
 
@@ -78,15 +99,14 @@ impl EgressCoordinator {
         cache_store: Arc<TrackCacheStore>,
         sender_map: Arc<TrackNotifier>,
         request: EgressStartRequest,
-        joinset: &mut JoinSet<()>,
-    ) {
+    ) -> Option<JoinHandle<()>> {
         let publisher = session_repo
             .lock()
             .await
             .publisher(request.subscriber_session_id);
         let Some(publisher) = publisher else {
             tracing::error!("publisher session not found for egress start");
-            return;
+            return None;
         };
 
         let cache = cache_store.get_or_create(request.track_key);
@@ -99,11 +119,11 @@ impl EgressCoordinator {
             request.published_resources,
         );
 
-        joinset.spawn(async move {
+        Some(tokio::spawn(async move {
             if let Err(e) = runner.run().await {
                 tracing::error!(?e, "egress runner finished with error");
             }
-        });
+        }))
     }
 }
 

@@ -24,7 +24,7 @@ pub enum FilterType {
 }
 
 impl FilterType {
-    pub(crate) fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let value = FilterTypeValue::try_from(bytes.get_u8()).ok()?;
         match value {
             FilterTypeValue::LatestObject => Some(FilterType::LargestObject),
@@ -46,7 +46,7 @@ impl FilterType {
         }
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         match self {
             FilterType::LargestObject => {

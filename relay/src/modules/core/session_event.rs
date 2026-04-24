@@ -1,6 +1,7 @@
 use crate::modules::core::handler::{
     publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
     subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
+    unsubscribe::UnsubscribeHandler,
 };
 
 pub(crate) enum SessionEvent {
@@ -8,6 +9,7 @@ pub(crate) enum SessionEvent {
     SubscribeNamespace(Box<dyn SubscribeNamespaceHandler>),
     Publish(Box<dyn PublishHandler>),
     Subscribe(Box<dyn SubscribeHandler>),
+    Unsubscribe(Box<dyn UnsubscribeHandler>),
     Disconnected(),
     ProtocolViolation(),
 }
@@ -19,6 +21,7 @@ impl std::fmt::Debug for SessionEvent {
             SessionEvent::SubscribeNamespace(_) => "SubscribeNamespace",
             SessionEvent::Publish(_) => "Publish",
             SessionEvent::Subscribe(_) => "Subscribe",
+            SessionEvent::Unsubscribe(_) => "Unsubscribe",
             SessionEvent::Disconnected() => "Disconnected",
             SessionEvent::ProtocolViolation() => "ProtocolViolation",
         };

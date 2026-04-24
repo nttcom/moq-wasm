@@ -6,16 +6,16 @@ use serde::Serialize;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct NamespaceOk {
-    pub(crate) request_id: u64,
+    pub request_id: u64,
 }
 
 impl NamespaceOk {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         Some(NamespaceOk { request_id })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload

@@ -1,15 +1,25 @@
 import { VideoJitterBuffer } from '../videoJitterBuffer'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
-import type { ChunkMetadata } from '../chunk'
+import { tryDeserializeChunk, type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros, monotonicUnixMicros } from '../clock'
+import { bytesToBase64, readLocHeader } from '../loc'
 
 const bitrateLogger = createBitrateLogger((kbps) => {
-  self.postMessage({ type: 'bitrate', kbps })
+  postTelemetry({ type: 'bitrate', kbps })
 })
 
 type VideoDecoderHardwareAcceleration = 'prefer-hardware' | 'prefer-software'
 const DEFAULT_VIDEO_DECODER_HARDWARE_ACCELERATION: VideoDecoderHardwareAcceleration = 'prefer-software'
+let telemetryEnabled = true
+let bypassJitterBuffer = false
+
+function postTelemetry(message: unknown): void {
+  if (!telemetryEnabled) {
+    return
+  }
+  self.postMessage(message)
+}
 
 let videoDecoder: VideoDecoder | undefined
 let currentDecoderHardwareAcceleration: VideoDecoderHardwareAcceleration = DEFAULT_VIDEO_DECODER_HARDWARE_ACCELERATION
@@ -32,7 +42,7 @@ function postDecodingObject(
   chunkType: string,
   codec?: string
 ): void {
-  self.postMessage({
+  postTelemetry({
     type: 'decodingObject',
     media: 'video',
     phase,
@@ -40,6 +50,15 @@ function postDecodingObject(
     objectId,
     chunkType,
     codec
+  })
+}
+
+function postBufferedObject(groupId: bigint, objectId: bigint): void {
+  postTelemetry({
+    type: 'bufferedObject',
+    media: 'video',
+    groupId,
+    objectId
   })
 }
 
@@ -95,6 +114,7 @@ type VideoJitterBufferConfig = {
 
 const POP_INTERVAL_MS = 33
 const MISSING_META_WARN_SUPPRESS_AFTER_RESET_MS = 3000
+const MAX_FRAMES_PER_DRAIN = 2
 
 type VideoPacingConfig = {
   preset: VideoPacingPreset
@@ -171,6 +191,7 @@ let pacingDelayMs = DEFAULT_JITTER_CONFIG.minDelayMs
 let pacingLastReason: string | null = null
 let pacingLastReportMs = 0
 let decodedFrameBuffer: DecodedFrameEntry[] = []
+let decodedDrainTimer: number | null = null
 let outputPendingMeta: Map<number, OutputMeta[]> = new Map()
 let receivedFrameTimes: Map<string, number> = new Map()
 let lastOutputMetaResetAtMs = Number.NEGATIVE_INFINITY
@@ -311,6 +332,34 @@ let cachedVideoConfig: CachedVideoConfig | null = null
 let catalogCodec: string | null = null
 let catalogFramerate: number | null = null
 let missingCatalogCodecWarned = false
+let directDecodeQueue: Promise<void> = Promise.resolve()
+const directLastObjectIds = new Map<string, bigint>()
+
+function summarizeDescriptionBase64(descriptionBase64?: string): {
+  length: number
+  preview?: string
+} {
+  if (!descriptionBase64) {
+    return { length: 0 }
+  }
+  return {
+    length: descriptionBase64.length,
+    preview: descriptionBase64.slice(0, 48)
+  }
+}
+
+function summarizeUint8Array(bytes?: Uint8Array): {
+  length: number
+  preview?: number[]
+} {
+  if (!(bytes instanceof Uint8Array)) {
+    return { length: 0 }
+  }
+  return {
+    length: bytes.byteLength,
+    preview: Array.from(bytes.slice(0, 16))
+  }
+}
 
 function resolvePlayoutDelayMs(): number {
   return pacingDelayMs
@@ -332,6 +381,10 @@ function clearOutputQueue(): void {
   if (pendingEncodedTimer !== null) {
     clearTimeout(pendingEncodedTimer)
     pendingEncodedTimer = null
+  }
+  if (decodedDrainTimer !== null) {
+    clearTimeout(decodedDrainTimer)
+    decodedDrainTimer = null
   }
   for (const entry of decodedFrameBuffer) {
     entry.frame.close()
@@ -566,9 +619,18 @@ function pushDecodedFrame(entry: DecodedFrameEntry): void {
 }
 
 function drainDecodedOutput(): void {
-  while (decodedFrameBuffer.length > 0) {
+  let drained = 0
+  while (decodedFrameBuffer.length > 0 && drained < MAX_FRAMES_PER_DRAIN) {
     emitDecodedFrame()
+    drained += 1
   }
+  if (decodedFrameBuffer.length === 0 || decodedDrainTimer !== null) {
+    return
+  }
+  decodedDrainTimer = setTimeout(() => {
+    decodedDrainTimer = null
+    drainDecodedOutput()
+  }, 0)
 }
 
 function emitDecodedFrame(): void {
@@ -580,29 +642,34 @@ function emitDecodedFrame(): void {
   const receiveToDecodeMs = entry.receivedMs !== null ? Math.round(entry.decodeDoneMs - entry.receivedMs) : null
   const receiveToRenderMs = entry.receivedMs !== null ? Math.round(renderMs - entry.receivedMs) : null
   reportLatency(entry.captureTimestampMicros)
-  self.postMessage({
+  postTelemetry({
     type: 'timing',
     media: 'video',
     receiveToDecodeMs,
     receiveToRenderMs
   })
-  self.postMessage({
-    type: 'frame',
-    frame: entry.frame,
-    width: entry.frame.displayWidth,
-    height: entry.frame.displayHeight
-  })
-  entry.frame.close()
+  self.postMessage(
+    {
+      type: 'frame',
+      frame: entry.frame,
+      width: entry.frame.displayWidth,
+      height: entry.frame.displayHeight
+    },
+    [entry.frame]
+  )
 }
 
 schedulePop(currentPacingConfig.fallbackIntervalMs)
 
 type DecoderControlMessage =
-  | { type: 'config'; config: VideoJitterBufferConfig }
+  | { type: 'config'; config: VideoJitterBufferConfig & { telemetryEnabled?: boolean; bypassJitterBuffer?: boolean } }
   | { type: 'catalog'; codec?: string; framerate?: number }
 type WorkerMessage = SubgroupWorkerMessage | DecoderControlMessage
 
-function isConfigMessage(message: WorkerMessage): message is { type: 'config'; config: VideoJitterBufferConfig } {
+function isConfigMessage(message: WorkerMessage): message is {
+  type: 'config'
+  config: VideoJitterBufferConfig & { telemetryEnabled?: boolean; bypassJitterBuffer?: boolean }
+} {
   return (message as { type?: string }).type === 'config'
 }
 
@@ -612,6 +679,8 @@ function isCatalogMessage(message: WorkerMessage): message is { type: 'catalog';
 
 self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
   if (isConfigMessage(event.data)) {
+    telemetryEnabled = event.data.config.telemetryEnabled ?? telemetryEnabled
+    bypassJitterBuffer = event.data.config.bypassJitterBuffer ?? bypassJitterBuffer
     updateJitterBuffer(event.data.config)
     return
   }
@@ -620,26 +689,140 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
     return
   }
   const subgroupStreamObject: SubgroupObjectWithLoc = {
-    objectId: event.data.subgroupStreamObject.objectId,
+    subgroupId: event.data.subgroupStreamObject.subgroupId,
+    objectIdDelta: event.data.subgroupStreamObject.objectIdDelta,
     objectPayloadLength: event.data.subgroupStreamObject.objectPayloadLength,
-    objectPayload: new Uint8Array(event.data.subgroupStreamObject.objectPayload),
+    objectPayload: event.data.subgroupStreamObject.objectPayload,
     objectStatus: event.data.subgroupStreamObject.objectStatus,
     locHeader: event.data.subgroupStreamObject.locHeader
   }
   bitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
-  const receiveKey = `${event.data.groupId.toString()}:${subgroupStreamObject.objectId.toString()}`
 
-  const inserted = jitterBuffer.push(
-    event.data.groupId,
-    subgroupStreamObject.objectId,
-    subgroupStreamObject,
-    (latencyMs) => postReceiveLatency(latencyMs)
+  if (bypassJitterBuffer) {
+    enqueueDirectDecode(event.data.groupId, subgroupStreamObject)
+    return
+  }
+
+  const objectId = jitterBuffer.push(event.data.groupId, subgroupStreamObject, (latencyMs) =>
+    postReceiveLatency(latencyMs)
   )
-  if (inserted) {
+  if (objectId !== null) {
+    const receiveKey = `${event.data.groupId.toString()}:${objectId.toString()}`
     postJitterBufferActivity('push')
+    postBufferedObject(event.data.groupId, objectId)
     receivedFrameTimes.set(receiveKey, performance.now())
     schedulePop(0)
   }
+}
+
+function enqueueDirectDecode(groupId: bigint, subgroupStreamObject: SubgroupObjectWithLoc): void {
+  directDecodeQueue = directDecodeQueue
+    .then(async () => {
+      const entry = materializeDirectObject(groupId, subgroupStreamObject, (latencyMs) => postReceiveLatency(latencyMs))
+      if (!entry) {
+        return
+      }
+      postBufferedObject(groupId, entry.object.objectId)
+      const decoded = entry.object.cachedChunk
+      if (waitingForKeyFrame && decoded.metadata.type !== 'key') {
+        return
+      }
+      registerOutputMeta(decoded.metadata.timestamp, {
+        groupId,
+        objectId: entry.object.objectId,
+        chunkType: decoded.metadata.type,
+        timestampUs: decoded.metadata.timestamp,
+        receivedMs: performance.now(),
+        captureTimestampMicros: entry.captureTimestampMicros
+      })
+      await decode(groupId, entry.object, entry.captureTimestampMicros)
+    })
+    .catch((error) => {
+      console.error('[videoDecoder] direct decode failed', error)
+    })
+}
+
+function materializeDirectObject(
+  groupId: bigint,
+  object: SubgroupObjectWithLoc,
+  onReceiveLatency?: (latencyMs: number) => void
+): { object: JitterBufferSubgroupObject; captureTimestampMicros?: number } | null {
+  const subgroupId = normalizeSubgroupId(object.subgroupId)
+  const objectId = assignDirectObjectId(groupId, subgroupId, object.objectIdDelta)
+  if (isTerminalStatus(object.objectStatus)) {
+    directLastObjectIds.delete(makeSubgroupKey(groupId, subgroupId))
+  }
+  if (!object.objectPayloadLength) {
+    return null
+  }
+
+  const locMetadata = readLocHeader(object.locHeader)
+  const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
+  const parsed = tryDeserializeChunk(object.objectPayload) ?? buildChunkFromLoc(object, objectId)
+  if (!parsed) {
+    return null
+  }
+  if (!parsed.metadata.descriptionBase64 && locMetadata.videoConfig) {
+    parsed.metadata.descriptionBase64 = bytesToBase64(locMetadata.videoConfig)
+  }
+
+  if (typeof captureTimestampMicros === 'number') {
+    onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))
+  }
+
+  return {
+    captureTimestampMicros,
+    object: {
+      ...object,
+      objectId,
+      cachedChunk: parsed,
+      remotePTS: parsed.metadata.timestamp,
+      localPTS: performance.timeOrigin + performance.now()
+    }
+  }
+}
+
+function assignDirectObjectId(groupId: bigint, subgroupId: bigint, objectIdDelta: bigint): bigint {
+  const key = makeSubgroupKey(groupId, subgroupId)
+  const previousObjectId = directLastObjectIds.get(key)
+  const objectId =
+    previousObjectId === undefined ? (objectIdDelta > 0n ? objectIdDelta - 1n : 0n) : previousObjectId + objectIdDelta
+  directLastObjectIds.set(key, objectId)
+  return objectId
+}
+
+function normalizeSubgroupId(subgroupId: bigint | undefined): bigint {
+  return subgroupId ?? 0n
+}
+
+function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
+  return `${groupId.toString()}:${subgroupId.toString()}`
+}
+
+function isTerminalStatus(status: number | undefined): boolean {
+  return status === 3 || status === 4
+}
+
+function buildChunkFromLoc(
+  object: SubgroupObjectWithLoc,
+  objectId: bigint
+): { metadata: ChunkMetadata; data: Uint8Array } | null {
+  const loc = readLocHeader(object.locHeader)
+  const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
+  const metadata: ChunkMetadata = {
+    type: objectId === 0n ? 'key' : 'delta',
+    timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
+    duration: null,
+    descriptionBase64: loc.videoConfig ? bytesToBase64(loc.videoConfig) : undefined
+  }
+  return { metadata, data: object.objectPayload }
+}
+
+function getCaptureTimestampMicros(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return undefined
+  }
+  return value
 }
 
 async function decode(
@@ -652,9 +835,48 @@ async function decode(
 
   const resolvedConfig = resolveVideoConfig(decoded.metadata)
   if (!resolvedConfig) {
+    console.info('[videoDecoder] decode config unresolved', {
+      groupId: groupId.toString(),
+      objectId: subgroupStreamObject.objectId.toString(),
+      chunkType: decoded.metadata.type,
+      metadataCodec: decoded.metadata.codec,
+      metadataAvcFormat: decoded.metadata.avcFormat,
+      metadataDescription: summarizeDescriptionBase64(decoded.metadata.descriptionBase64),
+      catalogCodec,
+      cachedVideoConfig
+    })
     return
   }
   const desiredConfig = buildVideoDecoderConfig(resolvedConfig)
+  const desiredDescription = desiredConfig.description instanceof Uint8Array ? desiredConfig.description : undefined
+  console.info('[videoDecoder] decode config', {
+    groupId: groupId.toString(),
+    objectId: subgroupStreamObject.objectId.toString(),
+    chunkType: decoded.metadata.type,
+    waitingForKeyFrame,
+    metadata: {
+      codec: decoded.metadata.codec,
+      avcFormat: decoded.metadata.avcFormat,
+      timestamp: decoded.metadata.timestamp,
+      duration: decoded.metadata.duration,
+      description: summarizeDescriptionBase64(decoded.metadata.descriptionBase64)
+    },
+    resolvedConfig: {
+      codec: resolvedConfig.codec,
+      avcFormat: resolvedConfig.avcFormat,
+      description: summarizeDescriptionBase64(resolvedConfig.descriptionBase64)
+    },
+    desiredConfig: {
+      codec: desiredConfig.codec,
+      avcFormat:
+        desiredConfig.avc?.format === 'avc' || desiredConfig.avc?.format === 'annexb'
+          ? desiredConfig.avc.format
+          : undefined,
+      description: summarizeUint8Array(desiredDescription),
+      hardwareAcceleration: desiredConfig.hardwareAcceleration
+    },
+    cachedVideoConfig
+  })
 
   const encodedVideoChunk = new EncodedVideoChunk({
     type: decoded.metadata.type as EncodedVideoChunkType,
@@ -721,7 +943,7 @@ function reportPacingStatus(action: 'decode' | 'wait' | 'config' | 'error' | 'ju
   }
   pacingLastReportMs = nowMs
   const bufferedFrames = getBufferedFrameCount()
-  self.postMessage({
+  postTelemetry({
     type: 'pacing',
     media: 'video',
     intervalMs: pacingFrameIntervalUs / 1000,
@@ -747,7 +969,7 @@ function trackKeyframeInterval(chunkType: string): void {
     return
   }
   if (typeof framesSinceLastKeyFrame === 'number' && framesSinceLastKeyFrame > 0) {
-    self.postMessage({ type: 'keyframeInterval', media: 'video', frames: framesSinceLastKeyFrame })
+    postTelemetry({ type: 'keyframeInterval', media: 'video', frames: framesSinceLastKeyFrame })
   }
   framesSinceLastKeyFrame = 0
 }
@@ -774,18 +996,18 @@ function postReceiveLatency(latencyMs: number) {
   if (latencyMs < 0) {
     return
   }
-  self.postMessage({ type: 'receiveLatency', media: 'video', ms: latencyMs })
+  postTelemetry({ type: 'receiveLatency', media: 'video', ms: latencyMs })
 }
 
 function postRenderingLatency(latencyMs: number) {
   if (latencyMs < 0) {
     return
   }
-  self.postMessage({ type: 'renderingLatency', media: 'video', ms: latencyMs })
+  postTelemetry({ type: 'renderingLatency', media: 'video', ms: latencyMs })
 }
 
 function postJitterBufferActivity(event: 'push' | 'pop') {
-  self.postMessage({
+  postTelemetry({
     type: 'jitterBufferActivity',
     media: 'video',
     event,
@@ -805,7 +1027,7 @@ function postDecoderConfig(resolvedConfig: CachedVideoConfig, desired: VideoDeco
     desired.hardwareAcceleration === 'no-preference'
       ? desired.hardwareAcceleration
       : undefined
-  self.postMessage({
+  postTelemetry({
     type: 'decoderConfig',
     codec: resolvedConfig.codec,
     descriptionLength,
@@ -859,7 +1081,7 @@ function resolveVideoConfig(metadata: ChunkMetadata): CachedVideoConfig | null {
   return {
     codec,
     descriptionBase64: metadata.descriptionBase64,
-    avcFormat: metadata.avcFormat
+    avcFormat: metadata.avcFormat ?? (codec.startsWith('avc') ? 'annexb' : undefined)
   }
 }
 

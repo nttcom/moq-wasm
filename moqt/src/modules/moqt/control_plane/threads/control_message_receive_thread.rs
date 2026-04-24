@@ -12,6 +12,7 @@ use crate::{
                 publish_namespace_handler::PublishNamespaceHandler,
                 subscribe_handler::SubscribeHandler,
                 subscribe_namespace_handler::SubscribeNamespaceHandler,
+                unsubscribe_handler::UnsubscribeHandler,
             },
         },
         data_plane::streams::stream::{
@@ -91,6 +92,11 @@ impl ControlMessageReceiveThread {
                 tracing::debug!("Event: Subscribe");
                 let subscribe_handler = SubscribeHandler::new(session.clone(), subscribe);
                 DepacketizeResult::SessionEvent(SessionEvent::<T>::Subscribe(subscribe_handler))
+            }
+            ReceivedMessage::Unsubscribe(unsubscribe) => {
+                tracing::debug!("Event: Unsubscribe");
+                let unsubscribe_handler = UnsubscribeHandler::new(session.clone(), unsubscribe);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::Unsubscribe(unsubscribe_handler))
             }
             ReceivedMessage::SubscribeOk(subscribe_ok) => {
                 tracing::debug!("Event: Subscribe ok");

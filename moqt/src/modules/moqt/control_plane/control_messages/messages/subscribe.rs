@@ -14,19 +14,19 @@ use tracing;
 
 #[derive(Debug, PartialEq)]
 pub struct Subscribe {
-    pub(crate) request_id: u64,
-    pub(crate) track_namespace: Vec<String>,
-    pub(crate) track_name: String,
-    pub(crate) subscriber_priority: u8,
-    pub(crate) group_order: GroupOrder,
-    pub(crate) forward: bool,
-    pub(crate) filter_type: FilterType,
-    pub(crate) authorization_tokens: Vec<AuthorizationToken>,
-    pub(crate) delivery_timeout: Option<u64>,
+    pub request_id: u64,
+    pub track_namespace: Vec<String>,
+    pub track_name: String,
+    pub subscriber_priority: u8,
+    pub group_order: GroupOrder,
+    pub forward: bool,
+    pub filter_type: FilterType,
+    pub authorization_tokens: Vec<AuthorizationToken>,
+    pub delivery_timeout: Option<u64>,
 }
 
 impl Subscribe {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let request_id = buf.try_get_varint().log_context("request id").ok()?;
         let track_namespace_tuple_length = buf
             .try_get_varint()
@@ -89,7 +89,7 @@ impl Subscribe {
         })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         // Track Namespace Number of elements
@@ -106,7 +106,11 @@ impl Subscribe {
         let mut number_of_parameters = 0;
         let mut parameters_payload = BytesMut::new();
         for token in &self.authorization_tokens {
-            let token_payload = token.encode();
+            let token_payload = KeyValuePair {
+                key: 0x03,
+                value: VariantType::Odd(token.encode().freeze()),
+            }
+            .encode();
             parameters_payload.unsplit(token_payload);
             number_of_parameters += 1;
         }
@@ -133,9 +137,13 @@ mod tests {
         use bytes::BytesMut;
 
         use crate::modules::moqt::control_plane::control_messages::messages::{
-            parameters::{filter_type::FilterType, group_order::GroupOrder, location::Location},
+            parameters::{
+                authorization_token::AuthorizationToken, filter_type::FilterType,
+                group_order::GroupOrder, location::Location,
+            },
             subscribe::Subscribe,
         };
+        use bytes::Bytes;
 
         #[test]
         fn packetize_latest_group() {
@@ -437,6 +445,30 @@ mod tests {
                 delivery_timeout: None,
             };
             assert_eq!(depacketized_subscribe, expected_subscribe);
+        }
+
+        #[test]
+        fn packetize_and_depacketize_with_authorization_token() {
+            let subscribe = Subscribe {
+                request_id: 7,
+                track_namespace: vec!["test".to_string()],
+                track_name: "track_name".to_string(),
+                subscriber_priority: 1,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+                authorization_tokens: vec![AuthorizationToken::UseValue {
+                    token_type: 0,
+                    token_value: Bytes::from_static(b"secret"),
+                }],
+                delivery_timeout: None,
+            };
+
+            let buf = subscribe.encode();
+            let mut buf = std::io::Cursor::new(&buf[..]);
+            let depacketized_subscribe = Subscribe::decode(&mut buf).unwrap();
+
+            assert_eq!(depacketized_subscribe, subscribe);
         }
     }
 }

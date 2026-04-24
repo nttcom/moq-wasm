@@ -9,7 +9,7 @@ export type MediaVideoProfile = {
   height: number
 }
 
-export const MEDIA_DEFAULT_VIDEO_CODEC = 'avc1.640032'
+export const MEDIA_DEFAULT_VIDEO_CODEC = 'avc1.640028' // H.264 High Profile Level 4.0
 
 export const MEDIA_VIDEO_PROFILES: MediaVideoProfile[] = [
   { trackName: 'video_1080p', label: '1080p', codec: MEDIA_DEFAULT_VIDEO_CODEC, width: 1920, height: 1080 },

@@ -33,6 +33,7 @@ impl TransportReceiveStream for WtReceiveStream {
             Poll::Ready(Err(e)) => Poll::Ready(Err(match e.kind() {
                 std::io::ErrorKind::ConnectionReset => ReadError::Reset,
                 std::io::ErrorKind::ConnectionAborted => ReadError::ConnectionLost,
+                std::io::ErrorKind::NotConnected => ReadError::Closed,
                 std::io::ErrorKind::UnexpectedEof => ReadError::Closed,
                 _ => todo!("handle other web-transport-quinn read errors: {:?}", e),
             })),

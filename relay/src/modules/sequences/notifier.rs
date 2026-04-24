@@ -114,4 +114,28 @@ impl Notifier {
             Err(anyhow::anyhow!("No subscriber"))
         }
     }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.notifier.unsubscribe",
+        skip_all,
+        fields(session_id = %session_id, subscribe_id = %subscribe_id)
+    )]
+    pub(crate) async fn unsubscribe(
+        &self,
+        session_id: SessionId,
+        subscribe_id: u64,
+    ) -> anyhow::Result<()> {
+        if let Some(subscriber) = self.repository.lock().await.subscriber(session_id) {
+            tracing::info!(
+                "Forwarded UNSUBSCRIBE subscribe_id={} to session:{}",
+                subscribe_id,
+                session_id
+            );
+            subscriber.send_unsubscribe(subscribe_id).await
+        } else {
+            tracing::error!("No subscriber");
+            Err(anyhow::anyhow!("No subscriber"))
+        }
+    }
 }

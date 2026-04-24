@@ -490,6 +490,27 @@ audio {
   gap: 12px;
 }
 
+.playback-panel {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.playback-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.playback-meta span {
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
 #logPanel {
   max-height: 260px;
   overflow: auto;

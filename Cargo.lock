@@ -3167,6 +3167,7 @@ dependencies = [
  "ttl_cache",
  "url",
  "web-transport-quinn",
+ "wtransport",
 ]
 
 [[package]]
@@ -3221,7 +3222,7 @@ dependencies = [
  "futures",
  "js-sys",
  "media-streaming-format",
- "moqt-core",
+ "moqt",
  "packages",
  "serde",
  "serde-wasm-bindgen",

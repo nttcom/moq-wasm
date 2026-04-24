@@ -239,7 +239,7 @@ impl SubgroupHeader {
         }
     }
 
-    pub(crate) fn decode(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self, DecodeError> {
+    pub fn decode(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self, DecodeError> {
         let message_type = cursor
             .try_get_varint()
             .log_context("Subgroup Header Message Type")
@@ -268,7 +268,7 @@ impl SubgroupHeader {
         })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut buf = BytesMut::new();
         buf.put_varint(self.message_type.get_value());
         buf.put_varint(self.track_alias);
@@ -296,7 +296,7 @@ impl SubgroupObjectField {
         self.message_type.has_end_of_group()
     }
 
-    pub(crate) fn decode(
+    pub fn decode(
         message_type: SubgroupHeaderType,
         buf: &mut BytesMut,
     ) -> Result<Self, DecodeError> {
@@ -316,7 +316,10 @@ impl SubgroupObjectField {
         };
         let length = SubgroupObject::check_length(&mut cursor).ok_or(DecodeError::NeedMoreData)?;
         let subgroup_object = if length == 0 {
-            SubgroupObject::decode_status(&mut cursor).ok_or(DecodeError::NeedMoreData)?
+            let status =
+                SubgroupObject::decode_status(&mut cursor).ok_or(DecodeError::NeedMoreData)?;
+            let _ = buf.split_to(cursor.position() as usize);
+            status
         } else {
             let _ = buf.split_to(cursor.position() as usize);
             SubgroupObject::decode_payload(length, buf)
@@ -329,7 +332,7 @@ impl SubgroupObjectField {
         })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut buf = BytesMut::new();
         buf.put_varint(self.object_id_delta);
         if self.message_type.has_extensions() {
@@ -524,9 +527,7 @@ mod tests {
             );
             assert_eq!(object_field.subgroup_object, depacketized.subgroup_object);
 
-            // Check raw bytes: Object ID Delta (10=0x0A), Status Length (0), Status (3)
-            let expected_bytes = vec![0x0A, 0x00, 0x03];
-            assert_eq!(buf.as_ref(), expected_bytes.as_slice());
+            assert!(buf.is_empty());
         }
 
         #[test]

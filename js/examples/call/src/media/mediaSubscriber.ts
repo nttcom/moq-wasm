@@ -1,5 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { SubgroupStreamObjectMessage } from '../../../../pkg/moqt_client_wasm'
+import { SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { AudioJitterBufferMode } from '../../../../utils/media/audioJitterBuffer'
 import {
   DEFAULT_AUDIO_JITTER_CONFIG,
@@ -103,7 +103,7 @@ interface AudioSubscriptionContext {
   lastPlaybackQueueReportAtMs: number
 }
 
-type SubgroupStreamObjectMessageWithLoc = SubgroupStreamObjectMessage & { locHeader?: any }
+type SubgroupObjectMessageWithLoc = SubgroupObjectMessage & { locHeader?: any }
 
 export class MediaSubscriber {
   private handlers: MediaSubscriberHandlers = {}
@@ -133,6 +133,7 @@ export class MediaSubscriber {
     worker.onmessage = async (event: MessageEvent) => {
       const data = event.data as
         | { type: 'frame'; frame: VideoFrame; width?: number; height?: number }
+        | { type: 'bufferedObject'; media: 'video'; groupId: bigint; objectId: bigint }
         | { type: 'bitrate'; kbps: number }
         | { type: 'keyframeInterval'; media: 'video'; frames: number }
         | { type: 'receiveLatency'; media: 'video'; ms: number }
@@ -266,6 +267,9 @@ export class MediaSubscriber {
         )
         return
       }
+      if (data.type === 'bufferedObject') {
+        return
+      }
       if (data.type === 'frame') {
         const lastCodec = this.videoCodecByTrackAlias.get(trackAlias)
         const lastSize = this.videoSizeByTrackAlias.get(trackAlias)
@@ -328,6 +332,7 @@ export class MediaSubscriber {
     worker.onmessage = async (event: MessageEvent) => {
       const data = event.data as
         | { type: 'audioData'; audioData: AudioData }
+        | { type: 'bufferedObject'; media: 'audio'; groupId: bigint; objectId: bigint }
         | { type: 'bitrate'; kbps: number }
         | { type: 'receiveLatency'; media: 'audio'; ms: number }
         | { type: 'renderingLatency'; media: 'audio'; ms: number }
@@ -356,6 +361,9 @@ export class MediaSubscriber {
           bufferedFrames: data.bufferedFrames,
           capacityFrames: data.capacityFrames
         })
+        return
+      }
+      if (data.type === 'bufferedObject') {
         return
       }
       const audioData = data.audioData
@@ -418,14 +426,36 @@ export class MediaSubscriber {
     this.audioContexts.delete(trackAlias)
   }
 
-  private forwardToWorker(worker: Worker, groupId: bigint, message: SubgroupStreamObjectMessageWithLoc) {
+  dispose(): void {
+    for (const trackAlias of Array.from(this.videoContexts.keys())) {
+      this.unregisterVideoTrack(trackAlias)
+    }
+    for (const trackAlias of Array.from(this.audioContexts.keys())) {
+      this.unregisterAudioTrack(trackAlias)
+    }
+    this.videoJitterConfigByUserId.clear()
+    this.audioJitterConfigByUserId.clear()
+    this.videoCodecByTrackAlias.clear()
+    this.videoSizeByTrackAlias.clear()
+    this.handlers = {}
+  }
+
+  private forwardToWorker(worker: Worker, groupId: bigint, message: SubgroupObjectMessageWithLoc) {
+    console.info('[call][moqt] received subgroup object', {
+      groupId: groupId.toString(),
+      subgroupId: message.subgroupId?.toString() ?? '0',
+      objectIdDelta: message.objectIdDelta.toString(),
+      objectPayloadLength: message.objectPayloadLength,
+      objectStatus: message.objectStatus
+    })
     const payload = new Uint8Array(message.objectPayload)
     const payloadLength = message.objectPayloadLength
     worker.postMessage(
       {
         groupId,
         subgroupStreamObject: {
-          objectId: message.objectId,
+          subgroupId: message.subgroupId,
+          objectIdDelta: message.objectIdDelta,
           objectPayloadLength: payloadLength,
           objectPayload: payload,
           objectStatus: message.objectStatus,

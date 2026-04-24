@@ -4,7 +4,6 @@ use std::{
 };
 
 use rcgen::{CertifiedKey, generate_simple_self_signed};
-use tracing::Instrument;
 
 const CERT_DIR: &str = "keys";
 
@@ -32,6 +31,7 @@ pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
     } else {
         let subject_alt_names = vec![
             "localhost".to_string(),
+            "127.0.0.1".to_string(),
             "moqt.research.skyway.io".to_string(),
         ];
         let CertifiedKey { cert, signing_key } =
@@ -48,40 +48,19 @@ pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _logging = relay::init_logging("relay")?;
-    let relay_span = tracing::info_span!(parent: None, "relay");
+    create_certs_for_test_if_needed()?;
 
-    async move {
-        let startup_span = tracing::info_span!("startup");
-        let (server, _key_path, _cert_path) = async move {
-            create_certs_for_test_if_needed()?;
+    let key_path = get_key_path().to_str().unwrap().to_string();
+    let cert_path = get_cert_path().to_str().unwrap().to_string();
 
-            let key_path = get_key_path().to_str().unwrap().to_string();
-            let cert_path = get_cert_path().to_str().unwrap().to_string();
+    let server = relay::RelayServer::new(&key_path, &cert_path);
+    let _handler = server.spawn_transport::<moqt::DUAL>(4433);
 
-            let server = relay::RelayServer::new(&key_path, &cert_path);
-            anyhow::Ok((server, key_path, cert_path))
-        }
-        .instrument(startup_span)
-        .await?;
+    tracing::info!("Relay server started with QUIC + WebTransport (4433)");
+    tracing::info!("Ctrl+C to shutdown");
 
-        // QUIC + WebTransport を1ポートで起動
-        let _handler = server.spawn_transport::<moqt::DUAL>(4433);
-
-        tracing::info!("Relay server started with QUIC + WebTransport (4433)");
-        tracing::info!("Ctrl+C to shutdown");
-
-        let shutdown_span = tracing::info_span!("shutdown");
-        async {
-            tokio::signal::ctrl_c().await?;
-            tracing::info!("Shutdown signal received. Closing...");
-            tracing::info!("Relay server gracefully shutdown.");
-            anyhow::Ok(())
-        }
-        .instrument(shutdown_span)
-        .await?;
-
-        Ok(())
-    }
-    .instrument(relay_span)
-    .await
+    tokio::signal::ctrl_c().await?;
+    tracing::info!("Shutdown signal received. Closing...");
+    tracing::info!("Relay server gracefully shutdown.");
+    Ok(())
 }

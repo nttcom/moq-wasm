@@ -66,7 +66,6 @@ impl SubgroupDecoder {
 
     fn decode_object_field(&self, src: &mut BytesMut) -> Result<Option<Subgroup>, std::io::Error> {
         if src.is_empty() {
-            tracing::debug!("need more data.");
             return Ok(None);
         }
         let subgroup_object_field =

@@ -10,9 +10,11 @@ import { KEYFRAME_INTERVAL } from '../../../utils/media/constants'
 import { MEDIA_AUDIO_PROFILES, MEDIA_CATALOG_TRACK_NAME, MEDIA_VIDEO_PROFILES, buildMediaCatalogJson } from '../catalog'
 
 let mediaStream: MediaStream | null = null
+const ENABLE_AUDIO_PUBLISH = false
 const moqtClient = new MoqtClientWrapper()
-const transportState = new MediaTransportState()
+let transportState = new MediaTransportState()
 const catalogAliases = new Set<string>()
+let setupCompleted = false
 
 function ensureClient(): MOQTClient {
   const client = moqtClient.getRawClient()
@@ -115,11 +117,20 @@ function getAudioTrackAliases(client: MOQTClient, trackNamespace: string[], trac
 async function sendCatalog(client: MOQTClient, trackAlias: bigint, trackNamespace: string[]): Promise<void> {
   const aliasKey = trackAlias.toString()
   if (catalogAliases.has(aliasKey)) {
+    console.info('[MediaPublisher] catalog already sent', { trackAlias: aliasKey, trackNamespace })
     return
   }
   const payload = new TextEncoder().encode(buildMediaCatalogJson(trackNamespace))
-  await client.sendSubgroupStreamHeaderMessage(trackAlias, 0n, 0n, 0)
-  await client.sendSubgroupStreamObject(trackAlias, 0n, 0n, 0n, undefined, payload, undefined)
+  console.info('[MediaPublisher] sending catalog', {
+    trackAlias: aliasKey,
+    trackNamespace,
+    groupId: '0',
+    subgroupId: '0',
+    objectId: '0',
+    payloadLength: payload.byteLength
+  })
+  await client.sendSubgroupHeader(trackAlias, 0n, 0n, 0)
+  await client.sendSubgroupObject(trackAlias, 0n, 0n, 0n, undefined, payload, undefined)
   catalogAliases.add(aliasKey)
   console.info('[MediaPublisher] sent catalog', { trackAlias: aliasKey, trackNamespace })
 }
@@ -127,22 +138,41 @@ async function sendCatalog(client: MOQTClient, trackAlias: bigint, trackNamespac
 function sendSetupButtonClickHandler(): void {
   const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
   sendSetupBtn.addEventListener('click', async () => {
-    const form = getFormElement()
+    try {
+      const form = getFormElement()
+      const versions = new BigUint64Array('0xff00000E'.split(',').map(BigInt))
+      const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
 
-    const versions = new BigUint64Array('0xff00000A'.split(',').map(BigInt))
-    const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
-
-    await moqtClient.sendSetupMessage(versions, maxSubscribeId)
+      await moqtClient.sendClientSetup(versions, maxSubscribeId)
+      console.info('[MediaPublisher] CLIENT_SETUP sent', { maxSubscribeId: maxSubscribeId.toString() })
+    } catch (error) {
+      console.error('[MediaPublisher] CLIENT_SETUP failed', error)
+    }
   })
 }
 
-function sendAnnounceButtonClickHandler(): void {
-  const sendAnnounceBtn = document.getElementById('sendAnnounceBtn') as HTMLButtonElement
-  sendAnnounceBtn.addEventListener('click', async () => {
-    const form = getFormElement()
-    const trackNamespace = parseTrackNamespace(form['announce-track-namespace'].value)
+function sendPublishNamespaceButtonClickHandler(): void {
+  const sendPublishNamespaceBtn = document.getElementById('sendPublishNamespaceBtn') as HTMLButtonElement
+  sendPublishNamespaceBtn.addEventListener('click', async () => {
+    try {
+      if (!moqtClient.getConnectionStatus()) {
+        console.warn('[MediaPublisher] Connect first before sending PUBLISH_NAMESPACE')
+        return
+      }
+      if (!setupCompleted) {
+        console.warn('[MediaPublisher] Send CLIENT_SETUP first before sending PUBLISH_NAMESPACE')
+        return
+      }
 
-    await moqtClient.announce(trackNamespace, AUTH_INFO)
+      const form = getFormElement()
+      const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
+
+      console.info('[MediaPublisher] sending PUBLISH_NAMESPACE', { trackNamespace })
+      await moqtClient.publishNamespace(trackNamespace, AUTH_INFO)
+      console.info('[MediaPublisher] PUBLISH_NAMESPACE completed', { trackNamespace })
+    } catch (error) {
+      console.error('[MediaPublisher] PUBLISH_NAMESPACE failed', error)
+    }
   })
 }
 
@@ -168,19 +198,13 @@ function sendSubgroupObjectButtonClickHandler(): void {
         return
       }
       const { chunk, metadata, captureTimestampMicros } = data
-      console.debug('[MediaPublisher] video chunk', {
-        byteLength: chunk.byteLength,
-        type: chunk.type,
-        timestamp: chunk.timestamp
-      })
       const form = getFormElement()
-      const trackNamespace = parseTrackNamespace(form['announce-track-namespace'].value)
+      const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
       const publisherPriority = Number(form['video-publisher-priority'].value)
       const trackAliases = getVideoTrackAliases(client, trackNamespace)
       if (!trackAliases.length) {
         return
       }
-
       await sendVideoChunkViaMoqt({
         chunk,
         metadata,
@@ -192,78 +216,86 @@ function sendSubgroupObjectButtonClickHandler(): void {
         sender: sendVideoObjectMessage
       })
     }
-    for (const context of audioEncoderContexts) {
-      context.worker.onmessage = async (event: MessageEvent<AudioEncoderWorkerMessage>) => {
-        const data = event.data
-        if (data.type !== 'chunk') {
-          return
+    if (ENABLE_AUDIO_PUBLISH) {
+      for (const context of audioEncoderContexts) {
+        context.worker.onmessage = async (event: MessageEvent<AudioEncoderWorkerMessage>) => {
+          const data = event.data
+          if (data.type !== 'chunk') {
+            return
+          }
+          const { chunk, metadata, captureTimestampMicros } = data
+          const form = getFormElement()
+          const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
+          const trackAliases = getAudioTrackAliases(client, trackNamespace, context.trackName)
+          if (!trackAliases.length) {
+            return
+          }
+          await sendAudioChunkViaMoqt({
+            chunk,
+            metadata,
+            captureTimestampMicros,
+            trackAliases,
+            client,
+            transportState
+          })
         }
-        const { chunk, metadata, captureTimestampMicros } = data
-        const form = getFormElement()
-        const trackNamespace = parseTrackNamespace(form['announce-track-namespace'].value)
-        const trackAliases = getAudioTrackAliases(client, trackNamespace, context.trackName)
-        if (!trackAliases.length) {
-          return
-        }
-        await sendAudioChunkViaMoqt({
-          chunk,
-          metadata,
-          captureTimestampMicros,
-          trackAliases,
-          client,
-          transportState
-        })
       }
     }
 
     const [videoTrack] = mediaStream.getVideoTracks()
     const videoProcessor = new MediaStreamTrackProcessor({ track: videoTrack })
     const videoStream = videoProcessor.readable
+    transportState = new MediaTransportState()
     videoEncoderWorker.postMessage({
       type: 'keyframeInterval',
       keyframeInterval: KEYFRAME_INTERVAL
     })
     videoEncoderWorker.postMessage({ type: 'videoStream', videoStream: videoStream }, [videoStream])
-    const [audioTrack] = mediaStream.getAudioTracks()
-    audioEncoderContexts.forEach((context, index) => {
-      context.worker.postMessage({
-        type: 'config',
-        config: { bitrate: context.bitrate }
+    if (ENABLE_AUDIO_PUBLISH) {
+      const [audioTrack] = mediaStream.getAudioTracks()
+      audioEncoderContexts.forEach((context, index) => {
+        context.worker.postMessage({
+          type: 'config',
+          config: { bitrate: context.bitrate }
+        })
+        const sourceTrack = index === 0 ? audioTrack : audioTrack.clone()
+        const audioProcessor = new MediaStreamTrackProcessor({ track: sourceTrack })
+        const audioStream = audioProcessor.readable
+        context.worker.postMessage({ type: 'audioStream', audioStream: audioStream }, [audioStream])
       })
-      const sourceTrack = index === 0 ? audioTrack : audioTrack.clone()
-      const audioProcessor = new MediaStreamTrackProcessor({ track: sourceTrack })
-      const audioStream = audioProcessor.readable
-      context.worker.postMessage({ type: 'audioStream', audioStream: audioStream }, [audioStream])
-    })
+    }
   })
 }
 
 function setupButtonClickHandler(): void {
   sendSetupButtonClickHandler()
-  sendAnnounceButtonClickHandler()
+  sendPublishNamespaceButtonClickHandler()
   sendSubgroupObjectButtonClickHandler()
 }
 
 function setupClientCallbacks(): void {
   moqtClient.setOnServerSetupHandler((serverSetup: any) => {
+    setupCompleted = true
     console.log({ serverSetup })
   })
 
-  moqtClient.setOnAnnounceHandler(async (announceMessage) => {
-    console.log({ announceMessage })
-    const client = ensureClient()
-    await client.sendAnnounceOkMessage(announceMessage.trackNamespace)
+  moqtClient.setOnPublishNamespaceResponseHandler((responseMessage) => {
+    console.log({ publishNamespaceResponseMessage: responseMessage })
   })
 
-  moqtClient.setOnSubscribeResponseHandler((announceResponseMessage) => {
-    console.log({ announceResponseMessage })
+  moqtClient.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
+    console.log({ publishNamespace })
+    await respondOk()
+  })
+
+  moqtClient.setOnSubscribeResponseHandler((subscribeResponseMessage) => {
+    console.log({ subscribeResponseMessage })
   })
 
   moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
     console.log({ subscribeMessage: subscribe })
     const form = getFormElement()
-    const forwardingPreference = getForwardingPreference(form)
-    const trackNamespace = parseTrackNamespace(form['announce-track-namespace'].value)
+    const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
     const requestedNamespace = subscribe.trackNamespace ?? []
     const trackName = subscribe.trackName ?? ''
     const namespaceMatched = requestedNamespace.join('/') === trackNamespace.join('/')
@@ -274,13 +306,13 @@ function setupClientCallbacks(): void {
         return
       }
       if (isCatalogTrack(trackName)) {
-        await respondOk(0n, AUTH_INFO, 'subgroup')
+        const trackAlias = await respondOk(0n)
         const client = ensureClient()
-        await sendCatalog(client, BigInt(subscribe.trackAlias), trackNamespace)
+        await sendCatalog(client, trackAlias, trackNamespace)
         return
       }
       if (isVideoTrack(trackName) || isAudioTrack(trackName)) {
-        await respondOk(0n, AUTH_INFO, forwardingPreference)
+        await respondOk(0n)
         return
       }
       await respondError(404n, 'unknown track')
@@ -309,7 +341,10 @@ connectBtn.addEventListener('click', async () => {
   const form = getFormElement()
   const url = form.url.value
 
+  setupCompleted = false
   await moqtClient.connect(url, { sendSetup: false })
   catalogAliases.clear()
-  setupButtonClickHandler()
+  console.info('[MediaPublisher] connected', { url })
 })
+
+setupButtonClickHandler()

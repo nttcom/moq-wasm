@@ -24,12 +24,16 @@ export async function sendAudioChunkViaMoqt({
     return
   }
 
+  if (transportState.getAudioGroupId() < 0n) {
+    transportState.advanceAudioGroup()
+  }
+
   const subgroupId = 0
   transportState.ensureAudioSubgroup(subgroupId)
 
   for (const alias of trackAliases) {
     if (transportState.shouldSendAudioHeader(alias, subgroupId)) {
-      await client.sendSubgroupStreamHeaderMessage(alias, transportState.getAudioGroupId(), BigInt(subgroupId), 0)
+      await client.sendSubgroupHeader(alias, transportState.getAudioGroupId(), BigInt(subgroupId), 0)
       transportState.markAudioHeaderSent(alias, subgroupId)
     }
   }
@@ -45,16 +49,16 @@ export async function sendAudioChunkViaMoqt({
   })
 
   for (const alias of trackAliases) {
-    await client.sendSubgroupStreamObject(
+    await client.sendSubgroupObject(
       alias,
       transportState.getAudioGroupId(),
       BigInt(subgroupId),
-      transportState.getAudioObjectId(),
+      transportState.getAudioObjectNumber(),
       undefined,
       payload,
       locHeader
     )
   }
 
-  transportState.incrementAudioObject()
+  transportState.incrementAudioObjectNumber()
 }

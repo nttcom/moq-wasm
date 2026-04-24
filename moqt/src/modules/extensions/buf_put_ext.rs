@@ -1,6 +1,6 @@
 use bytes::{BufMut, BytesMut};
 
-pub(crate) trait BufPutExt: BufMut {
+pub trait BufPutExt: BufMut {
     fn put_varint(&mut self, value: u64);
     fn put_string(&mut self, value: &str);
 }

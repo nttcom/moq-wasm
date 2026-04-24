@@ -285,14 +285,8 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
             audioRenderLatencyMs: media?.audioLatencyRenderMs,
             videoReceiveToDecodeMs: media?.videoReceiveToDecodeMs,
             videoReceiveToRenderMs: media?.videoReceiveToRenderMs,
-            videoDecodeQueueAtReceive: media?.videoDecodeQueueAtReceive,
-            videoDecodeQueueAtSubmit: media?.videoDecodeQueueAtSubmit,
-            videoDecodeQueueAtOutput: media?.videoDecodeQueueAtOutput,
             screenShareReceiveToDecodeMs: media?.screenShareReceiveToDecodeMs,
             screenShareReceiveToRenderMs: media?.screenShareReceiveToRenderMs,
-            screenShareDecodeQueueAtReceive: media?.screenShareDecodeQueueAtReceive,
-            screenShareDecodeQueueAtSubmit: media?.screenShareDecodeQueueAtSubmit,
-            screenShareDecodeQueueAtOutput: media?.screenShareDecodeQueueAtOutput,
             videoPacingEffectiveIntervalMs: media?.videoPacingEffectiveIntervalMs,
             videoPacingBufferedFrames: media?.videoPacingBufferedFrames,
             videoDecodeQueueSize: media?.videoDecodeQueueSize,
@@ -378,7 +372,6 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
 
     try {
       const tracks = await session.subscribeCatalog(
-        catalogSubscribeId,
         catalogSubscribeId,
         trackNamespace,
         undefined,
@@ -471,7 +464,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     )
 
     try {
-      await session.subscribe(subscribeId, subscribeId, trackNamespace, trackName, undefined, role, trackCodec)
+      await session.subscribe(subscribeId, trackNamespace, trackName, undefined, role, trackCodec)
     } catch (error) {
       console.error(`Failed to subscribe ${role} track for ${memberId}:`, error)
       setRoom((currentRoom) =>

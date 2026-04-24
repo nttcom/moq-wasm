@@ -37,7 +37,7 @@ pub struct SetupParameter {
 }
 
 impl SetupParameter {
-    pub(crate) fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let mut kv_pairs = Vec::new();
         let number_of_parameters = buf
             .try_get_varint()
@@ -108,7 +108,7 @@ impl SetupParameter {
         })
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut buf = BytesMut::new();
         let mut number_of_parameters = 0;
 

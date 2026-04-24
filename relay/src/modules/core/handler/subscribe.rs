@@ -7,6 +7,7 @@ use crate::modules::{
 
 #[async_trait]
 pub(crate) trait SubscribeHandler: 'static + Send + Sync {
+    fn subscribe_id(&self) -> u64;
     fn track_namespace(&self) -> &str;
     fn track_name(&self) -> &str;
     fn _subscriber_priority(&self) -> u8;
@@ -23,6 +24,9 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
 
 #[async_trait]
 impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> {
+    fn subscribe_id(&self) -> u64 {
+        self.request_id()
+    }
     fn track_namespace(&self) -> &str {
         &self.track_namespace
     }

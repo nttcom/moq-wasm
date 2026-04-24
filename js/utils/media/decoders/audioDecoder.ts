@@ -1,8 +1,19 @@
 import { AudioJitterBuffer } from '../audioJitterBuffer'
 import type { SubgroupObjectWithLoc, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
-import type { ChunkMetadata } from '../chunk'
+import { tryDeserializeChunk, type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros } from '../clock'
+import { readLocHeader } from '../loc'
+
+let telemetryEnabled = true
+let bypassJitterBuffer = false
+
+function postTelemetry(message: unknown): void {
+  if (!telemetryEnabled) {
+    return
+  }
+  self.postMessage(message)
+}
 
 type CachedAudioConfig = {
   codec: string
@@ -12,7 +23,7 @@ type CachedAudioConfig = {
 }
 
 const audioBitrateLogger = createBitrateLogger((kbps) => {
-  self.postMessage({ type: 'bitrate', media: 'audio', kbps })
+  postTelemetry({ type: 'bitrate', media: 'audio', kbps })
 })
 
 const DEFAULT_AUDIO_DECODER_CONFIG = {
@@ -25,11 +36,12 @@ let audioDecoder: AudioDecoder | undefined
 let remoteTimestampBase: number | null = null
 let decoderSignature: string | null = null
 let cachedAudioConfig: CachedAudioConfig | null = null
+let directDecodeQueue: Promise<void> = Promise.resolve()
+const directLastObjectIds = new Map<string, bigint>()
 
 async function createAudioDecoder(config: AudioDecoderConfig, signature: string) {
   function sendAudioDataMessage(audioData: AudioData): void {
-    self.postMessage({ type: 'audioData', audioData })
-    audioData.close()
+    self.postMessage({ type: 'audioData', audioData }, [audioData])
   }
 
   const init: AudioDecoderInit = {
@@ -47,6 +59,15 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
 const POP_INTERVAL_MS = 5
 const jitterBuffer = new AudioJitterBuffer(1800, 'ordered')
 
+function postBufferedObject(groupId: bigint, objectId: bigint) {
+  postTelemetry({
+    type: 'bufferedObject',
+    media: 'audio',
+    groupId,
+    objectId
+  })
+}
+
 setInterval(() => {
   const jitterBufferEntry = jitterBuffer.pop()
   if (!jitterBufferEntry) {
@@ -59,11 +80,20 @@ setInterval(() => {
   }
 }, POP_INTERVAL_MS)
 
-type AudioWorkerMessage = SubgroupWorkerMessage | { type: 'config'; config: { mode?: string } }
+type AudioWorkerMessage =
+  | SubgroupWorkerMessage
+  | { type: 'config'; config: { mode?: string; telemetryEnabled?: boolean; bypassJitterBuffer?: boolean } }
 
 self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
   if ((event.data as { type?: string }).type === 'config') {
-    const config = (event.data as { type: 'config'; config: { mode?: string } }).config
+    const config = (
+      event.data as {
+        type: 'config'
+        config: { mode?: string; telemetryEnabled?: boolean; bypassJitterBuffer?: boolean }
+      }
+    ).config
+    telemetryEnabled = config.telemetryEnabled ?? telemetryEnabled
+    bypassJitterBuffer = config.bypassJitterBuffer ?? bypassJitterBuffer
     if (config.mode === 'ordered' || config.mode === 'latest') {
       jitterBuffer.setMode(config.mode)
     }
@@ -72,23 +102,100 @@ self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
 
   const message = event.data as SubgroupWorkerMessage
   const subgroupStreamObject: SubgroupObjectWithLoc = {
-    objectId: message.subgroupStreamObject.objectId,
+    subgroupId: message.subgroupStreamObject.subgroupId,
+    objectIdDelta: message.subgroupStreamObject.objectIdDelta,
     objectPayloadLength: message.subgroupStreamObject.objectPayloadLength,
-    objectPayload: new Uint8Array(message.subgroupStreamObject.objectPayload),
+    objectPayload: message.subgroupStreamObject.objectPayload,
     objectStatus: message.subgroupStreamObject.objectStatus,
     locHeader: message.subgroupStreamObject.locHeader
   }
   audioBitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
 
-  const inserted = jitterBuffer.push(
-    message.groupId,
-    subgroupStreamObject.objectId,
-    subgroupStreamObject,
-    (latencyMs) => postReceiveLatency(latencyMs)
-  )
-  if (inserted) {
-    postJitterBufferActivity('push')
+  if (bypassJitterBuffer) {
+    enqueueDirectDecode(message.groupId, subgroupStreamObject)
+    return
   }
+
+  const objectId = jitterBuffer.push(message.groupId, subgroupStreamObject, (latencyMs) =>
+    postReceiveLatency(latencyMs)
+  )
+  if (objectId !== null) {
+    postJitterBufferActivity('push')
+    postBufferedObject(message.groupId, objectId)
+  }
+}
+
+function enqueueDirectDecode(groupId: bigint, subgroupStreamObject: SubgroupObjectWithLoc): void {
+  directDecodeQueue = directDecodeQueue
+    .then(async () => {
+      const entry = materializeDirectObject(groupId, subgroupStreamObject, (latencyMs) => postReceiveLatency(latencyMs))
+      if (!entry) {
+        return
+      }
+      postBufferedObject(groupId, entry.object.objectId)
+      await decode(entry.object, entry.captureTimestampMicros)
+    })
+    .catch((error) => {
+      console.error('[audioDecoder] direct decode failed', error)
+    })
+}
+
+function materializeDirectObject(
+  groupId: bigint,
+  object: SubgroupObjectWithLoc,
+  onReceiveLatency?: (latencyMs: number) => void
+): { object: JitterBufferSubgroupObject; captureTimestampMicros?: number } | null {
+  const subgroupId = normalizeSubgroupId(object.subgroupId)
+  const objectId = assignDirectObjectId(groupId, subgroupId, object.objectIdDelta)
+  if (isTerminalStatus(object.objectStatus)) {
+    directLastObjectIds.delete(makeSubgroupKey(groupId, subgroupId))
+  }
+  if (!object.objectPayloadLength) {
+    return null
+  }
+  const locMetadata = readLocHeader(object.locHeader)
+  const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
+
+  const parsed = tryDeserializeChunk(object.objectPayload) ?? buildChunkFromLoc(object)
+  if (!parsed) {
+    return null
+  }
+
+  if (typeof captureTimestampMicros === 'number') {
+    onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))
+  }
+
+  return {
+    captureTimestampMicros,
+    object: {
+      ...object,
+      objectId,
+      cachedChunk: parsed,
+      remotePTS: parsed.metadata.timestamp,
+      localPTS: performance.timeOrigin + performance.now()
+    }
+  }
+}
+
+function assignDirectObjectId(groupId: bigint, subgroupId: bigint, objectIdDelta: bigint): bigint {
+  const key = makeSubgroupKey(groupId, subgroupId)
+  const previousObjectId = directLastObjectIds.get(key)
+  const objectId =
+    previousObjectId === undefined ? (objectIdDelta > 0n ? objectIdDelta - 1n : 0n) : previousObjectId + objectIdDelta
+  directLastObjectIds.set(key, objectId)
+  return objectId
+}
+
+function normalizeSubgroupId(subgroupId: bigint | undefined): bigint {
+  return subgroupId ?? 0n
+}
+
+function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
+  return `${groupId.toString()}:${subgroupId.toString()}`
+}
+
+function isTerminalStatus(status: number | undefined): boolean {
+  return status === OBJECT_STATUS_END_OF_GROUP || status === OBJECT_STATUS_END_OF_TRACK
 }
 
 async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureTimestampMicros?: number) {
@@ -140,18 +247,18 @@ function postReceiveLatency(latencyMs: number) {
   if (latencyMs < 0) {
     return
   }
-  self.postMessage({ type: 'receiveLatency', media: 'audio', ms: latencyMs })
+  postTelemetry({ type: 'receiveLatency', media: 'audio', ms: latencyMs })
 }
 
 function postRenderingLatency(latencyMs: number) {
   if (latencyMs < 0) {
     return
   }
-  self.postMessage({ type: 'renderingLatency', media: 'audio', ms: latencyMs })
+  postTelemetry({ type: 'renderingLatency', media: 'audio', ms: latencyMs })
 }
 
 function postJitterBufferActivity(event: 'push' | 'pop') {
-  self.postMessage({
+  postTelemetry({
     type: 'jitterBufferActivity',
     media: 'audio',
     event,

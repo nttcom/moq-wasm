@@ -15,7 +15,7 @@ type LoopbackState = {
   sourceTrack: MediaStreamTrack | null
   processorTrack: MediaStreamTrack | null
   reader: ReadableStreamDefaultReader<VideoFrame> | null
-  generator: MediaStreamTrackGenerator | null
+  generator: MediaStreamTrackGenerator<VideoFrame> | null
   writer: WritableStreamDefaultWriter<VideoFrame> | null
   writerChain: Promise<void>
   encoder: VideoEncoder | null
@@ -371,7 +371,7 @@ async function startLoopback(): Promise<void> {
     const processor = new MediaStreamTrackProcessor({ track: processorTrack })
     const reader = processor.readable.getReader()
 
-    const generator = new MediaStreamTrackGenerator({ kind: 'video' })
+    const generator = new MediaStreamTrackGenerator({ kind: 'video' }) as MediaStreamTrackGenerator<VideoFrame>
     const writer = generator.writable.getWriter()
     decodedVideo.srcObject = new MediaStream([generator])
 
