@@ -257,6 +257,12 @@ export class CallMediaController {
     this.subscriber.unregisterAudioTrack(trackAlias)
   }
 
+  async dispose(): Promise<void> {
+    await this.publisher.dispose()
+    this.subscriber.dispose()
+    this.handlers = {}
+  }
+
   getCatalogTracks(): CallCatalogTrack[] {
     return this.publisher.getCatalogTracks()
   }

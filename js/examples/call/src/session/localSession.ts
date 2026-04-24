@@ -125,7 +125,18 @@ export class LocalSession {
 
     this.transitionToState(LocalSessionState.Disconnecting)
     try {
-      await this.client.disconnect()
+      await this.mediaController.dispose()
+      this.subscribeTrackAliases.clear()
+      this.chatMessageHandler = null
+      this.client.setOnPublishNamespaceHandler(null)
+      this.client.setOnSubscribeResponseHandler(null)
+      this.client.setOnIncomingSubscribeHandler(null)
+      this.client.setOnIncomingUnsubscribeHandler(null)
+      this.client.setOnPublishNamespaceResponseHandler(null)
+      this.client.setOnSubscribeNamespaceResponseHandler(null)
+      this.client.setOnServerSetupHandler(null)
+      this.client.setOnConnectionClosedHandler(null)
+      await this.client.finish()
     } finally {
       this.transitionToState(LocalSessionState.Disconnected)
     }

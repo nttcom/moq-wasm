@@ -199,6 +199,14 @@ export class MediaPublisher {
     this.handleSubscriptionEnded('subscribe_done', subscribeId)
   }
 
+  async dispose(): Promise<void> {
+    await this.stopCamera()
+    await this.stopScreenShare()
+    await this.stopAudio()
+    this.catalogGroupByAlias.clear()
+    this.handlers = {}
+  }
+
   private handleSubscriptionEnded(type: 'unsubscribe' | 'subscribe_done', subscribeId: bigint): void {
     void type
     void subscribeId

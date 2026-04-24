@@ -166,6 +166,10 @@ export class MoqtClientWrapper {
     }
   }
 
+  async finish(): Promise<void> {
+    await this.disconnect()
+  }
+
   getConnectionStatus(): this is MoqtClientWrapper & { client: MOQTClient } {
     return !!this.client && this.client.isConnected()
   }
@@ -485,6 +489,18 @@ export class MoqtClientWrapper {
     this.pendingSubscribeNamespace.clear()
     this.pendingSubscribe.clear()
     this.subscriptionTrackAliases.clear()
+    this.nextRequestId = 0n
+    this.onPublishNamespaceHandler = null
+    this.onPublishNamespaceResponseHandler = null
+    this.onSubscribeNamespaceResponseHandler = null
+    this.onSubscribeResponseHandler = null
+    this.onConnectionClosedHandler = null
+    this.incomingSubscribeHandler = null
+    this.incomingUnsubscribeHandler = null
+    this.onServerSetupHandler = null
+    this.onObjectDatagramHandler = null
+    this.onObjectDatagramStatusHandler = null
+    this.onSubgroupHeaderHandler = null
     this.clearSubgroupObjectHandlers()
   }
 

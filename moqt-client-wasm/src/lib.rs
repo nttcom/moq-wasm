@@ -943,6 +943,9 @@ impl MOQTClient {
 
     #[wasm_bindgen(js_name = close)]
     pub async fn close(&self) -> Result<(), JsValue> {
+        // Explicit close is driven by the JS wrapper, so suppress the async
+        // `onConnectionClosed` callback path to avoid re-entrant cleanup.
+        self.callbacks.borrow_mut().connection_closed_callback = None;
         if let Some(transport) = self.transport.borrow().clone() {
             let closed = webtransport_closed_promise(&transport);
             transport.close();
@@ -964,8 +967,14 @@ impl MOQTClient {
         if let Some(closed) = webtransport_closed_promise(transport) {
             wasm_bindgen_futures::spawn_local(async move {
                 let _ = JsFuture::from(closed).await;
-                transport_cell.borrow_mut().take();
-                if let Some(callback) = callbacks.borrow().connection_closed_callback.clone() {
+                if let Ok(mut transport) = transport_cell.try_borrow_mut() {
+                    transport.take();
+                }
+                let callback = callbacks
+                    .try_borrow()
+                    .ok()
+                    .and_then(|callbacks| callbacks.connection_closed_callback.clone());
+                if let Some(callback) = callback {
                     let _ = callback.call0(&JsValue::NULL);
                 }
             });

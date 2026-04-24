@@ -426,6 +426,20 @@ export class MediaSubscriber {
     this.audioContexts.delete(trackAlias)
   }
 
+  dispose(): void {
+    for (const trackAlias of Array.from(this.videoContexts.keys())) {
+      this.unregisterVideoTrack(trackAlias)
+    }
+    for (const trackAlias of Array.from(this.audioContexts.keys())) {
+      this.unregisterAudioTrack(trackAlias)
+    }
+    this.videoJitterConfigByUserId.clear()
+    this.audioJitterConfigByUserId.clear()
+    this.videoCodecByTrackAlias.clear()
+    this.videoSizeByTrackAlias.clear()
+    this.handlers = {}
+  }
+
   private forwardToWorker(worker: Worker, groupId: bigint, message: SubgroupObjectMessageWithLoc) {
     console.info('[call][moqt] received subgroup object', {
       groupId: groupId.toString(),
