@@ -46,11 +46,7 @@ pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .with_line_number(true)
-        .try_init()
-        .ok();
+    relay::init_logging("info".to_string());
 
     create_certs_for_test_if_needed()?;
 

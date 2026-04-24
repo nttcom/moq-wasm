@@ -50,6 +50,7 @@ pub use modules::moqt::data_plane::streams::stream::stream_data_sender::Subgroup
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender::Uninitialized;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::data_plane::streams::stream::stream_data_sender_factory::StreamDataSenderFactory;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::endpoint::ClientConfig;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::endpoint::Endpoint;
@@ -65,6 +66,7 @@ pub use modules::moqt::domains::session::Session;
 pub use modules::moqt::domains::subscriber::DataReceiver;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::subscriber::Subscriber;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::subscription::Subscription;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::protocol::QUIC;

@@ -20,7 +20,7 @@ impl TrackNotifier {
         let _ = self
             .map
             .entry(track_key)
-            .or_insert_with(|| tokio::sync::broadcast::channel(16).0);
+            .or_insert_with(|| tokio::sync::broadcast::channel(256).0);
         self.map.get(&track_key).unwrap().clone()
     }
 }

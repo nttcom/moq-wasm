@@ -117,7 +117,11 @@ impl Publish {
         let mut number_of_parameters = 0;
         let mut parameters_payload = BytesMut::new();
         for token in &self.authorization_tokens {
-            let token_payload = token.encode();
+            let token_payload = KeyValuePair {
+                key: 0x03,
+                value: VariantType::Odd(token.encode().freeze()),
+            }
+            .encode();
             parameters_payload.unsplit(token_payload);
             number_of_parameters += 1;
         }
@@ -150,10 +154,12 @@ impl Publish {
 #[cfg(test)]
 mod tests {
     mod success {
+        use bytes::Bytes;
         use crate::modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
         use crate::modules::moqt::control_plane::control_messages::messages::parameters::group_order::GroupOrder;
         use crate::modules::moqt::control_plane::control_messages::messages::{
-            parameters::location::Location, publish::Publish,
+            parameters::{authorization_token::AuthorizationToken, location::Location},
+            publish::Publish,
         };
 
         #[test]
@@ -284,6 +290,61 @@ mod tests {
                 1, 1, 3, b'm', b'o', b'q', 5, b'v', b'i', b'd', b'e', b'o', 2, 1, 0, 1, 0,
             ];
             assert_eq!(buf.as_ref(), expected_bytes.as_slice());
+        }
+
+        #[test]
+        fn packetize_and_depacketize_with_authorization_token() {
+            let publish_message = Publish {
+                request_id: 1,
+                track_namespace_tuple: vec!["moq".to_string()],
+                track_name: "video".to_string(),
+                track_alias: 2,
+                group_order: GroupOrder::Ascending,
+                content_exists: ContentExists::False,
+                forward: true,
+                authorization_tokens: vec![AuthorizationToken::UseValue {
+                    token_type: 0,
+                    token_value: Bytes::from_static(b"secret"),
+                }],
+                delivery_timeout: None,
+                max_duration: None,
+            };
+
+            let buf = publish_message.encode();
+            let mut buf = std::io::Cursor::new(&buf[..]);
+            let depacketized_message = Publish::decode(&mut buf).unwrap();
+
+            assert_eq!(publish_message.request_id, depacketized_message.request_id);
+            assert_eq!(
+                publish_message.track_namespace_tuple,
+                depacketized_message.track_namespace_tuple
+            );
+            assert_eq!(publish_message.track_name, depacketized_message.track_name);
+            assert_eq!(
+                publish_message.track_alias,
+                depacketized_message.track_alias
+            );
+            assert_eq!(
+                publish_message.group_order,
+                depacketized_message.group_order
+            );
+            assert_eq!(
+                publish_message.content_exists,
+                depacketized_message.content_exists
+            );
+            assert_eq!(publish_message.forward, depacketized_message.forward);
+            assert_eq!(
+                publish_message.authorization_tokens,
+                depacketized_message.authorization_tokens
+            );
+            assert_eq!(
+                publish_message.delivery_timeout,
+                depacketized_message.delivery_timeout
+            );
+            assert_eq!(
+                publish_message.max_duration,
+                depacketized_message.max_duration
+            );
         }
     }
 }

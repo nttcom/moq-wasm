@@ -426,8 +426,20 @@ export class MoqtClientWrapper {
       this.onSubgroupHeaderHandler?.(header)
     })
     this.client.onSubgroupObject((trackAlias: bigint, groupId: bigint, subgroupObject: SubgroupObjectMessage) => {
+      console.log('[moqt] received subgroup object', {
+        trackAlias: trackAlias.toString(),
+        groupId: groupId.toString(),
+        subgroupId: subgroupObject.subgroupId?.toString() ?? '0',
+        objectIdDelta: subgroupObject.objectIdDelta.toString(),
+        objectPayloadLength: subgroupObject.objectPayloadLength,
+        objectStatus: subgroupObject.objectStatus
+      })
       const handler = this.subscriptionState.getSubgroupObjectHandler(trackAlias)
-      handler?.(groupId, subgroupObject)
+      if (handler) {
+        handler(groupId, subgroupObject)
+        return
+      }
+      this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, subgroupObject)
     })
     this.client.onConnectionClosed(() => this.handleConnectionClosed())
   }

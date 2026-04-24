@@ -3,7 +3,6 @@ import type { MOQTClient } from '../../../../pkg/moqt_client_wasm'
 import { MediaTransportState } from '../../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../../utils/media/audioTransport'
-import { serializeChunk } from '../../../../utils/media/chunk'
 import type { LocHeader } from '../../../../utils/media/loc'
 import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 import { DEFAULT_AUDIO_ENCODING_SETTINGS, type AudioEncodingSettings } from '../types/audioEncoding'
@@ -852,7 +851,7 @@ export class MediaPublisher {
           groupId,
           subgroupId,
           objectId,
-          videoChunk,
+          payload,
           rawClient,
           loc
         ) => {
@@ -862,8 +861,7 @@ export class MediaPublisher {
             groupId,
             subgroupId,
             objectId,
-            videoChunk,
-            metadata,
+            payload,
             rawClient,
             loc,
             timingAcc
@@ -951,8 +949,7 @@ export class MediaPublisher {
     groupId: bigint,
     subgroupId: bigint,
     objectId: bigint,
-    chunk: EncodedVideoChunk,
-    metadata: EncodedVideoChunkMetadata | undefined,
+    payload: Uint8Array,
     client: MOQTClient,
     locHeader?: LocHeader,
     timingAcc?: VideoSendTimingAccumulator
@@ -967,27 +964,7 @@ export class MediaPublisher {
       }
     }
 
-    const decoderConfig = metadata?.decoderConfig as { codec?: string; avc?: { format?: 'annexb' | 'avc' } } | undefined
-    const avcFormat = context.config.codec.startsWith('avc')
-      ? ((decoderConfig?.avc?.format as 'annexb' | 'avc' | undefined) ?? 'annexb')
-      : undefined
-    const codec = decoderConfig?.codec ?? context.config.codec
-    const serializeStartedAtMs = performance.now()
-    const payload = serializeChunk(
-      {
-        type: chunk.type,
-        timestamp: chunk.timestamp,
-        duration: chunk.duration ?? null,
-        byteLength: chunk.byteLength,
-        copyTo: (dest) => chunk.copyTo(dest)
-      },
-      {
-        codec,
-        avcFormat
-      }
-    )
     if (timingAcc) {
-      timingAcc.serializeMs += Math.max(0, performance.now() - serializeStartedAtMs)
       timingAcc.objectBytes += payload.byteLength
       timingAcc.objectCount += 1
     }

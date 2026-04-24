@@ -1622,8 +1622,8 @@ fn filter_type_from_fields(
     end_group: Option<u64>,
 ) -> Result<FilterType, JsValue> {
     match filter_type {
-        1 => Ok(FilterType::LatestGroup),
-        2 => Ok(FilterType::LatestObject),
+        1 => Ok(FilterType::NextGroupStart),
+        2 => Ok(FilterType::LargestObject),
         3 => Ok(FilterType::AbsoluteStart {
             location: Location {
                 group_id: start_group.unwrap_or(0),

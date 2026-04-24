@@ -10,8 +10,8 @@ use wasm_bindgen::prelude::*;
 
 fn filter_fields(filter_type: FilterType) -> (u8, Option<u64>, Option<u64>, Option<u64>) {
     match filter_type {
-        FilterType::LatestGroup => (1, None, None, None),
-        FilterType::LatestObject => (2, None, None, None),
+        FilterType::NextGroupStart => (1, None, None, None),
+        FilterType::LargestObject => (2, None, None, None),
         FilterType::AbsoluteStart { location } => {
             (3, Some(location.group_id), Some(location.object_id), None)
         }

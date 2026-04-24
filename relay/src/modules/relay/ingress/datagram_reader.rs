@@ -64,7 +64,7 @@ impl DatagramReader {
                     if current_group_id != Some(group_id) {
                         if let Some(old_group) = current_group_id {
                             let cache = cache_store.get_or_create(track_key);
-                            cache.close_group(old_group).await;
+                            cache.close_datagram_group(old_group).await;
                         }
                         current_group_id = Some(group_id);
                         let _ = sender_map
@@ -72,16 +72,13 @@ impl DatagramReader {
                             .send(TrackEvent::DatagramOpened { group_id });
                     }
                     let cache = cache_store.get_or_create(track_key);
-                    cache.append_object(group_id, object).await;
-                    let _ = sender_map
-                        .get_or_create(track_key)
-                        .send(TrackEvent::LatestObject);
+                    cache.append_datagram_object(group_id, object).await;
                 }
                 Err(_) => {
                     // Ensure the last group is closed before exiting.
                     if let Some(group_id) = current_group_id {
                         let cache = cache_store.get_or_create(track_key);
-                        cache.close_group(group_id).await;
+                        cache.close_datagram_group(group_id).await;
                     }
                     tracing::debug!(track_key, "datagram receiver ended");
                     return;

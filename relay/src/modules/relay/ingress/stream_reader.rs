@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use moqt::wire::ObjectStatus;
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
@@ -7,6 +8,7 @@ use crate::modules::{
     relay::{
         cache::store::TrackCacheStore,
         notifications::{track_event::TrackEvent, track_notifier::TrackNotifier},
+        types::StreamSubgroupId,
     },
     types::TrackKey,
 };
@@ -57,28 +59,53 @@ impl StreamReader {
         sender_map: Arc<TrackNotifier>,
     ) {
         let mut group_id = 0u64;
+        let mut subgroup_id = StreamSubgroupId::None;
         loop {
             match receiver.receive_object().await {
                 Ok(DataObject::SubgroupHeader(header)) => {
                     group_id = header.group_id;
+                    subgroup_id = StreamSubgroupId::from(&header.subgroup_id);
                     let cache = cache_store.get_or_create(track_key);
                     cache
-                        .append_object(group_id, DataObject::SubgroupHeader(header))
+                        .append_stream_object(
+                            group_id,
+                            &subgroup_id,
+                            DataObject::SubgroupHeader(header),
+                        )
                         .await;
                     let _ = sender_map
                         .get_or_create(track_key)
-                        .send(TrackEvent::StreamOpened { group_id });
+                        .send(TrackEvent::StreamOpened {
+                            group_id,
+                            subgroup_id: subgroup_id.clone(),
+                        });
                 }
                 Ok(object) => {
+                    let should_close = matches!(
+                        &object,
+                        DataObject::SubgroupObject(field)
+                            if matches!(
+                                &field.subgroup_object,
+                                moqt::SubgroupObject::Status { code, .. }
+                                    if *code == ObjectStatus::EndOfGroup as u64
+                                        || *code == ObjectStatus::EndOfTrack as u64
+                            )
+                    );
                     let cache = cache_store.get_or_create(track_key);
-                    cache.append_object(group_id, object).await;
-                    let _ = sender_map
-                        .get_or_create(track_key)
-                        .send(TrackEvent::LatestObject);
+                    cache
+                        .append_stream_object(group_id, &subgroup_id, object)
+                        .await;
+                    if should_close {
+                        cache.close_stream_subgroup(group_id, &subgroup_id).await;
+                        let _ = sender_map
+                            .get_or_create(track_key)
+                            .send(TrackEvent::EndOfGroup);
+                        return;
+                    }
                 }
                 Err(_) => {
                     let cache = cache_store.get_or_create(track_key);
-                    cache.close_group(group_id).await;
+                    cache.close_stream_subgroup(group_id, &subgroup_id).await;
                     let _ = sender_map
                         .get_or_create(track_key)
                         .send(TrackEvent::EndOfGroup);

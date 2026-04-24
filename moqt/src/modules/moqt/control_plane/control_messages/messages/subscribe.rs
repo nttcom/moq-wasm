@@ -106,7 +106,11 @@ impl Subscribe {
         let mut number_of_parameters = 0;
         let mut parameters_payload = BytesMut::new();
         for token in &self.authorization_tokens {
-            let token_payload = token.encode();
+            let token_payload = KeyValuePair {
+                key: 0x03,
+                value: VariantType::Odd(token.encode().freeze()),
+            }
+            .encode();
             parameters_payload.unsplit(token_payload);
             number_of_parameters += 1;
         }
@@ -133,9 +137,13 @@ mod tests {
         use bytes::BytesMut;
 
         use crate::modules::moqt::control_plane::control_messages::messages::{
-            parameters::{filter_type::FilterType, group_order::GroupOrder, location::Location},
+            parameters::{
+                authorization_token::AuthorizationToken, filter_type::FilterType,
+                group_order::GroupOrder, location::Location,
+            },
             subscribe::Subscribe,
         };
+        use bytes::Bytes;
 
         #[test]
         fn packetize_latest_group() {
@@ -437,6 +445,30 @@ mod tests {
                 delivery_timeout: None,
             };
             assert_eq!(depacketized_subscribe, expected_subscribe);
+        }
+
+        #[test]
+        fn packetize_and_depacketize_with_authorization_token() {
+            let subscribe = Subscribe {
+                request_id: 7,
+                track_namespace: vec!["test".to_string()],
+                track_name: "track_name".to_string(),
+                subscriber_priority: 1,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+                authorization_tokens: vec![AuthorizationToken::UseValue {
+                    token_type: 0,
+                    token_value: Bytes::from_static(b"secret"),
+                }],
+                delivery_timeout: None,
+            };
+
+            let buf = subscribe.encode();
+            let mut buf = std::io::Cursor::new(&buf[..]);
+            let depacketized_subscribe = Subscribe::decode(&mut buf).unwrap();
+
+            assert_eq!(depacketized_subscribe, subscribe);
         }
     }
 }

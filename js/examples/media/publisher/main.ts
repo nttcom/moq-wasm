@@ -1,7 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import type { MOQTClient } from '../../../pkg/moqt_client_wasm'
 import { AUTH_INFO } from './const'
-import { sendVideoObjectMessage } from './sender'
+import { sendVideoEndOfGroup, sendVideoObjectMessage } from './sender'
 import { getFormElement } from './utils'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt } from '../../../utils/media/videoTransport'
@@ -11,10 +11,13 @@ import { MEDIA_AUDIO_PROFILES, MEDIA_CATALOG_TRACK_NAME, MEDIA_VIDEO_PROFILES, b
 
 let mediaStream: MediaStream | null = null
 const ENABLE_AUDIO_PUBLISH = false
+const MAX_VIDEO_GROUPS = 5n
 const moqtClient = new MoqtClientWrapper()
-const transportState = new MediaTransportState()
+let transportState = new MediaTransportState()
 const catalogAliases = new Set<string>()
 let setupCompleted = false
+let videoPublishingStopped = false
+let videoPublishingFinalized = false
 
 function ensureClient(): MOQTClient {
   const client = moqtClient.getRawClient()
@@ -22,6 +25,29 @@ function ensureClient(): MOQTClient {
     throw new Error('MOQT client not connected')
   }
   return client
+}
+
+async function finalizeVideoPublishing(client: MOQTClient, trackAliases: bigint[]): Promise<void> {
+  if (videoPublishingFinalized) {
+    return
+  }
+  videoPublishingStopped = true
+  videoPublishingFinalized = true
+
+  const currentGroupId = transportState.getVideoGroupId()
+  const nextObjectNumber = transportState.getVideoObjectNumber()
+  if (currentGroupId < 0n || nextObjectNumber <= 0n) {
+    console.info('[MediaPublisher] stopped before any video group was sent')
+    return
+  }
+
+  for (const alias of trackAliases) {
+    await sendVideoEndOfGroup(alias, currentGroupId, nextObjectNumber, client)
+  }
+  console.info('[MediaPublisher] stopped video publishing after reaching group limit', {
+    sentGroups: MAX_VIDEO_GROUPS.toString(),
+    lastGroupId: currentGroupId.toString()
+  })
 }
 
 function setUpStartGetUserMediaButton() {
@@ -117,9 +143,18 @@ function getAudioTrackAliases(client: MOQTClient, trackNamespace: string[], trac
 async function sendCatalog(client: MOQTClient, trackAlias: bigint, trackNamespace: string[]): Promise<void> {
   const aliasKey = trackAlias.toString()
   if (catalogAliases.has(aliasKey)) {
+    console.info('[MediaPublisher] catalog already sent', { trackAlias: aliasKey, trackNamespace })
     return
   }
   const payload = new TextEncoder().encode(buildMediaCatalogJson(trackNamespace))
+  console.info('[MediaPublisher] sending catalog', {
+    trackAlias: aliasKey,
+    trackNamespace,
+    groupId: '0',
+    subgroupId: '0',
+    objectId: '0',
+    payloadLength: payload.byteLength
+  })
   await client.sendSubgroupHeader(trackAlias, 0n, 0n, 0)
   await client.sendSubgroupObject(trackAlias, 0n, 0n, 0n, undefined, payload, undefined)
   catalogAliases.add(aliasKey)
@@ -188,17 +223,19 @@ function sendSubgroupObjectButtonClickHandler(): void {
       if (data.type !== 'chunk') {
         return
       }
+      if (videoPublishingStopped) {
+        return
+      }
       const { chunk, metadata, captureTimestampMicros } = data
-      console.debug('[MediaPublisher] video chunk', {
-        byteLength: chunk.byteLength,
-        type: chunk.type,
-        timestamp: chunk.timestamp
-      })
       const form = getFormElement()
       const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
       const publisherPriority = Number(form['video-publisher-priority'].value)
       const trackAliases = getVideoTrackAliases(client, trackNamespace)
       if (!trackAliases.length) {
+        return
+      }
+      if (chunk.type === 'key' && transportState.getVideoGroupId() + 1n >= MAX_VIDEO_GROUPS) {
+        await finalizeVideoPublishing(client, trackAliases)
         return
       }
 
@@ -242,6 +279,9 @@ function sendSubgroupObjectButtonClickHandler(): void {
     const [videoTrack] = mediaStream.getVideoTracks()
     const videoProcessor = new MediaStreamTrackProcessor({ track: videoTrack })
     const videoStream = videoProcessor.readable
+    transportState = new MediaTransportState()
+    videoPublishingStopped = false
+    videoPublishingFinalized = false
     videoEncoderWorker.postMessage({
       type: 'keyframeInterval',
       keyframeInterval: KEYFRAME_INTERVAL

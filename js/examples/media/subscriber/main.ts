@@ -39,7 +39,8 @@ let catalogVideoTracks: MediaCatalogTrack[] = []
 let catalogAudioTracks: MediaCatalogTrack[] = []
 let selectedVideoTrackName: string | null = null
 let selectedAudioTrackName: string | null = null
-let videoReceiveSequence = 0
+let audioPlaybackStarted = false
+let videoPlaybackStarted = false
 
 function setPlaybackObjectStatus(kind: 'video' | 'audio', text: string): void {
   const element = document.getElementById(`${kind}-playback-object`)
@@ -205,12 +206,25 @@ function setupCatalogSelectionHandler(): void {
 }
 
 function setupCatalogCallbacks(trackAlias: bigint): void {
-  moqtClient.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroupStreamObject) => {
-    const payload = new TextDecoder().decode(new Uint8Array(subgroupStreamObject.objectPayload))
+  moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
+    const payloadBytes = subgroupStreamObject.objectPayload
+    console.info('[MediaSubscriber] received catalog object', {
+      trackAlias: trackAlias.toString(),
+      groupId: groupId.toString(),
+      subgroupId: subgroupStreamObject.subgroupId?.toString() ?? '0',
+      objectIdDelta: subgroupStreamObject.objectIdDelta.toString(),
+      payloadLength: subgroupStreamObject.objectPayloadLength
+    })
+    const payload = new TextDecoder().decode(payloadBytes)
     try {
       const parsed = parse_msf_catalog_json(payload)
       catalogVideoTracks = extractCatalogVideoTracks(parsed)
       catalogAudioTracks = extractCatalogAudioTracks(parsed)
+      console.info('[MediaSubscriber] parsed catalog', {
+        trackAlias: trackAlias.toString(),
+        videoTracks: catalogVideoTracks.length,
+        audioTracks: catalogAudioTracks.length
+      })
       renderCatalogTracks()
     } catch (error) {
       console.error('[MediaSubscriber] failed to parse catalog', error)
@@ -289,6 +303,7 @@ function setupAudioDecoderWorker() {
   const audioStream = new MediaStream([audioGenerator])
   const audioElement = document.getElementById('audio') as HTMLAudioElement
   audioElement.srcObject = audioStream
+  audioDecoderWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
   audioDecoderWorker.onmessage = async (event: MessageEvent<AudioDecoderWorkerMessage>) => {
     const data = event.data
     if (data.type === 'bufferedObject') {
@@ -300,7 +315,11 @@ function setupAudioDecoderWorker() {
     }
     await audioWriter.ready
     await audioWriter.write(data.audioData)
-    await audioElement.play()
+    data.audioData.close()
+    if (!audioPlaybackStarted) {
+      await audioElement.play()
+      audioPlaybackStarted = true
+    }
   }
 }
 function setupVideoDecoderWorker() {
@@ -312,6 +331,7 @@ function setupVideoDecoderWorker() {
   const videoStream = new MediaStream([videoGenerator])
   const videoElement = document.getElementById('video') as HTMLVideoElement
   videoElement.srcObject = videoStream
+  videoDecoderWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
   videoDecoderWorker.onmessage = async (event: MessageEvent<VideoDecoderWorkerMessage>) => {
     const data = event.data
     if (data.type === 'bufferedObject') {
@@ -325,7 +345,10 @@ function setupVideoDecoderWorker() {
     await videoWriter.ready
     await videoWriter.write(videoFrame)
     videoFrame.close()
-    await videoElement.play()
+    if (!videoPlaybackStarted) {
+      await videoElement.play()
+      videoPlaybackStarted = true
+    }
   }
 }
 
@@ -335,7 +358,7 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
   if (type === 'audio') {
     setupAudioDecoderWorker()
     moqtClient.setOnSubgroupObjectHandler(alias, (groupId, subgroupStreamObject) => {
-      const payload = new Uint8Array(subgroupStreamObject.objectPayload)
+      const payload = subgroupStreamObject.objectPayload
       audioDecoderWorker.postMessage(
         {
           groupId,
@@ -356,18 +379,7 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
 
   setupVideoDecoderWorker()
   moqtClient.setOnSubgroupObjectHandler(alias, (groupId, subgroupStreamObject) => {
-    const payload = new Uint8Array(subgroupStreamObject.objectPayload)
-    videoReceiveSequence += 1
-    console.log('[MediaSubscriber] received MoQT video object', {
-      seq: videoReceiveSequence,
-      trackAlias: alias.toString(),
-      groupId: groupId.toString(),
-      subgroupId: (subgroupStreamObject.subgroupId ?? 0n).toString(),
-      objectIdDelta: subgroupStreamObject.objectIdDelta.toString(),
-      payloadLength: subgroupStreamObject.objectPayloadLength,
-      status: subgroupStreamObject.objectStatus
-    })
-
+    const payload = subgroupStreamObject.objectPayload
     videoDecoderWorker.postMessage(
       {
         groupId,
@@ -397,6 +409,8 @@ function setupCloseButtonHandler(): void {
   const closeBtn = document.getElementById('closeBtn') as HTMLButtonElement
   closeBtn.addEventListener('click', async () => {
     await moqtClient.disconnect()
+    audioPlaybackStarted = false
+    videoPlaybackStarted = false
     moqtClient.clearSubgroupObjectHandlers()
     catalogVideoTracks = []
     catalogAudioTracks = []

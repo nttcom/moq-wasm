@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "wasm": "wasm-pack build ../moqt-client-wasm --target web --out-dir=../js/pkg --features web_sys_unstable_apis",
-    "dev": "npm run wasm && vite",
+    "wasm:dev": "wasm-pack build --dev ../moqt-client-wasm --target web --out-dir=../js/pkg --features web_sys_unstable_apis",
+    "dev": "npm run wasm:dev && vite",
     "build": "npm run wasm && vite build",
     "prod": "npm run wasm && vite --host",
     "lint": "tsc --noEmit"

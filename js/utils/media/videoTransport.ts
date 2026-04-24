@@ -1,6 +1,7 @@
 import type { MOQTClient } from '../../pkg/moqt_client_wasm'
 import { MediaTransportState } from './transportState'
-import { buildLocHeader, arrayBufferToUint8Array, type LocHeader } from './loc'
+import { serializeChunk } from './chunk'
+import { buildLocHeader, bytesToBase64, arrayBufferToUint8Array, type LocHeader } from './loc'
 import { monotonicUnixMicros } from './clock'
 
 export type VideoChunkSender = (
@@ -8,7 +9,7 @@ export type VideoChunkSender = (
   groupId: bigint,
   subgroupId: bigint,
   objectNumber: bigint,
-  chunk: EncodedVideoChunk,
+  payload: Uint8Array,
   client: MOQTClient,
   locHeader?: LocHeader
 ) => Promise<void>
@@ -45,6 +46,11 @@ export async function sendVideoChunkViaMoqt({
   const decoderConfig = metadata?.decoderConfig as any
   const configBytes = arrayBufferToUint8Array(decoderConfig?.description)
   const includeConfig = chunk.type === 'key' || shouldIncludeCodec
+  const payload = serializeChunk(chunk, {
+    codec: typeof decoderConfig?.codec === 'string' ? decoderConfig.codec : undefined,
+    descriptionBase64: includeConfig && configBytes ? bytesToBase64(configBytes) : undefined,
+    avcFormat: typeof decoderConfig?.codec === 'string' && decoderConfig.codec.startsWith('avc') ? 'annexb' : undefined
+  })
   const resolvedCaptureTimestampMicros =
     typeof captureTimestampMicros === 'number' && Number.isFinite(captureTimestampMicros)
       ? Math.round(captureTimestampMicros)
@@ -82,7 +88,7 @@ export async function sendVideoChunkViaMoqt({
       transportState.getVideoGroupId(),
       BigInt(subgroupId),
       transportState.getVideoObjectNumber(),
-      chunk,
+      payload,
       client,
       locHeader
     )
