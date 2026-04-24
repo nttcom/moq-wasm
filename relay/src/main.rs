@@ -64,38 +64,10 @@ async fn main() -> anyhow::Result<()> {
         .instrument(startup_span)
         .await?;
 
-        let quic_handler = {
-            let quic_listener_span = tracing::info_span!("quic_listener", port = 4434);
-            async {
-                tracing::info!(
-                    key_path = %key_path,
-                    cert_path = %cert_path,
-                    "Starting QUIC listener"
-                );
-                server.spawn_transport::<moqt::QUIC>(4434)
-            }
-            .instrument(quic_listener_span)
-            .await
-        };
+        // QUIC + WebTransport を1ポートで起動
+        let _handler = server.spawn_transport::<moqt::DUAL>(4433);
 
-        let wt_handler = {
-            let webtransport_listener_span =
-                tracing::info_span!("webtransport_listener", port = 4433);
-            async {
-                tracing::info!(
-                    key_path = %key_path,
-                    cert_path = %cert_path,
-                    "Starting WebTransport listener"
-                );
-                server.spawn_transport::<moqt::WEBTRANSPORT>(4433)
-            }
-            .instrument(webtransport_listener_span)
-            .await
-        };
-
-        let (_server, _quic_handler, _wt_handler) = (server, quic_handler, wt_handler);
-
-        tracing::info!("Relay server started with QUIC (4434) and WebTransport (4433)");
+        tracing::info!("Relay server started with QUIC + WebTransport (4433)");
         tracing::info!("Ctrl+C to shutdown");
 
         let shutdown_span = tracing::info_span!("shutdown");
