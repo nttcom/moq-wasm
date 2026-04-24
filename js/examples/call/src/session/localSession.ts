@@ -46,7 +46,17 @@ export class LocalSession {
       }
     }
     this.client.setOnConnectionClosedHandler(() => {
+      console.info('[call][moqt] connection closed')
       this.transitionToState(LocalSessionState.Disconnected)
+    })
+    this.client.setOnServerSetupHandler((setup) => {
+      console.info('[call][moqt] received SERVER_SETUP', setup)
+    })
+    this.client.setOnPublishNamespaceResponseHandler((response) => {
+      console.info('[call][moqt] received PUBLISH_NAMESPACE response', response)
+    })
+    this.client.setOnSubscribeNamespaceResponseHandler((response) => {
+      console.info('[call][moqt] received SUBSCRIBE_NAMESPACE response', response)
     })
     this.mediaController = new CallMediaController(this.client, this.trackNamespace)
     this.state = LocalSessionState.Idle
@@ -75,13 +85,17 @@ export class LocalSession {
       return
     }
     this.client.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
+      console.info('[call][moqt] received PUBLISH_NAMESPACE', publishNamespace)
       handler(publishNamespace)
       await respondOk()
     })
   }
 
   setOnSubscribeResponseHandler(handler: (response: SubscribeOkMessage | RequestErrorMessage) => void): void {
-    this.client.setOnSubscribeResponseHandler(handler)
+    this.client.setOnSubscribeResponseHandler((response) => {
+      console.info('[call][moqt] received SUBSCRIBE response', response)
+      handler(response)
+    })
   }
 
   setOnChatMessageHandler(handler: ((message: ChatMessage) => void) | null): void {
@@ -149,6 +163,14 @@ export class LocalSession {
     const resolvedRole = role ?? this.resolveTrackRole(trackName)
     if (resolvedRole === 'chat') {
       this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroup) => {
+        console.info('[call][moqt] received subgroup object', {
+          trackAlias: trackAlias.toString(),
+          groupId: groupId.toString(),
+          subgroupId: subgroup.subgroupId?.toString() ?? '0',
+          objectIdDelta: subgroup.objectIdDelta.toString(),
+          objectPayloadLength: subgroup.objectPayloadLength,
+          objectStatus: subgroup.objectStatus
+        })
         try {
           const payload = new Uint8Array(subgroup.objectPayload)
           const decoded = new TextDecoder().decode(payload)
@@ -200,6 +222,14 @@ export class LocalSession {
         .then((trackAlias) => {
           this.subscribeTrackAliases.set(subscribeId, trackAlias)
           this.client.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroup) => {
+            console.info('[call][moqt] received subgroup object', {
+              trackAlias: trackAlias.toString(),
+              groupId: _groupId.toString(),
+              subgroupId: subgroup.subgroupId?.toString() ?? '0',
+              objectIdDelta: subgroup.objectIdDelta.toString(),
+              objectPayloadLength: subgroup.objectPayloadLength,
+              objectStatus: subgroup.objectStatus
+            })
             try {
               const payload = new TextDecoder().decode(new Uint8Array(subgroup.objectPayload))
               const tracks = parseCallCatalogTracks(payload)

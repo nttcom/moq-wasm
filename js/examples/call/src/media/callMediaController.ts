@@ -155,6 +155,11 @@ export class CallMediaController {
     })
 
     client.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
+      console.info('[call][moqt] received SUBSCRIBE', {
+        subscribe,
+        isSuccess,
+        code
+      })
       if (!isSuccess) {
         await respondError(BigInt(code), 'Subscription validation failed')
         return
@@ -191,6 +196,7 @@ export class CallMediaController {
     })
 
     client.setOnIncomingUnsubscribeHandler((subscribeId) => {
+      console.info('[call][moqt] received UNSUBSCRIBE', { subscribeId: subscribeId.toString() })
       this.publisher.handleIncomingUnsubscribe(subscribeId)
     })
   }

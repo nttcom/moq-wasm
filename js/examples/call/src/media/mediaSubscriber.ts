@@ -419,6 +419,13 @@ export class MediaSubscriber {
   }
 
   private forwardToWorker(worker: Worker, groupId: bigint, message: SubgroupObjectMessageWithLoc) {
+    console.info('[call][moqt] received subgroup object', {
+      groupId: groupId.toString(),
+      subgroupId: message.subgroupId?.toString() ?? '0',
+      objectIdDelta: message.objectIdDelta.toString(),
+      objectPayloadLength: message.objectPayloadLength,
+      objectStatus: message.objectStatus
+    })
     const payload = new Uint8Array(message.objectPayload)
     const payloadLength = message.objectPayloadLength
     worker.postMessage(
