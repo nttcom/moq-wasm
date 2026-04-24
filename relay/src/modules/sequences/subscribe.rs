@@ -94,6 +94,14 @@ impl Subscribe {
             tracing::warn!("Failed to send `SUBSCRIBE` to publisher. Session close.");
             return;
         };
+        tracing::info!(
+            pub_session_id = %pub_session_id,
+            track_namespace = %track_namespace,
+            track_name = %track_name,
+            track_alias = subscription.track_alias(),
+            expires = subscription.expires(),
+            "upstream subscribe ok received"
+        );
 
         let track_key = compose_session_track_key(pub_session_id, subscription.track_alias());
         let expires = subscription.expires();
@@ -110,6 +118,12 @@ impl Subscribe {
             tracing::error!("Failed to send IngressStartRequest. Session close.");
             return;
         }
+        tracing::info!(
+            pub_session_id = %pub_session_id,
+            track_namespace = %track_namespace,
+            track_name = %track_name,
+            "ingress start request sent"
+        );
 
         let Ok(subscriber_track_alias) = handler.ok(expires, content_exists).await else {
             tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
@@ -117,6 +131,13 @@ impl Subscribe {
             // TODO: close session
             return;
         };
+        tracing::info!(
+            session_id = %session_id,
+            track_namespace = %track_namespace,
+            track_name = %track_name,
+            subscriber_track_alias = subscriber_track_alias,
+            "downstream subscribe ok sent"
+        );
 
         if egress_sender
             .send(EgressCommand::StartReader(EgressStartRequest {

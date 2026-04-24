@@ -158,41 +158,25 @@ impl<T: TransportProtocol> Subscriber<T> {
         subscription: &Subscription,
     ) -> anyhow::Result<DataReceiver<T>> {
         let track_alias = subscription.track_alias;
-        let stream_with_object = self
+        let mut receiver = self
             .session
             .receiver_map
             .lock()
             .await
-            .get_mut(&track_alias)
-            .ok_or_else(|| anyhow::anyhow!("No receiver for track_alias: {}", track_alias))?
+            .remove(&track_alias)
+            .ok_or_else(|| anyhow::anyhow!("No receiver for track_alias: {}", track_alias))?;
+        let stream_with_object = receiver
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
         match stream_with_object {
             StreamWithObject::StreamHeader { stream, header } => {
                 let first = StreamDataReceiver::new(stream, header).await?;
-                let rest = self
-                    .session
-                    .receiver_map
-                    .lock()
-                    .await
-                    .remove(&track_alias)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("receiver already removed for track_alias: {}", track_alias)
-                    })?;
                 Ok(DataReceiver::Stream(StreamDataReceiverFactory::new(
-                    first, rest,
+                    first, receiver,
                 )))
             }
             StreamWithObject::Datagram(object) => {
-                // Datagram は1回限りなので map から除去する
-                let receiver = self
-                    .session
-                    .receiver_map
-                    .lock()
-                    .await
-                    .remove(&track_alias)
-                    .unwrap();
                 let data_receiver = DatagramReceiver::new(object, receiver).await;
                 Ok(DataReceiver::Datagram(data_receiver))
             }

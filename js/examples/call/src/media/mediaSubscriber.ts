@@ -133,6 +133,7 @@ export class MediaSubscriber {
     worker.onmessage = async (event: MessageEvent) => {
       const data = event.data as
         | { type: 'frame'; frame: VideoFrame; width?: number; height?: number }
+        | { type: 'bufferedObject'; media: 'video'; groupId: bigint; objectId: bigint }
         | { type: 'bitrate'; kbps: number }
         | { type: 'keyframeInterval'; media: 'video'; frames: number }
         | { type: 'receiveLatency'; media: 'video'; ms: number }
@@ -264,6 +265,9 @@ export class MediaSubscriber {
           },
           source
         )
+        return
+      }
+      if (data.type === 'bufferedObject') {
         return
       }
       if (data.type === 'frame') {
