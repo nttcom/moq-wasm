@@ -10,7 +10,10 @@ impl<T: moqt::TransportProtocol> StreamReceiver for moqt::StreamDataReceiver<T> 
     async fn receive_object(&mut self) -> anyhow::Result<DataObject> {
         let object = self.receive().await?;
         match object {
-            moqt::Subgroup::Header(header) => Ok(DataObject::SubgroupHeader(header)),
+            moqt::Subgroup::Header(header) => {
+                tracing::debug!(subgroup_header = ?header, "Received subgroup header");
+                Ok(DataObject::SubgroupHeader(header))
+            }
             moqt::Subgroup::Object(field) => Ok(DataObject::SubgroupObject(field)),
         }
     }

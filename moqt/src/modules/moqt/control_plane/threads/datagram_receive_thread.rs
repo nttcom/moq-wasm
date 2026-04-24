@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use bytes::BytesMut;
+use tracing::{Instrument, Span};
 
 use crate::{
     Subgroup, TransportProtocol,
@@ -22,36 +23,41 @@ pub(crate) struct DatagramReceiveThread;
 impl DatagramReceiveThread {
     pub(crate) fn run<T: TransportProtocol>(
         context: Arc<SessionContext<T>>,
+        datagram_span: Span,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Datagram Receiver")
-            .spawn(async move {
-                tracing::debug!("Datagram Receiver started");
-                loop {
-                    tokio::select! {
-                        data = context.transport_connection.receive_datagram() => {
-                            if let Ok(mut data) = data {
-                                Self::on_datagram_received(&context, &mut data).await;
-                            } else {
-                                tracing::error!("Failed to receive datagram");
-                                break;
-                            }
-                        },
-                        stream = context.transport_connection.accept_uni() => {
-                            if let Ok(stream) = stream {
-                                let stream = UniStreamReceiver::new(stream, SubgroupDecoder::new());
-                                Self::on_stream_received(&context, stream).await;
-                            } else {
-                                tracing::error!("Failed to accept uni stream");
-                                break;
+            .spawn(
+                async move {
+                    tracing::debug!("Datagram Receiver started");
+                    loop {
+                        tokio::select! {
+                            data = context.transport_connection.receive_datagram() => {
+                                if let Ok(mut data) = data {
+                                    Self::on_datagram_received(&context, &mut data).await;
+                                } else {
+                                    tracing::error!("Failed to receive datagram");
+                                    break;
+                                }
+                            },
+                            stream = context.transport_connection.accept_uni() => {
+                                if let Ok(stream) = stream {
+                                    let stream = UniStreamReceiver::new(stream, SubgroupDecoder::new());
+                                    Self::on_stream_received(&context, stream).await;
+                                } else {
+                                    tracing::error!("Failed to accept uni stream");
+                                    break;
+                                }
                             }
                         }
                     }
                 }
-            })
+                .instrument(datagram_span),
+            )
             .unwrap()
     }
 
+    #[tracing::instrument(level = "info", name = "on_datagram_received", skip_all)]
     async fn on_datagram_received<T: TransportProtocol>(
         context: &Arc<SessionContext<T>>,
         data: &mut BytesMut,
@@ -75,6 +81,7 @@ impl DatagramReceiveThread {
         true
     }
 
+    #[tracing::instrument(level = "info", name = "on_stream_received", skip_all)]
     async fn on_stream_received<T: TransportProtocol>(
         context: &Arc<SessionContext<T>>,
         mut stream: UniStreamReceiver<T>,
@@ -107,6 +114,12 @@ impl DatagramReceiveThread {
         true
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "moqt.datagram_receiver.notify",
+        skip_all,
+        fields(track_alias = track_alias)
+    )]
     async fn notify<T: TransportProtocol>(
         context: &Arc<SessionContext<T>>,
         track_alias: u64,

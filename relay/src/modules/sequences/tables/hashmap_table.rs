@@ -35,6 +35,12 @@ impl Table for HashMapTable {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.table.remove_session",
+        skip_all,
+        fields(session_id = %session_id)
+    )]
     async fn remove_session(&self, session_id: SessionId) {
         let namespaces_to_remove: Vec<_> = self
             .publisher_namespaces
@@ -83,6 +89,12 @@ impl Table for HashMapTable {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.table.register_publish_namespace",
+        skip_all,
+        fields(session_id = %session_id, track_namespace = %track_namespace)
+    )]
     fn register_publish_namespace(&self, session_id: SessionId, track_namespace: String) -> bool {
         if self
             .publisher_namespaces
@@ -95,24 +107,26 @@ impl Table for HashMapTable {
             );
             false
         } else {
-            tracing::info!("New namespace '{}' is subscribed.", track_namespace);
             self.publisher_namespaces
                 .insert(track_namespace.to_string(), session_id);
             true
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.table.register_subscribe_namespace",
+        skip_all,
+        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
+    )]
     fn register_subscribe_namespace(&self, session_id: SessionId, track_namespace_prefix: String) {
         if let Some(dash_set) = self.subscriber_namespaces.get_mut(&track_namespace_prefix) {
-            tracing::info!(
-                "The namespace prefix '{}' is registered for namespace subscription.",
-                track_namespace_prefix
-            );
             dash_set.insert(session_id);
         } else {
             tracing::info!(
-                "New namespace prefix '{}' is subscribed.",
-                track_namespace_prefix
+                session_id = %session_id,
+                track_namespace_prefix = %track_namespace_prefix,
+                "New namespace prefix is subscribed."
             );
             let dash_set = DashSet::new();
             dash_set.insert(session_id);
@@ -121,6 +135,12 @@ impl Table for HashMapTable {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.table.register_publish",
+        skip_all,
+        fields(session_id = %session_id)
+    )]
     async fn register_publish(&self, session_id: SessionId, handler: Arc<dyn PublishHandler>) {
         self.published_handlers
             .write()
@@ -128,6 +148,12 @@ impl Table for HashMapTable {
             .push((session_id, handler));
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.table.get_namespace_subscribers",
+        skip_all,
+        fields(track_namespace = %track_namespace)
+    )]
     fn get_namespace_subscribers(&self, track_namespace: &str) -> DashSet<SessionId> {
         let combined = DashSet::new();
         self.subscriber_namespaces
@@ -143,6 +169,12 @@ impl Table for HashMapTable {
         combined
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.table.get_subscribers",
+        skip_all,
+        fields(track_namespace_prefix = %track_namespace_prefix)
+    )]
     async fn get_subscribers(
         &self,
         track_namespace_prefix: &str,
@@ -171,11 +203,23 @@ impl Table for HashMapTable {
         filtered
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.table.get_publish_namespace",
+        skip_all,
+        fields(track_namespace = %track_namespace)
+    )]
     fn get_publish_namespace(&self, track_namespace: &str) -> Option<SessionId> {
         let result = self.publisher_namespaces.get(track_namespace)?;
         Some(*result)
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.table.find_publish_handler_with",
+        skip_all,
+        fields(track_namespace = %track_namespace, track_name = %track_name)
+    )]
     async fn find_publish_handler_with(
         &self,
         track_namespace: &str,
@@ -192,6 +236,17 @@ impl Table for HashMapTable {
         }
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.table.register_track_alias_link",
+        skip_all,
+        fields(
+            publisher_session_id = %publisher_session_id,
+            publisher_track_alias = %publisher_track_alias,
+            subscriber_session_id = %subscriber_session_id,
+            subscriber_track_alias = %subscriber_track_alias
+        )
+    )]
     fn register_track_alias_link(
         &self,
         publisher_session_id: SessionId,
@@ -209,6 +264,16 @@ impl Table for HashMapTable {
         );
     }
 
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.table.find_subscriber_track_alias",
+        skip_all,
+        fields(
+            publisher_session_id = %publisher_session_id,
+            publisher_track_alias = %publisher_track_alias,
+            subscriber_session_id = %subscriber_session_id
+        )
+    )]
     fn _find_subscriber_track_alias(
         &self,
         publisher_session_id: SessionId,

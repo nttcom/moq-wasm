@@ -1,5 +1,7 @@
 use std::sync::{Arc, Weak};
 
+use tracing::{Instrument, Span};
+
 use crate::{
     SessionEvent, TransportProtocol,
     modules::moqt::{
@@ -30,48 +32,52 @@ impl ControlMessageReceiveThread {
     pub(crate) fn run<T: TransportProtocol>(
         mut receive_stream: BiStreamReceiver<T>,
         session_context: Weak<SessionContext<T>>,
+        receiver_span: Span,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Message Receiver")
-            .spawn(async move {
-                loop {
-                    if let Some(session) = session_context.upgrade() {
-                        tracing::debug!("Session is alive.");
-
-                        let received_message = match receive_stream.receive().await {
-                            Some(Ok(b)) => b,
-                            _ => {
-                                tracing::error!("Stream ended.");
-                                break;
-                            }
-                        };
-                        tracing::info!("Message received.");
-                        let depack_result =
-                            Self::resolve_message(session.clone(), received_message);
-                        match depack_result {
-                            DepacketizeResult::SessionEvent(event) => {
-                                if let Err(e) = session.event_sender.send(event) {
-                                    tracing::error!("failed to send message: {:?}", e);
+            .spawn(
+                async move {
+                    loop {
+                        if let Some(session) = session_context.upgrade() {
+                            let received_message = match receive_stream.receive().await {
+                                Some(Ok(received_message)) => {
+                                    tracing::info!(message = ?received_message, "Message received");
+                                    received_message
                                 }
-                            }
-                            DepacketizeResult::ResponseMessage(request_id, message) => {
-                                if let Some(sender) =
-                                    session.sender_map.lock().await.remove(&request_id)
-                                {
-                                    if let Err(e) = sender.send(message) {
+                                _ => {
+                                    tracing::error!("Stream ended.");
+                                    break;
+                                }
+                            };
+                            let depack_result =
+                                Self::resolve_message(session.clone(), received_message);
+                            match depack_result {
+                                DepacketizeResult::SessionEvent(event) => {
+                                    if let Err(e) = session.event_sender.send(event) {
                                         tracing::error!("failed to send message: {:?}", e);
                                     }
-                                } else {
-                                    tracing::error!("Protocol violation");
+                                }
+                                DepacketizeResult::ResponseMessage(request_id, message) => {
+                                    if let Some(sender) =
+                                        session.sender_map.lock().await.remove(&request_id)
+                                    {
+                                        if let Err(e) = sender.send(message) {
+                                            tracing::error!("failed to send message: {:?}", e);
+                                        }
+                                    } else {
+                                        tracing::error!("Protocol violation");
+                                    }
                                 }
                             }
+                        } else {
+                            tracing::error!("Session dropped.");
+                            break;
                         }
-                    } else {
-                        tracing::error!("Session dropped.");
-                        break;
                     }
                 }
-            })
+                .instrument(receiver_span),
+            )
             .unwrap()
     }
 
@@ -79,7 +85,7 @@ impl ControlMessageReceiveThread {
         session: Arc<SessionContext<T>>,
         received_message: ReceivedMessage,
     ) -> DepacketizeResult<T> {
-        tracing::debug!("Event: message_type: {:?}", received_message);
+        tracing::debug!(message = ?received_message, "Event: message_type");
         match received_message {
             ReceivedMessage::Subscribe(subscribe) => {
                 tracing::debug!("Event: Subscribe");
