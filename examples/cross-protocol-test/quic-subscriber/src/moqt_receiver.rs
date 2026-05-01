@@ -73,47 +73,49 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
 
     match receiver {
         moqt::DataReceiver::Stream(mut factory) => {
-            let mut stream = factory
-                .next()
-                .await
-                .context("failed to get initial stream")?;
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
             let mut init_written = false;
-            let mut object_id: u64 = 0;
-            loop {
-                let result = match stream.receive().await {
-                    Ok(r) => r,
+            'outer: loop {
+                let mut stream = match factory.next().await {
+                    Ok(s) => s,
                     Err(e) => {
-                        tracing::error!("receive error: {}", e);
-                        break;
+                        tracing::error!("factory.next error: {}", e);
+                        break 'outer;
                     }
                 };
-                match result {
-                    Subgroup::Header(header) => {
-                        info!(group_id = header.group_id, "received subgroup header");
-                        object_id = 0;
-                    }
-                    Subgroup::Object(field) => {
-                        let current_object_id = object_id;
-                        object_id += 1;
-                        match field.subgroup_object {
-                            SubgroupObject::Payload { data, .. } => {
-                                // Object 0 は init segment。初回のみ書き出す
-                                if current_object_id == 0 {
-                                    if !init_written {
-                                        info!(size = data.len(), "writing init segment");
-                                        out.write_all(&data)?;
-                                        out.flush()?;
-                                        init_written = true;
+                let mut object_id: u64 = 0;
+                loop {
+                    let result = match stream.receive().await {
+                        Ok(r) => r,
+                        Err(_) => break,
+                    };
+                    match result {
+                        Subgroup::Header(header) => {
+                            info!(group_id = header.group_id, "received subgroup header");
+                            object_id = 0;
+                        }
+                        Subgroup::Object(field) => {
+                            let current_object_id = object_id;
+                            object_id += 1;
+                            match field.subgroup_object {
+                                SubgroupObject::Payload { data, .. } => {
+                                    // Object 0 は init segment。初回のみ書き出す
+                                    if current_object_id == 0 {
+                                        if !init_written {
+                                            info!(size = data.len(), "writing init segment");
+                                            out.write_all(&data)?;
+                                            out.flush()?;
+                                            init_written = true;
+                                        }
+                                        continue;
                                     }
-                                    continue;
+                                    out.write_all(&data)?;
+                                    out.flush()?;
                                 }
-                                out.write_all(&data)?;
-                                out.flush()?;
-                            }
-                            SubgroupObject::Status { code, .. } => {
-                                info!(code, "received status object");
+                                SubgroupObject::Status { code, .. } => {
+                                    info!(code, "received status object");
+                                }
                             }
                         }
                     }
