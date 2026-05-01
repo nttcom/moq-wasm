@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use std::io::Cursor;
 
 pub use crate::modules::extensions::buf_get_ext::BufGetExt;
@@ -42,7 +42,8 @@ pub type SubscribeError = RequestError;
 pub fn encode_control_message(message_type: ControlMessageType, payload: BytesMut) -> BytesMut {
     let mut buf = BytesMut::new();
     buf.put_varint(u8::from(message_type) as u64);
-    buf.put_varint(payload.len() as u64);
+    // draft-14: Message Length is 16-bit fixed
+    buf.put_u16(payload.len() as u16);
     buf.unsplit(payload);
     buf
 }
@@ -55,7 +56,8 @@ pub fn take_control_message(
         Ok(value) => value,
         Err(_) => return Ok(None),
     };
-    let payload_length = match cursor.try_get_varint() {
+    // draft-14: Message Length is 16-bit fixed
+    let payload_length = match cursor.try_get_u16() {
         Ok(value) => value as usize,
         Err(_) => return Ok(None),
     };
