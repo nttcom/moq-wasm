@@ -101,7 +101,7 @@ make client
 ```
 
 - ブラウザ側では `https://127.0.0.1:4433` を preset から選択できます
-- `make chrome` は `relay` が生成した `keys/cert.pem` を読み込み、対応する SPKI pin を付けて Chrome を起動します
+- `make chrome` は `relay` が生成した `relay/keys/cert.pem` を読み込み、対応する SPKI pin を付けて Chrome を起動します
 - 証明書がまだ無い場合は、先に `make relay-browser` か `cargo run -p relay -- --transport webtransport --port 4433` を一度実行してください
 
 ```shell

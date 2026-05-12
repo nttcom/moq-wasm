@@ -11,9 +11,9 @@ tokio = { version = "1.41.0", features = ["full"] }
 rml_rtmp = "0.7.0"
 srt-tokio = "0.4.1"
 futures = "0.3.30"
-moqt-client-rust = { path = "../moqt-client-rust" }
-wtransport = "0.6.0"
+moqt = { path = "../moqt" }
+media-streaming-format = { path = "../media-streaming-format" }
 serde_json = "1.0"
-moqt-core = { path = "../moqt-core" }
 serde = { version = "1.0", features = ["derive"] }
 base64 = "0.22"
+url = "2.5.7"

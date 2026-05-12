@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use anyhow::Result;
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
@@ -10,10 +10,45 @@ use crate::{
     video::{AvcState, pack_video_chunk_payload},
 };
 
+const AUDIO_GROUP_ROTATION_INTERVAL_US: u64 = 2_000_000;
+
 #[derive(Default)]
 pub struct RtmpCounters {
     pub audio: u64,
     pub video: u64,
+}
+
+#[derive(Default)]
+pub struct AudioTrackState {
+    pub parser: AacState,
+    pub current_group_duration_us: u64,
+}
+
+impl AudioTrackState {
+    fn handle_flv_audio(&mut self, data: &[u8]) -> Result<Option<crate::audio::AudioFrame>> {
+        self.parser.handle_flv_audio(data)
+    }
+
+    fn should_rotate_before_frame(&mut self, frame_duration_us: u64) -> bool {
+        if self.current_group_duration_us == 0 {
+            self.current_group_duration_us = frame_duration_us;
+            return false;
+        }
+
+        if self
+            .current_group_duration_us
+            .saturating_add(frame_duration_us)
+            > AUDIO_GROUP_ROTATION_INTERVAL_US
+        {
+            self.current_group_duration_us = frame_duration_us;
+            return true;
+        }
+
+        self.current_group_duration_us = self
+            .current_group_duration_us
+            .saturating_add(frame_duration_us);
+        false
+    }
 }
 
 pub struct RtmpState {
@@ -21,7 +56,8 @@ pub struct RtmpState {
     pub recorder: Option<FlvRecorder>,
     pub moqt: Option<MoqtManager>,
     pub video_states: HashMap<(String, String), AvcState>,
-    pub audio_states: HashMap<(String, String), AacState>,
+    pub audio_states: HashMap<(String, String), AudioTrackState>,
+    pub published_namespaces: HashSet<String>,
 }
 
 impl RtmpState {
@@ -32,6 +68,7 @@ impl RtmpState {
             moqt: Some(moqt),
             video_states: HashMap::new(),
             audio_states: HashMap::new(),
+            published_namespaces: HashSet::new(),
         }
     }
 }
@@ -59,8 +96,6 @@ pub async fn handle_event(
         } => {
             let (namespace_path, cleaned_stream_key) =
                 split_namespace_and_key(&app_name, &stream_key);
-            let namespace_vec: Vec<String> =
-                namespace_path.split('/').map(|s| s.to_string()).collect();
             println!(
                 "[rtmp {label}] publish app={app_name} stream={cleaned_stream_key} -> ns={namespace_path} mode={mode:?}"
             );
@@ -71,12 +106,6 @@ pub async fn handle_event(
                     Err(err) => {
                         eprintln!("[rtmp {label}] fail to start ffmpeg recorder: {err:?}");
                     }
-                }
-            }
-            if let Some(moqt) = state.moqt.as_ref() {
-                let namespace = namespace_vec;
-                if let Err(err) = moqt.setup_namespace(&namespace).await {
-                    eprintln!("[rtmp {label}] moqt setup failed: {err:?}");
                 }
             }
         }
@@ -119,23 +148,43 @@ pub async fn handle_event(
             {
                 eprintln!("[rtmp {label}] write_audio failed: {err:?}");
             }
-            if let Some(moqt) = state.moqt.as_ref() {
+            if let Some(moqt) = state.moqt.clone() {
                 let key = (namespace_path.clone(), track_name.clone());
-                let frame = match state
-                    .audio_states
-                    .entry(key)
-                    .or_default()
-                    .handle_flv_audio(data.as_ref())
-                {
-                    Ok(f) => f,
-                    Err(err) => {
-                        eprintln!("[rtmp {label}] aac parse failed: {err:?}");
-                        None
-                    }
+                let (frame, rotate_group) = {
+                    let audio_track_state = state.audio_states.entry(key).or_default();
+                    let frame = match audio_track_state.handle_flv_audio(data.as_ref()) {
+                        Ok(f) => f,
+                        Err(err) => {
+                            eprintln!("[rtmp {label}] aac parse failed: {err:?}");
+                            None
+                        }
+                    };
+                    let rotate_group = frame
+                        .as_ref()
+                        .map(|frame| {
+                            audio_track_state.should_rotate_before_frame(compute_aac_duration_us(
+                                frame.sample_rate,
+                            ))
+                        })
+                        .unwrap_or(false);
+                    (frame, rotate_group)
                 };
                 if let Some(frame) = frame {
+                    let duration_us = compute_aac_duration_us(frame.sample_rate);
+                    if let Err(err) = moqt
+                        .update_audio_catalog(&namespace_vec, frame.sample_rate, frame.channels)
+                        .await
+                    {
+                        eprintln!("[rtmp {label}] moqt update audio catalog failed: {err:?}");
+                    }
+                    if let Err(err) =
+                        publish_namespace_if_needed(state, &moqt, &namespace_path, &namespace_vec)
+                            .await
+                    {
+                        eprintln!("[rtmp {label}] moqt setup failed: {err:?}");
+                    }
                     let timestamp_us = timestamp.value as u64 * 1_000;
-                    let duration_us = Some(compute_aac_duration_us(frame.sample_rate));
+                    let duration_us = Some(duration_us);
                     let sent_at_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -143,7 +192,12 @@ pub async fn handle_event(
                     let payload =
                         pack_audio_chunk_payload(&frame, timestamp_us, duration_us, sent_at_ms);
                     if let Err(err) = moqt
-                        .send_object(&namespace_vec, &track_name, false, payload.as_slice())
+                        .send_object(
+                            &namespace_vec,
+                            &track_name,
+                            rotate_group,
+                            payload.as_slice(),
+                        )
                         .await
                     {
                         eprintln!("[rtmp {label}] moqt send audio failed: {err:?}");
@@ -173,7 +227,7 @@ pub async fn handle_event(
             {
                 eprintln!("[rtmp {label}] write_video failed: {err:?}");
             }
-            if let Some(moqt) = state.moqt.as_ref() {
+            if let Some(moqt) = state.moqt.clone() {
                 let namespace = namespace_vec.as_slice();
                 let key = (namespace_path.clone(), track_name.clone());
                 let frame = match state
@@ -189,6 +243,17 @@ pub async fn handle_event(
                     }
                 };
                 if let Some(frame) = frame {
+                    if let Some(codec) = frame.codec.as_deref()
+                        && let Err(err) = moqt.update_video_catalog(namespace, Some(codec)).await
+                    {
+                        eprintln!("[rtmp {label}] moqt update video catalog failed: {err:?}");
+                    }
+                    if let Err(err) =
+                        publish_namespace_if_needed(state, &moqt, &namespace_path, &namespace_vec)
+                            .await
+                    {
+                        eprintln!("[rtmp {label}] moqt setup failed: {err:?}");
+                    }
                     // RTMP timestamp は ms 単位なので μs へ拡張
                     let timestamp_us = timestamp.value as u64 * 1_000;
                     let sent_at_ms = std::time::SystemTime::now()
@@ -254,4 +319,21 @@ fn split_namespace_and_key(app_name: &str, stream_key: &str) -> (String, String)
     } else {
         (app_name.to_string(), stream_key.to_string())
     }
+}
+
+async fn publish_namespace_if_needed(
+    state: &mut RtmpState,
+    moqt: &MoqtManager,
+    namespace_path: &str,
+    namespace_vec: &[String],
+) -> Result<()> {
+    if state.published_namespaces.contains(namespace_path) {
+        return Ok(());
+    }
+
+    moqt.setup_namespace(namespace_vec).await?;
+    state
+        .published_namespaces
+        .insert(namespace_path.to_string());
+    Ok(())
 }

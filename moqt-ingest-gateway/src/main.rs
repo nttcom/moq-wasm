@@ -24,7 +24,7 @@ struct Args {
     #[arg(long, default_value = "0.0.0.0:9000")]
     srt_addr: String,
 
-    /// MoQ server URL (WebTransport)
+    /// MoQ server URL (`moqt://` for QUIC, `https://` for WebTransport)
     #[arg(long)]
     moqt_url: Option<String>,
 }
