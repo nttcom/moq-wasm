@@ -34,6 +34,7 @@ const DEFAULT_AUDIO_DECODER_CONFIG = {
 
 let audioDecoder: AudioDecoder | undefined
 let remoteTimestampBase: number | null = null
+let lastRebasedTimestamp: number | null = null
 let decoderSignature: string | null = null
 let cachedAudioConfig: CachedAudioConfig | null = null
 let directDecodeQueue: Promise<void> = Promise.resolve()
@@ -206,8 +207,26 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureT
     // メタデータからデコーダ設定を導けるまで待つ
     return
   }
-  const desiredConfig = buildDecoderConfig(resolvedConfig)
   const desiredSignature = buildSignature(resolvedConfig)
+  if (isPcmAlawCodec(resolvedConfig.codec)) {
+    try {
+      if (decoderSignature !== desiredSignature) {
+        remoteTimestampBase = null
+        lastRebasedTimestamp = null
+      }
+      decodePcmAlawChunk(decoded.metadata, decoded.data, resolvedConfig)
+      cachedAudioConfig = resolvedConfig
+      if (audioDecoder && audioDecoder.state !== 'closed') {
+        audioDecoder.close()
+      }
+      audioDecoder = undefined
+      decoderSignature = desiredSignature
+    } catch (error) {
+      console.error('[audioDecoder] pcm alaw decode failed', error)
+    }
+    return
+  }
+  const desiredConfig = buildDecoderConfig(resolvedConfig)
 
   if (!audioDecoder || audioDecoder.state === 'closed' || decoderSignature !== desiredSignature) {
     try {
@@ -216,6 +235,7 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureT
       }
       audioDecoder = await createAudioDecoder(desiredConfig, desiredSignature)
       remoteTimestampBase = null
+      lastRebasedTimestamp = null
       cachedAudioConfig = resolvedConfig
     } catch (e) {
       console.error('[audioDecoder] configure failed', e)
@@ -233,6 +253,58 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureT
   })
 
   await audioDecoder.decode(encodedAudioChunk)
+}
+
+function decodePcmAlawChunk(metadata: ChunkMetadata, payload: Uint8Array, resolved: CachedAudioConfig): void {
+  const channels = Math.max(1, resolved.channels)
+  const sampleRate = Math.max(1, resolved.sampleRate)
+  const totalSamples = payload.byteLength
+  const numberOfFrames = Math.floor(totalSamples / channels)
+  if (numberOfFrames <= 0) {
+    return
+  }
+
+  const pcm = new Int16Array(numberOfFrames * channels)
+  for (let i = 0; i < pcm.length; i += 1) {
+    pcm[i] = decodeAlawSample(payload[i] ?? 0)
+  }
+
+  const timestamp = rebaseTimestamp(metadata.timestamp)
+  const duration = metadata.duration ?? Math.round((numberOfFrames / sampleRate) * 1_000_000)
+  const audioData = new AudioData({
+    format: 's16',
+    sampleRate,
+    numberOfFrames,
+    numberOfChannels: channels,
+    timestamp,
+    duration,
+    data: new Uint8Array(pcm.buffer)
+  })
+  self.postMessage({ type: 'audioData', audioData }, [audioData])
+}
+
+function isPcmAlawCodec(codec: string): boolean {
+  const normalized = codec.trim().toLowerCase()
+  return normalized === 'pcma' || normalized === 'pcm_alaw' || normalized === 'g711-alaw'
+}
+
+function decodeAlawSample(encoded: number): number {
+  let sample = encoded ^ 0x55
+  let value = (sample & 0x0f) << 4
+  const segment = (sample & 0x70) >> 4
+  switch (segment) {
+    case 0:
+      value += 8
+      break
+    case 1:
+      value += 0x108
+      break
+    default:
+      value += 0x108
+      value <<= segment - 1
+      break
+  }
+  return (sample & 0x80) !== 0 ? value : -value
 }
 
 function reportAudioLatency(captureTimestampMicros: number | undefined) {
@@ -266,20 +338,19 @@ function postJitterBufferActivity(event: 'push' | 'pop') {
   })
 }
 
-/**
- * Convert sender-side timestamps to a local timeline so the decoder can play them.
- * NOTE: 検証目的で全てのtimestampを0に設定
- */
 function rebaseTimestamp(remoteTimestamp: number): number {
-  // 検証目的: 全てのtimestampを0に差し替え
-  return 0
-
-  // 元の実装（コメントアウト）
-  // if (remoteTimestampBase === null) {
-  //   remoteTimestampBase = remoteTimestamp
-  // }
-  // let rebased = remoteTimestamp - remoteTimestampBase
-  // return rebased
+  if (remoteTimestampBase === null) {
+    remoteTimestampBase = remoteTimestamp
+  }
+  let rebased = remoteTimestamp - remoteTimestampBase
+  if (!Number.isFinite(rebased) || rebased < 0) {
+    rebased = 0
+  }
+  if (lastRebasedTimestamp !== null && rebased <= lastRebasedTimestamp) {
+    rebased = lastRebasedTimestamp + 1
+  }
+  lastRebasedTimestamp = rebased
+  return rebased
 }
 
 function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {

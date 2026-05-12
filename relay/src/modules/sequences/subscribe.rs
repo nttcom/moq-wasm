@@ -65,7 +65,18 @@ impl Subscribe {
             )
             .await;
         } else {
-            self.response_error(handler.as_ref()).await;
+            tracing::warn!(
+                session_id = %session_id,
+                track_namespace = %track_namespace,
+                track_name = %track_name,
+                "No publisher namespace registered for subscribe request"
+            );
+            self.response_error(
+                handler.as_ref(),
+                0,
+                "Designated namespace and track name do not exist.".to_string(),
+            )
+            .await;
         }
     }
 
@@ -204,14 +215,45 @@ impl Subscribe {
         name = "relay.sequence.subscribe.response_error",
         skip_all
     )]
-    async fn response_error(&self, handler: &dyn SubscribeHandler) {
+    async fn response_error(
+        &self,
+        handler: &dyn SubscribeHandler,
+        code: u64,
+        reason_phrase: String,
+    ) {
+        let track_namespace = handler.track_namespace();
+        let track_name = handler.track_name();
+        tracing::warn!(
+            subscribe_id = handler.subscribe_id(),
+            track_namespace = %track_namespace,
+            track_name = %track_name,
+            error_code = code,
+            reason_phrase = %reason_phrase,
+            "Sending `SUBSCRIBE_ERROR`"
+        );
         let _ = handler
-            .error(
-                0,
-                "Designated namespace and track name do not exist.".to_string(),
-            )
+            .error(code, reason_phrase.clone())
             .await
-            .inspect(|_| tracing::info!("send `SUBSCRIBE_ERROR` ok"))
-            .inspect_err(|_| tracing::error!("Failed to send `SUBSCRIBE_ERROR`. Session close."));
+            .inspect(|_| {
+                tracing::info!(
+                    subscribe_id = handler.subscribe_id(),
+                    track_namespace = %track_namespace,
+                    track_name = %track_name,
+                    error_code = code,
+                    reason_phrase = %reason_phrase,
+                    "send `SUBSCRIBE_ERROR` ok"
+                )
+            })
+            .inspect_err(|err| {
+                tracing::error!(
+                    subscribe_id = handler.subscribe_id(),
+                    track_namespace = %track_namespace,
+                    track_name = %track_name,
+                    error_code = code,
+                    reason_phrase = %reason_phrase,
+                    error = ?err,
+                    "Failed to send `SUBSCRIBE_ERROR`. Session close."
+                )
+            });
     }
 }

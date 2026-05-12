@@ -19,6 +19,88 @@ pub(crate) struct SessionRepository {
     session_spans: DashMap<SessionId, Span>,
 }
 
+fn filter_type_label(filter_type: &crate::modules::enums::FilterType) -> String {
+    match filter_type {
+        crate::modules::enums::FilterType::NextGroupStart => "NextGroupStart".to_string(),
+        crate::modules::enums::FilterType::LargestObject => "LargestObject".to_string(),
+        crate::modules::enums::FilterType::AbsoluteStart { location } => format!(
+            "AbsoluteStart(group_id={}, object_id={})",
+            location.group_id, location.object_id
+        ),
+        crate::modules::enums::FilterType::AbsoluteRange {
+            location,
+            end_group,
+        } => format!(
+            "AbsoluteRange(group_id={}, object_id={}, end_group={})",
+            location.group_id, location.object_id, end_group
+        ),
+    }
+}
+
+fn log_session_event(event: &SessionEvent) {
+    match event {
+        SessionEvent::PublishNamespace(handler) => {
+            tracing::info!(
+                event = "PublishNamespace",
+                track_namespace = %handler.track_namespace(),
+                "Received session event"
+            );
+        }
+        SessionEvent::SubscribeNamespace(handler) => {
+            tracing::info!(
+                event = "SubscribeNamespace",
+                track_namespace_prefix = %handler.track_namespace_prefix(),
+                "Received session event"
+            );
+        }
+        SessionEvent::Publish(handler) => {
+            tracing::info!(
+                event = "Publish",
+                track_namespace = %handler.track_namespace(),
+                track_name = %handler.track_name(),
+                track_alias = handler.track_alias(),
+                group_order = ?handler._group_order(),
+                content_exists = ?handler._content_exists(),
+                forward = handler._forward(),
+                has_authorization_token = handler._authorization_token().is_some(),
+                delivery_timeout = ?handler._delivery_timeout(),
+                max_cache_duration = ?handler._max_cache_duration(),
+                "Received session event"
+            );
+        }
+        SessionEvent::Subscribe(handler) => {
+            let filter_type = handler._filter_type();
+            tracing::info!(
+                event = "Subscribe",
+                subscribe_id = handler.subscribe_id(),
+                track_namespace = %handler.track_namespace(),
+                track_name = %handler.track_name(),
+                subscriber_priority = handler._subscriber_priority(),
+                group_order = ?handler._group_order(),
+                forward = handler._forward(),
+                filter_type = %filter_type_label(&filter_type),
+                has_authorization_token = handler._authorization_token().is_some(),
+                max_cache_duration = ?handler._max_cache_duration(),
+                delivery_timeout = ?handler._delivery_timeout(),
+                "Received session event"
+            );
+        }
+        SessionEvent::Unsubscribe(handler) => {
+            tracing::info!(
+                event = "Unsubscribe",
+                subscribe_id = handler.subscribe_id(),
+                "Received session event"
+            );
+        }
+        SessionEvent::Disconnected() => {
+            tracing::info!(event = "Disconnected", "Received session event");
+        }
+        SessionEvent::ProtocolViolation() => {
+            tracing::error!(event = "ProtocolViolation", "Received session event");
+        }
+    }
+}
+
 impl SessionRepository {
     pub(crate) fn new() -> Self {
         Self {
@@ -76,10 +158,7 @@ impl SessionRepository {
                         if let Some(session) = session.upgrade() {
                             let event = match session.receive_session_event().await {
                                 Ok(event) => {
-                                    tracing::info!(
-                                        event = %format!("{event:?}"),
-                                        "Received session event"
-                                    );
+                                    log_session_event(&event);
                                     event
                                 }
                                 Err(e) => {
