@@ -440,23 +440,21 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         };
 
         let send_result: Result<()> = async {
-            if rotate_group {
-                if let Some(mut current_stream) = stream.take() {
-                    let eog = current_stream.create_object_field(
-                        JS_COMPAT_OBJECT_ID_DELTA,
-                        empty_extension_headers(),
-                        SubgroupObject::new_status(moqt::wire::ObjectStatus::EndOfGroup as u64),
-                    );
-                    current_stream
-                        .send(eog)
-                        .await
-                        .context("send end-of-group object")?;
-                    if let Err(err) = current_stream.close().await {
-                        eprintln!("[moqt] failed to close previous subgroup stream: {err:?}");
-                    }
-                    group_id = group_id.saturating_add(1);
-                    object_id = 0;
+            if rotate_group && let Some(mut current_stream) = stream.take() {
+                let eog = current_stream.create_object_field(
+                    JS_COMPAT_OBJECT_ID_DELTA,
+                    empty_extension_headers(),
+                    SubgroupObject::new_status(moqt::wire::ObjectStatus::EndOfGroup as u64),
+                );
+                current_stream
+                    .send(eog)
+                    .await
+                    .context("send end-of-group object")?;
+                if let Err(err) = current_stream.close().await {
+                    eprintln!("[moqt] failed to close previous subgroup stream: {err:?}");
                 }
+                group_id = group_id.saturating_add(1);
+                object_id = 0;
             }
 
             if stream.is_none() {
