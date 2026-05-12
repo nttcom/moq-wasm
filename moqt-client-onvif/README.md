@@ -9,7 +9,7 @@ An ONVIF PTZ client with a minimal GUI and RTSP preview.
 - RTSP: display the live preview in the GUI.
 - RTSP: log SDP details once at startup when available.
 - Startup: fetch PTZ configuration/option info and print a short summary (token/spaces/limits) grouped by `[GetToken]`, etc.
-- MoQ: publish RTSP video as subgroup streams and subscribe to ONVIF command datagrams over a single WebTransport connection (AnnexB conversion applied; keyframes include LoC videoConfig derived from SPS/PPS when available; codec string is derived from SPS with the CLI value used as a fallback; RTSP capture starts after MoQ setup/announce/subscribe; each group switch sends an `EndOfGroup` object and finishes the previous subgroup stream).
+- MoQ: publish RTSP video/audio as subgroup streams and subscribe to ONVIF command datagrams over a single WebTransport connection (AnnexB conversion applied for video; keyframes include LoC videoConfig derived from SPS/PPS when available; AAC/Opus audio is forwarded as LOC objects with chunk metadata; codec string is derived from SPS with the CLI value used as a fallback; RTSP capture starts after the first media Subscribe; video rotates groups on keyframes and audio rotates groups roughly every 2 seconds).
 
 ## Usage
 
@@ -51,6 +51,7 @@ cargo run -p moqt-client-onvif --bin moqt-onvif-client -- \
   --publish-namespace onvif/client \
   --subscribe-namespace onvif/viewer \
   --video-track video \
+  --audio-track audio \
   --catalog-track catalog \
   --command-track command
 ```
@@ -58,11 +59,11 @@ cargo run -p moqt-client-onvif --bin moqt-onvif-client -- \
 This publishes the RTSP stream as profile-specific tracks under `onvif/client`, and subscribes to the `command` track
 (datagram) under `onvif/viewer`.
 
-Each ONVIF profile becomes a separate track named `<video-track>/profile_N` (for example `video/profile_1`). A catalog
-track (`catalog` by default) returns an MSF Catalog JSON object (draft-ietf-moq-msf-00) describing those tracks
-(label/codec/width/height). The initial catalog omits codec until SPS/PPS are parsed; it is resent with codec only for
-the selected profile once resolved. The bridge waits for the first Subscribe to one of the profile tracks and publishes
-only that profile.
+Each ONVIF profile becomes a pair of tracks named `<video-track>/profile_N` and `<audio-track>/profile_N`
+(for example `video/profile_1` and `audio/profile_1`). A catalog track (`catalog` by default) returns an MSF Catalog
+JSON object (draft-ietf-moq-msf-00) describing those tracks. Video codec is filled after SPS/PPS are parsed; audio
+codec/sample-rate/channel metadata is filled after the selected RTSP stream yields audio packets. The bridge waits for
+the first media Subscribe, locks to that profile, and publishes that profile's video/audio only.
 
 ## Options
 
@@ -70,6 +71,7 @@ only that profile.
 - `--username`, `--password`: credentials for ONVIF WS-Security (required)
 - `--timeout-ms`: timeout per operation
 - `--video-track`: track prefix for video profiles (default `video`, publishes `video/profile_1`, ...)
+- `--audio-track`: track prefix for audio profiles (default `audio`, publishes `audio/profile_1`, ...)
 - `--catalog-track`: track name for the profile catalog (default `catalog`)
 - `--payload-format`: send payload as `annexb` or `avcc` (default). AVCC mode converts AnnexB payloads to length-prefixed.
 - `--insecure-skip-tls-verify`: skip certificate validation for local debugging only (INSECURE)

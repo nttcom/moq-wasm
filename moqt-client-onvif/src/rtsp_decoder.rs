@@ -1,5 +1,5 @@
 use crate::app_config::Target;
-use crate::rtsp_frame::{EncodedPacket, Frame};
+use crate::rtsp_frame::{EncodedAudioPacket, EncodedPacket, Frame, RtspPacket};
 use anyhow::{bail, Result};
 use base64::{engine::general_purpose, Engine as _};
 use ffmpeg_next as ffmpeg;
@@ -87,7 +87,7 @@ pub fn run_encoded(
     target: Target,
     codec_label: String,
     payload_format: PayloadFormat,
-    tx: TokioSender<EncodedPacket>,
+    tx: TokioSender<RtspPacket>,
     err_tx: Sender<String>,
 ) {
     run_encoded_url(target.rtsp_url(), codec_label, payload_format, tx, err_tx);
@@ -97,7 +97,7 @@ pub fn run_encoded_url(
     url: String,
     codec_label: String,
     payload_format: PayloadFormat,
-    tx: TokioSender<EncodedPacket>,
+    tx: TokioSender<RtspPacket>,
     err_tx: Sender<String>,
 ) {
     if let Err(err) = ffmpeg::init() {
@@ -114,7 +114,7 @@ pub fn run_encoded_url(
         }
     };
     log_sdp(&input);
-    let stream = match input.streams().best(ffmpeg::media::Type::Video) {
+    let video_stream = match input.streams().best(ffmpeg::media::Type::Video) {
         Some(stream) => stream,
         None => {
             send_error(&err_tx, "no video stream found".to_string());
@@ -122,7 +122,7 @@ pub fn run_encoded_url(
         }
     };
     let annexb = if payload_format == PayloadFormat::AnnexB {
-        match AnnexBConverter::from_stream(&stream) {
+        match AnnexBConverter::from_stream(&video_stream) {
             Ok(converter) => converter,
             Err(err) => {
                 send_error(
@@ -135,14 +135,14 @@ pub fn run_encoded_url(
     } else {
         None
     };
-    let stream_index = stream.index();
-    let time_base = stream.time_base();
-    let default_interval_us = default_frame_interval_us(&stream);
-    let mut timestamp_corrector = TimestampCorrector::new(default_interval_us);
+    let video_stream_index = video_stream.index();
+    let video_time_base = video_stream.time_base();
+    let default_interval_us = default_frame_interval_us(&video_stream);
+    let mut video_timestamp_corrector = TimestampCorrector::new(default_interval_us);
     let fallback_codec_label = (!codec_label.is_empty()).then_some(codec_label);
-    let mut codec_label = None;
+    let mut video_codec_label = None;
     let mut avcc_state = if payload_format == PayloadFormat::Avcc {
-        match AnnexBConverter::from_stream(&stream) {
+        match AnnexBConverter::from_stream(&video_stream) {
             Ok(Some(converter)) => Some(AvccConfig::from(&converter)),
             Ok(None) => None,
             Err(err) => {
@@ -156,163 +156,275 @@ pub fn run_encoded_url(
     } else {
         annexb.as_ref().map(AvccConfig::from)
     };
-    let mut format_logged = false;
-    let mut last_timestamp_source: Option<TimestampSource> = None;
-    let mut timestamp_presence = TimestampPresence::default();
-    for (stream, packet) in input.packets() {
-        if stream.index() != stream_index {
-            continue;
-        }
-        let ingest_wallclock_micros = now_micros();
-        let is_keyframe = packet.is_key();
-        let payload = match build_payload(&packet, is_keyframe, payload_format, annexb.as_ref()) {
-            Ok(Some(payload)) => payload,
-            Ok(None) => continue,
-            Err(err) => {
-                send_error(&err_tx, format!("annexb conversion failed: {err}"));
-                return;
+    let audio_info = match input.streams().best(ffmpeg::media::Type::Audio) {
+        Some(stream) => match AudioStreamInfo::from_stream(&stream) {
+            Ok(Some(info)) => {
+                log::info!(
+                    "RTSP audio stream detected: codec={} sample_rate={:?} channels={:?}",
+                    info.codec_label,
+                    info.sample_rate,
+                    info.channels
+                );
+                Some(info)
             }
-        };
-        if !format_logged {
-            log::info!("RTSP payload format in use: {}", payload_format.label());
-            format_logged = true;
+            Ok(None) => None,
+            Err(err) => {
+                log::warn!("failed to initialize RTSP audio stream: {err}");
+                None
+            }
+        },
+        None => {
+            log::info!("RTSP audio stream not found");
+            None
         }
-        if payload_format == PayloadFormat::AnnexB && is_annexb(&payload) {
-            let nal_info = collect_nal_types(&payload);
-            if nal_info.has_idr != is_keyframe {
-                log::warn!(
-                    "RTSP keyframe mismatch: packet.is_key={} has_idr={} nal_types={}",
+    };
+    let mut format_logged = false;
+    let mut video_last_timestamp_source: Option<TimestampSource> = None;
+    let mut video_timestamp_presence = TimestampPresence::default();
+    let mut audio_last_timestamp_source: Option<TimestampSource> = None;
+    let mut audio_timestamp_presence = TimestampPresence::default();
+    let mut audio_timestamp_corrector = audio_info
+        .as_ref()
+        .map(|info| TimestampCorrector::new(info.default_interval_us));
+    for (stream, packet) in input.packets() {
+        if stream.index() == video_stream_index {
+            let ingest_wallclock_micros = now_micros();
+            let is_keyframe = packet.is_key();
+            let payload = match build_payload(&packet, is_keyframe, payload_format, annexb.as_ref())
+            {
+                Ok(Some(payload)) => payload,
+                Ok(None) => continue,
+                Err(err) => {
+                    send_error(&err_tx, format!("annexb conversion failed: {err}"));
+                    return;
+                }
+            };
+            if !format_logged {
+                log::info!("RTSP payload format in use: {}", payload_format.label());
+                format_logged = true;
+            }
+            if payload_format == PayloadFormat::AnnexB && is_annexb(&payload) {
+                let nal_info = collect_nal_types(&payload);
+                if nal_info.has_idr != is_keyframe {
+                    log::warn!(
+                        "RTSP keyframe mismatch: packet.is_key={} has_idr={} nal_types={}",
+                        is_keyframe,
+                        nal_info.has_idr,
+                        nal_info.summary
+                    );
+                }
+            }
+            if let Some(slice_type) = detect_slice_type(
+                &payload,
+                payload_format,
+                avcc_state
+                    .as_ref()
+                    .map(|state| state.nal_length_size)
+                    .unwrap_or(DEFAULT_NAL_LENGTH_SIZE),
+            ) {
+                let label = slice_type_label(slice_type);
+                let timestamp_us = packet_timestamp_us(&packet, video_time_base);
+                log::debug!(
+                    "RTSP slice_type={} raw={} ts_us={} keyframe={} format={}",
+                    label,
+                    slice_type,
+                    timestamp_us,
                     is_keyframe,
-                    nal_info.has_idr,
-                    nal_info.summary
+                    payload_format.label()
                 );
             }
-        }
-        if let Some(slice_type) = detect_slice_type(
-            &payload,
-            payload_format,
-            avcc_state
-                .as_ref()
-                .map(|state| state.nal_length_size)
-                .unwrap_or(DEFAULT_NAL_LENGTH_SIZE),
-        ) {
-            let label = slice_type_label(slice_type);
-            let timestamp_us = packet_timestamp_us(&packet, time_base);
-            log::debug!(
-                "RTSP slice_type={} raw={} ts_us={} keyframe={} format={}",
-                label,
-                slice_type,
-                timestamp_us,
+            if payload_format == PayloadFormat::AnnexB && !is_annexb(&payload) {
+                log::warn!(
+                    "RTSP payload is not AnnexB: size={} keyframe={}",
+                    payload.len(),
+                    is_keyframe,
+                );
+            }
+            let pts = packet.pts();
+            let dts = packet.dts();
+            if !video_timestamp_presence.logged {
+                log::debug!(
+                    "RTSP video timestamps initial: pts_raw={:?} dts_raw={:?} time_base={}/{}",
+                    pts,
+                    dts,
+                    video_time_base.numerator(),
+                    video_time_base.denominator()
+                );
+                video_timestamp_presence.logged = true;
+            }
+            if pts.is_some() && !video_timestamp_presence.seen_pts {
+                log::debug!(
+                    "RTSP video timestamp available: PTS (us={:?})",
+                    pts.and_then(|value| to_microseconds(value, video_time_base))
+                );
+                video_timestamp_presence.seen_pts = true;
+            }
+            if dts.is_some() && !video_timestamp_presence.seen_dts {
+                log::debug!(
+                    "RTSP video timestamp available: DTS (us={:?})",
+                    dts.and_then(|value| to_microseconds(value, video_time_base))
+                );
+                video_timestamp_presence.seen_dts = true;
+            }
+            if payload_format == PayloadFormat::AnnexB {
+                if let Some(state) = avcc_state.as_mut() {
+                    let update = state.update_from_annexb(&payload);
+                    if update.sps_updated || update.pps_updated {
+                        log_sps_pps(state);
+                        log_avcc_bytes(state);
+                    }
+                } else if let Some(state) = AvccConfig::from_annexb(&payload) {
+                    log_sps_pps(&state);
+                    log_avcc_bytes(&state);
+                    avcc_state = Some(state);
+                }
+            } else if payload_format == PayloadFormat::Avcc {
+                if let Some(state) = avcc_state.as_mut() {
+                    let update = state.update_from_avcc(&payload);
+                    if update.sps_updated || update.pps_updated {
+                        log_sps_pps(state);
+                        log_avcc_bytes(state);
+                    }
+                } else if let Some(state) = AvccConfig::from_avcc_payload(&payload) {
+                    log_sps_pps(&state);
+                    log_avcc_bytes(&state);
+                    avcc_state = Some(state);
+                }
+            }
+            if let Some(state) = avcc_state.as_ref() {
+                if let Some(codec) = state.codec_string() {
+                    video_codec_label = Some(codec);
+                }
+            }
+            let codec_for_packet = is_keyframe
+                .then(|| {
+                    video_codec_label
+                        .clone()
+                        .or_else(|| fallback_codec_label.clone())
+                })
+                .flatten();
+            let description_base64 = is_keyframe
+                .then(|| avcc_state.as_ref().and_then(AvccConfig::to_base64))
+                .flatten();
+            let avc_format = payload_format.label().to_string();
+            let timestamp_source = if packet.pts().is_some() {
+                TimestampSource::Pts
+            } else if packet.dts().is_some() {
+                TimestampSource::Dts
+            } else {
+                TimestampSource::FallbackZero
+            };
+            if video_last_timestamp_source != Some(timestamp_source) {
+                if timestamp_source == TimestampSource::Pts {
+                    log::debug!("RTSP video timestamp source: PTS");
+                } else {
+                    log::info!(
+                        "RTSP video timestamp source fallback: {:?}",
+                        timestamp_source
+                    );
+                }
+                video_last_timestamp_source = Some(timestamp_source);
+            }
+            let raw_timestamp_us = packet_timestamp_us(&packet, video_time_base);
+            let duration_us = if packet.duration() > 0 {
+                to_microseconds(packet.duration(), video_time_base)
+            } else {
+                None
+            };
+            let timestamp_us = video_timestamp_corrector.correct(raw_timestamp_us, duration_us);
+            let encoded = build_encoded_packet(EncodedPacketArgs {
+                payload,
+                packet: &packet,
                 is_keyframe,
-                payload_format.label()
-            );
+                time_base: video_time_base,
+                codec_label: codec_for_packet,
+                description_base64,
+                avc_format: Some(avc_format),
+                timestamp_source,
+                timestamp_us,
+                ingest_wallclock_micros,
+                duration_us,
+            });
+            if tx.blocking_send(RtspPacket::Video(encoded)).is_err() {
+                return;
+            }
+            continue;
         }
-        if payload_format == PayloadFormat::AnnexB && !is_annexb(&payload) {
-            log::warn!(
-                "RTSP payload is not AnnexB: size={} keyframe={}",
-                payload.len(),
-                is_keyframe
-            );
+
+        let Some(audio_info) = audio_info.as_ref() else {
+            continue;
+        };
+        if stream.index() != audio_info.stream_index {
+            continue;
         }
+        let Some(payload) = packet.data().map(ToOwned::to_owned) else {
+            continue;
+        };
         let pts = packet.pts();
         let dts = packet.dts();
-        if !timestamp_presence.logged {
+        if !audio_timestamp_presence.logged {
             log::debug!(
-                "RTSP timestamps initial: pts_raw={:?} dts_raw={:?} time_base={}/{}",
+                "RTSP audio timestamps initial: pts_raw={:?} dts_raw={:?} time_base={}/{}",
                 pts,
                 dts,
-                time_base.numerator(),
-                time_base.denominator()
+                audio_info.time_base.numerator(),
+                audio_info.time_base.denominator()
             );
-            timestamp_presence.logged = true;
+            audio_timestamp_presence.logged = true;
         }
-        if pts.is_some() && !timestamp_presence.seen_pts {
+        if pts.is_some() && !audio_timestamp_presence.seen_pts {
             log::debug!(
-                "RTSP timestamp available: PTS (us={:?})",
-                pts.and_then(|value| to_microseconds(value, time_base))
+                "RTSP audio timestamp available: PTS (us={:?})",
+                pts.and_then(|value| to_microseconds(value, audio_info.time_base))
             );
-            timestamp_presence.seen_pts = true;
+            audio_timestamp_presence.seen_pts = true;
         }
-        if dts.is_some() && !timestamp_presence.seen_dts {
+        if dts.is_some() && !audio_timestamp_presence.seen_dts {
             log::debug!(
-                "RTSP timestamp available: DTS (us={:?})",
-                dts.and_then(|value| to_microseconds(value, time_base))
+                "RTSP audio timestamp available: DTS (us={:?})",
+                dts.and_then(|value| to_microseconds(value, audio_info.time_base))
             );
-            timestamp_presence.seen_dts = true;
+            audio_timestamp_presence.seen_dts = true;
         }
-        if payload_format == PayloadFormat::AnnexB {
-            if let Some(state) = avcc_state.as_mut() {
-                let update = state.update_from_annexb(&payload);
-                if update.sps_updated || update.pps_updated {
-                    log_sps_pps(state);
-                    log_avcc_bytes(state);
-                }
-            } else if let Some(state) = AvccConfig::from_annexb(&payload) {
-                log_sps_pps(&state);
-                log_avcc_bytes(&state);
-                avcc_state = Some(state);
-            }
-        } else if payload_format == PayloadFormat::Avcc {
-            if let Some(state) = avcc_state.as_mut() {
-                let update = state.update_from_avcc(&payload);
-                if update.sps_updated || update.pps_updated {
-                    log_sps_pps(state);
-                    log_avcc_bytes(state);
-                }
-            } else if let Some(state) = AvccConfig::from_avcc_payload(&payload) {
-                log_sps_pps(&state);
-                log_avcc_bytes(&state);
-                avcc_state = Some(state);
-            }
-        }
-        if let Some(state) = avcc_state.as_ref() {
-            if let Some(codec) = state.codec_string() {
-                codec_label = Some(codec);
-            }
-        }
-        let codec_for_packet = is_keyframe
-            .then(|| codec_label.clone().or_else(|| fallback_codec_label.clone()))
-            .flatten();
-        let description_base64 = is_keyframe
-            .then(|| avcc_state.as_ref().and_then(AvccConfig::to_base64))
-            .flatten();
-        let avc_format = payload_format.label().to_string();
-        let timestamp_source = if packet.pts().is_some() {
+        let timestamp_source = if pts.is_some() {
             TimestampSource::Pts
-        } else if packet.dts().is_some() {
+        } else if dts.is_some() {
             TimestampSource::Dts
         } else {
             TimestampSource::FallbackZero
         };
-        if last_timestamp_source != Some(timestamp_source) {
+        if audio_last_timestamp_source != Some(timestamp_source) {
             if timestamp_source == TimestampSource::Pts {
-                log::debug!("RTSP timestamp source: PTS");
+                log::debug!("RTSP audio timestamp source: PTS");
             } else {
-                log::info!("RTSP timestamp source fallback: {:?}", timestamp_source);
+                log::info!(
+                    "RTSP audio timestamp source fallback: {:?}",
+                    timestamp_source
+                );
             }
-            last_timestamp_source = Some(timestamp_source);
+            audio_last_timestamp_source = Some(timestamp_source);
         }
-        let raw_timestamp_us = packet_timestamp_us(&packet, time_base);
+        let raw_timestamp_us = packet_timestamp_us(&packet, audio_info.time_base);
         let duration_us = if packet.duration() > 0 {
-            to_microseconds(packet.duration(), time_base)
+            to_microseconds(packet.duration(), audio_info.time_base)
         } else {
             None
         };
-        let timestamp_us = timestamp_corrector.correct(raw_timestamp_us, duration_us);
-        let encoded = build_encoded_packet(EncodedPacketArgs {
+        let corrected_duration_us = duration_us
+            .or_else(|| frame_size_to_duration_us(audio_info.frame_size, audio_info.sample_rate));
+        let timestamp_us = audio_timestamp_corrector
+            .as_mut()
+            .map(|corrector| corrector.correct(raw_timestamp_us, corrected_duration_us))
+            .unwrap_or(raw_timestamp_us);
+        let encoded = build_audio_packet(
+            &packet,
             payload,
-            packet: &packet,
-            is_keyframe,
-            time_base,
-            codec_label: codec_for_packet,
-            description_base64,
-            avc_format: Some(avc_format),
-            timestamp_source,
+            audio_info,
             timestamp_us,
-            ingest_wallclock_micros,
-            duration_us,
-        });
-        if tx.blocking_send(encoded).is_err() {
+            now_micros(),
+            corrected_duration_us,
+        );
+        if tx.blocking_send(RtspPacket::Audio(encoded)).is_err() {
             return;
         }
     }
@@ -371,6 +483,58 @@ struct EncodedPacketArgs<'a> {
     duration_us: Option<u64>,
 }
 
+struct AudioStreamInfo {
+    stream_index: usize,
+    time_base: ffmpeg::Rational,
+    codec_label: String,
+    description_base64: Option<String>,
+    sample_rate: Option<u32>,
+    channels: Option<u8>,
+    frame_size: u32,
+    default_interval_us: u64,
+}
+
+impl AudioStreamInfo {
+    fn from_stream(stream: &ffmpeg::Stream<'_>) -> Result<Option<Self>> {
+        let codec_id = stream.parameters().id();
+        let codec_label = match codec_id {
+            Id::AAC => "mp4a.40.2".to_string(),
+            Id::OPUS => "opus".to_string(),
+            Id::PCM_ALAW => "pcma".to_string(),
+            other => {
+                log::warn!("RTSP audio codec unsupported for MoQ bridge: {:?}", other);
+                return Ok(None);
+            }
+        };
+        let context = ffmpeg::codec::context::Context::from_parameters(stream.parameters())?;
+        let decoder = context.decoder().audio()?;
+        let sample_rate = Some(decoder.rate()).filter(|value| *value > 0);
+        let channels = u8::try_from(decoder.channels())
+            .ok()
+            .filter(|value| *value > 0);
+        let frame_size = decoder.frame_size();
+        let default_interval_us =
+            frame_size_to_duration_us(frame_size, sample_rate).unwrap_or(DEFAULT_AUDIO_INTERVAL_US);
+        let description_base64 = if codec_id == Id::AAC {
+            extract_extradata(stream)
+                .filter(|bytes| !bytes.is_empty())
+                .map(|bytes| general_purpose::STANDARD.encode(bytes))
+        } else {
+            None
+        };
+        Ok(Some(Self {
+            stream_index: stream.index(),
+            time_base: stream.time_base(),
+            codec_label,
+            description_base64,
+            sample_rate,
+            channels,
+            frame_size,
+            default_interval_us,
+        }))
+    }
+}
+
 fn build_encoded_packet(args: EncodedPacketArgs<'_>) -> EncodedPacket {
     let pts_us = args
         .packet
@@ -398,6 +562,34 @@ fn build_encoded_packet(args: EncodedPacketArgs<'_>) -> EncodedPacket {
         codec: args.codec_label,
         description_base64: args.description_base64,
         avc_format: args.avc_format,
+    }
+}
+
+fn build_audio_packet(
+    packet: &ffmpeg::Packet,
+    payload: Vec<u8>,
+    info: &AudioStreamInfo,
+    timestamp_us: u64,
+    ingest_wallclock_micros: u64,
+    duration_us: Option<u64>,
+) -> EncodedAudioPacket {
+    let pts_us = packet
+        .pts()
+        .and_then(|value| to_microseconds(value, info.time_base));
+    let dts_us = packet
+        .dts()
+        .and_then(|value| to_microseconds(value, info.time_base));
+    EncodedAudioPacket {
+        data: payload,
+        timestamp_us,
+        ingest_wallclock_micros,
+        pts_us,
+        dts_us,
+        duration_us,
+        codec: info.codec_label.clone(),
+        description_base64: info.description_base64.clone(),
+        sample_rate: info.sample_rate,
+        channels: info.channels,
     }
 }
 
@@ -533,6 +725,7 @@ impl TimestampCorrector {
 }
 
 const DEFAULT_FRAME_INTERVAL_US: u64 = 66_666;
+const DEFAULT_AUDIO_INTERVAL_US: u64 = 20_000;
 const MIN_INTERVAL_US: u64 = 5_000;
 const MAX_INTERVAL_US: u64 = 200_000;
 const MAX_STEP_MULTIPLIER: u64 = 5;
@@ -560,6 +753,15 @@ fn interval_from_rate(rate: ffmpeg::Rational) -> Option<u64> {
         return None;
     }
     Some(interval as u64)
+}
+
+fn frame_size_to_duration_us(frame_size: u32, sample_rate: Option<u32>) -> Option<u64> {
+    let frame_size = u64::from(frame_size);
+    let sample_rate = u64::from(sample_rate?);
+    if frame_size == 0 || sample_rate == 0 {
+        return None;
+    }
+    Some((frame_size * 1_000_000 + sample_rate / 2) / sample_rate)
 }
 
 fn send_error(err_tx: &Sender<String>, message: String) {

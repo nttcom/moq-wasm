@@ -3,9 +3,17 @@ import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
 import type { MOQTClient } from '../../pkg/moqt_client_wasm'
 
 const moqtClient = new MoqtClientWrapper()
+let audioDecoderWorker: Worker | null = null
 const videoDecoderWorker = new Worker(new URL('../../utils/media/decoders/videoDecoder.ts', import.meta.url), {
   type: 'module'
 })
+
+type AudioDecoderWorkerMessage =
+  | { type: 'audioData'; audioData: AudioData }
+  | { type: 'bitrate'; media: 'audio'; kbps: number }
+  | { type: 'receiveLatency'; media: 'audio'; ms: number }
+  | { type: 'renderingLatency'; media: 'audio'; ms: number }
+  | { type: 'bufferedObject'; media: 'audio'; groupId: bigint; objectId: bigint }
 
 type VideoDecoderWorkerMessage =
   | { type: 'frame'; frame: VideoFrame }
@@ -133,12 +141,14 @@ type CatalogTrack = {
   namespace?: string
   codec?: string
   resolution?: string
-  role?: string
+  role?: 'video' | 'audio' | string
   packaging?: string
   isLive?: boolean
   targetLatency?: number
   framerate?: number
   bitrate?: number
+  samplerate?: number
+  channelConfig?: string
 }
 
 type FieldKey = 'pan' | 'tilt' | 'zoom' | 'speed'
@@ -261,13 +271,17 @@ function createEmptyStatsSnapshot(): StatsSnapshot {
 }
 
 let currentVideoDecoderConfig: VideoDecoderRuntimeConfig = cloneVideoDecoderConfig(DEFAULT_VIDEO_DECODER_CONFIG)
+let audioWorkerInitialized = false
 let videoWorkerInitialized = false
 let commandTrackAlias: bigint | null = null
 let commandObjectId = 0n
 let catalogTrackAlias: bigint | null = null
 let catalogTracks: CatalogTrack[] = []
+let audioSubscribed = false
 let videoSubscribed = false
+let selectedAudioTrack: string | null = null
 let selectedVideoTrack: string | null = null
+let audioPlaybackStarted = false
 let jitterSnapshot: JitterBufferSnapshot | null = null
 let jitterHighlightTimer: number | null = null
 let latestStats: StatsSnapshot = createEmptyStatsSnapshot()
@@ -583,11 +597,71 @@ function setupVideoDecoderWorker(): void {
   }
 }
 
+function setupAudioDecoderWorker(): void {
+  if (audioWorkerInitialized) return
+
+  audioDecoderWorker = new Worker(new URL('../../utils/media/decoders/audioDecoder.ts', import.meta.url), {
+    type: 'module'
+  })
+  audioWorkerInitialized = true
+  const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
+  const audioWriter = audioGenerator.writable.getWriter()
+  const audioStream = new MediaStream([audioGenerator])
+  const audioElement = document.getElementById('audio') as HTMLAudioElement | null
+  if (audioElement) {
+    audioElement.srcObject = audioStream
+  }
+  const worker = audioDecoderWorker
+
+  worker.onmessage = async (event: MessageEvent<AudioDecoderWorkerMessage>) => {
+    const data = event.data
+    if (data.type !== 'audioData') {
+      return
+    }
+    await audioWriter.ready
+    await audioWriter.write(data.audioData)
+    data.audioData.close()
+    if (!audioPlaybackStarted && audioElement) {
+      try {
+        await audioElement.play()
+        audioPlaybackStarted = true
+      } catch (error) {
+        console.warn('[onvif][audio] play failed', error)
+      }
+    }
+  }
+}
+
 function setupVideoCallbacks(trackAlias: bigint): void {
   setupVideoDecoderWorker()
   moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
     const payload = new Uint8Array(subgroupStreamObject.objectPayload)
     videoDecoderWorker.postMessage(
+      {
+        groupId,
+        subgroupStreamObject: {
+          subgroupId: subgroupStreamObject.subgroupId,
+          objectIdDelta: subgroupStreamObject.objectIdDelta,
+          objectPayloadLength: subgroupStreamObject.objectPayloadLength,
+          objectPayload: payload,
+          objectStatus: subgroupStreamObject.objectStatus,
+          locHeader: subgroupStreamObject.locHeader
+        }
+      },
+      [payload.buffer]
+    )
+  })
+}
+
+function setupAudioCallbacks(trackAlias: bigint): void {
+  setupAudioDecoderWorker()
+  const worker = audioDecoderWorker
+  if (!worker) {
+    throw new Error('audio decoder worker is not initialized')
+  }
+  moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
+    const payload = new Uint8Array(subgroupStreamObject.objectPayload)
+    worker.postMessage(
       {
         groupId,
         subgroupStreamObject: {
@@ -628,6 +702,12 @@ function updateCatalogAlias(alias: bigint | null): void {
 
 function updateSelectedVideoTrackLabel(track: string | null): void {
   const element = document.getElementById('selected-video-track')
+  if (!element) return
+  element.textContent = track ?? '-'
+}
+
+function updateSelectedAudioTrackLabel(track: string | null): void {
+  const element = document.getElementById('selected-audio-track')
   if (!element) return
   element.textContent = track ?? '-'
 }
@@ -770,9 +850,14 @@ function applySelectedVideoTrack(track: string): void {
   notifyDecoderFromCatalog(track)
 }
 
+function applySelectedAudioTrack(track: string): void {
+  selectedAudioTrack = track
+  updateSelectedAudioTrackLabel(track)
+}
+
 function notifyDecoderFromCatalog(trackName: string | null): void {
   if (!trackName) return
-  const track = catalogTracks.find((entry) => entry.name === trackName)
+  const track = catalogTracks.find((entry) => entry.name === trackName && entry.role === 'video')
   if (!track?.codec && typeof track?.framerate !== 'number') return
   videoDecoderWorker.postMessage({ type: 'catalog', codec: track.codec, framerate: track.framerate })
 }
@@ -811,36 +896,50 @@ function formatLive(value?: boolean): string | undefined {
   return value ? 'live' : 'ended'
 }
 
-function renderCatalogList(): void {
-  const list = document.getElementById('catalog-list')
-  if (!list) return
-  list.innerHTML = ''
-  if (catalogTracks.length === 0) {
+function getCatalogTracksByRole(role: 'video' | 'audio'): CatalogTrack[] {
+  return catalogTracks.filter((track) => track.role === role)
+}
+
+function ensureSelectedCatalogTrack(role: 'video' | 'audio'): string | null {
+  const tracks = getCatalogTracksByRole(role)
+  const currentTrack = role === 'video' ? selectedVideoTrack : selectedAudioTrack
+  if (currentTrack && tracks.some((track) => track.name === currentTrack)) {
+    return currentTrack
+  }
+  return tracks[0]?.name ?? null
+}
+
+function renderCatalogRoleSection(
+  list: HTMLElement,
+  role: 'video' | 'audio',
+  title: string,
+  selectedTrack: string | null
+): void {
+  const tracks = getCatalogTracksByRole(role)
+  const section = document.createElement('div')
+  section.className = 'catalog-section'
+
+  const header = document.createElement('div')
+  header.className = 'command-title'
+  header.textContent = title
+  section.appendChild(header)
+
+  if (!tracks.length) {
     const empty = document.createElement('div')
     empty.className = 'muted'
-    empty.textContent = 'No catalog data yet.'
-    list.appendChild(empty)
-    updateSelectedVideoTrackLabel(selectedVideoTrack)
+    empty.textContent = `No ${role} tracks in catalog.`
+    section.appendChild(empty)
+    list.appendChild(section)
     return
   }
-  let currentTrack = selectedVideoTrack ?? ''
-  if (currentTrack && !catalogTracks.some((track) => track.name === currentTrack)) {
-    currentTrack = ''
-  }
-  if (!currentTrack) {
-    const firstTrack = catalogTracks[0]?.name
-    if (firstTrack) {
-      applySelectedVideoTrack(firstTrack)
-      currentTrack = firstTrack
-    }
-  }
-  for (const [index, track] of catalogTracks.entries()) {
+
+  for (const [index, track] of tracks.entries()) {
     const item = document.createElement('label')
     item.className = 'catalog-item'
 
-    const header = document.createElement('div')
-    header.className = 'command-title'
-    header.textContent = track.label || `Track ${index + 1}`
+    const itemHeader = document.createElement('div')
+    itemHeader.className = 'command-title'
+    itemHeader.textContent = track.label || `${title} ${index + 1}`
 
     const subtitle = document.createElement('div')
     subtitle.className = 'catalog-subtitle'
@@ -849,11 +948,15 @@ function renderCatalogList(): void {
     const inputRow = document.createElement('div')
     const radio = document.createElement('input')
     radio.type = 'radio'
-    radio.name = 'catalog-profile'
+    radio.name = `catalog-profile-${role}`
     radio.value = track.name
-    radio.checked = currentTrack === track.name || (!currentTrack && index === 0)
+    radio.checked = selectedTrack === track.name
     radio.addEventListener('change', () => {
-      applySelectedVideoTrack(track.name)
+      if (role === 'video') {
+        applySelectedVideoTrack(track.name)
+      } else {
+        applySelectedAudioTrack(track.name)
+      }
     })
     const trackLabel = document.createElement('span')
     trackLabel.textContent = track.name
@@ -868,12 +971,52 @@ function renderCatalogList(): void {
     appendMeta(meta, 'codec', track.codec)
     appendMeta(meta, 'fps', formatNumber(track.framerate))
     appendMeta(meta, 'bitrate', formatBitrate(track.bitrate))
+    appendMeta(meta, 'samplerate', typeof track.samplerate === 'number' ? `${track.samplerate}Hz` : undefined)
+    appendMeta(meta, 'channels', track.channelConfig)
     appendMeta(meta, 'latency', formatLatency(track.targetLatency))
 
-    item.append(header, subtitle, inputRow, meta)
-    list.appendChild(item)
+    item.append(itemHeader, subtitle, inputRow, meta)
+    section.appendChild(item)
   }
+
+  list.appendChild(section)
+}
+
+function renderCatalogList(): void {
+  const list = document.getElementById('catalog-list')
+  if (!list) return
+  list.innerHTML = ''
+  if (catalogTracks.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'muted'
+    empty.textContent = 'No catalog data yet.'
+    list.appendChild(empty)
+    updateSelectedVideoTrackLabel(selectedVideoTrack)
+    updateSelectedAudioTrackLabel(selectedAudioTrack)
+    return
+  }
+
+  const nextVideoTrack = ensureSelectedCatalogTrack('video')
+  if (nextVideoTrack) {
+    applySelectedVideoTrack(nextVideoTrack)
+  } else {
+    selectedVideoTrack = null
+    updateSelectedVideoTrackLabel(null)
+  }
+
+  const nextAudioTrack = ensureSelectedCatalogTrack('audio')
+  if (nextAudioTrack) {
+    applySelectedAudioTrack(nextAudioTrack)
+  } else {
+    selectedAudioTrack = null
+    updateSelectedAudioTrackLabel(null)
+  }
+
+  renderCatalogRoleSection(list, 'video', 'Video Tracks', selectedVideoTrack)
+  renderCatalogRoleSection(list, 'audio', 'Audio Tracks', selectedAudioTrack)
+
   updateSelectedVideoTrackLabel(selectedVideoTrack)
+  updateSelectedAudioTrackLabel(selectedAudioTrack)
 }
 
 function setupCatalogCallbacks(trackAlias: bigint): void {
@@ -910,7 +1053,9 @@ function buildCatalogTracks(catalog: MsfCatalog): CatalogTrack[] {
       isLive: track.isLive,
       targetLatency: track.targetLatency,
       framerate: track.framerate,
-      bitrate: track.bitrate
+      bitrate: track.bitrate,
+      samplerate: track.samplerate,
+      channelConfig: track.channelConfig
     }
   })
 }
@@ -1075,6 +1220,29 @@ async function subscribeSelectedVideo(): Promise<void> {
   updateStatus(`video subscribed: ${videoTrack}`, true)
 }
 
+async function subscribeSelectedAudio(): Promise<void> {
+  if (audioSubscribed) {
+    updateStatus('audio already subscribed', false)
+    return
+  }
+  ensureClient()
+  const subscribeNamespace = parseNamespace((document.getElementById('subscribe-namespace') as HTMLInputElement).value)
+  const audioTrack = selectedAudioTrack?.trim() ?? ''
+  const authInfo = (document.getElementById('auth-info') as HTMLInputElement).value
+  const audioSubscribeId = parseBigInt((document.getElementById('audio-subscribe-id') as HTMLInputElement).value)
+
+  if (!subscribeNamespace.length || !audioTrack) {
+    updateStatus('audio track required', false)
+    return
+  }
+
+  const audioTrackAlias = await moqtClient.subscribe(audioSubscribeId, subscribeNamespace, audioTrack, authInfo)
+  ;(document.getElementById('audio-track-alias') as HTMLInputElement).value = audioTrackAlias.toString()
+  setupAudioCallbacks(audioTrackAlias)
+  audioSubscribed = true
+  updateStatus(`audio subscribed: ${audioTrack}`, true)
+}
+
 async function connect(): Promise<void> {
   const url = (document.getElementById('moqt-url') as HTMLInputElement).value
   const publishNamespace = parseNamespace((document.getElementById('publish-namespace') as HTMLInputElement).value)
@@ -1090,12 +1258,16 @@ async function connect(): Promise<void> {
   }
 
   catalogTracks = []
+  audioSubscribed = false
   videoSubscribed = false
   catalogTrackAlias = null
+  selectedAudioTrack = null
   selectedVideoTrack = null
+  audioPlaybackStarted = false
   resetStatsSamples()
   renderCatalogList()
   updateCatalogAlias(catalogTrackAlias)
+  updateSelectedAudioTrackLabel(selectedAudioTrack)
   updateSelectedVideoTrackLabel(selectedVideoTrack)
 
   updateStatus('connecting', true)
@@ -1131,13 +1303,17 @@ async function disconnect(): Promise<void> {
   commandObjectId = 0n
   catalogTrackAlias = null
   catalogTracks = []
+  audioSubscribed = false
   videoSubscribed = false
+  selectedAudioTrack = null
   selectedVideoTrack = null
+  audioPlaybackStarted = false
   moqtClient.clearSubgroupObjectHandlers()
   resetStatsSamples()
   updateCommandAlias(commandTrackAlias)
   updateCatalogAlias(catalogTrackAlias)
   renderCatalogList()
+  updateSelectedAudioTrackLabel(selectedAudioTrack)
   updateSelectedVideoTrackLabel(selectedVideoTrack)
   updateStatus('disconnected', false)
 }
@@ -1145,6 +1321,7 @@ async function disconnect(): Promise<void> {
 const connectBtn = document.getElementById('connect-btn') as HTMLButtonElement | null
 const disconnectBtn = document.getElementById('disconnect-btn') as HTMLButtonElement | null
 const catalogSubscribeBtn = document.getElementById('catalog-subscribe-btn') as HTMLButtonElement | null
+const audioSubscribeBtn = document.getElementById('audio-subscribe-btn') as HTMLButtonElement | null
 const videoSubscribeBtn = document.getElementById('video-subscribe-btn') as HTMLButtonElement | null
 const settingsBtn = document.getElementById('settings-btn') as HTMLButtonElement | null
 const settingsCloseBtn = document.getElementById('settings-close-btn') as HTMLButtonElement | null
@@ -1175,6 +1352,13 @@ videoSubscribeBtn?.addEventListener('click', () => {
   subscribeSelectedVideo().catch((err) => {
     console.error(err)
     updateStatus('video subscribe failed', false)
+  })
+})
+
+audioSubscribeBtn?.addEventListener('click', () => {
+  subscribeSelectedAudio().catch((err) => {
+    console.error(err)
+    updateStatus('audio subscribe failed', false)
   })
 })
 

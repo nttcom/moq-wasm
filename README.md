@@ -50,7 +50,7 @@ Supported version: draft-ietf-moq-transport-14
 ### moqt-client-onvif
 
 - Client for IP cameras over RTSP/ONVIF (Raspberry Pi and Mac)
-- Includes `moqt-onvif-client` to bridge RTSP video + ONVIF commands over MoQ
+- Includes `moqt-onvif-client` to bridge RTSP video/audio + ONVIF commands over MoQ
 
 ## How to run
 

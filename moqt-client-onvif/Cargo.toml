@@ -12,8 +12,7 @@ env_logger = "0.11.6"
 eframe = "0.27"
 ffmpeg-next = "8.0.0"
 log = "0.4.22"
-moqt-client-rust = { path = "../moqt-client-rust" }
-moqt-core = { path = "../moqt-core" }
+moqt = { path = "../moqt" }
 media-streaming-format = { path = "../media-streaming-format" }
 packages = { path = "../packages" }
 rand = "0.8.5"
@@ -25,4 +24,4 @@ sha1 = "0.10.6"
 strum = { version = "0.26.3", features = ["derive"] }
 time = { version = "0.3.36", features = ["formatting", "macros"] }
 tokio = { version = "1.45.0", features = ["macros", "rt-multi-thread", "sync", "io-util"] }
-wtransport = "0.6.0"
+url = "2.5.7"
