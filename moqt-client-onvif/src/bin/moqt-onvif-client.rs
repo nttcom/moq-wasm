@@ -1,34 +1,31 @@
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose, Engine as _};
-use bytes::BytesMut;
+use bytes::Bytes;
 use clap::Parser;
 use media_streaming_format::{
     Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole,
+};
+use moqt::{
+    ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
+    ObjectDatagramPayload, PublishedResource, Session, SessionEvent, SubgroupId, SubgroupObject,
+    SubgroupObjectSender, SubscribeOption, WEBTRANSPORT,
 };
 use moqt_client_onvif::{
     app_config, cli, onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker, rtsp_decoder,
     rtsp_frame::EncodedPacket, soap_client,
 };
-use moqt_client_rust::{
-    datagram_io::DatagramEvent, loc::loc_header_to_extension_headers, publisher::MoqtPublisher,
-};
-use moqt_core::messages::{
-    control_messages::subscribe::FilterType,
-    data_streams::{object_status::ObjectStatus, subgroup_stream, DataStreams},
-};
 use packages::loc::{CaptureTimestamp, LocHeader, LocHeaderExtension, VideoConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::Write;
+use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
-use wtransport::stream::SendStream;
+use url::Url;
 
-const MOQ_DRAFT_10: u32 = 0xff00000a;
-const SUBGROUP_ID: u64 = 0;
+const LOC_HEADER_SENTINEL: &[u8] = b"loc:";
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Bridge ONVIF PTZ and RTSP video over MoQ")]
@@ -63,22 +60,6 @@ struct MoqtArgs {
     /// Track name for ONVIF commands
     #[arg(long, default_value = "command")]
     command_track: String,
-
-    /// Authorization info used for announce/subscribe
-    #[arg(long, default_value = "secret")]
-    auth_info: String,
-
-    /// Max subscribe ID to advertise
-    #[arg(long, default_value_t = 100)]
-    max_subscribe_id: u64,
-
-    /// Subscribe ID for command track
-    #[arg(long, default_value_t = 0)]
-    command_subscribe_id: u64,
-
-    /// Track alias for command track
-    #[arg(long, default_value_t = 0)]
-    command_track_alias: u64,
 
     /// Subscriber priority for command track
     #[arg(long, default_value_t = 0)]
@@ -132,52 +113,54 @@ async fn main() -> Result<()> {
     let expected_tracks = build_expected_tracks(&catalog_track, &profile_tracks);
 
     let wt_connect_started = Instant::now();
-    let mut publisher =
-        MoqtPublisher::connect_with_options(&args.moqt_url, args.insecure_skip_tls_verify)
-            .await
-            .context("connect moqt publisher")?;
+    let session = connect_session(&args.moqt_url, args.insecure_skip_tls_verify)
+        .await
+        .context("connect moqt session")?;
+    let publisher = session.publisher();
     log::info!(
         "WebTransport connected: url={} elapsed_ms={}",
         args.moqt_url,
         wt_connect_started.elapsed().as_millis()
     );
     publisher
-        .setup(vec![MOQ_DRAFT_10], args.max_subscribe_id)
+        .publish_namespace(publish_namespace.join("/"))
         .await
-        .context("publisher setup")?;
-    publisher
-        .announce(&publish_namespace, args.auth_info.clone())
-        .await
-        .context("publisher announce")?;
+        .context("publisher publish_namespace")?;
 
     let mut catalog_state = CatalogUpdateState::new();
-    let (selected_profile, video_alias) = wait_for_video_selection(
-        &mut publisher,
-        &publish_namespace,
-        &catalog_track,
-        &expected_tracks,
-        &profile_tracks,
-        args.publisher_priority,
-        &mut catalog_state,
-    )
-    .await
-    .context("wait for video subscribe")?;
+    let selection_context = VideoSelectionContext {
+        session: session.as_ref(),
+        publisher: &publisher,
+        namespace: &publish_namespace,
+        catalog_track: &catalog_track,
+        expected_tracks: &expected_tracks,
+        profile_tracks: &profile_tracks,
+        publisher_priority: args.publisher_priority,
+    };
+    let (selected_profile, video_publication) =
+        wait_for_video_selection(selection_context, &mut catalog_state)
+            .await
+            .context("wait for video subscribe")?;
 
-    publisher
+    let mut command_subscriber = session.subscriber();
+    let command_subscription = command_subscriber
         .subscribe(
-            args.command_subscribe_id,
-            args.command_track_alias,
-            subscribe_namespace.clone(),
+            subscribe_namespace.join("/"),
             args.command_track.clone(),
-            args.subscriber_priority,
-            FilterType::LatestGroup,
-            None,
-            None,
-            None,
-            args.auth_info.clone(),
+            SubscribeOption {
+                subscriber_priority: args.subscriber_priority,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::NextGroupStart,
+            },
         )
         .await
         .context("subscribe command track")?;
+    spawn_command_receiver(
+        command_subscriber,
+        command_subscription,
+        command_sender.clone(),
+    );
 
     let (encoded_tx, encoded_rx) = mpsc::channel(16);
     let (rtsp_err_tx, rtsp_err_rx) = std_mpsc::channel();
@@ -207,9 +190,8 @@ async fn main() -> Result<()> {
     catalog_state.selected_track = Some(selected_profile.track_name.clone());
     run_moqt_bridge(BridgeContext {
         publisher,
-        track_alias: video_alias,
+        publication: video_publication,
         rx: encoded_rx,
-        command_sender,
         publisher_priority: args.publisher_priority,
         dump_keyframe: args.dump_keyframe,
         publish_namespace,
@@ -222,10 +204,9 @@ async fn main() -> Result<()> {
 }
 
 struct BridgeContext {
-    publisher: MoqtPublisher,
-    track_alias: u64,
+    publisher: moqt::Publisher<WEBTRANSPORT>,
+    publication: PublishedResource,
     rx: mpsc::Receiver<EncodedPacket>,
-    command_sender: std_mpsc::Sender<ptz_worker::Command>,
     publisher_priority: u8,
     dump_keyframe: Option<PathBuf>,
     publish_namespace: Vec<String>,
@@ -236,9 +217,8 @@ struct BridgeContext {
 async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
     let BridgeContext {
         publisher,
-        track_alias,
+        publication,
         mut rx,
-        command_sender,
         publisher_priority,
         dump_keyframe,
         publish_namespace,
@@ -247,56 +227,33 @@ async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
     } = ctx;
     let mut state = VideoStreamState::default();
     let mut dump_state = dump_keyframe.map(KeyframeDump::new);
-    let mut video_done = false;
-
-    loop {
-        tokio::select! {
-            maybe_packet = rx.recv(), if !video_done => {
-                match maybe_packet {
-                    Some(packet) => {
-                        maybe_send_catalog_update(
-                            &publisher,
-                            &mut catalog_state,
-                            &publish_namespace,
-                            &profile_tracks,
-                            publisher_priority,
-                            &packet,
-                        )
-                        .await?;
-                        send_video_packet(
-                            &publisher,
-                            &mut state,
-                            track_alias,
-                            publisher_priority,
-                            &mut dump_state,
-                            packet,
-                        )
-                        .await?;
-                    }
-                    None => {
-                        video_done = true;
-                    }
-                }
-            }
-            event = publisher.recv_datagram() => {
-                match event? {
-                    DatagramEvent::Object(obj) => {
-                        let payload = obj.object_payload();
-                        if let Err(err) = handle_command_payload(&payload, &command_sender) {
-                            log::warn!("command payload error: {err}");
-                        }
-                    }
-                    DatagramEvent::Status(_) => {}
-                }
-            }
-        }
+    while let Some(packet) = rx.recv().await {
+        maybe_send_catalog_update(
+            &publisher,
+            &mut catalog_state,
+            &publish_namespace,
+            &profile_tracks,
+            publisher_priority,
+            &packet,
+        )
+        .await?;
+        send_video_packet(
+            &publisher,
+            &mut state,
+            &publication,
+            publisher_priority,
+            &mut dump_state,
+            packet,
+        )
+        .await?;
     }
+    Ok(())
 }
 
 async fn send_video_packet(
-    publisher: &MoqtPublisher,
+    publisher: &moqt::Publisher<WEBTRANSPORT>,
     state: &mut VideoStreamState,
-    track_alias: u64,
+    publication: &PublishedResource,
     publisher_priority: u8,
     dump_state: &mut Option<KeyframeDump>,
     packet: EncodedPacket,
@@ -307,7 +264,7 @@ async fn send_video_packet(
     let mut pending_group_close: Option<PendingGroupClose> = None;
     if packet.is_keyframe {
         pending_group_close = state
-            .start_group(publisher, track_alias, publisher_priority)
+            .start_group(publisher, publication, publisher_priority)
             .await
             .context("send subgroup header")?;
     } else if !state.started {
@@ -322,19 +279,12 @@ async fn send_video_packet(
     let Some(stream) = state.stream.as_mut() else {
         return Ok(());
     };
-    publisher
-        .write_subgroup_object(
-            stream,
-            track_alias,
-            state.group_id,
-            SUBGROUP_ID,
-            state.object_id,
-            extension_headers,
-            None,
-            &payload,
-        )
-        .await
-        .context("send subgroup object")?;
+    let object = stream.create_object_field(
+        0,
+        extension_headers,
+        SubgroupObject::new_payload(payload.into()),
+    );
+    stream.send(object).await.context("send subgroup object")?;
     let total_delay_us = now_micros().saturating_sub(packet.ingest_wallclock_micros);
     log::info!(
         "MoQ send video packet group_id={} object_id={} timestamp_us={} total_delay_ms={} keyframe={}",
@@ -400,8 +350,8 @@ fn serialize_chunk_payload(packet: &EncodedPacket) -> Result<Vec<u8>> {
 }
 
 async fn send_catalog(
-    publisher: &MoqtPublisher,
-    track_alias: u64,
+    publisher: &moqt::Publisher<WEBTRANSPORT>,
+    publication: &PublishedResource,
     group_id: u64,
     publisher_priority: u8,
     namespace: &[String],
@@ -420,30 +370,30 @@ async fn send_catalog(
         tracks: Some(tracks),
     };
     let data = serde_json::to_vec(&catalog).context("serialize catalog json")?;
-    let mut stream = publisher.open_data_uni().await?;
-    publisher
-        .write_subgroup_header(
-            &mut stream,
-            track_alias,
-            group_id,
-            SUBGROUP_ID,
-            publisher_priority,
-        )
+    let uninit_stream = publisher
+        .create_stream(publication)
+        .next()
+        .await
+        .context("open catalog subgroup stream")?;
+    let header =
+        uninit_stream.create_header(group_id, SubgroupId::None, publisher_priority, false, false);
+    let mut stream = uninit_stream
+        .send_header(header)
         .await
         .context("send catalog subgroup header")?;
-    publisher
-        .write_subgroup_object(
-            &mut stream,
-            track_alias,
-            group_id,
-            SUBGROUP_ID,
-            0,
-            Vec::new(),
-            None,
-            &data,
-        )
+    let object = stream.create_object_field(
+        0,
+        empty_extension_headers(),
+        SubgroupObject::new_payload(data.into()),
+    );
+    stream
+        .send(object)
         .await
         .context("send catalog subgroup object")?;
+    stream
+        .close()
+        .await
+        .context("close catalog subgroup stream")?;
     if let Some(update) = codec_update {
         log::info!(
             "Catalog sent: tracks={} codec={} track={} group_id={}",
@@ -622,7 +572,7 @@ struct VideoStreamState {
     group_id: u64,
     object_id: u64,
     started: bool,
-    stream: Option<SendStream>,
+    stream: Option<SubgroupObjectSender<WEBTRANSPORT>>,
     last_timestamp_us: Option<u64>,
 }
 
@@ -630,7 +580,7 @@ struct PendingGroupClose {
     track_alias: u64,
     group_id: u64,
     end_object_id: u64,
-    stream: SendStream,
+    stream: SubgroupObjectSender<WEBTRANSPORT>,
 }
 
 impl VideoStreamState {
@@ -646,26 +596,29 @@ impl VideoStreamState {
 
     async fn start_group(
         &mut self,
-        publisher: &MoqtPublisher,
-        track_alias: u64,
+        publisher: &moqt::Publisher<WEBTRANSPORT>,
+        publication: &PublishedResource,
         publisher_priority: u8,
     ) -> Result<Option<PendingGroupClose>> {
         let mut pending_close = None;
         if self.started {
-            pending_close = self.take_pending_group_close(track_alias);
+            pending_close = self.take_pending_group_close(publication.track_alias);
             self.group_id += 1;
         }
         self.object_id = 0;
-        let mut stream = publisher.open_data_uni().await?;
-        publisher
-            .write_subgroup_header(
-                &mut stream,
-                track_alias,
-                self.group_id,
-                SUBGROUP_ID,
-                publisher_priority,
-            )
-            .await?;
+        let uninit_stream = publisher
+            .create_stream(publication)
+            .next()
+            .await
+            .context("open video subgroup stream")?;
+        let header = uninit_stream.create_header(
+            self.group_id,
+            SubgroupId::None,
+            publisher_priority,
+            false,
+            true,
+        );
+        let stream = uninit_stream.send_header(header).await?;
         self.stream = Some(stream);
         self.started = true;
         Ok(pending_close)
@@ -681,17 +634,13 @@ fn spawn_pending_group_close(pending: PendingGroupClose) {
             mut stream,
         } = pending;
         let close_result = async {
-            let object = subgroup_stream::Object::new(
-                end_object_id,
-                Vec::new(),
-                Some(ObjectStatus::EndOfGroup),
-                Vec::new(),
-            )?;
-            let mut buf = BytesMut::new();
-            object.packetize(&mut buf);
-            stream.write_all(&buf).await.context("write end of group")?;
-            stream.flush().await.context("flush end of group")?;
-            stream.finish().await.context("finish subgroup stream")?;
+            let object = stream.create_object_field(
+                0,
+                empty_extension_headers(),
+                SubgroupObject::new_status(moqt::wire::ObjectStatus::EndOfGroup as u64),
+            );
+            stream.send(object).await.context("write end of group")?;
+            stream.close().await.context("finish subgroup stream")?;
             Result::<()>::Ok(())
         }
         .await;
@@ -791,25 +740,41 @@ fn build_expected_tracks(catalog_track: &str, profile_tracks: &[ProfileTrack]) -
 }
 
 async fn wait_for_video_selection(
-    publisher: &mut MoqtPublisher,
-    namespace: &[String],
-    catalog_track: &str,
-    expected_tracks: &HashSet<String>,
-    profile_tracks: &[ProfileTrack],
-    publisher_priority: u8,
+    context: VideoSelectionContext<'_>,
     catalog_state: &mut CatalogUpdateState,
-) -> Result<(ProfileTrack, u64)> {
-    let mut pending = expected_tracks.clone();
+) -> Result<(ProfileTrack, PublishedResource)> {
+    let VideoSelectionContext {
+        session,
+        publisher,
+        namespace,
+        catalog_track,
+        expected_tracks,
+        profile_tracks,
+        publisher_priority,
+    } = context;
+    let expected_namespace = namespace.join("/");
     loop {
-        let (track_name, alias) = publisher
-            .wait_subscribe_any_and_accept(namespace, &pending)
-            .await?;
-        pending.remove(&track_name);
+        let event = session.receive_event().await?;
+        let SessionEvent::Subscribe(handler) = event else {
+            continue;
+        };
+        let track_name = handler.track_name.clone();
+        if handler.track_namespace != expected_namespace || !expected_tracks.contains(&track_name) {
+            log::warn!(
+                "Subscribe received for unsupported track: ns={} track={}",
+                handler.track_namespace,
+                track_name
+            );
+            let _ = handler.error(404, "unsupported track".to_string()).await;
+            continue;
+        }
+        let alias = handler.ok(1_000_000, ContentExists::False).await?;
+        let publication = handler.into_publication(alias);
         if track_name == catalog_track {
-            catalog_state.track_alias = Some(alias);
+            catalog_state.track_publication = Some(publication.clone());
             send_catalog(
                 publisher,
-                alias,
+                &publication,
                 catalog_state.next_group_id,
                 publisher_priority,
                 namespace,
@@ -829,14 +794,24 @@ async fn wait_for_video_selection(
                 profile.track_name,
                 profile.profile_token
             );
-            return Ok((profile.clone(), alias));
+            return Ok((profile.clone(), publication));
         }
         log::warn!("Subscribe received for unknown track: {}", track_name);
     }
 }
 
+struct VideoSelectionContext<'a> {
+    session: &'a Session<WEBTRANSPORT>,
+    publisher: &'a moqt::Publisher<WEBTRANSPORT>,
+    namespace: &'a [String],
+    catalog_track: &'a str,
+    expected_tracks: &'a HashSet<String>,
+    profile_tracks: &'a [ProfileTrack],
+    publisher_priority: u8,
+}
+
 struct CatalogUpdateState {
-    track_alias: Option<u64>,
+    track_publication: Option<PublishedResource>,
     next_group_id: u64,
     last_codec: Option<String>,
     selected_track: Option<String>,
@@ -845,7 +820,7 @@ struct CatalogUpdateState {
 impl CatalogUpdateState {
     fn new() -> Self {
         Self {
-            track_alias: None,
+            track_publication: None,
             next_group_id: 0,
             last_codec: None,
             selected_track: None,
@@ -859,14 +834,14 @@ struct CatalogCodecUpdate<'a> {
 }
 
 async fn maybe_send_catalog_update(
-    publisher: &MoqtPublisher,
+    publisher: &moqt::Publisher<WEBTRANSPORT>,
     state: &mut CatalogUpdateState,
     namespace: &[String],
     profiles: &[ProfileTrack],
     publisher_priority: u8,
     packet: &EncodedPacket,
 ) -> Result<()> {
-    let Some(alias) = state.track_alias else {
+    let Some(publication) = state.track_publication.as_ref() else {
         return Ok(());
     };
     let Some(track_name) = state.selected_track.as_deref() else {
@@ -887,7 +862,7 @@ async fn maybe_send_catalog_update(
     let update = CatalogCodecUpdate { track_name, codec };
     send_catalog(
         publisher,
-        alias,
+        publication,
         state.next_group_id,
         publisher_priority,
         namespace,
@@ -983,6 +958,94 @@ fn redact_rtsp_url(uri: &str) -> String {
         }
     }
     uri.to_string()
+}
+
+async fn connect_session(
+    url: &str,
+    insecure_skip_tls_verify: bool,
+) -> Result<std::sync::Arc<Session<WEBTRANSPORT>>> {
+    let parsed = Url::parse(url).context("parse moqt url")?;
+    if parsed.scheme() != "https" {
+        bail!("moqt-onvif-client currently supports https:// WebTransport URLs only");
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow!("missing host in moqt url"))?;
+    let port = parsed.port().unwrap_or(443);
+    let remote_address = (host, port)
+        .to_socket_addrs()
+        .context("resolve moqt address")?
+        .next()
+        .ok_or_else(|| anyhow!("failed to resolve moqt address"))?;
+    let endpoint = Endpoint::<WEBTRANSPORT>::create_client(&ClientConfig {
+        port: 0,
+        verify_certificate: !insecure_skip_tls_verify,
+    })?;
+    let connecting = endpoint
+        .connect(remote_address, host)
+        .await
+        .context("connect moqt transport")?;
+    Ok(std::sync::Arc::new(
+        connecting.await.context("establish moqt session")?,
+    ))
+}
+
+fn spawn_command_receiver(
+    mut subscriber: moqt::Subscriber<WEBTRANSPORT>,
+    subscription: moqt::Subscription,
+    command_sender: std_mpsc::Sender<ptz_worker::Command>,
+) {
+    tokio::spawn(async move {
+        let receiver = match subscriber.accept_data_receiver(&subscription).await {
+            Ok(receiver) => receiver,
+            Err(err) => {
+                log::warn!("command accept_data_receiver failed: {err}");
+                return;
+            }
+        };
+        let DataReceiver::Datagram(mut datagram) = receiver else {
+            log::warn!("command track did not produce datagram receiver");
+            return;
+        };
+        loop {
+            let object = match datagram.receive().await {
+                Ok(object) => object,
+                Err(err) => {
+                    log::warn!("command datagram receive failed: {err}");
+                    return;
+                }
+            };
+            match object.field.payload() {
+                ObjectDatagramPayload::Payload(payload) => {
+                    if let Err(err) = handle_command_payload(payload.as_ref(), &command_sender) {
+                        log::warn!("command payload error: {err}");
+                    }
+                }
+                ObjectDatagramPayload::Status(_) => {}
+            }
+        }
+    });
+}
+
+fn loc_header_to_extension_headers(header: &LocHeader) -> Result<ExtensionHeaders> {
+    let mut immutable_extensions = Vec::with_capacity(1);
+    let mut encoded = Vec::from(LOC_HEADER_SENTINEL);
+    encoded.extend_from_slice(&serde_json::to_vec(header)?);
+    immutable_extensions.push(Bytes::from(encoded));
+
+    Ok(ExtensionHeaders {
+        prior_group_id_gap: vec![],
+        prior_object_id_gap: vec![],
+        immutable_extensions,
+    })
+}
+
+fn empty_extension_headers() -> ExtensionHeaders {
+    ExtensionHeaders {
+        prior_group_id_gap: vec![],
+        prior_object_id_gap: vec![],
+        immutable_extensions: vec![],
+    }
 }
 
 fn parse_namespace(value: &str) -> Vec<String> {
