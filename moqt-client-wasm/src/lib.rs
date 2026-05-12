@@ -875,11 +875,13 @@ impl MOQTClient {
         let object_id_delta = {
             let stream_object_numbers = self.stream_object_numbers.borrow();
             match stream_object_numbers.get(&writer_key).copied() {
-                Some(previous_object_number) => object_number.checked_sub(previous_object_number),
-                None => object_number.checked_add(1),
+                Some(previous_object_number) => previous_object_number
+                    .checked_add(1)
+                    .and_then(|next_object_number| object_number.checked_sub(next_object_number)),
+                None => Some(object_number),
             }
             .ok_or_else(|| {
-                js_error("object number must be non-decreasing within a subgroup stream")
+                js_error("object number must increase monotonically within a subgroup stream")
             })?
         };
         let header = SubgroupHeader::new(

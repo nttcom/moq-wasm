@@ -22,7 +22,6 @@ const AUDIO_TRACK_NAME: &str = "audio";
 const CATALOG_TRACK_NAME: &str = "catalog";
 const CHAT_TRACK_NAME: &str = "chat";
 const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
-const JS_COMPAT_OBJECT_ID_DELTA: u64 = 1;
 
 #[derive(Clone)]
 pub struct MoqtManager {
@@ -442,7 +441,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         let send_result: Result<()> = async {
             if rotate_group && let Some(mut current_stream) = stream.take() {
                 let eog = current_stream.create_object_field(
-                    JS_COMPAT_OBJECT_ID_DELTA,
+                    0,
                     empty_extension_headers(),
                     SubgroupObject::new_status(moqt::wire::ObjectStatus::EndOfGroup as u64),
                 );
@@ -483,7 +482,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                 .as_mut()
                 .ok_or_else(|| anyhow!("subgroup stream not initialized"))?;
             let object = stream_ref.create_object_field(
-                JS_COMPAT_OBJECT_ID_DELTA,
+                0,
                 empty_extension_headers(),
                 SubgroupObject::new_payload(payload.to_vec().into()),
             );
@@ -622,7 +621,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             .await
             .context("send catalog subgroup header")?;
         let object = stream.create_object_field(
-            JS_COMPAT_OBJECT_ID_DELTA,
+            0,
             empty_extension_headers(),
             SubgroupObject::new_payload(payload.into()),
         );

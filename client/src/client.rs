@@ -266,7 +266,7 @@ impl<T: TransportProtocol> Client<T> {
                         prior_object_id_gap: vec![],
                         immutable_extensions: vec![],
                     };
-                    let obj = stream.create_object_field(id, extension_headers, data);
+                    let obj = stream.create_object_field(0, extension_headers, data);
                     match stream.send(obj).await {
                         Ok(_) => {
                             tokio::time::sleep(std::time::Duration::from_millis(1000)).await;

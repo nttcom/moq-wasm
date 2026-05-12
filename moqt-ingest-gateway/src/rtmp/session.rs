@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use anyhow::Error;
 use anyhow::Result;
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
 
@@ -199,6 +200,7 @@ pub async fn handle_event(
                             payload.as_slice(),
                         )
                         .await
+                        && !is_expected_pre_subscribe_send_error(&err)
                     {
                         eprintln!("[rtmp {label}] moqt send audio failed: {err:?}");
                     }
@@ -289,6 +291,7 @@ pub async fn handle_event(
                     if let Err(err) = moqt
                         .send_object(namespace, &track_name, frame.is_key, payload.as_slice())
                         .await
+                        && !is_expected_pre_subscribe_send_error(&err)
                     {
                         eprintln!("[rtmp {label}] moqt send video failed: {err:?}");
                     }
@@ -336,4 +339,9 @@ async fn publish_namespace_if_needed(
         .published_namespaces
         .insert(namespace_path.to_string());
     Ok(())
+}
+
+fn is_expected_pre_subscribe_send_error(err: &Error) -> bool {
+    let message = err.to_string();
+    message.contains("track not set up:") || message.contains("subscribe not completed:")
 }

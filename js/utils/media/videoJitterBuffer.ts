@@ -86,8 +86,7 @@ export class VideoJitterBuffer {
   private assignObjectId(groupId: bigint, subgroupId: bigint, objectIdDelta: bigint): bigint {
     const key = makeSubgroupKey(groupId, subgroupId)
     const previousObjectId = this.lastObjectIds.get(key)
-    const objectId =
-      previousObjectId === undefined ? (objectIdDelta > 0n ? objectIdDelta - 1n : 0n) : previousObjectId + objectIdDelta
+    const objectId = previousObjectId === undefined ? objectIdDelta : previousObjectId + objectIdDelta + 1n
     this.lastObjectIds.set(key, objectId)
     return objectId
   }
