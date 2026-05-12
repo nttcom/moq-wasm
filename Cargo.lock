@@ -3254,14 +3254,14 @@ dependencies = [
  "clap",
  "ffmpeg-next",
  "futures",
- "moqt-client-rust",
- "moqt-core",
+ "media-streaming-format",
+ "moqt",
  "rml_rtmp",
  "serde",
  "serde_json",
  "srt-tokio",
  "tokio",
- "wtransport",
+ "url",
 ]
 
 [[package]]

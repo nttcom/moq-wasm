@@ -7,22 +7,24 @@ use rcgen::{CertifiedKey, generate_simple_self_signed};
 
 const CERT_DIR: &str = "keys";
 
+fn cert_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(CERT_DIR)
+}
+
 fn get_cert_path() -> PathBuf {
-    let current = std::env::current_dir().unwrap();
-    current.join(CERT_DIR).join("cert.pem")
+    cert_dir().join("cert.pem")
 }
 
 fn get_key_path() -> PathBuf {
-    let current = std::env::current_dir().unwrap();
-    current.join(CERT_DIR).join("key.pem")
+    cert_dir().join("key.pem")
 }
 
 pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
     unsafe { std::env::set_var("RUST_BACKTRACE", "full") };
-    let current = std::env::current_dir()?;
-    tracing::info!("current path: {}", current.to_str().unwrap());
-    if !Path::new(CERT_DIR).exists() {
-        fs::create_dir_all(CERT_DIR).unwrap();
+    let cert_dir = cert_dir();
+    tracing::info!("relay cert dir: {}", cert_dir.to_string_lossy());
+    if !Path::new(&cert_dir).exists() {
+        fs::create_dir_all(&cert_dir)?;
     }
 
     if get_cert_path().exists() && get_key_path().exists() {

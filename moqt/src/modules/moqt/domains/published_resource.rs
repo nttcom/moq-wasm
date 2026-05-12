@@ -3,6 +3,7 @@ use crate::{
     modules::moqt::control_plane::control_messages::messages::publish_ok::PublishOk,
 };
 
+#[derive(Clone)]
 pub struct PublishedResource {
     pub track_namespace: String,
     pub track_name: String,
