@@ -11,7 +11,7 @@ name = "relay"
 path = "src/main.rs"
 
 [dependencies]
-moqt = {path = "../moqt"}
+moqt = { path = "../moqt" }
 tokio = { version = "1.45.0", features = ["full", "tracing"] }
 tracing = "0.1.40"
 async-trait = "0.1.74"

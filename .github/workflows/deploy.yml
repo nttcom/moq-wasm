@@ -27,10 +27,6 @@ jobs:
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      # 3. wasm-pack build
-      - name: Build wasm with wasm-pack
-        run: wasm-pack build moqt-client-wasm --target web --out-dir=js/pkg --features web_sys_unstable_apis
-
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -38,14 +34,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-        working-directory: js
+        working-directory: examples/browser
 
       - name: Build with Vite
         run: npm run build
-        working-directory: js
+        working-directory: examples/browser
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@e9c66a37f080288a11235e32cbe2dc5fb3a679cc
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: js/dist
+          publish_dir: examples/browser/dist

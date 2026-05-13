@@ -15,6 +15,11 @@ js/examples/*/node_modules/*
 js/dist/*
 js/pkg/*
 js/examples/*/dist/*
+examples/browser/node_modules/*
+examples/browser/dist/*
+examples/browser/pkg/*
+examples/browser/examples/*/node_modules/*
+examples/browser/examples/*/dist/*
 # Added by cargo
 
 /target
@@ -23,6 +28,7 @@ js/examples/*/dist/*
 .DS_Store
 
 moqt-ingest-gateway/recordings/
+bridges/live-ingest/recordings/
 
 log/*
 

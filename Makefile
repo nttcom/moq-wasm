@@ -2,31 +2,48 @@ RUSTFLAGS := --cfg tokio_unstable --remap-path-prefix=$(shell pwd)=.
 
 -include .env
 
+.PHONY: relay browser live-ingest ffmpeg-rtmp ffmpeg-rtmp-local-pub ffmpeg-rtmp-local-sub chrome onvif onvif-bridge test
+
 ONVIF_IP ?=
 ONVIF_USERNAME ?=
 ONVIF_PASSWORD ?=
 MOQT_URL ?= 
 
-# デフォルトターゲット（何も指定しない場合）
-default: relay-browser
-
-client:
-	cd js && npm run dev
-
-client-prod:
-	cd js && npm run prod
-
 relay:
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay -- --transport quic --port 4434
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
 
-relay-browser:
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay -- --transport webtransport --port 4433
+browser:
+	cd examples/browser && npm run dev
 
-ingest-gateway:
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-ingest-gateway -- \
+live-ingest:
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-bridge-live-ingest -- \
 		--rtmp-addr 0.0.0.0:1935 \
 		--srt-addr 0.0.0.0:9000 \
 		--moqt-url https://127.0.0.1:4433
+
+chrome:
+	./scripts/chrome_mac.sh
+
+onvif:
+	@if [ -z "$(ONVIF_IP)" ] || [ -z "$(ONVIF_USERNAME)" ] || [ -z "$(ONVIF_PASSWORD)" ]; then \
+		echo "ONVIF_IP/ONVIF_USERNAME/ONVIF_PASSWORD are required (set in .env or environment)"; \
+		exit 1; \
+	fi
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-bridge-onvif --bin moqt-onvif-client -- \
+		--ip $(ONVIF_IP) \
+		--username $(ONVIF_USERNAME) \
+		--password $(ONVIF_PASSWORD) \
+		--moqt-url $(MOQT_URL) \
+		--dump-keyframe \
+		--payload-format avcc \
+		--insecure-skip-tls-verify
+
+
+
+test:
+	cargo test
+
+
 
 ffmpeg-rtmp:
 	ffmpeg -re \
@@ -51,34 +68,12 @@ ffmpeg-rtmp-local-sub:
 	ffmpeg -listen 1 -i rtmp://0.0.0.0:1936/live/monitor -c copy -f matroska - \
 	| ffplay -fflags +nobuffer -flags low_delay -
 
-chrome:
-	./scripts/chrome_mac.sh
-
-onvif:
+onvif-controller:
 	@if [ -z "$(ONVIF_IP)" ] || [ -z "$(ONVIF_USERNAME)" ] || [ -z "$(ONVIF_PASSWORD)" ]; then \
 		echo "ONVIF_IP/ONVIF_USERNAME/ONVIF_PASSWORD are required (set in .env or environment)"; \
 		exit 1; \
 	fi
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-client-onvif --bin moqt-client-onvif -- \
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-bridge-onvif --bin moqt-bridge-onvif -- \
 		--ip $(ONVIF_IP) \
 		--username $(ONVIF_USERNAME) \
 		--password $(ONVIF_PASSWORD)
-
-onvif-moq:
-	@if [ -z "$(ONVIF_IP)" ] || [ -z "$(ONVIF_USERNAME)" ] || [ -z "$(ONVIF_PASSWORD)" ]; then \
-		echo "ONVIF_IP/ONVIF_USERNAME/ONVIF_PASSWORD are required (set in .env or environment)"; \
-		exit 1; \
-	fi
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-client-onvif --bin moqt-onvif-client -- \
-		--ip $(ONVIF_IP) \
-		--username $(ONVIF_USERNAME) \
-		--password $(ONVIF_PASSWORD) \
-		--moqt-url $(MOQT_URL) \
-		--dump-keyframe \
-		--payload-format avcc \
-		--insecure-skip-tls-verify
-
-
-
-test:
-	cargo test
