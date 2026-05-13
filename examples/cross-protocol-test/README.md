@@ -1,35 +1,36 @@
 # Cross-Protocol Test
 
-QUIC と WebTransport を跨いだ映像の Pub/Sub が動作することを手動で確認するためのアプリケーション。
+This application is for manually verifying video Pub/Sub across QUIC and WebTransport.
 
-## 構成
+## Architecture
 
 ```
                               [Relay]
                           (dual protocol)
 [QUIC Publisher]           port 4433               [Browser Subscriber]
- Rust ネイティブ            (QUIC + WT)             moqtail (WASM) で接続
- カメラ映像                      ↓                   fMP4 を MSE で再生
-   ↓                       両プロトコル間で
- ffmpeg (子プロセス)        データをリレー           [QUIC Subscriber]
-   ↓                                                 Rust ネイティブ
- fMP4 → MoQT 送信                                    fMP4 を stdout に出力
+ Rust native               (QUIC + WT)             moqtail (WASM) connection
+ Camera video                    ↓                 fMP4 playback with MSE
+   ↓                       Relays data across
+ ffmpeg (child process)    both protocols           [QUIC Subscriber]
+   ↓                                                 Rust native
+ fMP4 -> MoQT publishing                             Writes fMP4 to stdout
 ```
 
-QUIC → QUIC、および QUIC → WebTransport の両方で検証する。
+This verifies both QUIC -> QUIC and QUIC -> WebTransport.
 
-## データフォーマット
+## Data Format
 
-- コンテナ: fMP4 (fragmented MP4)
-- 映像コーデック: H.264 (yuv420p, MSE 互換)
-- 音声: なし（映像のみ）
+- Container: fMP4 (fragmented MP4)
+- Video codec: H.264 (yuv420p, MSE compatible)
+- Audio: none (video only)
 
-### MoQT データモデルへのマッピング
+### Mapping to the MoQT Data Model
 
-> **注意**: この実装は MoQT のカタログ仕様 (draft-ietf-moq-catalogformat) に準拠していない。
-> 標準的な CMAF over MoQT では、init segment はカタログの `initData` フィールドで配信するが、
-> この実装ではカタログを使用せず、各 Group の Object 0 に init segment を独自にマッピングしている。
-> あくまでクロスプロトコル中継の動作検証を目的とした簡易的な実装である。
+> **Note**: This implementation does not conform to the MoQT catalog specification
+> (draft-ietf-moq-catalogformat). In standard CMAF over MoQT, the init segment is
+> delivered through the catalog `initData` field. This implementation does not use
+> catalogs and instead maps the init segment to Object 0 in each Group. It is a
+> simplified implementation for validating cross-protocol relay behavior.
 
 ```
 Track: video
@@ -39,35 +40,35 @@ Track: video
       Object 1: media segment (moof+mdat)
 ```
 
-- 1 Group = 1 Subgroup = 1 GoP（1 秒間隔）
-- Object 0 に init segment (ftyp+moov) を毎回送る（途中参加対応）
-- Object 1 に media segment (moof+mdat) を送る
+- 1 Group = 1 Subgroup = 1 GoP (1-second interval)
+- Object 0 sends the init segment (ftyp+moov) every time to support late joiners
+- Object 1 sends the media segment (moof+mdat)
 
-## 前提条件
+## Prerequisites
 
-- macOS（avfoundation によるカメラキャプチャ）
-- ffmpeg / ffplay がインストール済み
-- Node.js（browser-subscriber 用）
-- Relay サーバーが dual protocol (QUIC + WebTransport) で起動できること
+- macOS (camera capture via avfoundation)
+- ffmpeg / ffplay installed
+- Node.js (for the browser subscriber)
+- Relay server available in dual-protocol mode (QUIC + WebTransport)
 
-## 使い方
+## Usage
 
-### 1. Relay を起動
+### 1. Start the Relay
 
 ```sh
 cargo run -p relay
 ```
 
-### 2. Publisher を起動
+### 2. Start the Publisher
 
 ```sh
 cargo run -p quic-publisher
 ```
 
-ログに `using namespace namespace="live-XXXX"` と表示される。
-Publisher は subscriber が接続するまで待機し、接続後に ffmpeg を起動して映像送信を開始する。
+The log prints `using namespace namespace="live-XXXX"`.
+The publisher waits for a subscriber, then starts ffmpeg and begins sending video.
 
-### 3a. Browser Subscriber（推奨）
+### 3a. Browser Subscriber (Recommended)
 
 ```sh
 cd examples/cross-protocol-test/browser-subscriber
@@ -75,11 +76,11 @@ npm install
 npm run dev
 ```
 
-ブラウザで http://localhost:5173/ を開き、namespace を入力して Subscribe ボタンを押す。
+Open http://localhost:5173/ in a browser, enter the namespace, and press the Subscribe button.
 
 ### 3b. QUIC Subscriber
 
-ffplay にパイプしてリアルタイム再生:
+Pipe to ffplay for real-time playback:
 
 ```sh
 cargo run -p quic-subscriber -- <namespace> video 2>/dev/null | ffplay -
@@ -87,12 +88,12 @@ cargo run -p quic-subscriber -- <namespace> video 2>/dev/null | ffplay -
 
 ## QUIC Publisher
 
-ffmpeg を子プロセスとして起動し、カメラキャプチャ・エンコード・fMP4 muxing を委譲する。
-Rust 側は ffmpeg の stdout から fMP4 バイト列を読み、box 単位でパースして MoQT で送信する。
+The publisher starts ffmpeg as a child process and delegates camera capture, encoding, and fMP4 muxing to it.
+The Rust side reads fMP4 bytes from ffmpeg stdout, parses them box by box, and sends them over MoQT.
 
-subscriber が接続するまで ffmpeg は起動しない。これにより不要なバッファリングを防ぐ。
+ffmpeg is not started until a subscriber connects. This prevents unnecessary buffering.
 
-### ffmpeg コマンド
+### ffmpeg Command
 
 ```sh
 ffmpeg \
@@ -102,57 +103,57 @@ ffmpeg \
   pipe:1
 ```
 
-- `-pix_fmt yuv420p`: MSE が対応するピクセルフォーマット
-- `-g 30`: 30fps で 1 秒ごとのキーフレーム
-- `default_base_moof`: MSE が要求する movie-fragment-relative-addressing
+- `-pix_fmt yuv420p`: pixel format supported by MSE
+- `-g 30`: keyframe every second at 30 fps
+- `default_base_moof`: movie-fragment-relative addressing required by MSE
 
-### 処理フロー
+### Processing Flow
 
-1. Relay に QUIC で接続し namespace を publish
-2. subscriber の接続を待つ
-3. subscriber が来たら ffmpeg を子プロセスで起動
-4. stdout から fMP4 の box を読み出す（先頭 8 バイト: 4 バイト size + 4 バイト type）
-5. `ftyp` + `moov` box → init segment として保持
-6. `moof` + `mdat` box のペア → media segment として MoQT Object に詰めて送信
+1. Connect to the Relay over QUIC and publish the namespace
+2. Wait for a subscriber connection
+3. Start ffmpeg as a child process when a subscriber connects
+4. Read fMP4 boxes from stdout (first 8 bytes: 4-byte size + 4-byte type)
+5. Keep `ftyp` + `moov` boxes as the init segment
+6. Pack each `moof` + `mdat` pair into a MoQT Object as a media segment and send it
 
 ## Browser Subscriber
 
-moqtail (WASM) を使ったブラウザアプリ。WebTransport で Relay に接続し、受信した fMP4 を MSE (Media Source Extensions) でリアルタイム再生する。
+Browser application using moqtail (WASM). It connects to the Relay with WebTransport and plays received fMP4 in real time using MSE (Media Source Extensions).
 
-### 処理フロー
+### Processing Flow
 
-1. moqtail で Relay (port 4433) に WebTransport 接続
-2. MoQT セッション確立 (SETUP)
-3. Subscribe（namespace と track name を UI から指定）
-4. init segment から avcC を解析してコーデック文字列を自動検出
-5. MSE の MediaSource + SourceBuffer を初期化
-6. 受信した Object からデータを取り出す:
-   - Object 0 (init segment): 初回のみ SourceBuffer に追加
-   - Object 1 (media segment): SourceBuffer に追加
-7. バッファが 2 秒以上溜まると自動で live edge にシーク
+1. Connect to the Relay (port 4433) with WebTransport via moqtail
+2. Establish the MoQT session (SETUP)
+3. Subscribe using the namespace and track name from the UI
+4. Parse avcC from the init segment and automatically detect the codec string
+5. Initialize MSE MediaSource and SourceBuffer
+6. Extract data from received Objects:
+   - Object 0 (init segment): append to SourceBuffer only once
+   - Object 1 (media segment): append to SourceBuffer
+7. Seek automatically to the live edge when more than 2 seconds of data is buffered
 
-### 技術的な注意点
+### Technical Notes
 
-- relay の自己署名証明書のハッシュを vite ビルド時に注入し、WebTransport の `serverCertificateHashes` で指定
-- relay の証明書を再生成した場合は vite の再起動が必要
+- The relay self-signed certificate hash is injected at Vite build time and passed through WebTransport `serverCertificateHashes`
+- Restart Vite if the relay certificate is regenerated
 
 ## QUIC Subscriber
 
-Rust ネイティブ CLI として実装。QUIC で Relay に接続し、受信した fMP4 を stdout に書き出す。
-ffplay にパイプしてリアルタイム再生、またはファイルに保存して確認する用途向け。
+Rust native CLI. It connects to the Relay over QUIC and writes received fMP4 to stdout.
+It can be piped to ffplay for real-time playback or saved to a file for inspection.
 
-### 処理フロー
+### Processing Flow
 
-1. QUIC で Relay (port 4433) に接続
-2. MoQT セッション確立 (SETUP)
-3. Subscribe（namespace と track_name をコマンドライン引数で指定）
-4. 受信した Object からデータを取り出す:
-   - Object 0 (init segment): 初回のみ stdout に書き出す（2 回目以降はスキップ）
-   - Object 1 (media segment): そのまま stdout に書き出す
+1. Connect to the Relay (port 4433) over QUIC
+2. Establish the MoQT session (SETUP)
+3. Subscribe using the namespace and track name from command-line arguments
+4. Extract data from received Objects:
+   - Object 0 (init segment): write to stdout only once; skip later occurrences
+   - Object 1 (media segment): write directly to stdout
 
-### 設計上の注意点
+### Design Notes
 
-- tracing の出力先は stderr（stdout は fMP4 データ用）
-- init segment は初回 group でのみ書き出す。毎回書き出すと fMP4 ストリームとして壊れる（duplicated MOOV Atom）
-- 証明書検証はスキップしている（`verify_certificate: false`）
-- `ffplay -` にパイプしてリアルタイム再生が可能
+- tracing output goes to stderr; stdout is reserved for fMP4 data
+- The init segment is written only for the first group. Writing it every time breaks the fMP4 stream with a duplicated MOOV atom
+- Certificate verification is skipped (`verify_certificate: false`)
+- Pipe to `ffplay -` for real-time playback

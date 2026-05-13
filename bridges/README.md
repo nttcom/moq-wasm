@@ -1,6 +1,6 @@
 # bridges
 
-外部入力や外部デバイスを MoQT に接続する bridge 群です。
+Bridges for connecting external inputs and devices to MoQT.
 
 - `onvif/`: ONVIF/RTSP camera bridge
 - `live-ingest/`: RTMP/SRT live ingest bridge

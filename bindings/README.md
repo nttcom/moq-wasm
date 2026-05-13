@@ -1,5 +1,5 @@
 # bindings
 
-`moqt` を Rust 以外の実行環境から使うための binding です。
+Bindings for using `moqt` from non-Rust runtimes.
 
-- `wasm/`: browser examples から使う WASM binding
+- `wasm/`: WASM bindings used by the browser examples

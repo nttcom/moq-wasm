@@ -1,10 +1,10 @@
-## 起動
+## Run
 
 ```bash
 make live-ingest
 ```
 
-## ffmpeg から RTMP 配信
+## Publish RTMP From ffmpeg
 
 ```bash
 ffmpeg -loglevel info -re \
@@ -22,13 +22,13 @@ ffmpeg -re \
   -f flv rtmp://localhost:1935/live/test
 ```
 
-### ffplay での再生
+### Playback With ffplay
 
 ```bash
 ffplay recordings/live_test.flv
 ```
 
-### ffmpeg から SRT 配信
+### Publish SRT From ffmpeg
 
 ```bash
 ffmpeg -re \

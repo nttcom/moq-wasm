@@ -1,10 +1,10 @@
 # moqt
 
-MoQT の draft-14 protocol implementation です。
+MoQT draft-14 protocol implementation.
 
-- `src/`: wire / codec / session 実装
+- `src/`: wire format, codec, and session implementation
 
-browser examples から使う WASM binding は `bindings/wasm` にあります。
+The WASM bindings used by the browser examples are in `bindings/wasm`.
 
 ```shell
 npm --prefix examples/browser run wasm

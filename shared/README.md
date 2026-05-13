@@ -1,6 +1,6 @@
 # shared
 
-複数の crate / bridge / browser examples から使う共有型です。
+Shared types used by multiple crates, bridges, and browser examples.
 
 - `media-streaming-format/`: MSF catalog structures
-- `packages/`: LoC header などの共有型
+- `packages/`: shared types such as LoC headers

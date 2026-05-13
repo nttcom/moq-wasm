@@ -1,14 +1,14 @@
 # relay
 
-MoQT relay です。QUIC と WebTransport の両方を `4433` で受け付けます。
+MoQT relay. It accepts both QUIC and WebTransport on port `4433`.
 
-初回起動時に `relay/keys/` に自己署名証明書を生成します。
+On the first run, it generates a self-signed certificate under `relay/keys/`.
 
 ```shell
 make relay
 ```
 
-同等のコマンド:
+Equivalent command:
 
 ```shell
 cargo run -p relay

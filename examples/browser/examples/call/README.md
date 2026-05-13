@@ -1,182 +1,182 @@
 # MoQT Video Call Application
 
-MoQT (Media over QUIC Transport) を使用したビデオ通話アプリケーションです。
+Video call application using MoQT (Media over QUIC Transport).
 
-## 概要
+## Overview
 
-このアプリケーションは、draft-ietf-moq-transport-14 に準拠した MoQT プロトコルを使用して、リアルタイムのビデオ通話機能を提供します。
+This application provides real-time video calling using the MoQT protocol defined by draft-ietf-moq-transport-14.
 
-### 主な機能
+### Main Features
 
-- **Room & User 管理**: Room Name と User Name を入力してルームに参加
-- **Relay 選択**: 127.0.0.1 かドメインの MoQT relay を選択
-- **Catalog 経由購読**: `catalog` track から video/audio track を解決して購読
-- **動的 Catalog 構成**: 初期Catalogは空。camera/mic/screenshare を ON にしたとき未登録なら初期track群を追加し、OFFでは自動削除しない
-- **Catalog プロファイル**: camera は 1080p/720p/480p、audio は 128/64/32kbps、screenshare は 1080p/720p/480p
-- **参加者グリッド表示**: ルーム内の他の参加者を一覧表示
-- **選択的購読**: `Catalog Subscribe` 後に video/audio を個別選択し、`Subscribe Video` / `Subscribe Audio` で個別購読
-- **メディア配信**: カメラ、マイク、画面共有を選択して配信
-- **エンコード設定**: H.264 High@5.0 (avc1.640032) を含むコーデックを選択可能
-- **設定モーダル分離**: `Device` と `Catalog` のボタンを分け、`Select Devices` モーダル（device/getUserMedia）と `Catalog Details` モーダル（track詳細）を独立表示
-- **Catalog Track 編集**: `Catalog Details` から Track 情報を複数追加・削除・編集（`Video / Screenshare / Audio` のグループ表示、codec/bitrate/resolution/channel はプリセット選択）
-- **Track単位キーフレーム設定**: Video/Screenshare の各Trackで `keyframeInterval` を個別設定可能
-- **Catalog詳細表示**: `Catalogs` モーダルの Track 一覧で codec/bitrate/resolution/samplerate/channel/live を表示
-- **デバッグログ最適化**: subscriber/decoder のログを初回受信・設定変更・警告中心に絞り、object単位の大量ログを抑制
-- **AV1初期化修正**: video decoder 初期化時に Catalog の codec を優先し、AV1 track 購読時に `avc1` へ誤フォールバックしない
-- **Decoder初期化方針**: Catalog情報を初回decoder初期化に固定利用し、decode中の動的reinitializeと既定codecフォールバックを行わない
-- **独立エンコード解決**: Catalog からのエンコード設定解決は `camera` と `screenshare` を別々に扱い、片方のtrack設定がもう片方へ混入しない
-- **購読時codec適用**: Subscriber は選択した Catalog track の codec を decoder 初期化に反映し、screenshare 単独購読時も正しい codec でデコードする
-- **購読時profile反映**: Publisher は incoming SUBSCRIBE の track 名に対応する Catalog profile を source の encoder 設定へ反映し、選択 bitrate/profile で送信する
-- **Track単位Encoder**: Publisher は camera/screen/audio の各 Catalog track ごとに encoder worker を分離し、track 単位の設定（codec/bitrate 等）で送信する
-- **保守性改善**: Subscriber の Catalog 購読UIは role 定義ベース（video/screenshare/audio）で共通描画し、Hook 側の Catalog add/remove も source 別の共通更新処理に統一
-- **音声Stream更新モード**: Catalog Details で Audio 各Trackごとに `単一Stream` または `N秒ごとのgroup更新` を選択可能（デフォルトは 1 秒更新）
-- **音声groupローテーション安定化**: group切替時に EndOfGroup を送信し、WASM 側で該当 subgroup stream writer を close/remove して stream 枯渇を防止
-- **ユーザー別Statsモーダル**: 各リモートユーザーの Jitter 設定ボタン横に可視化ボタンを配置し、押下時に大きなモーダルで bitrate / latency / keyframe interval などのグラフを表示
-- **Videoオーバーレイ整理**: bitrate などの統計テキストを Video タグ上から除去し、統計表示をユーザー別 Stats モーダルへ集約
-- **Rendering Rate 算出改善**: rendering latency の逆数ではなく、decoder からの rendering イベント間隔ベースで fps を算出
-- **遅延可視化追加**: Stats に受信遅延 / 再生遅延 (ms) の現在値と時系列グラフを追加
-- **遅延タイムスタンプ統一**: chunk 独自 `sentAt` は廃止し、LoC `captureTimestamp`（encode 直前に採取した `performance.now()` 基準時刻）を送受信遅延/バッファ遅延計測に利用
-- **遅延ドリフト補正**: audio/video encoder は captureTimestamp を FIFO キューではなく入力 chunk の timestamp 対応で関連付け、長時間運用時に latency が単調増加する誤計測を防止
-- **Audio再生段キュー可視化**: Subscriber の audio 再生直前（MediaStreamTrackGenerator write 待ち）キュー時間を `Audio Playout Queue` グラフで可視化
-- **Audio再生段キュー目盛り**: `Audio Playout Queue` グラフのY軸目盛りは 10ms 刻みで表示
-- **再購読時Audioリセット**: `UNSUBSCRIBE` 時に remote audio stream を明示的に閉じ、`SUBSCRIBE` 時に audio 要素を再初期化して再生状態の持ち越しを抑制
-- **bitrate目盛り追加**: Video/ScreenShare bitrate グラフは 250kbps 刻みで、実データに応じて目盛り上限を自動調整（2000kbps固定を廃止）
-- **Audio bitrate目盛り最適化**: Audio bitrate グラフは 30 / 60 / 90 / 120 / 160 / 200 kbps の固定目盛り線を表示
-- **fps/遅延目盛り追加**: Video frame rate/s グラフは 10fps 刻み、Latency グラフは 100ms 刻みの固定目盛り線を表示
-- **Statsラベル整理**: `Audio Rendering Rate (fps)` グラフは削除し、`Rendering Latency (ms)` は `E2E Latency (ms)` 表記に変更
-- **Latencyラベル更新**: `Receive Latency` は `Network Latency` に変更し、Latency系タイトルの `(ms)` 表記を省略
-- **Latencyグラフ統合**: Video/Audio それぞれで `Network` と `E2E` を1グラフに統合し、凡例ラベルと半透明の塗り領域で識別
-- **Keyframe Interval可視化**: Stats に `Video / ScreenShare Keyframe Interval (frames)` グラフを追加し、受信 Chunk の `type`（`key`）から実測した間隔を時系列表示
-- **Keyframe目盛り可変化**: Keyframe Interval グラフは目盛り本数が増えすぎないように、値レンジに応じて目盛り間隔を自動拡大
-- **Catalog拡張整理**: `keyframeInterval` / `audioStreamUpdateMode` / `audioStreamUpdateIntervalSeconds` は Catalog には載せず、送信側ローカルの encoder 制御設定として扱う
-- **Stats線幅調整**: Stats グラフの折れ線を細くして、重なり時の視認性を改善
-- **チャットサイドバースクロール対応**: Chat サイドバー全体を縦スクロール可能にし、長い会話でも操作可能
-- **Stats表示簡素化**: Stats の瞬間値カード/最新値テキストを廃止し、グラフ表示に集約
-- **購読ボタン配置改善**: Track選択と `Subscribe/Unsubscribe` は横幅に応じて横並び/縦並びを自動切替し、ウィンドウ縮小時のはみ出しを防止
-- **Statsグラフ視認性改善**: グラフの縦幅を拡大し、Y軸の上余白/下余白をメトリクスごとに可変設定して見やすさを改善
-- **Stats購読連動表示**: Stats は購読中で実データがある項目のみ表示し、未購読（データなし）の項目/メンバーは非表示
-- **JitterBufferブロック可視化**: 各リモート映像の下部に Video/Audio の buffer 占有を「1ブロック=1フレーム（最大30ブロック）」で描画し、push/pop に応じてリアルタイム更新
-- **JitterBuffer右寄せ描画**: バッファ占有ブロックは左詰めではなく右詰めで色付けし、末尾側に溜まる見え方で表示
-- **Video/Audio識別アイコン**: JitterBuffer 可視化行の左側に Video / Audio アイコンを表示し、ブロック列の種別を識別しやすくする
-- **可視化トグル**: 各リモート受信コンポーネントのグリッドアイコンボタンで「受信側 JitterBuffer 可視化」の ON/OFF を個別に切替可能
-- **ローカル操作ボタン簡素化**: Camera / Screen Share / Mic の制御はテキストを廃止し、アイコンボタンのみで操作可能
+- **Room and user management**: join a room by entering a Room Name and User Name
+- **Relay selection**: choose either `127.0.0.1` or a domain-based MoQT relay
+- **Catalog-based subscription**: resolve video/audio tracks from the `catalog` track and subscribe to them
+- **Dynamic catalog composition**: the initial Catalog is empty; default tracks are added when camera, mic, or screen share is enabled, and disabling a source does not remove its tracks automatically
+- **Catalog profiles**: camera has 1080p/720p/480p profiles, audio has 128/64/32 kbps profiles, and screen share has 1080p/720p/480p profiles
+- **Participant grid**: list other participants in the room
+- **Selective subscription**: after `Catalog Subscribe`, select video/audio tracks and subscribe with `Subscribe Video` / `Subscribe Audio`
+- **Media publishing**: publish selected camera, microphone, and screen share streams
+- **Encoding settings**: choose codecs including H.264 High@5.0 (`avc1.640032`)
+- **Separated settings modals**: `Device` and `Catalog` buttons open separate `Select Devices` and `Catalog Details` modals
+- **Catalog track editing**: add, delete, and edit tracks from `Catalog Details`; tracks are grouped by `Video / Screenshare / Audio`, and codec/bitrate/resolution/channel values are selected from presets
+- **Per-track keyframe settings**: configure `keyframeInterval` independently for each video and screen share track
+- **Catalog detail display**: the `Catalogs` modal shows codec, bitrate, resolution, sample rate, channel, and live status for each track
+- **Optimized debug logging**: subscriber/decoder logs focus on first receive events, configuration changes, and warnings, while high-volume per-object logs are suppressed
+- **AV1 initialization fix**: video decoder initialization prefers the Catalog codec and does not incorrectly fall back to `avc1` for AV1 tracks
+- **Decoder initialization policy**: Catalog information is fixed at first decoder initialization; dynamic reinitialization during decode and default codec fallback are avoided
+- **Independent encoding resolution**: Catalog-based encoding resolution treats `camera` and `screenshare` independently so one track setting does not leak into the other
+- **Codec application on subscribe**: the subscriber applies the selected Catalog track codec to decoder initialization, including screen-share-only subscriptions
+- **Profile application on subscribe**: the publisher applies the Catalog profile matching the incoming SUBSCRIBE track name to the source encoder and sends with the selected bitrate/profile
+- **Per-track encoders**: the publisher uses separate encoder workers for each camera/screen/audio Catalog track and sends with per-track settings such as codec and bitrate
+- **Maintainability improvements**: Catalog subscription UI is rendered from role definitions (`video` / `screenshare` / `audio`), and Hook-side Catalog add/remove logic is shared per source type
+- **Audio stream update modes**: each Audio track can use either `single stream` or `group update every N seconds`; the default is 1-second updates
+- **Stable audio group rotation**: EndOfGroup is sent on group switches, and the WASM side closes/removes the relevant subgroup stream writer to avoid stream exhaustion
+- **Per-user Stats modal**: a visualization button beside each remote user's Jitter settings opens a larger modal with bitrate, latency, keyframe interval, and related graphs
+- **Video overlay cleanup**: bitrate and related stats text were removed from the video tag and consolidated into per-user Stats modals
+- **Rendering rate calculation**: fps is calculated from intervals between decoder rendering events instead of the inverse of rendering latency
+- **Latency visualization**: Stats include current values and time-series graphs for receive latency and playback latency
+- **Unified latency timestamps**: the custom chunk `sentAt` value was removed; LoC `captureTimestamp` based on `performance.now()` just before encode is used for receive and buffer latency measurements
+- **Latency drift correction**: audio/video encoders associate capture timestamps with input chunk timestamps rather than using FIFO queues, preventing monotonically increasing latency errors during long runs
+- **Audio playout queue visualization**: subscriber-side audio queue time before `MediaStreamTrackGenerator.write` is shown in the `Audio Playout Queue` graph
+- **Audio playout queue scale**: the `Audio Playout Queue` graph uses 10 ms tick intervals
+- **Audio reset on resubscribe**: remote audio streams are explicitly closed on `UNSUBSCRIBE`, and audio elements are reinitialized on `SUBSCRIBE` to avoid carrying over playback state
+- **Bitrate scale improvements**: Video/ScreenShare bitrate graphs use 250 kbps ticks and auto-adjust the upper bound from actual data instead of using a fixed 2000 kbps limit
+- **Audio bitrate scale optimization**: Audio bitrate graphs show fixed tick lines at 30 / 60 / 90 / 120 / 160 / 200 kbps
+- **FPS and latency scales**: Video frame rate graphs use 10 fps ticks, and latency graphs use 100 ms tick lines
+- **Stats label cleanup**: the `Audio Rendering Rate (fps)` graph was removed, and `Rendering Latency (ms)` was renamed to `E2E Latency (ms)`
+- **Latency label update**: `Receive Latency` was renamed to `Network Latency`, and `(ms)` was removed from latency titles
+- **Latency graph consolidation**: Video and Audio each combine `Network` and `E2E` into one graph with legend labels and translucent filled areas
+- **Keyframe interval visualization**: Stats include `Video / ScreenShare Keyframe Interval (frames)` graphs measured from received Chunk `type` (`key`)
+- **Adaptive keyframe tick intervals**: Keyframe Interval graph tick spacing increases with the value range to avoid excessive ticks
+- **Catalog extension cleanup**: `keyframeInterval`, `audioStreamUpdateMode`, and `audioStreamUpdateIntervalSeconds` are treated as local sender encoder-control settings and are not included in the Catalog
+- **Stats line width adjustment**: Stats graph lines are thinner for better readability when overlapping
+- **Scrollable chat sidebar**: the full Chat sidebar can scroll vertically so long conversations remain usable
+- **Simplified Stats display**: instantaneous value cards and latest-value text were removed, consolidating Stats into graph views
+- **Subscription button layout improvements**: track selection and `Subscribe/Unsubscribe` switch between horizontal and vertical layouts based on width to prevent overflow
+- **Stats graph readability**: graph height was increased and Y-axis top/bottom padding is adjusted per metric
+- **Stats tied to subscriptions**: Stats only show metrics with real data from active subscriptions; unsubscribed metrics and members without data are hidden
+- **JitterBuffer block visualization**: each remote video shows Video/Audio buffer occupancy below the media area, rendered as one block per frame with up to 30 blocks and real-time push/pop updates
+- **Right-aligned JitterBuffer blocks**: buffer blocks are colored from the right side to represent data accumulating near the tail
+- **Video/Audio identification icons**: the JitterBuffer visualization row shows Video / Audio icons on the left side
+- **Visualization toggle**: each remote receiver component has a grid icon button to toggle receiver-side JitterBuffer visualization independently
+- **Simplified local controls**: Camera, Screen Share, and Mic controls use icon-only buttons
 
-## MoQT プロトコルフロー
+## MoQT Protocol Flow
 
-### TrackName Space 構造
+### Track Namespace Structure
 
-- **TrackName Space**: `/{RoomName}/{UserName}`
-- **Catalog TrackName**: `catalog`
-- **Camera TrackName**: `camera_1080p`, `camera_720p`, `camera_480p`
-- **Screenshare TrackName**: `screenshare_1080p`, `screenshare_720p`, `screenshare_480p`
-- **Audio TrackName**: `audio_128kbps`, `audio_64kbps`, `audio_32kbps`
+- **Track Namespace**: `/{RoomName}/{UserName}`
+- **Catalog Track Name**: `catalog`
+- **Camera Track Names**: `camera_1080p`, `camera_720p`, `camera_480p`
+- **Screenshare Track Names**: `screenshare_1080p`, `screenshare_720p`, `screenshare_480p`
+- **Audio Track Names**: `audio_128kbps`, `audio_64kbps`, `audio_32kbps`
 
-### メッセージシーケンス
+### Message Sequence
 
-1. **接続とセットアップ**
+1. **Connection and setup**
 
-   - `CLIENT_SETUP` / `SERVER_SETUP` で relay と接続を確立
+   - Establish the connection with the relay using `CLIENT_SETUP` / `SERVER_SETUP`
 
-2. **ルーム参加**
+2. **Joining a room**
 
-   - `SUBSCRIBE_NAMESPACE` で `/{RoomName}/` prefix を購読
-   - 既存参加者と新規参加者の `PUBLISH_NAMESPACE` を受信
+   - Subscribe to the `/{RoomName}/` prefix with `SUBSCRIBE_NAMESPACE`
+   - Receive `PUBLISH_NAMESPACE` messages for existing and newly joined participants
 
-3. **メディア配信**
+3. **Media publishing**
 
-   - 初期状態では Catalog track は空
-   - カメラ ON で camera 3段、マイク ON で audio 3段、画面共有 ON で screenshare 3段を Catalog に追加
+   - The Catalog track is empty initially
+   - Enabling camera adds three camera profiles, enabling mic adds three audio profiles, and enabling screen share adds three screen share profiles to the Catalog
+   - Tracks for disabled media are not automatically removed from the Catalog because the disabled state may represent mute
+   - Tracks can still be manually removed from the Catalog Tracks screen while the source is enabled, and that setting is preserved
+   - Notify `/{RoomName}/{UserName}` with `PUBLISH_NAMESPACE`
+   - When a Catalog `SUBSCRIBE` is received, send the `catalog` object on the `trackAlias` returned by `SUBSCRIBE_OK`
+   - When the Catalog is updated, resend the Catalog object to notify track additions and deletions
+   - Audio has an update mode per track; `every N seconds` tracks advance the groupId at the configured interval and publish on a new subgroup stream
+   - Receive `SUBSCRIBE` messages from other participants
+   - Start publishing on the `trackAlias` returned by `SUBSCRIBE_OK`
+   - Send media data with `OBJECT` messages
 
-   - OFF にしたメディアの track は Catalog から自動削除しない（ミュート用途を想定）
-   - ON中でも Catalog Tracks 画面から任意のtrackを手動削除でき、その設定を維持する
-   - `PUBLISH_NAMESPACE` で `/{RoomName}/{UserName}` を通知
-   - Catalog `SUBSCRIBE` を受けたら `SUBSCRIBE_OK` で返された `trackAlias` に対して `catalog` object を返却
-   - Catalog が更新されたら Catalog object を再送し、Track 追加・削除を通知
-   - 音声はTrackごとに更新モードを持ち、`N秒ごと` のTrackは指定間隔で groupId を進めて新しい subgroup stream として配信
-   - 他の参加者から `SUBSCRIBE` を受信
-   - `SUBSCRIBE_OK` で返された `trackAlias` に紐づけて配信開始
-   - `OBJECT` メッセージでメディアデータを送信
+4. **Media receiving**
 
-4. **メディア受信**
-   - ルーム参加時には自動で SUBSCRIBE しない
-   - 参加者カードで `Catalog Subscribe` を実行し、`catalog` から track 一覧を取得
-   - Catalog の追加/削除更新も継続受信し、UI に反映
-   - video/audio の track を選択し、`Subscribe Video` / `Subscribe Audio` で個別購読を実行
-   - `OBJECT` メッセージでメディアデータを受信
+   - Joining a room does not automatically subscribe to media
+   - Run `Catalog Subscribe` from a participant card to get the track list from `catalog`
+   - Continue receiving Catalog add/delete updates and reflect them in the UI
+   - Select video/audio tracks and subscribe individually with `Subscribe Video` / `Subscribe Audio`
+   - Receive media data with `OBJECT` messages
 
-## セットアップ
+## Setup
 
-### 依存関係のインストール
+### Install Dependencies
 
 ```bash
 cd ../../
 npm install
 ```
 
-### 開発サーバーの起動
+### Start the Development Server
 
 ```bash
 npm run dev
 ```
 
-ブラウザで http://localhost:5173/examples/call/ を開いてください。
+Open http://localhost:5173/examples/call/ in a browser.
 
-### ビルド
+### Build
 
 ```bash
 npm run build
 ```
 
-## プロジェクト構造
+## Project Structure
 
 ```
 src/
 ├── components/
-│   ├── ui/               # shadcn/ui コンポーネント
+│   ├── ui/               # shadcn/ui components
 │   │   ├── button.tsx
 │   │   ├── card.tsx
 │   │   ├── input.tsx
 │   │   └── label.tsx
-│   ├── JoinRoomForm.tsx      # ルーム参加フォーム
-│   ├── CallRoom.tsx          # 通話ルームメイン画面
-│   ├── ParticipantCard.tsx   # 参加者カード
-│   └── PublishMediaPanel.tsx # メディア配信パネル
+│   ├── JoinRoomForm.tsx      # room join form
+│   ├── CallRoom.tsx          # main call room screen
+│   ├── ParticipantCard.tsx   # participant card
+│   └── PublishMediaPanel.tsx # media publishing panel
 ├── hooks/
-│   └── useLocalSession.ts    # MoQT セッション管理フック
+│   └── useLocalSession.ts    # MoQT session management hook
 ├── types/
-│   └── moqt.ts               # 型定義
+│   └── moqt.ts               # type definitions
 ├── lib/
-│   └── utils.ts              # ユーティリティ関数
-├── App.tsx                   # メインアプリケーション
-└── main.tsx                  # エントリーポイント
+│   └── utils.ts              # utility functions
+├── App.tsx                   # main application
+└── main.tsx                  # entry point
 ```
 
-## TODO: WASM統合
+## TODO: WASM Integration
 
-現在、MoQT クライアントの実装は `src/hooks/useLocalSession.ts` でスタブ化されています。
-実際の WASM モジュール (`moqt-client-wasm`) を統合するには、以下を実施してください：
+The MoQT client implementation is currently stubbed in `src/hooks/useLocalSession.ts`.
+To integrate the actual WASM module (`moqt-client-wasm`), do the following:
 
-1. WASM モジュールのビルド
+1. Build the WASM module
 
    ```bash
    cd ../../../../bindings/wasm
    wasm-pack build --target web --features web_sys_unstable_apis
    ```
 
-2. `useLocalSession.ts` 内のコメントアウトされたコードを有効化
+2. Enable the commented-out code in `useLocalSession.ts`
 
-   - `import init, { MOQTClient }` のインポート
-   - `init()` の呼び出し
-   - `MOQTClient` インスタンスの作成
+   - Import `import init, { MOQTClient }`
+   - Call `init()`
+   - Create a `MOQTClient` instance
 
-3. エンコーダー/デコーダーワーカーの実装
-   - 既存の `media/publisher` と `media/subscriber` のコードを参考に実装
+3. Implement encoder/decoder workers
+   - Use the existing `media/publisher` and `media/subscriber` code as references
 
-## 技術スタック
+## Technology Stack
 
-- **React 19**: UI フレームワーク
-- **TypeScript**: 型安全な開発
-- **Tailwind CSS**: スタイリング
-- **shadcn/ui**: UIコンポーネントライブラリ
-- **Vite**: ビルドツール
-- **MoQT (WASM)**: Media over QUIC Transport プロトコル実装
+- **React 19**: UI framework
+- **TypeScript**: type-safe development
+- **Tailwind CSS**: styling
+- **shadcn/ui**: UI component library
+- **Vite**: build tool
+- **MoQT (WASM)**: Media over QUIC Transport protocol implementation
