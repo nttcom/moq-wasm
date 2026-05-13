@@ -29,7 +29,6 @@ tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 ttl_cache = "0.5.1"
 web-transport-quinn = { version = "0.11", default-features = false, features = ["ring"] }
-wtransport = { version = "0.6.1", features = ["quinn"] }
 
 [dev-dependencies]
 rcgen = "0.14.3"

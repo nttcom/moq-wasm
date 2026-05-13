@@ -2370,12 +2370,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "httlib-huffman"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a9fcbcc408c5526c3ab80d534e5c86e7967c1fb7aa0a8c76abd1edc27deb877"
-
-[[package]]
 name = "http"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2989,7 +2983,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "moqt",
- "rcgen 0.14.8",
+ "rcgen",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3152,7 +3146,7 @@ dependencies = [
  "num_enum",
  "once_cell",
  "quinn",
- "rcgen 0.14.8",
+ "rcgen",
  "rustls-native-certs",
  "rustls-pemfile",
  "serde",
@@ -3166,7 +3160,6 @@ dependencies = [
  "ttl_cache",
  "url",
  "web-transport-quinn",
- "wtransport",
 ]
 
 [[package]]
@@ -3550,12 +3543,6 @@ checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
 dependencies = [
  "memchr",
 ]
-
-[[package]]
-name = "octets"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8311fa8ab7a57759b4ff1f851a3048d9ef0effaa0130726426b742d26d8a88e7"
 
 [[package]]
 name = "oid-registry"
@@ -4234,19 +4221,6 @@ checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 
 [[package]]
 name = "rcgen"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
-dependencies = [
- "pem",
- "ring",
- "rustls-pki-types",
- "time",
- "yasna 0.5.2",
-]
-
-[[package]]
-name = "rcgen"
 version = "0.14.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57f6d249aad744e274e682777a50283a225a32705394ee6d5fcc01efa25e4055"
@@ -4255,8 +4229,8 @@ dependencies = [
  "ring",
  "rustls-pki-types",
  "time",
- "x509-parser 0.18.1",
- "yasna 0.6.0",
+ "x509-parser",
+ "yasna",
 ]
 
 [[package]]
@@ -4350,7 +4324,7 @@ dependencies = [
  "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "rcgen 0.14.8",
+ "rcgen",
  "tokio",
  "tracing",
  "tracing-appender",
@@ -4440,7 +4414,7 @@ dependencies = [
  "hmac 0.10.1",
  "rand 0.8.6",
  "rml_amf0",
- "sha2 0.9.9",
+ "sha2",
  "thiserror 1.0.69",
 ]
 
@@ -4815,17 +4789,6 @@ dependencies = [
  "cpufeatures",
  "digest 0.9.0",
  "opaque-debug",
-]
-
-[[package]]
-name = "sha2"
-version = "0.10.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
-dependencies = [
- "cfg-if",
- "cpufeatures",
- "digest 0.10.7",
 ]
 
 [[package]]
@@ -6905,43 +6868,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
-name = "wtransport"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e5e745c8789c20095c9061d292098d4106660efe2d172efd8ae7a369fe28e3e"
-dependencies = [
- "bytes",
- "pem",
- "quinn",
- "rcgen 0.13.2",
- "rustls",
- "rustls-native-certs",
- "rustls-pemfile",
- "rustls-pki-types",
- "sha2 0.10.9",
- "socket2 0.5.10",
- "thiserror 2.0.18",
- "time",
- "tokio",
- "tracing",
- "url",
- "wtransport-proto",
- "x509-parser 0.17.0",
-]
-
-[[package]]
-name = "wtransport-proto"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a09d89a8dba201c2439d9d5eca55a0faa08909d69da50decdb5ec00be0ac504"
-dependencies = [
- "httlib-huffman",
- "octets",
- "thiserror 2.0.18",
- "url",
-]
-
-[[package]]
 name = "x11-dl"
 version = "2.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6972,23 +6898,6 @@ name = "x11rb-protocol"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
-
-[[package]]
-name = "x509-parser"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4569f339c0c402346d4a75a9e39cf8dad310e287eef1ff56d4c68e5067f53460"
-dependencies = [
- "asn1-rs",
- "data-encoding",
- "der-parser",
- "lazy_static",
- "nom",
- "oid-registry",
- "rusticata-macros",
- "thiserror 2.0.18",
- "time",
-]
 
 [[package]]
 name = "x509-parser"
@@ -7048,15 +6957,6 @@ name = "xml-rs"
 version = "0.8.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
-
-[[package]]
-name = "yasna"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
-dependencies = [
- "time",
-]
 
 [[package]]
 name = "yasna"
