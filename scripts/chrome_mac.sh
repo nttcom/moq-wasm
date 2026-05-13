@@ -7,7 +7,6 @@ REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 
 RELAY_CERT_PEM="${REPO_ROOT}/relay/keys/cert.pem"
 DEFAULT_CERT_PEM="${REPO_ROOT}/keys/cert.pem"
-LEGACY_CERT_PEM="${REPO_ROOT}/moqt-server-sample/keys/cert.pem"
 
 if [[ -n "${MOQT_CERT_PEM:-}" ]]; then
   CERT_PEM="${MOQT_CERT_PEM}"
@@ -15,14 +14,11 @@ elif [[ -f "${RELAY_CERT_PEM}" ]]; then
   CERT_PEM="${RELAY_CERT_PEM}"
 elif [[ -f "${DEFAULT_CERT_PEM}" ]]; then
   CERT_PEM="${DEFAULT_CERT_PEM}"
-elif [[ -f "${LEGACY_CERT_PEM}" ]]; then
-  CERT_PEM="${LEGACY_CERT_PEM}"
 else
   echo "certificate not found." >&2
   echo "expected one of:" >&2
   echo "  ${RELAY_CERT_PEM}" >&2
   echo "  ${DEFAULT_CERT_PEM}" >&2
-  echo "  ${LEGACY_CERT_PEM}" >&2
   echo "" >&2
   echo "run the relay once to generate keys first:" >&2
   echo "  cargo run -p relay -- --transport webtransport --port 4433" >&2

@@ -8,23 +8,7 @@ ONVIF_PASSWORD ?=
 MOQT_URL ?= 
 
 # デフォルトターゲット（何も指定しない場合）
-default: run
-
-# 実行用
-server:
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-server-sample
-
-server-trace:
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-server-sample -- --log trace
-
-server-warn:
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-server-sample -- --log warn
-
-server-release:
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-server-sample --release
-
-server-flamegraph:
-	RUSTFLAGS="$(RUSTFLAGS)" cargo flamegraph -p moqt-server-sample --release
+default: relay-browser
 
 client:
 	cd js && npm run dev

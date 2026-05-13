@@ -81,17 +81,6 @@ cargo install tokio-console
 tokio-console
 ```
 
-#### Specify the log level
-
-```shell
-make server-trace
-
-or
-
-# Default setting is `DEBUG`
-cargo run -p moqt-server-sample -- --log <Log Level>
-```
-
 ### Run browser examples
 
 ```shell
