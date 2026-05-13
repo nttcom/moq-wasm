@@ -9,13 +9,17 @@
     "dev": "npm run wasm:dev && vite",
     "build": "npm run wasm && vite build",
     "prod": "npm run wasm && vite --host",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install chromium",
+    "e2e:media": "playwright test tests/media-e2e.spec.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.14",
+    "@playwright/test": "^1.56.1",
     "@types/node": "^24.6.2",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

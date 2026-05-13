@@ -68,6 +68,10 @@ ffmpeg-rtmp-local-sub:
 	ffmpeg -listen 1 -i rtmp://0.0.0.0:1936/live/monitor -c copy -f matroska - \
 	| ffplay -fflags +nobuffer -flags low_delay -
 
+.PHONY: chrome chrome\:linux
+chrome\:linux:
+	./scripts/chrome_linux.sh
+
 onvif-controller:
 	@if [ -z "$(ONVIF_IP)" ] || [ -z "$(ONVIF_USERNAME)" ] || [ -z "$(ONVIF_PASSWORD)" ]; then \
 		echo "ONVIF_IP/ONVIF_USERNAME/ONVIF_PASSWORD are required (set in .env or environment)"; \

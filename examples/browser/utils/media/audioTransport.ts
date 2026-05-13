@@ -30,6 +30,9 @@ export async function sendAudioChunkViaMoqt({
 
   const subgroupId = 0
   transportState.ensureAudioSubgroup(subgroupId)
+  if (transportState.getAudioGroupId() < 0n) {
+    transportState.advanceAudioGroup()
+  }
 
   for (const alias of trackAliases) {
     if (transportState.shouldSendAudioHeader(alias, subgroupId)) {

@@ -2,12 +2,14 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../../pkg/moqt_client_wasm'
 import { AUTH_INFO } from './const'
 import { getFormElement } from './utils'
+import { summarizeLocHeader } from '../../../utils/media/locSummary'
 import {
-  MEDIA_DEFAULT_VIDEO_CODEC,
   extractCatalogAudioTracks,
   extractCatalogVideoTracks,
+  getResolvedMediaVideoCodec,
   type MediaCatalogTrack
 } from '../catalog'
+import { initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../common'
 
 const moqtClient = new MoqtClientWrapper()
 
@@ -41,6 +43,8 @@ let selectedVideoTrackName: string | null = null
 let selectedAudioTrackName: string | null = null
 let audioPlaybackStarted = false
 let videoPlaybackStarted = false
+let receivedVideoObjectCount = 0
+let receivedAudioObjectCount = 0
 
 function shouldBypassJitterBuffer(): boolean {
   const input = document.getElementById('bypass-jitter-buffer') as HTMLInputElement | null
@@ -75,21 +79,37 @@ function toBigUint64Array(value: string): BigUint64Array {
   return new BigUint64Array(values)
 }
 
-function parseTrackNamespace(value: string): string[] {
-  return value
-    .split('/')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
+function setCatalogTrackStatus(text: string): void {
+  setStatusText('catalog-track-status', text)
 }
 
-function setCatalogTrackStatus(text: string): void {
-  const status = document.getElementById('catalog-track-status')
-  if (!status) {
-    return
-  }
-  const normalized = text.trim()
-  status.textContent = normalized
-  status.style.display = normalized.length > 0 ? '' : 'none'
+function setConnectionStatus(text: string): void {
+  setStatusText('subscriber-connection-status', text)
+}
+
+function setSetupStatus(text: string): void {
+  setStatusText('subscriber-setup-status', text)
+}
+
+function setTrackSubscribeStatus(text: string): void {
+  setStatusText('subscriber-track-status', text)
+}
+
+function setReceiveStatus(text: string): void {
+  setStatusText('subscriber-receive-status', text)
+}
+
+function setPlaybackStatus(text: string): void {
+  setStatusText('subscriber-playback-status', text)
+}
+
+function initializeStatuses(): void {
+  setConnectionStatus('Not connected')
+  setSetupStatus('Setup not sent')
+  setCatalogTrackStatus('Catalog not loaded yet')
+  setTrackSubscribeStatus('Subscription idle')
+  setReceiveStatus('Waiting for media objects')
+  setPlaybackStatus('Playback idle')
 }
 
 function getCatalogTrackSelect(kind: 'video' | 'audio'): HTMLSelectElement | null {
@@ -124,7 +144,7 @@ function setSelectedCatalogTrack(kind: 'video' | 'audio', trackName: string | nu
   }
   const track = catalogVideoTracks.find((entry) => entry.name === trackName)
   if (trackName) {
-    videoDecoderWorker.postMessage({ type: 'catalog', codec: track?.codec ?? MEDIA_DEFAULT_VIDEO_CODEC })
+    videoDecoderWorker.postMessage({ type: 'catalog', codec: track?.codec ?? getResolvedMediaVideoCodec() })
   }
 }
 
@@ -194,7 +214,7 @@ function renderCatalogTracks(): void {
   const hasAudioTracks = renderCatalogTrackSelect('audio')
 
   if (!hasVideoTracks && !hasAudioTracks) {
-    setCatalogTrackStatus('')
+    setCatalogTrackStatus('Catalog not loaded yet')
     return
   }
   setCatalogTrackStatus(`Catalog loaded: video=${catalogVideoTracks.length}, audio=${catalogAudioTracks.length}`)
@@ -263,6 +283,7 @@ function sendSetupButtonClickHandler(): void {
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
 
     await moqtClient.sendClientSetup(versions, maxSubscribeId)
+    setSetupStatus('Setup acknowledged')
   })
 }
 
@@ -285,7 +306,7 @@ function sendCatalogSubscribeButtonClickHandler(): void {
     )
     form['catalog-track-alias'].value = catalogTrackAlias.toString()
     setupCatalogCallbacks(catalogTrackAlias)
-    setCatalogTrackStatus(`Catalog subscribed: ${catalogTrackName}`)
+    setCatalogTrackStatus(`Catalog subscribe requested: ${catalogTrackName}`)
   })
 }
 
@@ -311,7 +332,7 @@ function sendSubscribeButtonClickHandler(): void {
     const audioTrackAlias = await moqtClient.subscribe(audioSubscribeId, trackNamespace, selectedAudioTrack, AUTH_INFO)
     form['audio-track-alias'].value = audioTrackAlias.toString()
     setupClientObjectCallbacks('audio', audioTrackAlias)
-    setCatalogTrackStatus(`Subscribed video=${selectedVideoTrack}, audio=${selectedAudioTrack}`)
+    setTrackSubscribeStatus(`Track subscribe requested: video=${selectedVideoTrack}, audio=${selectedAudioTrack}`)
   })
 }
 
@@ -373,13 +394,60 @@ function setupVideoDecoderWorker() {
   }
 }
 
+function setupVideoPlaybackStatus(): void {
+  const videoElement = document.getElementById('video') as HTMLVideoElement
+  const updatePlaybackStatus = (label: string) => {
+    setPlaybackStatus(
+      `${label}: readyState=${videoElement.readyState}, currentTime=${videoElement.currentTime.toFixed(2)}`
+    )
+  }
+
+  videoElement.addEventListener('loadeddata', () => {
+    updatePlaybackStatus('Loaded data')
+  })
+  videoElement.addEventListener('playing', () => {
+    updatePlaybackStatus('Playing')
+  })
+  videoElement.addEventListener('timeupdate', () => {
+    if (videoElement.currentTime > 0) {
+      updatePlaybackStatus('Playing')
+    }
+  })
+  videoElement.addEventListener('pause', () => {
+    if (videoElement.currentTime === 0) {
+      setPlaybackStatus('Playback paused')
+    }
+  })
+}
+
 function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint): void {
   const alias = trackAlias
 
   if (type === 'audio') {
     setupAudioDecoderWorker()
     moqtClient.setOnSubgroupObjectHandler(alias, (groupId, subgroupStreamObject) => {
-      const payload = subgroupStreamObject.objectPayload
+      receivedAudioObjectCount += 1
+      setReceiveStatus(
+        `Received video objects: ${receivedVideoObjectCount}, audio objects: ${receivedAudioObjectCount}`
+      )
+      const payload = new Uint8Array(subgroupStreamObject.objectPayload)
+      const locSummary = summarizeLocHeader(subgroupStreamObject.locHeader)
+      if (locSummary.present && locSummary.extensionCount > 0) {
+        console.debug('[MediaSubscriber] LoC object (audio)', {
+          trackAlias: alias.toString(),
+          groupId,
+          objectId: subgroupStreamObject.objectId,
+          loc: locSummary
+        })
+      }
+      console.debug('[MediaSubscriber] recv audio object', {
+        groupId,
+        objectId: subgroupStreamObject.objectId,
+        payloadLength: subgroupStreamObject.objectPayloadLength,
+        payloadByteLength: payload.byteLength,
+        status: subgroupStreamObject.objectStatus,
+        loc: locSummary
+      })
       audioDecoderWorker.postMessage(
         {
           groupId,
@@ -400,7 +468,30 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
 
   setupVideoDecoderWorker()
   moqtClient.setOnSubgroupObjectHandler(alias, (groupId, subgroupStreamObject) => {
-    const payload = subgroupStreamObject.objectPayload
+    receivedVideoObjectCount += 1
+    setReceiveStatus(`Received video objects: ${receivedVideoObjectCount}, audio objects: ${receivedAudioObjectCount}`)
+    if (selectedVideoTrackName && selectedAudioTrackName) {
+      setTrackSubscribeStatus(`Subscribed video=${selectedVideoTrackName}, audio=${selectedAudioTrackName}`)
+    }
+    const payload = new Uint8Array(subgroupStreamObject.objectPayload)
+    const locSummary = summarizeLocHeader(subgroupStreamObject.locHeader)
+    if (locSummary.present && locSummary.extensionCount > 0) {
+      console.debug('[MediaSubscriber] LoC object (video)', {
+        trackAlias: alias.toString(),
+        groupId,
+        objectId: subgroupStreamObject.objectId,
+        loc: locSummary
+      })
+    }
+    console.debug('[MediaSubscriber] recv video object', {
+      groupId,
+      objectId: subgroupStreamObject.objectId,
+      payloadLength: subgroupStreamObject.objectPayloadLength,
+      payloadByteLength: payload.byteLength,
+      status: subgroupStreamObject.objectStatus,
+      loc: locSummary
+    })
+
     videoDecoderWorker.postMessage(
       {
         groupId,
@@ -420,6 +511,7 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
 
 moqtClient.setOnServerSetupHandler((serverSetup: any) => {
   console.log({ serverSetup })
+  setSetupStatus('Setup acknowledged')
 })
 
 moqtClient.setOnSubscribeResponseHandler((subscribeResponse) => {
@@ -439,7 +531,14 @@ function setupCloseButtonHandler(): void {
     selectedAudioTrackName = null
     setPlaybackObjectStatus('video', 'Waiting for objects')
     setPlaybackObjectStatus('audio', 'Waiting for objects')
+    receivedVideoObjectCount = 0
+    receivedAudioObjectCount = 0
     renderCatalogTracks()
+    setConnectionStatus('Disconnected')
+    setSetupStatus('Setup not sent')
+    setTrackSubscribeStatus('Subscription idle')
+    setReceiveStatus('Waiting for media objects')
+    setPlaybackStatus('Playback idle')
     setCatalogTrackStatus('Disconnected')
   })
 }
@@ -462,11 +561,17 @@ connectBtn.addEventListener('click', async () => {
   const url = form.url.value
 
   await moqtClient.connect(url, { sendSetup: false })
-  setCatalogTrackStatus('Connected')
+  receivedVideoObjectCount = 0
+  receivedAudioObjectCount = 0
+  setConnectionStatus(`Connected: ${url}`)
+  setReceiveStatus('Waiting for media objects')
 })
 
+initializeMediaExamplePage('subscribe-track-namespace')
+initializeStatuses()
 setupButtonHandlers()
 applyDecoderWorkerConfig()
+setupVideoPlaybackStatus()
 renderCatalogTracks()
 setPlaybackObjectStatus('video', 'Waiting for objects')
 setPlaybackObjectStatus('audio', 'Waiting for objects')

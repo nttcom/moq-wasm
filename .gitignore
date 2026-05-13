@@ -16,6 +16,7 @@ js/dist/*
 js/pkg/*
 js/examples/*/dist/*
 examples/browser/node_modules/*
+examples/browser/.vite/*
 examples/browser/dist/*
 examples/browser/pkg/*
 examples/browser/examples/*/node_modules/*
@@ -40,5 +41,6 @@ Cargo.lock
 
 **.log
 /.env
+test-results
 
 cargo-flamegraph.trace/*
