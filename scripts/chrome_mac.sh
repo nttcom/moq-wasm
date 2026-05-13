@@ -21,7 +21,7 @@ else
   echo "  ${DEFAULT_CERT_PEM}" >&2
   echo "" >&2
   echo "run the relay once to generate keys first:" >&2
-  echo "  cargo run -p relay -- --transport webtransport --port 4433" >&2
+  echo "  cargo run -p relay" >&2
   exit 1
 fi
 

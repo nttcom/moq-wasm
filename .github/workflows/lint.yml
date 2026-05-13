@@ -87,13 +87,14 @@ jobs:
         with:
           token: ${{secrets.CODECOV_TOKEN}}
           fail_ci_if_error: true
-  pretiier:
+  prettier:
     runs-on: ubuntu-latest
     container:
       image: cimg/node:21.6.2
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - name: Install Prettier
-        run: npm install ./js
+      - name: Install dependencies
+        run: npm ci
+        working-directory: examples/browser
       - name: Check code formatting
-        run: npx prettier --check "js/**/*.{js,jsx,ts,tsx,json,css,md}"
+        run: npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path examples/browser/.prettierignore
