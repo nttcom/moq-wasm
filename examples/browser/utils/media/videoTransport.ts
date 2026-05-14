@@ -1,0 +1,101 @@
+import type { MOQTClient } from '../../pkg/moqt_client_wasm'
+import { MediaTransportState } from './transportState'
+import { serializeChunk } from './chunk'
+import { buildLocHeader, bytesToBase64, arrayBufferToUint8Array, type LocHeader } from './loc'
+import { monotonicUnixMicros } from './clock'
+
+export type VideoChunkSender = (
+  trackAlias: bigint,
+  groupId: bigint,
+  subgroupId: bigint,
+  objectNumber: bigint,
+  payload: Uint8Array,
+  client: MOQTClient,
+  locHeader?: LocHeader
+) => Promise<void>
+
+export interface VideoChunkSendOptions {
+  chunk: EncodedVideoChunk
+  metadata: EncodedVideoChunkMetadata | undefined
+  captureTimestampMicros?: number
+  trackAliases: bigint[]
+  publisherPriority: number
+  client: MOQTClient
+  transportState: MediaTransportState
+  sender: VideoChunkSender
+}
+
+export async function sendVideoChunkViaMoqt({
+  chunk,
+  metadata,
+  captureTimestampMicros,
+  trackAliases,
+  publisherPriority,
+  client,
+  transportState,
+  sender
+}: VideoChunkSendOptions): Promise<void> {
+  if (!trackAliases.length) {
+    return
+  }
+
+  const subgroupId = Number((metadata as { svc?: { temporalLayerId?: number } } | undefined)?.svc?.temporalLayerId ?? 0)
+  transportState.ensureVideoSubgroup(subgroupId)
+
+  const shouldIncludeCodec = trackAliases.some((alias) => transportState.shouldSendVideoCodec(alias))
+  const decoderConfig = metadata?.decoderConfig as any
+  const configBytes = arrayBufferToUint8Array(decoderConfig?.description)
+  const includeConfig = chunk.type === 'key' || shouldIncludeCodec
+  const payload = serializeChunk(chunk, {
+    codec: typeof decoderConfig?.codec === 'string' ? decoderConfig.codec : undefined,
+    descriptionBase64: includeConfig && configBytes ? bytesToBase64(configBytes) : undefined,
+    avcFormat: typeof decoderConfig?.codec === 'string' && decoderConfig.codec.startsWith('avc') ? 'annexb' : undefined
+  })
+  const resolvedCaptureTimestampMicros =
+    typeof captureTimestampMicros === 'number' && Number.isFinite(captureTimestampMicros)
+      ? Math.round(captureTimestampMicros)
+      : monotonicUnixMicros()
+  const locHeader = buildLocHeader({
+    captureTimestampMicros: resolvedCaptureTimestampMicros,
+    videoConfig: includeConfig ? configBytes : undefined
+  })
+
+  if (chunk.type === 'key') {
+    transportState.advanceVideoGroup()
+  } else if (transportState.getVideoGroupId() < 0n) {
+    transportState.advanceVideoGroup()
+  }
+
+  if (chunk.type === 'key') {
+    for (const alias of trackAliases) {
+      for (const subgroup of transportState.listVideoSubgroups()) {
+        await client.sendSubgroupHeader(alias, transportState.getVideoGroupId(), BigInt(subgroup), publisherPriority)
+        transportState.markVideoHeaderSent(alias, subgroup)
+      }
+    }
+  } else {
+    for (const alias of trackAliases) {
+      if (!transportState.hasVideoHeaderSent(alias, subgroupId)) {
+        await client.sendSubgroupHeader(alias, transportState.getVideoGroupId(), BigInt(subgroupId), publisherPriority)
+        transportState.markVideoHeaderSent(alias, subgroupId)
+      }
+    }
+  }
+
+  for (const alias of trackAliases) {
+    await sender(
+      alias,
+      transportState.getVideoGroupId(),
+      BigInt(subgroupId),
+      transportState.getVideoObjectNumber(),
+      payload,
+      client,
+      locHeader
+    )
+    if (includeConfig && configBytes) {
+      transportState.markVideoCodecSent(alias)
+    }
+  }
+
+  transportState.incrementVideoObjectNumber()
+}

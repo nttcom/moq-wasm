@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MSF Publisher (moqtail + mediabunny)</title>
+  <style>
+    body { font-family: sans-serif; max-width: 720px; margin: 2rem auto; }
+    video { width: 640px; height: 480px; background: #000; display: block; }
+    .controls { margin: 1rem 0; display: flex; gap: 0.5rem; align-items: center; }
+    .controls label { font-size: 0.9rem; }
+    .controls input { font-family: monospace; padding: 0.3rem; width: 300px; }
+    .steps { margin: 1rem 0; display: flex; gap: 0.5rem; }
+    button:disabled { opacity: 0.5; }
+    #status { margin-top: 1rem; white-space: pre-wrap; font-family: monospace; background: #f0f0f0; padding: 1em; max-height: 400px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <h1>MSF Publisher (moqtail + mediabunny)</h1>
+  <video id="preview" autoplay muted playsinline></video>
+  <div class="controls">
+    <label for="nsInput">Namespace:</label>
+    <input id="nsInput" type="text">
+  </div>
+  <div class="steps">
+    <button id="connectBtn">1. Connect (WebTransport + SETUP)</button>
+    <button id="publishNsBtn" disabled>2. PUBLISH_NAMESPACE</button>
+    <button id="startBtn" disabled>3. Start Encoding</button>
+  </div>
+  <div id="status">Ready</div>
+  <script type="module" src="./src/publisher.ts"></script>
+</body>
+</html>

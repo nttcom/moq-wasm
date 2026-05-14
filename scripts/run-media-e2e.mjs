@@ -33,12 +33,12 @@ async function main() {
   );
   assertPathExists(
     `${jsDir}/node_modules`,
-    "js/node_modules",
+    "examples/browser/node_modules",
     "Run node scripts/setup-media-e2e.mjs first.",
   );
   assertPathExists(
     `${jsDir}/pkg/moqt_client_wasm.js`,
-    "moqt-client-wasm build output",
+    "bindings/wasm build output",
     "Run node scripts/setup-media-e2e.mjs first.",
   );
 
@@ -59,7 +59,7 @@ async function main() {
     const server = spawnProcess(
       "server",
       "cargo",
-      ["run", "-p", "moqt-server-sample", "--", "--log", "INFO"],
+      ["run", "-p", "relay"],
       {
         cwd: repoRoot,
       },
@@ -83,7 +83,7 @@ async function main() {
     childProcesses.push(server, vite);
 
     await Promise.all([
-      waitForOutput(server, /Server ready!/, "moqt-server-sample", 180_000),
+      waitForOutput(server, /Relay server started/, "relay", 180_000),
       waitForHttpOk(`${baseUrl}${mediaIndexPath}`, 120_000),
     ]);
 

@@ -1,0 +1,31 @@
+[package]
+name = "relay"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs" # これを追加
+
+[[bin]]
+name = "relay"
+path = "src/main.rs"
+
+[dependencies]
+moqt = { path = "../moqt" }
+tokio = { version = "1.45.0", features = ["full", "tracing"] }
+tracing = "0.1.40"
+async-trait = "0.1.74"
+anyhow = { version = "1.0.75", features = ["backtrace"] }
+dashmap = "6.1.0"
+rcgen = "0.14.3"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+bytes = "1"
+console-subscriber = "0.5"
+tracing-appender = "0.2.3"
+backtrace-on-stack-overflow="0.3.0"
+tracing-panic = "0.1.2"
+opentelemetry = { version = "0.31.0", features = ["trace", "logs"] }
+opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio", "logs"] }
+opentelemetry-otlp = { version = "0.31.0", features = ["grpc-tonic", "trace", "logs"] }
+opentelemetry-appender-tracing = "0.31.1"
+tracing-opentelemetry = "0.32.1"
