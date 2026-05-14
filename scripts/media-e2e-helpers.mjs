@@ -7,13 +7,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export const repoRoot = resolve(__dirname, "..");
-export const jsDir = resolve(repoRoot, "js");
+export const jsDir = resolve(repoRoot, "examples", "browser");
 export const mediaPublisherPath =
   "/moq-wasm/examples/media/publisher/index.html";
 export const mediaSubscriberPath =
   "/moq-wasm/examples/media/subscriber/index.html";
 export const mediaIndexPath = "/moq-wasm/examples/media/index.html";
-export const serverKeysDir = resolve(repoRoot, "moqt-server-sample", "keys");
+export const serverKeysDir = resolve(repoRoot, "relay", "keys");
 export const certPath = resolve(serverKeysDir, "cert.pem");
 export const keyPath = resolve(serverKeysDir, "key.pem");
 

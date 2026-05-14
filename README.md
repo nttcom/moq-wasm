@@ -1,134 +1,62 @@
-# MoQ WASM
+# MoQT
 
-Both server and browser client are written in Rust.
+Rust workspace for MoQT draft-14.
 
-## Demo page
+## Directories
 
-Being Deployed to Github Pages.
+- `moqt/`: MoQT core implementation
+- `bindings/`: bindings for non-Rust runtimes
+- `relay/`: QUIC + WebTransport relay
+- `bridges/`: ONVIF and live ingest bridges
+- `shared/`: shared data structures
+- `examples/`: browser and interop examples
+- `spec/`: protocol specifications
 
-- https://nttcom.github.io/moq-wasm/
-
-## Implementation
-
-Supported version: draft-ietf-moq-transport-10
-
-- [ ] Control Messages
-  - [x] CLIENT_SETUP / SERVER_SETUP
-  - [ ] GOAWAY
-  - [x] ANNOUNCE
-  - [x] SUBSCRIBE
-  - [ ] SUBSCRIBE_UPDATE
-  - [ ] UNSUBSCRIBE
-  - [x] ANNOUNCE_OK
-  - [x] ANNOUNCE_ERROR
-  - [ ] ANNOUNCE_CANCEL
-  - [ ] TRACK_STATUS_REQUEST
-  - [x] SUBSCRIBE_ANNOUNCES
-  - [ ] UNSUBSCRIBE_ANNOUNCES
-  - [x] SUBSCRIBE_OK
-  - [x] SUBSCRIBE_ERROR
-  - [ ] SUBSCRIBE_DONE
-  - [ ] MAX_SUBSCRIBE_ID
-  - [x] ANNOUNCE
-  - [ ] UNANNOUNCE
-  - [ ] TRACK_STATUS
-  - [x] SUBSCRIBE_ANNOUNCES_OK
-  - [x] SUBSCRIBE_ANNOUNCES_ERROR
-  - [ ] FETCH
-  - [ ] FETCH_OK
-  - [ ] FETCH_ERROR
-  - [ ] FETCH_CANCEL
-- [x] Data Streams
-  - [x] Datagram
-  - [x] Subgroup Stream
-- [ ] Features
-  - [x] Manage Publisher / Subscriber
-  - [x] Forword Messages
-  - [ ] Priorities
-  - [x] Object Cache
-
-## Modules
-
-### moqt-core
-
-- Core module for both server and client
-- Includes handlers and data structures
-
-### media-streaming-format
-
-- MSF (Media Streaming Format) catalog structures (draft-ietf-moq-msf-00)
-
-### moqt-server
-
-- Module for server application
-  - Only for WebTransport
-    - Using [`wtransport`](https://github.com/BiagioFesta/wtransport)
-
-### moqt-server-sample
-
-- Sample server application
-  - Supported Roles: PubSub
-
-### moqt-client-wasm
-
-- Module for browser client and sample browser client application
-  - Supported Roles: Publisher, Subscriber, PubSub
-- Exposes MSF catalog JSON helpers for browser integration
-
-### moqt-client-onvif
-
-- Client for IP cameras over RTSP/ONVIF (Raspberry Pi and Mac)
-- Includes `moqt-onvif-client` to bridge RTSP video + ONVIF commands over MoQ
-
-## How to run
-
-### Generating public and private keys for the server
+## Setup
 
 ```shell
-cd moqt-server-sample
-mkdir keys
-cd keys
-openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -out cert.pem -subj '/CN=Test Certificate' -addext "subjectAltName = DNS:localhost"
-
+cargo check --workspace
+npm --prefix examples/browser install
+npm --prefix examples/browser run wasm
 ```
 
-### Run moqt-server-sample
-
-- `make server`
-
-if you want to watch tokio tasks, use tokio-console
+## Run
 
 ```shell
-cargo install tokio-console
-tokio-console
-```
-
-#### Specify the log level
-
-```shell
-make server-trace
-
-or
-
-# Default setting is `DEBUG`
-cargo run -p moqt-server-sample -- --log <Log Level>
-```
-
-### Run moqt-client-wasm
-
-```shell
-cd js && npm install
-make client
-```
-
-- Add a certificate and Enable WebTransport feature in Chrome
-
-```shell
-# For Mac users
+make relay
+make browser
 make chrome
+make live-ingest
 
 # For Linux users
 make chrome:linux
+```
+
+### Validation commands
+
+```shell
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features
+cargo test
+cd examples/browser && npm run lint
+cd examples/browser && npx prettier --check "**/*.{js,jsx,ts,tsx,json,css,md}"
+cd examples/browser && npm run e2e:media
+```
+
+### Run moqt-client-onvif
+
+```shell
+cp .env.example .env
+make onvif
+```
+
+## Check
+
+```shell
+cargo check --workspace
+cargo fmt --check
+npm --prefix examples/browser run lint
+npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path examples/browser/.prettierignore
 ```
 
 ### One-command Linux setup for media E2E
@@ -141,9 +69,9 @@ node scripts/setup-media-e2e.mjs
 
 This command:
 
-- generates `moqt-server-sample/keys/key.pem` and `cert.pem` when missing
-- installs `js` dependencies
-- builds `moqt-client-wasm` into `js/pkg`
+- generates `relay/keys/key.pem` and `cert.pem` when missing
+- installs `examples/browser` dependencies
+- builds `bindings/wasm` into `examples/browser/pkg`
 - installs Playwright Chromium for the E2E browser run
 
 ### One-command Linux run for media E2E
@@ -152,14 +80,14 @@ This command:
 node scripts/run-media-e2e.mjs
 ```
 
-This command starts `moqt-server-sample`, starts the Vite server for `js`, runs the Playwright E2E for the Media Publisher / Subscriber examples, and cleans up the child processes.
+This command starts `relay`, starts the Vite server for `examples/browser`, runs the Playwright E2E for the Media Publisher / Subscriber examples, and cleans up the child processes.
 
 GitHub Actions also runs the same Linux media E2E flow in `.github/workflows/media-e2e.yml`.
 
 The Playwright test itself can also be run directly:
 
 ```shell
-cd js
+cd examples/browser
 npm run e2e:media
 ```
 
@@ -168,31 +96,3 @@ Environment variables for advanced runs:
 - `MEDIA_E2E_WEB_PORT` (default: `4173`)
 - `MEDIA_E2E_MOQT_URL` (default: `https://127.0.0.1:4433`)
 - `MEDIA_E2E_NAMESPACE` (default: auto-generated by `run-media-e2e.mjs`)
-
-### Validation commands
-
-```shell
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features
-cargo test
-cd js && npm run lint
-cd js && npx prettier --check "**/*.{js,jsx,ts,tsx,json,css,md}"
-cd js && npm run e2e:media
-```
-
-### Run moqt-client-onvif
-
-```shell
-cp .env.example .env
-make onvif
-```
-
-`ONVIF_IP` / `ONVIF_USERNAME` / `ONVIF_PASSWORD` are read from `.env`.
-
-MoQ bridge:
-
-```shell
-make onvif-moq
-```
-
-`MOQT_URL` is read from `.env`.

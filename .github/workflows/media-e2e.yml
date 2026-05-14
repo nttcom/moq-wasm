@@ -9,9 +9,9 @@ on:
       - "scripts/run-media-e2e.mjs"
       - "scripts/media-e2e-helpers.mjs"
       - "scripts/chrome_linux.sh"
-      - "js/**"
-      - "moqt-client-wasm/**"
-      - "moqt-server-sample/**"
+      - "examples/browser/**"
+      - "bindings/wasm/**"
+      - "relay/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain"
@@ -27,9 +27,9 @@ on:
       - "scripts/run-media-e2e.mjs"
       - "scripts/media-e2e-helpers.mjs"
       - "scripts/chrome_linux.sh"
-      - "js/**"
-      - "moqt-client-wasm/**"
-      - "moqt-server-sample/**"
+      - "examples/browser/**"
+      - "bindings/wasm/**"
+      - "relay/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain"
@@ -54,7 +54,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: js/package-lock.json
+          cache-dependency-path: examples/browser/package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -74,7 +74,7 @@ jobs:
         run: node scripts/setup-media-e2e.mjs
 
       - name: Install Playwright Linux dependencies
-        working-directory: js
+        working-directory: examples/browser
         run: npx playwright install --with-deps chromium
 
       - name: Run media E2E
@@ -89,6 +89,6 @@ jobs:
         with:
           name: media-e2e-artifacts
           path: |
-            js/test-results
-            js/playwright-report
+            examples/browser/test-results
+            examples/browser/playwright-report
           if-no-files-found: ignore

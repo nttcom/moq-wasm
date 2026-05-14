@@ -1,13 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    'packages',
-    'moqt-core',
-    'media-streaming-format',
-    'moqt-server',
-    'moqt-server-sample',
-    'moqt-client-wasm',
-    'moqt-ingest-gateway',
-    'moqt-client-rust',
-    'moqt-client-onvif',
+    'shared/packages',
+    'shared/media-streaming-format',
+    'moqt',
+    'relay',
+    'examples/rust/manual-client',
+    'examples/cross-protocol-test/publisher',
+    'examples/cross-protocol-test/quic-subscriber',
+    'bindings/wasm',
+    'bridges/live-ingest',
+    'bridges/onvif',
 ]

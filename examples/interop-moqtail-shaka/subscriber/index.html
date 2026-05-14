@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MSF Subscriber (Shaka Player)</title>
+  <script src="shaka-player-v4.16.16-msf-fixed.ui.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 2em; }
+    .controls { margin: 1rem 0; display: flex; gap: 0.5rem; align-items: center; }
+    .controls label { font-size: 0.9rem; }
+    .controls input { font-family: monospace; padding: 0.3rem; width: 300px; }
+    #video-container { width: 640px; margin: 1rem 0; }
+    video { width: 100%; background: #000; }
+    #status { white-space: pre-wrap; font-family: monospace; background: #f0f0f0; padding: 1em; max-height: 300px; overflow-y: auto; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>MSF Subscriber</h1>
+  <div class="controls">
+    <label for="nsInput">Namespace:</label>
+    <input id="nsInput" type="text">
+    <button id="loadBtn" type="button">Load</button>
+  </div>
+  <div id="video-container">
+    <video id="video" autoplay controls>
+      <track kind="captions" default>
+    </video>
+  </div>
+  <div id="status">Ready</div>
+
+  <script>
+    const status = document.getElementById('status');
+    const nsInput = document.getElementById('nsInput');
+    const loadBtn = document.getElementById('loadBtn');
+    const videoEl = document.getElementById('video');
+
+    // Default namespace
+    const now = new Date();
+    const ts = `${now.getHours()}${String(now.getMinutes()).padStart(2, '0')}`;
+    nsInput.value = `msf/demo-${ts}`;
+
+    const MAX_LOG_LINES = 50;
+    const logLines = [];
+    function log(msg) {
+      console.log(msg);
+      logLines.push(msg);
+      if (logLines.length > MAX_LOG_LINES) logLines.shift();
+      status.textContent = logLines.join('\n');
+    }
+
+    shaka.polyfill.installAll();
+
+    loadBtn.addEventListener('click', async () => {
+      loadBtn.disabled = true;
+      nsInput.disabled = true;
+      logLines.length = 0;
+
+      const namespacePath = nsInput.value.trim();
+      if (!namespacePath) {
+        log('Error: namespace is empty');
+        loadBtn.disabled = false;
+        nsInput.disabled = false;
+        return;
+      }
+
+      const namespace = namespacePath.split('/');
+      log(`Starting player with namespace: ${namespacePath}`);
+
+      try {
+        const player = new shaka.Player();
+        await player.attach(videoEl);
+
+        player.configure({
+          manifest: {
+            msf: {
+              fingerprintUri: '/fingerprint.txt',
+              namespaces: namespace,
+            },
+          },
+        });
+
+        player.addEventListener('error', (e) => {
+          log(`Player error: ${e.detail}`);
+          console.error('Player error:', e.detail);
+        });
+
+        // Intercept network requests to debug catalog flow
+        const net = player.getNetworkingEngine();
+        net.registerResponseFilter((type, response) => {
+          log(`Response filter: type=${type} uri=${response.uri} bytes=${response.data.byteLength}`);
+        });
+
+        log('Loading...');
+        await player.load(
+          'https://127.0.0.1:4433',
+          /* startTime= */ undefined,
+          'application/msf',
+        );
+        log('Player loaded successfully');
+      } catch (e) {
+        log(`Load failed: ${e}`);
+        console.error(e);
+        loadBtn.disabled = false;
+        nsInput.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

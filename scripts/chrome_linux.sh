@@ -3,11 +3,11 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-cert_path="${repo_root}/moqt-server-sample/keys/cert.pem"
+cert_path="${repo_root}/relay/keys/cert.pem"
 
 if [[ ! -f "${cert_path}" ]]; then
   echo "Certificate not found: ${cert_path}" >&2
-  echo "Run node scripts/setup-media-e2e.mjs first, or generate moqt-server-sample/keys/cert.pem." >&2
+  echo "Run make relay once or node scripts/setup-media-e2e.mjs first." >&2
   exit 1
 fi
 

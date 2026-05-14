@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MOQT CMAF Subscriber Test</title>
+    <link rel="stylesheet" href="../../media/media.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div>
+          <span class="pill">Subscriber</span>
+          <h1>MoQT CMAF Subscriber</h1>
+          <p>Subscribe to CMAF-packaged video and audio over MoQT and play back via MSE.</p>
+        </div>
+      </header>
+      <div id="app">
+        <form name="form" id="form" class="control-grid subscriber-grid">
+          <section class="card stack full">
+            <h2>Console</h2>
+            <p class="hint">info / warn / error を表示します。</p>
+            <div id="logPanel"></div>
+          </section>
+          <section class="card stack">
+            <h2>Connection</h2>
+            <label for="url">URL:</label>
+            <input type="url" name="url" id="url" value="https://moqt.research.skyway.io:4433" />
+            <div id="urlPresets" class="preset-bar">
+              Preset:
+              <button type="button" data-url="https://moqt.research.skyway.io:4433">
+                https://moqt.research.skyway.io:4433
+              </button>
+              <button type="button" data-url="https://127.0.0.1:4433">https://127.0.0.1:4433</button>
+            </div>
+            <script>
+              ;(function () {
+                const preset = document.getElementById('urlPresets')
+                const input = document.getElementById('url')
+                if (!preset || !input) return
+                preset.addEventListener('click', (event) => {
+                  const target = event.target
+                  if (!(target instanceof HTMLButtonElement)) return
+                  const value = target.getAttribute('data-url')
+                  if (!value) return
+                  input.value = value
+                })
+              })()
+            </script>
+            <div class="button-row">
+              <button type="button" id="connectBtn">Connect</button>
+              <button type="button" id="closeBtn">Close</button>
+            </div>
+          </section>
+
+          <section class="card stack">
+            <h3>CLIENT_SETUP</h3>
+            <label>Max Request ID: <input type="text" name="max-subscribe-id" value="100" /></label>
+            <div class="button-row action-row">
+              <button type="button" id="sendSetupBtn" class="compact-button">Send</button>
+            </div>
+          </section>
+
+          <section class="card stack full">
+            <h3>SUBSCRIBE</h3>
+            <label
+              >Track Namespace:
+              <input type="text" name="subscribe-track-namespace" id="subscribe-track-namespace" value="video_audio" />
+            </label>
+            <script>
+              ;(function () {
+                function pad(n) {
+                  return n < 10 ? '0' + n : n
+                }
+                const now = new Date()
+                const yyyy = now.getFullYear()
+                const mm = pad(now.getMonth() + 1)
+                const dd = pad(now.getDate())
+                const HH = pad(now.getHours())
+                const MM = pad(now.getMinutes())
+                const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
+                const input = document.getElementById('subscribe-track-namespace')
+                if (input) input.value = value
+              })()
+            </script>
+            <div class="subscribe-split">
+              <section class="subscribe-panel stack">
+                <h4>Catalog Subscribe</h4>
+                <div class="field-row inline-fields">
+                  <label>Catalog Track: <input type="text" name="catalog-track-name" value="catalog" /></label>
+                  <label>Catalog Subscribe ID: <input type="text" name="catalog-subscribe-id" value="0" /></label>
+                  <label>Catalog Track Alias: <input type="text" name="catalog-track-alias" value="0" /></label>
+                </div>
+                <p class="hint" id="catalog-track-status"></p>
+                <div class="button-row action-row">
+                  <button type="button" id="sendCatalogSubscribeBtn" class="compact-button">Subscribe Catalog</button>
+                </div>
+              </section>
+
+              <section class="subscribe-panel stack">
+                <h4>Track Subscribe</h4>
+                <label
+                  >Video Track (from Catalog):
+                  <select name="selected-video-track" id="selected-video-track"></select>
+                </label>
+                <div class="field-row">
+                  <label>Video Subscribe ID: <input type="text" name="video-subscribe-id" value="1" /></label>
+                  <label>Video Track Alias: <input type="text" name="video-track-alias" value="1" /></label>
+                </div>
+                <div class="field-row">
+                  <label>Audio Subscribe ID: <input type="text" name="audio-subscribe-id" value="2" /></label>
+                  <label>Audio Track Alias: <input type="text" name="audio-track-alias" value="2" /></label>
+                </div>
+                <div class="button-row action-row">
+                  <button type="button" id="sendSubscribeBtn">Subscribe Video + Audio</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="card stack full">
+            <div class="card-title-row">
+              <h2>Playback</h2>
+              <div class="card-title-actions">
+                <button
+                  type="button"
+                  id="toggleLiveCatchupBtn"
+                  class="compact-button mode-toggle-button active"
+                  aria-pressed="true"
+                  title="リアルタイム追従モード（ON）"
+                >
+                  Realtime追従
+                </button>
+                <button
+                  type="button"
+                  id="toggleMoqVisualizerBtn"
+                  class="icon-button"
+                  aria-label="MoQ受信可視化を表示"
+                  aria-pressed="false"
+                  title="MoQ受信可視化を表示"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="media-grid">
+              <video id="video" muted controls></video>
+            </div>
+            <div id="moqVisualizerPanel" class="visualizer-panel">
+              <div class="visualizer-cards">
+                <section class="visualizer-card">
+                  <h3>Current MoQ Object</h3>
+                  <table class="visualizer-table">
+                    <thead>
+                      <tr>
+                        <th>Track</th>
+                        <th>Group ID</th>
+                        <th>Object ID</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <th>Video</th>
+                        <td id="viz-video-group-id">-</td>
+                        <td id="viz-video-object-id">-</td>
+                      </tr>
+                      <tr>
+                        <th>Audio</th>
+                        <td id="viz-audio-group-id">-</td>
+                        <td id="viz-audio-object-id">-</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+
+                <section class="visualizer-card">
+                  <h3>Overhead Details</h3>
+                  <table class="visualizer-table">
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th>Video</th>
+                        <th>Audio</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <th>init</th>
+                        <td id="oh-video-init">-</td>
+                        <td id="oh-audio-init">-</td>
+                      </tr>
+                      <tr>
+                        <th>moof</th>
+                        <td id="oh-video-moof">-</td>
+                        <td id="oh-audio-moof">-</td>
+                      </tr>
+                      <tr>
+                        <th>mdat</th>
+                        <td id="oh-video-mdat">-</td>
+                        <td id="oh-audio-mdat">-</td>
+                      </tr>
+                      <tr>
+                        <th>overhead</th>
+                        <td id="oh-video-pct">-</td>
+                        <td id="oh-audio-pct">-</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+
+                <section class="visualizer-card">
+                  <h3>SourceBuffer</h3>
+                  <table class="visualizer-table">
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th>Video</th>
+                        <th>Audio</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <th>updating</th>
+                        <td id="sb-video-updating">-</td>
+                        <td id="sb-audio-updating">-</td>
+                      </tr>
+                      <tr>
+                        <th>queue</th>
+                        <td id="sb-video-queue">-</td>
+                        <td id="sb-audio-queue">-</td>
+                      </tr>
+                      <tr>
+                        <th>buffered ranges</th>
+                        <td id="sb-video-ranges">-</td>
+                        <td id="sb-audio-ranges">-</td>
+                      </tr>
+                      <tr>
+                        <th>buffered ahead</th>
+                        <td id="sb-video-ahead">-</td>
+                        <td id="sb-audio-ahead">-</td>
+                      </tr>
+                      <tr>
+                        <th>buffered end</th>
+                        <td id="sb-video-end">-</td>
+                        <td id="sb-audio-end">-</td>
+                      </tr>
+                      <tr>
+                        <th>end/wall speed</th>
+                        <td id="sb-video-speed">-</td>
+                        <td id="sb-audio-speed">-</td>
+                      </tr>
+                      <tr>
+                        <th>currentTime</th>
+                        <td id="sb-video-time">-</td>
+                        <td id="sb-audio-time">-</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+              </div>
+            </div>
+          </section>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      ;(function () {
+        const panel = document.getElementById('logPanel')
+        if (!panel) return
+        const levels = ['log', 'info', 'warn', 'error']
+        const original = {}
+        const maxEntries = 200
+
+        function append(level, args) {
+          const entry = document.createElement('div')
+          const classLevel = level === 'log' ? 'info' : level
+          entry.className = `log-entry log-${classLevel}`
+          const label = document.createElement('strong')
+          label.textContent = classLevel.toUpperCase()
+          entry.appendChild(label)
+          const text = document.createElement('span')
+          text.textContent = ' ' + args.map(formatArg).join(' ')
+          entry.appendChild(text)
+          panel.appendChild(entry)
+          while (panel.childNodes.length > maxEntries) {
+            panel.removeChild(panel.firstChild)
+          }
+          panel.scrollTop = panel.scrollHeight
+        }
+
+        function formatArg(arg) {
+          if (typeof arg === 'string') return arg
+          if (arg instanceof Error) return arg.message
+          try {
+            return JSON.stringify(arg)
+          } catch (_e) {
+            return String(arg)
+          }
+        }
+
+        for (const level of levels) {
+          original[level] = console[level].bind(console)
+          console[level] = (...args) => {
+            original[level](...args)
+            append(level, args)
+          }
+        }
+      })()
+    </script>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

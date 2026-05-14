@@ -1,1 +1,0 @@
-export const KEYFRAME_INTERVAL = 300
