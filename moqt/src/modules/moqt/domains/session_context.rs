@@ -6,11 +6,9 @@ use std::{
 use crate::{
     SessionEvent, TransportProtocol,
     modules::moqt::{
-        control_plane::{
-            enums::{RequestId, ResponseMessage},
-            threads::enums::StreamWithObject,
-        },
+        control_plane::enums::{RequestId, ResponseMessage},
         data_plane::streams::stream::bi_stream_sender::BiStreamSender,
+        runtime::dispatch::incoming_track_data::IncomingTrackData,
     },
 };
 
@@ -24,9 +22,10 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) sender_map:
         tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
     pub(crate) notification_map:
-        tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<StreamWithObject<T>>>>,
-    pub(crate) receiver_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<StreamWithObject<T>>>>,
+        tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<IncomingTrackData<T>>>>,
+    pub(crate) receiver_map: tokio::sync::Mutex<
+        HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingTrackData<T>>>,
+    >,
 }
 
 impl<T: TransportProtocol> SessionContext<T> {

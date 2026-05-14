@@ -1,25 +1,28 @@
 use std::sync::Arc;
 
 use anyhow::bail;
-use tracing::{Instrument, Span};
+use tracing::Span;
 
 use crate::Publisher;
 use crate::Subscriber;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
-use crate::modules::moqt::control_plane::threads::control_message_receive_thread::ControlMessageReceiveThread;
-use crate::modules::moqt::control_plane::threads::datagram_receive_thread::DatagramReceiveThread;
 use crate::modules::moqt::data_plane::streams::stream::stream_receiver::BiStreamReceiver;
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::protocol::TransportProtocol;
-use crate::modules::transport::transport_connection::TransportConnection;
+use crate::modules::moqt::runtime::tasks::{
+    control_message_receive_task::ControlMessageReceiveTask,
+    datagram_receive_task::DatagramReceiveTask, disconnect_watch_task::DisconnectWatchTask,
+    uni_stream_receive_task::UniStreamReceiveTask,
+};
 
 pub struct Session<T: TransportProtocol> {
     inner: Arc<SessionContext<T>>,
     session_span: Span,
     event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent<T>>>,
-    message_receive_join_handle: tokio::task::JoinHandle<()>,
-    datagram_receive_thread: tokio::task::JoinHandle<()>,
-    close_watch_join_handle: tokio::task::JoinHandle<()>,
+    control_message_receive_task: tokio::task::JoinHandle<()>,
+    datagram_receive_task: tokio::task::JoinHandle<()>,
+    uni_stream_receive_task: tokio::task::JoinHandle<()>,
+    disconnect_watch_task: tokio::task::JoinHandle<()>,
 }
 
 impl<T: TransportProtocol> Session<T> {
@@ -35,51 +38,33 @@ impl<T: TransportProtocol> Session<T> {
             parent: &session_span,
             "control_plane.receiver"
         );
-        let data_plane_receiver_span =
-            tracing::info_span!(parent: &session_span, "data_plane.receiver");
+        let datagram_receiver_span =
+            tracing::info_span!(parent: &session_span, "data_plane.datagram_receiver");
+        let uni_stream_receiver_span =
+            tracing::info_span!(parent: &session_span, "data_plane.uni_stream_receiver");
         let transport_close_watcher_span =
             tracing::info_span!(parent: &session_span, "transport.close_watcher");
 
-        let message_receive_join_handle = ControlMessageReceiveThread::run(
+        let control_message_receive_task = ControlMessageReceiveTask::run(
             receive_stream,
             Arc::downgrade(&inner),
             control_plane_receiver_span,
         );
-        let datagram_receive_thread =
-            DatagramReceiveThread::run(inner.clone(), data_plane_receiver_span);
-        let close_watch_join_handle =
-            Self::spawn_disconnect_notifier(inner.clone(), transport_close_watcher_span);
+        let datagram_receive_task = DatagramReceiveTask::run(inner.clone(), datagram_receiver_span);
+        let uni_stream_receive_task =
+            UniStreamReceiveTask::run(inner.clone(), uni_stream_receiver_span);
+        let disconnect_watch_task =
+            DisconnectWatchTask::run(inner.clone(), transport_close_watcher_span);
 
         Self {
             inner,
             session_span,
             event_receiver: tokio::sync::Mutex::new(event_receiver),
-            message_receive_join_handle,
-            datagram_receive_thread,
-            close_watch_join_handle,
+            control_message_receive_task,
+            datagram_receive_task,
+            uni_stream_receive_task,
+            disconnect_watch_task,
         }
-    }
-
-    fn spawn_disconnect_notifier(
-        session_context: Arc<SessionContext<T>>,
-        close_watcher_span: Span,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::task::Builder::new()
-            .name("Connection Close Watcher")
-            .spawn(
-                async move {
-                    session_context.transport_connection.closed().await;
-
-                    if let Err(err) = session_context
-                        .event_sender
-                        .send(SessionEvent::Disconnected())
-                    {
-                        tracing::warn!("failed to send disconnect event: {:?}", err);
-                    }
-                }
-                .instrument(close_watcher_span),
-            )
-            .unwrap()
     }
 
     pub fn publisher(&self) -> Publisher<T> {
@@ -111,8 +96,9 @@ impl<T: TransportProtocol> Drop for Session<T> {
         self.session_span.in_scope(|| {
             tracing::info!("Session dropped.");
         });
-        self.message_receive_join_handle.abort();
-        self.datagram_receive_thread.abort();
-        self.close_watch_join_handle.abort();
+        self.control_message_receive_task.abort();
+        self.datagram_receive_task.abort();
+        self.uni_stream_receive_task.abort();
+        self.disconnect_watch_task.abort();
     }
 }

@@ -1,20 +1,20 @@
 use anyhow::bail;
 
 use crate::TransportProtocol;
-use crate::modules::moqt::control_plane::threads::enums::StreamWithObject;
 use crate::modules::moqt::data_plane::object::object_datagram::ObjectDatagram;
+use crate::modules::moqt::runtime::dispatch::incoming_track_data::IncomingTrackData;
 
 #[derive(Debug)]
 pub struct DatagramReceiver<T: TransportProtocol> {
     pub track_alias: u64,
-    receiver: tokio::sync::mpsc::UnboundedReceiver<StreamWithObject<T>>,
+    receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingTrackData<T>>,
     first_object_datagram: Option<ObjectDatagram>,
 }
 
 impl<T: TransportProtocol> DatagramReceiver<T> {
     pub(crate) async fn new(
         first_object_datagram: ObjectDatagram,
-        receiver: tokio::sync::mpsc::UnboundedReceiver<StreamWithObject<T>>,
+        receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingTrackData<T>>,
     ) -> Self {
         let track_alias = first_object_datagram.track_alias;
         Self {
@@ -33,7 +33,7 @@ impl<T: TransportProtocol> DatagramReceiver<T> {
             None => bail!("Sender dropped."),
         };
         match result {
-            StreamWithObject::Datagram(datagram) => Ok(datagram),
+            IncomingTrackData::Datagram(datagram) => Ok(datagram),
             _ => unreachable!("DatagramReceiver can only receive ObjectDatagram"),
         }
     }
