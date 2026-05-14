@@ -4,13 +4,14 @@ use moqt::ServerConfig;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::modules::{
-    enums::MoqtRelayEvent, session_handler::SessionHandler, session_repository::SessionRepository,
+    session_event::SessionEvent, session_handler::SessionHandler,
+    session_repository::SessionRepository,
 };
 use crate::relay_server::{runtime::RelayRuntime, store::RelayStore};
 
 pub struct RelayServer {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-    sender: UnboundedSender<MoqtRelayEvent>,
+    sender: UnboundedSender<SessionEvent>,
     _store: Arc<RelayStore>,
     _runtime: RelayRuntime,
     key_path: String,

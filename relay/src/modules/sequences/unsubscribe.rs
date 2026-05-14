@@ -1,7 +1,7 @@
 use crate::modules::{
     core::handler::unsubscribe::UnsubscribeHandler,
     relay::egress::coordinator::EgressCommand,
-    sequences::{notifier::Notifier, tables::table::Table},
+    sequences::{notifier::SessionSignalingDispatcher, tables::table::SignalingStateTable},
     types::SessionId,
 };
 use tracing::Span;
@@ -20,8 +20,8 @@ impl Unsubscribe {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn Table,
-        notifier: &Notifier,
+        table: &dyn SignalingStateTable,
+        notifier: &SessionSignalingDispatcher,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn UnsubscribeHandler>,
     ) {
