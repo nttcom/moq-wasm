@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MOQT Media Subscriber Test</title>
-    <script type="module" crossorigin src="/moq-wasm/assets/subscriber-D4Qj-MFH.js"></script>
+    <script type="module" crossorigin src="/moq-wasm/assets/subscriber-Bkoc6eFO.js"></script>
     <link rel="modulepreload" crossorigin href="/moq-wasm/assets/modulepreload-polyfill-B5Qt9EMX.js">
-    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-DrLnhBHh.js">
-    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/catalog-BYlufEzj.js">
-    <link rel="stylesheet" crossorigin href="/moq-wasm/assets/media-DfT88zlG.css">
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-BgtCwMfr.js">
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/catalog-CSwpT0PM.js">
+    <link rel="stylesheet" crossorigin href="/moq-wasm/assets/media-CeCXKS6d.css">
   </head>
   <body>
     <div class="page">
@@ -24,12 +24,18 @@
           <section class="card stack full">
             <h2>Console</h2>
             <p class="hint">info / warn / error を表示します。</p>
-            <div id="logPanel"></div>
+            <div id="logPanel" data-testid="subscriber-log-panel"></div>
           </section>
           <section class="card stack">
             <h2>Connection</h2>
             <label for="url">URL:</label>
-            <input type="url" name="url" id="url" value="https://moqt.research.skyway.io:4433" />
+            <input
+              type="url"
+              name="url"
+              id="url"
+              value="https://moqt.research.skyway.io:4433"
+              data-testid="subscriber-url-input"
+            />
             <div id="urlPresets" class="preset-bar">
               Preset:
               <button type="button" data-url="https://moqt.research.skyway.io:4433">
@@ -37,31 +43,61 @@
               </button>
               <button type="button" data-url="https://127.0.0.1:4433">https://127.0.0.1:4433</button>
             </div>
-            <script>
-              ;(function () {
-                const preset = document.getElementById('urlPresets')
-                const input = document.getElementById('url')
-                if (!preset || !input) return
-                preset.addEventListener('click', (event) => {
-                  const target = event.target
-                  if (!(target instanceof HTMLButtonElement)) return
-                  const value = target.getAttribute('data-url')
-                  if (!value) return
-                  input.value = value
-                })
-              })()
-            </script>
             <div class="button-row">
-              <button type="button" id="connectBtn">Connect</button>
+              <button type="button" id="connectBtn" data-testid="subscriber-connect-button">Connect</button>
               <button type="button" id="closeBtn">Close</button>
             </div>
           </section>
 
           <section class="card stack">
+            <h2>Status</h2>
+            <div class="status-list">
+              <div class="status-item">
+                <span class="status-label">Connection</span>
+                <span id="subscriber-connection-status" class="status-value" data-testid="subscriber-connection-status">
+                  Not connected
+                </span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Setup</span>
+                <span id="subscriber-setup-status" class="status-value" data-testid="subscriber-setup-status">
+                  Setup not sent
+                </span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Catalog</span>
+                <span id="catalog-track-status" class="status-value" data-testid="subscriber-catalog-status">
+                  Catalog not loaded yet
+                </span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Track</span>
+                <span id="subscriber-track-status" class="status-value" data-testid="subscriber-track-status">
+                  Subscription idle
+                </span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Receive</span>
+                <span id="subscriber-receive-status" class="status-value" data-testid="subscriber-receive-status">
+                  Waiting for media objects
+                </span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Playback</span>
+                <span id="subscriber-playback-status" class="status-value" data-testid="subscriber-playback-status">
+                  Playback idle
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section class="card stack">
             <h3>CLIENT_SETUP</h3>
-            <label>Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
+            <label>Max Request ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
             <div class="button-row action-row">
-              <button type="button" id="sendSetupBtn" class="compact-button">Send</button>
+              <button type="button" id="sendSetupBtn" class="compact-button" data-testid="subscriber-setup-button">
+                Send
+              </button>
             </div>
           </section>
 
@@ -69,25 +105,14 @@
             <h3>SUBSCRIBE</h3>
             <label
               >Track Namespace:
-              <input type="text" name="subscribe-track-namespace" id="subscribe-track-namespace" value="video_audio" />
+              <input
+                type="text"
+                name="subscribe-track-namespace"
+                id="subscribe-track-namespace"
+                value=""
+                data-testid="subscriber-namespace-input"
+              />
             </label>
-            <script>
-              // Set default value for Track Namespace input
-              ;(function () {
-                function pad(n) {
-                  return n < 10 ? '0' + n : n
-                }
-                const now = new Date()
-                const yyyy = now.getFullYear()
-                const mm = pad(now.getMonth() + 1)
-                const dd = pad(now.getDate())
-                const HH = pad(now.getHours())
-                const MM = pad(now.getMinutes())
-                const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
-                const input = document.getElementById('subscribe-track-namespace')
-                if (input) input.value = value
-              })()
-            </script>
             <div class="subscribe-split">
               <section class="subscribe-panel stack">
                 <h4>Catalog Subscribe</h4>
@@ -96,9 +121,16 @@
                   <label>Catalog Subscribe ID: <input type="text" name="catalog-subscribe-id" value="0" /></label>
                   <label>Catalog Track Alias: <input type="text" name="catalog-track-alias" value="0" /></label>
                 </div>
-                <p class="hint" id="catalog-track-status"></p>
+                <p class="hint">Catalog をロードすると Track Subscribe で選択できるようになります。</p>
                 <div class="button-row action-row">
-                  <button type="button" id="sendCatalogSubscribeBtn" class="compact-button">Subscribe Catalog</button>
+                  <button
+                    type="button"
+                    id="sendCatalogSubscribeBtn"
+                    class="compact-button"
+                    data-testid="subscriber-catalog-subscribe-button"
+                  >
+                    Subscribe Catalog
+                  </button>
                 </div>
               </section>
 
@@ -106,11 +138,19 @@
                 <h4>Track Subscribe</h4>
                 <label
                   >Video Track (from Catalog):
-                  <select name="selected-video-track" id="selected-video-track"></select>
+                  <select
+                    name="selected-video-track"
+                    id="selected-video-track"
+                    data-testid="subscriber-video-track-select"
+                  ></select>
                 </label>
                 <label
                   >Audio Track (from Catalog):
-                  <select name="selected-audio-track" id="selected-audio-track"></select>
+                  <select
+                    name="selected-audio-track"
+                    id="selected-audio-track"
+                    data-testid="subscriber-audio-track-select"
+                  ></select>
                 </label>
                 <div class="field-row">
                   <label>Video Subscribe ID: <input type="text" name="video-subscribe-id" value="1" /></label>
@@ -119,7 +159,9 @@
                   <label>Audio Track Alias: <input type="text" name="audio-track-alias" value="2" /></label>
                 </div>
                 <div class="button-row action-row">
-                  <button type="button" id="sendSubscribeBtn">Subscribe Selected Tracks</button>
+                  <button type="button" id="sendSubscribeBtn" data-testid="subscriber-track-subscribe-button">
+                    Subscribe Selected Tracks
+                  </button>
                 </div>
               </section>
             </div>
@@ -127,9 +169,25 @@
 
           <section class="card stack full">
             <h2>Playback</h2>
+            <label>
+              <input type="checkbox" name="bypass-jitter-buffer" id="bypass-jitter-buffer" checked />
+              Bypass JitterBuffer
+            </label>
             <div class="media-grid">
-              <video id="video" muted inline controls></video>
-              <audio id="audio"></audio>
+              <section class="playback-panel stack">
+                <div class="playback-meta">
+                  <strong>Video</strong>
+                  <span id="video-playback-object">Waiting for objects</span>
+                </div>
+                <video id="video" muted inline controls data-testid="subscriber-video"></video>
+              </section>
+              <section class="playback-panel stack">
+                <div class="playback-meta">
+                  <strong>Audio</strong>
+                  <span id="audio-playback-object">Waiting for objects</span>
+                </div>
+                <audio id="audio" data-testid="subscriber-audio"></audio>
+              </section>
             </div>
           </section>
         </form>

@@ -249,6 +249,12 @@
         background: rgba(8, 12, 18, 0.55);
       }
 
+      .catalog-section {
+        display: grid;
+        gap: 10px;
+        min-width: 260px;
+      }
+
       .catalog-subtitle {
         font-size: 12px;
         color: var(--muted);
@@ -508,9 +514,9 @@
         }
       }
     </style>
-    <script type="module" crossorigin src="/moq-wasm/assets/onvif-DrPTFGeh.js"></script>
+    <script type="module" crossorigin src="/moq-wasm/assets/onvif-B9pf5WOp.js"></script>
     <link rel="modulepreload" crossorigin href="/moq-wasm/assets/modulepreload-polyfill-B5Qt9EMX.js">
-    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-DrLnhBHh.js">
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-BgtCwMfr.js">
   </head>
   <body>
     <div class="page">
@@ -556,12 +562,13 @@
           <div class="card-header">
             <div>
               <div class="command-title">Live Video</div>
-              <div class="muted">MoQ subgroup stream decoded locally</div>
+              <div class="muted">MoQ video/audio subgroup streams decoded locally</div>
             </div>
             <button id="stats-btn" class="secondary" type="button">Stats</button>
           </div>
           <div class="video-frame">
             <video id="video" playsinline muted autoplay></video>
+            <audio id="audio" autoplay></audio>
           </div>
           <div class="jitter-panel">
             <div class="jitter-header">
@@ -579,15 +586,17 @@
         <div class="card-header">
           <div>
             <div class="command-title">Catalog</div>
-            <div class="muted">Subscribe to list ONVIF profiles and select a video track.</div>
+            <div class="muted">Subscribe to list ONVIF profiles and select video/audio tracks independently.</div>
           </div>
         </div>
         <div class="button-row">
           <button id="catalog-subscribe-btn" type="button">Subscribe Catalog</button>
           <button id="video-subscribe-btn" class="secondary" type="button">Subscribe Selected Video</button>
+          <button id="audio-subscribe-btn" class="secondary" type="button">Subscribe Selected Audio</button>
         </div>
         <div class="muted">Catalog track alias: <span id="catalog-alias">-</span></div>
         <div class="muted">Selected video track: <span id="selected-video-track">-</span></div>
+        <div class="muted">Selected audio track: <span id="selected-audio-track">-</span></div>
         <div id="catalog-list" class="catalog-list"></div>
       </section>
 
@@ -632,7 +641,7 @@
           <input id="auth-info" type="text" value="secret" />
         </label>
         <label>
-          Max Subscribe ID
+          Max Request ID
           <input id="max-subscribe-id" type="number" value="100" />
         </label>
         <label>
@@ -640,8 +649,16 @@
           <input id="video-subscribe-id" type="number" value="0" />
         </label>
         <label>
+          Audio Subscribe ID
+          <input id="audio-subscribe-id" type="number" value="2" />
+        </label>
+        <label>
           Video Track Alias
           <input id="video-track-alias" type="number" value="0" />
+        </label>
+        <label>
+          Audio Track Alias
+          <input id="audio-track-alias" type="number" value="0" />
         </label>
         <label>
           Catalog Subscribe ID

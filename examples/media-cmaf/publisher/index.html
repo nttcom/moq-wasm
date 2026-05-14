@@ -4,13 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MOQT CMAF Publisher</title>
-    <script type="module" crossorigin src="/moq-wasm/assets/media-cmaf-publisher-BWxmvBDF.js"></script>
+    <script type="module" crossorigin src="/moq-wasm/assets/media-cmaf-publisher-CDECwN0m.js"></script>
     <link rel="modulepreload" crossorigin href="/moq-wasm/assets/modulepreload-polyfill-B5Qt9EMX.js">
-    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-DrLnhBHh.js">
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/moqtClient-BgtCwMfr.js">
     <link rel="modulepreload" crossorigin href="/moq-wasm/assets/utils-08qyBd2C.js">
-    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/transportState-hJ_n0Kd-.js">
-    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/catalog-BYlufEzj.js">
-    <link rel="stylesheet" crossorigin href="/moq-wasm/assets/media-DfT88zlG.css">
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/transportState-A1aEdFmI.js">
+    <link rel="modulepreload" crossorigin href="/moq-wasm/assets/catalog-CSwpT0PM.js">
+    <link rel="stylesheet" crossorigin href="/moq-wasm/assets/media-CeCXKS6d.css">
   </head>
   <body>
     <div class="page">
@@ -61,17 +61,17 @@
 
           <section class="card stack">
             <h3>CLIENT_SETUP</h3>
-            <label>Max Subscribe ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
+            <label>Max Request ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
             <div class="button-row action-row">
               <button type="button" id="sendSetupBtn" class="compact-button">Send</button>
             </div>
           </section>
 
           <section class="card stack">
-            <h3>ANNOUNCE</h3>
+            <h3>PUBLISH_NAMESPACE</h3>
             <label
               >Track Namespace:
-              <input type="text" name="announce-track-namespace" id="announce-track-namespace" value="video_audio" />
+              <input type="text" name="publish-track-namespace" id="publish-track-namespace" value="video_audio" />
             </label>
             <script>
               ;(function () {
@@ -85,12 +85,12 @@
                 const HH = pad(now.getHours())
                 const MM = pad(now.getMinutes())
                 const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
-                const input = document.getElementById('announce-track-namespace')
+                const input = document.getElementById('publish-track-namespace')
                 if (input) input.value = value
               })()
             </script>
             <div class="button-row action-row">
-              <button type="button" id="sendAnnounceBtn">Send</button>
+              <button type="button" id="sendPublishNamespaceBtn">Send</button>
             </div>
           </section>
 
