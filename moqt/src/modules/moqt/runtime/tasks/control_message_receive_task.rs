@@ -27,16 +27,16 @@ enum DepacketizeResult<T: TransportProtocol> {
     ResponseMessage(u64, ResponseMessage),
 }
 
-pub(crate) struct ControlMessageReceiveThread;
+pub(crate) struct ControlMessageReceiveTask;
 
-impl ControlMessageReceiveThread {
+impl ControlMessageReceiveTask {
     pub(crate) fn run<T: TransportProtocol>(
         mut receive_stream: BiStreamReceiver<T>,
         session_context: Weak<SessionContext<T>>,
         receiver_span: Span,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
-            .name("Message Receiver")
+            .name("Control Message Receiver")
             .spawn(
                 async move {
                     loop {
@@ -51,20 +51,19 @@ impl ControlMessageReceiveThread {
                                     break;
                                 }
                             };
-                            let depack_result =
-                                Self::resolve_message(session.clone(), received_message);
-                            match depack_result {
+
+                            match Self::resolve_message(session.clone(), received_message) {
                                 DepacketizeResult::SessionEvent(event) => {
-                                    if let Err(e) = session.event_sender.send(event) {
-                                        tracing::error!("failed to send message: {:?}", e);
+                                    if let Err(error) = session.event_sender.send(event) {
+                                        tracing::error!("failed to send message: {:?}", error);
                                     }
                                 }
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
                                     if let Some(sender) =
                                         session.sender_map.lock().await.remove(&request_id)
                                     {
-                                        if let Err(e) = sender.send(message) {
-                                            tracing::error!("failed to send message: {:?}", e);
+                                        if let Err(error) = sender.send(message) {
+                                            tracing::error!("failed to send message: {:?}", error);
                                         }
                                     } else {
                                         tracing::error!("Protocol violation");
@@ -101,17 +100,17 @@ impl ControlMessageReceiveThread {
             ReceivedMessage::SubscribeOk(subscribe_ok) => {
                 tracing::debug!("Event: Subscribe ok");
                 let request_id = subscribe_ok.request_id;
-                let reponse = ResponseMessage::SubscribeOk(subscribe_ok);
-                DepacketizeResult::ResponseMessage(request_id, reponse)
+                let response = ResponseMessage::SubscribeOk(subscribe_ok);
+                DepacketizeResult::ResponseMessage(request_id, response)
             }
             ReceivedMessage::SubscribeError(subscribe_error) => {
                 tracing::debug!("Event: Subscribe error");
-                let reponse = ResponseMessage::SubscribeError(
+                let response = ResponseMessage::SubscribeError(
                     subscribe_error.request_id,
                     subscribe_error.error_code,
                     subscribe_error.reason_phrase,
                 );
-                DepacketizeResult::ResponseMessage(subscribe_error.request_id, reponse)
+                DepacketizeResult::ResponseMessage(subscribe_error.request_id, response)
             }
             ReceivedMessage::Publish(publish) => {
                 tracing::debug!("Event: Publish");
@@ -121,16 +120,16 @@ impl ControlMessageReceiveThread {
             ReceivedMessage::PublishOk(publish_ok) => {
                 tracing::debug!("Event: Publish ok");
                 let request_id = publish_ok.request_id;
-                let reponse = ResponseMessage::PublishOk(publish_ok);
-                DepacketizeResult::ResponseMessage(request_id, reponse)
+                let response = ResponseMessage::PublishOk(publish_ok);
+                DepacketizeResult::ResponseMessage(request_id, response)
             }
             ReceivedMessage::PublishError(publish_error) => {
                 tracing::debug!("Event: Publish error");
                 let request_id = publish_error.request_id;
                 let error_code = publish_error.error_code;
                 let reason_phrase = publish_error.reason_phrase.clone();
-                let reponse = ResponseMessage::PublishError(request_id, error_code, reason_phrase);
-                DepacketizeResult::ResponseMessage(request_id, reponse)
+                let response = ResponseMessage::PublishError(request_id, error_code, reason_phrase);
+                DepacketizeResult::ResponseMessage(request_id, response)
             }
             ReceivedMessage::PublishNamespace(publish_namespace) => {
                 tracing::debug!("Event: Publish namespace");
@@ -143,17 +142,17 @@ impl ControlMessageReceiveThread {
             ReceivedMessage::PublishNamespaceOk(publish_namespace_ok) => {
                 tracing::debug!("Event: Publish namespace ok");
                 let request_id = publish_namespace_ok.request_id;
-                let reponse = ResponseMessage::PublishNamespaceOk(request_id);
-                DepacketizeResult::ResponseMessage(request_id, reponse)
+                let response = ResponseMessage::PublishNamespaceOk(request_id);
+                DepacketizeResult::ResponseMessage(request_id, response)
             }
             ReceivedMessage::PublishNamespaceError(publish_namespace_error) => {
                 tracing::debug!("Event: Publish namespace error");
                 let request_id = publish_namespace_error.request_id;
                 let error_code = publish_namespace_error.error_code;
                 let reason_phrase = publish_namespace_error.reason_phrase.clone();
-                let reponse =
+                let response =
                     ResponseMessage::PublishNamespaceError(request_id, error_code, reason_phrase);
-                DepacketizeResult::ResponseMessage(request_id, reponse)
+                DepacketizeResult::ResponseMessage(request_id, response)
             }
             ReceivedMessage::SubscribeNamespace(subscribe_namespace) => {
                 tracing::debug!("Event: Subscribe namespace");
@@ -166,17 +165,17 @@ impl ControlMessageReceiveThread {
             ReceivedMessage::SubscribeNamespaceOk(subscribe_namespace_ok) => {
                 tracing::debug!("Event: Subscribe namespace ok");
                 let request_id = subscribe_namespace_ok.request_id;
-                let reponse = ResponseMessage::SubscribeNameSpaceOk(request_id);
-                DepacketizeResult::ResponseMessage(request_id, reponse)
+                let response = ResponseMessage::SubscribeNameSpaceOk(request_id);
+                DepacketizeResult::ResponseMessage(request_id, response)
             }
             ReceivedMessage::SubscribeNamespaceError(subscribe_namespace_error) => {
                 tracing::debug!("Event: Subscribe namespace error");
                 let request_id = subscribe_namespace_error.request_id;
                 let error_code = subscribe_namespace_error.error_code;
                 let reason_phrase = subscribe_namespace_error.reason_phrase.clone();
-                let reponse =
+                let response =
                     ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase);
-                DepacketizeResult::ResponseMessage(request_id, reponse)
+                DepacketizeResult::ResponseMessage(request_id, response)
             }
             _ => todo!(),
         }
