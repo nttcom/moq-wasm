@@ -4,7 +4,7 @@ use crate::modules::core::handler::{
     unsubscribe::UnsubscribeHandler,
 };
 
-pub(crate) enum SessionEvent {
+pub(crate) enum MoqtSessionEvent {
     PublishNamespace(Box<dyn PublishNamespaceHandler>),
     SubscribeNamespace(Box<dyn SubscribeNamespaceHandler>),
     Publish(Box<dyn PublishHandler>),
@@ -14,16 +14,16 @@ pub(crate) enum SessionEvent {
     ProtocolViolation(),
 }
 
-impl std::fmt::Debug for SessionEvent {
+impl std::fmt::Debug for MoqtSessionEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
-            SessionEvent::PublishNamespace(_) => "PublishNamespace",
-            SessionEvent::SubscribeNamespace(_) => "SubscribeNamespace",
-            SessionEvent::Publish(_) => "Publish",
-            SessionEvent::Subscribe(_) => "Subscribe",
-            SessionEvent::Unsubscribe(_) => "Unsubscribe",
-            SessionEvent::Disconnected() => "Disconnected",
-            SessionEvent::ProtocolViolation() => "ProtocolViolation",
+            MoqtSessionEvent::PublishNamespace(_) => "PublishNamespace",
+            MoqtSessionEvent::SubscribeNamespace(_) => "SubscribeNamespace",
+            MoqtSessionEvent::Publish(_) => "Publish",
+            MoqtSessionEvent::Subscribe(_) => "Subscribe",
+            MoqtSessionEvent::Unsubscribe(_) => "Unsubscribe",
+            MoqtSessionEvent::Disconnected() => "Disconnected",
+            MoqtSessionEvent::ProtocolViolation() => "ProtocolViolation",
         };
 
         f.write_str(name)

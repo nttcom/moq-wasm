@@ -7,7 +7,7 @@ use crate::modules::{
     core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
     relay::{
         cache::store::TrackCacheStore,
-        notifications::{track_event::TrackEvent, track_notifier::TrackNotifier},
+        notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
         types::StreamSubgroupId,
     },
     types::TrackKey,
@@ -26,7 +26,7 @@ impl StreamReader {
     pub(crate) fn run(
         mut receiver: mpsc::Receiver<StreamOpened>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<TrackNotifier>,
+        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
@@ -37,7 +37,7 @@ impl StreamReader {
                             cmd.track_key,
                             cmd.receiver,
                             cache_store.clone(),
-                            sender_map.clone(),
+                            object_notify_producer_map.clone(),
                         ));
                     }
                     Some(result) = joinset.join_next() => {
@@ -56,7 +56,7 @@ impl StreamReader {
         track_key: TrackKey,
         mut receiver: Box<dyn StreamReceiver>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<TrackNotifier>,
+        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
     ) {
         let mut group_id = 0u64;
         let mut subgroup_id = StreamSubgroupId::None;
@@ -73,12 +73,12 @@ impl StreamReader {
                             DataObject::SubgroupHeader(header),
                         )
                         .await;
-                    let _ = sender_map
-                        .get_or_create(track_key)
-                        .send(TrackEvent::StreamOpened {
+                    let _ = object_notify_producer_map.get_or_create(track_key).send(
+                        TrackEvent::StreamOpened {
                             group_id,
                             subgroup_id: subgroup_id.clone(),
-                        });
+                        },
+                    );
                 }
                 Ok(object) => {
                     let should_close = matches!(
@@ -97,7 +97,7 @@ impl StreamReader {
                         .await;
                     if should_close {
                         cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                        let _ = sender_map
+                        let _ = object_notify_producer_map
                             .get_or_create(track_key)
                             .send(TrackEvent::EndOfGroup);
                         return;
@@ -106,7 +106,7 @@ impl StreamReader {
                 Err(_) => {
                     let cache = cache_store.get_or_create(track_key);
                     cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                    let _ = sender_map
+                    let _ = object_notify_producer_map
                         .get_or_create(track_key)
                         .send(TrackEvent::EndOfGroup);
                     return;

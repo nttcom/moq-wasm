@@ -2,72 +2,73 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::modules::{
-    enums::MoqtRelayEvent,
     relay::{
         egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressStartRequest,
     },
     sequences::{
-        notifier::Notifier,
+        notifier::SessionSignalingDispatcher,
         publish::Publish,
         publish_namespace::PublishNamespace,
         subscribe::Subscribe,
         subscribe_namespace::SubscribeNameSpace,
-        tables::{hashmap_table::HashMapTable, table::Table},
+        tables::{hashmap_table::InMemorySignalingStateTable, table::SignalingStateTable},
         unsubscribe::Unsubscribe,
     },
+    session_event::SessionEvent,
     session_repository::SessionRepository,
 };
 use tracing::Instrument;
 
 pub(crate) struct EventHandler {
-    session_event_watcher: tokio::task::JoinHandle<()>,
+    relay_session_event_handler: tokio::task::JoinHandle<()>,
 }
 
 impl EventHandler {
     pub(crate) fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        relay_event_receiver: tokio::sync::mpsc::UnboundedReceiver<MoqtRelayEvent>,
+        relay_event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
         ingress_sender: mpsc::Sender<IngressStartRequest>,
         egress_sender: mpsc::Sender<EgressCommand>,
     ) -> Self {
-        let session_event_watcher = Self::create_pub_sub_event_watcher(
+        let relay_session_event_handler = Self::create_relay_session_event_handler(
             repo,
             relay_event_receiver,
             ingress_sender,
             egress_sender,
         );
         Self {
-            session_event_watcher,
+            relay_session_event_handler,
         }
     }
 
-    fn create_pub_sub_event_watcher(
+    fn create_relay_session_event_handler(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        mut receiver: tokio::sync::mpsc::UnboundedReceiver<MoqtRelayEvent>,
+        mut receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
         ingress_sender: mpsc::Sender<IngressStartRequest>,
         egress_sender: mpsc::Sender<EgressCommand>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
-            .name("Session Event Watcher")
+            .name("Relay Session Event Handler")
             .spawn(async move {
-                let notifier = Notifier {
+                let session_signaling_dispatcher = SessionSignalingDispatcher {
                     repository: repo.clone(),
                 };
-                let table = Box::new(HashMapTable::new());
+                let signaling_state_table = Box::new(InMemorySignalingStateTable::new());
                 loop {
                     if let Some(event) = receiver.recv().await {
                         let session_id = match &event {
-                            MoqtRelayEvent::PublishNameSpace(session_id, _)
-                            | MoqtRelayEvent::SubscribeNameSpace(session_id, _)
-                            | MoqtRelayEvent::Publish(session_id, _)
-                            | MoqtRelayEvent::Subscribe(session_id, _)
-                            | MoqtRelayEvent::Unsubscribe(session_id, _)
-                            | MoqtRelayEvent::Disconnected(session_id)
-                            | MoqtRelayEvent::ProtocolViolation(session_id) => *session_id,
+                            SessionEvent::PublishNameSpace(session_id, _)
+                            | SessionEvent::SubscribeNameSpace(session_id, _)
+                            | SessionEvent::Publish(session_id, _)
+                            | SessionEvent::Subscribe(session_id, _)
+                            | SessionEvent::Unsubscribe(session_id, _)
+                            | SessionEvent::Disconnected(session_id)
+                            | SessionEvent::ProtocolViolation(session_id) => *session_id,
                         };
 
                         let session_span = {
-                            let repo = repo.lock().await;
+                            let repo: tokio::sync::MutexGuard<'_, SessionRepository> =
+                                repo.lock().await;
                             repo.session_span(session_id)
                         };
                         let Some(session_span) = session_span else {
@@ -76,70 +77,70 @@ impl EventHandler {
                         };
 
                         match event {
-                            MoqtRelayEvent::PublishNameSpace(session_id, handler) => {
+                            SessionEvent::PublishNameSpace(session_id, handler) => {
                                 let publish_ns = PublishNamespace {};
                                 publish_ns
                                     .handle(
                                         session_id,
                                         &session_span,
-                                        table.as_ref(),
-                                        &notifier,
+                                        signaling_state_table.as_ref(),
+                                        &session_signaling_dispatcher,
                                         handler.as_ref(),
                                     )
                                     .await;
                             }
-                            MoqtRelayEvent::SubscribeNameSpace(session_id, handler) => {
+                            SessionEvent::SubscribeNameSpace(session_id, handler) => {
                                 let subscribe_ns = SubscribeNameSpace {};
                                 subscribe_ns
                                     .handle(
                                         session_id,
                                         &session_span,
-                                        table.as_ref(),
-                                        &notifier,
+                                        signaling_state_table.as_ref(),
+                                        &session_signaling_dispatcher,
                                         handler.as_ref(),
                                     )
                                     .await;
                             }
-                            MoqtRelayEvent::Publish(session_id, handler) => {
+                            SessionEvent::Publish(session_id, handler) => {
                                 let publish = Publish {};
                                 publish
                                     .handle(
                                         session_id,
                                         &session_span,
-                                        table.as_ref(),
-                                        &notifier,
+                                        signaling_state_table.as_ref(),
+                                        &session_signaling_dispatcher,
                                         handler,
                                     )
                                     .await;
                             }
-                            MoqtRelayEvent::Subscribe(session_id, handler) => {
+                            SessionEvent::Subscribe(session_id, handler) => {
                                 let subscribe = Subscribe {};
                                 subscribe
                                     .handle(
                                         session_id,
                                         &session_span,
-                                        table.as_ref(),
-                                        &notifier,
+                                        signaling_state_table.as_ref(),
+                                        &session_signaling_dispatcher,
                                         &ingress_sender,
                                         &egress_sender,
                                         handler,
                                     )
                                     .await;
                             }
-                            MoqtRelayEvent::Unsubscribe(session_id, handler) => {
+                            SessionEvent::Unsubscribe(session_id, handler) => {
                                 let unsubscribe = Unsubscribe {};
                                 unsubscribe
                                     .handle(
                                         session_id,
                                         &session_span,
-                                        table.as_ref(),
-                                        &notifier,
+                                        signaling_state_table.as_ref(),
+                                        &session_signaling_dispatcher,
                                         &egress_sender,
                                         handler,
                                     )
                                     .await;
                             }
-                            MoqtRelayEvent::Disconnected(session_id) => {
+                            SessionEvent::Disconnected(session_id) => {
                                 let disconnected_span = tracing::info_span!(
                                     parent: session_span,
                                     "relay.session.disconnected",
@@ -147,13 +148,17 @@ impl EventHandler {
                                 );
                                 async {
                                     tracing::info!("Session disconnected: {}", session_id);
-                                    table.remove_session(session_id).await;
-                                    notifier.repository.lock().await.remove(session_id);
+                                    signaling_state_table.remove_session(session_id).await;
+                                    session_signaling_dispatcher
+                                        .repository
+                                        .lock()
+                                        .await
+                                        .remove(session_id);
                                 }
                                 .instrument(disconnected_span)
                                 .await;
                             }
-                            MoqtRelayEvent::ProtocolViolation(session_id) => {
+                            SessionEvent::ProtocolViolation(session_id) => {
                                 let protocol_violation_span = tracing::info_span!(
                                     parent: session_span,
                                     "relay.session.protocol_violation",
@@ -161,8 +166,12 @@ impl EventHandler {
                                 );
                                 async {
                                     tracing::error!("Session protocol violation: {}", session_id);
-                                    table.remove_session(session_id).await;
-                                    notifier.repository.lock().await.remove(session_id);
+                                    signaling_state_table.remove_session(session_id).await;
+                                    session_signaling_dispatcher
+                                        .repository
+                                        .lock()
+                                        .await
+                                        .remove(session_id);
                                 }
                                 .instrument(protocol_violation_span)
                                 .await;
@@ -181,6 +190,6 @@ impl EventHandler {
 impl Drop for EventHandler {
     fn drop(&mut self) {
         tracing::info!("Manager dropped.");
-        self.session_event_watcher.abort();
+        self.relay_session_event_handler.abort();
     }
 }

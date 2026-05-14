@@ -5,16 +5,17 @@ use tracing::{Instrument, Span};
 
 use crate::modules::{
     core::{
-        publisher::Publisher, session::Session, session_event::SessionEvent, subscriber::Subscriber,
+        publisher::Publisher, session::Session, session_event::MoqtSessionEvent,
+        subscriber::Subscriber,
     },
-    enums::MoqtRelayEvent,
-    event_resolver::moqt_relay_event_resolver::MoqtRelayEventResolver,
-    thread_manager::ThreadManager,
+    event_resolver::moqt_relay_event_resolver::RelaySessionEventResolver,
+    session_event::SessionEvent,
+    session_event_forward_task_registry::SessionEventForwardTaskRegistry,
     types::SessionId,
 };
 
 pub(crate) struct SessionRepository {
-    thread_manager: ThreadManager,
+    session_event_forward_task_registry: SessionEventForwardTaskRegistry,
     sessions: DashMap<SessionId, Arc<dyn Session>>,
     session_spans: DashMap<SessionId, Span>,
 }
@@ -37,23 +38,23 @@ fn filter_type_label(filter_type: &crate::modules::enums::FilterType) -> String 
     }
 }
 
-fn log_session_event(event: &SessionEvent) {
+fn log_session_event(event: &MoqtSessionEvent) {
     match event {
-        SessionEvent::PublishNamespace(handler) => {
+        MoqtSessionEvent::PublishNamespace(handler) => {
             tracing::info!(
                 event = "PublishNamespace",
                 track_namespace = %handler.track_namespace(),
                 "Received session event"
             );
         }
-        SessionEvent::SubscribeNamespace(handler) => {
+        MoqtSessionEvent::SubscribeNamespace(handler) => {
             tracing::info!(
                 event = "SubscribeNamespace",
                 track_namespace_prefix = %handler.track_namespace_prefix(),
                 "Received session event"
             );
         }
-        SessionEvent::Publish(handler) => {
+        MoqtSessionEvent::Publish(handler) => {
             tracing::info!(
                 event = "Publish",
                 track_namespace = %handler.track_namespace(),
@@ -68,7 +69,7 @@ fn log_session_event(event: &SessionEvent) {
                 "Received session event"
             );
         }
-        SessionEvent::Subscribe(handler) => {
+        MoqtSessionEvent::Subscribe(handler) => {
             let filter_type = handler._filter_type();
             tracing::info!(
                 event = "Subscribe",
@@ -85,17 +86,17 @@ fn log_session_event(event: &SessionEvent) {
                 "Received session event"
             );
         }
-        SessionEvent::Unsubscribe(handler) => {
+        MoqtSessionEvent::Unsubscribe(handler) => {
             tracing::info!(
                 event = "Unsubscribe",
                 subscribe_id = handler.subscribe_id(),
                 "Received session event"
             );
         }
-        SessionEvent::Disconnected() => {
+        MoqtSessionEvent::Disconnected() => {
             tracing::info!(event = "Disconnected", "Received session event");
         }
-        SessionEvent::ProtocolViolation() => {
+        MoqtSessionEvent::ProtocolViolation() => {
             tracing::error!(event = "ProtocolViolation", "Received session event");
         }
     }
@@ -104,7 +105,7 @@ fn log_session_event(event: &SessionEvent) {
 impl SessionRepository {
     pub(crate) fn new() -> Self {
         Self {
-            thread_manager: ThreadManager::new(),
+            session_event_forward_task_registry: SessionEventForwardTaskRegistry::new(),
             sessions: DashMap::new(),
             session_spans: DashMap::new(),
         }
@@ -114,16 +115,16 @@ impl SessionRepository {
         &mut self,
         session_id: SessionId,
         session: Box<dyn Session>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<MoqtRelayEvent>,
+        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         session_span: Span,
     ) {
         let arc_session: Arc<dyn Session> = Arc::from(session);
         self.sessions.insert(session_id, arc_session.clone());
         self.session_spans.insert(session_id, session_span.clone());
-        self.start_receive(
+        self.start_session_event_forwarding(
             session_id,
             Arc::downgrade(&arc_session),
-            event_sender,
+            relay_session_event_sender,
             session_span,
         );
     }
@@ -131,53 +132,54 @@ impl SessionRepository {
     pub(crate) fn remove(&mut self, session_id: SessionId) {
         self.sessions.remove(&session_id);
         self.session_spans.remove(&session_id);
-        self.thread_manager.remove(&session_id);
+        self.session_event_forward_task_registry.remove(&session_id);
     }
 
     pub(crate) fn session_span(&self, session_id: SessionId) -> Option<Span> {
         self.session_spans.get(&session_id).map(|span| span.clone())
     }
 
-    fn start_receive(
+    fn start_session_event_forwarding(
         &mut self,
         session_id: SessionId,
         session: Weak<dyn Session>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<MoqtRelayEvent>,
+        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         session_span: Span,
     ) {
-        let session_event_watcher_span = tracing::info_span!(
+        let session_event_forwarder_span = tracing::info_span!(
             parent: &session_span,
-            "relay.session.event_watcher",
+            "relay.session.event_forwarder",
             session_id = session_id
         );
         let join_handle = tokio::task::Builder::new()
-            .name("Session Event Watcher")
+            .name("Session Event Forwarder")
             .spawn(
                 async move {
                     loop {
                         if let Some(session) = session.upgrade() {
-                            let event = match session.receive_session_event().await {
+                            let event = match session.receive_moqt_session_event().await {
                                 Ok(event) => {
                                     log_session_event(&event);
                                     event
                                 }
                                 Err(e) => {
-                                    tracing::error!("Failed to receive session event: {}", e);
+                                    tracing::error!("Failed to receive moqt session event: {}", e);
                                     break;
                                 }
                             };
                             let should_stop = matches!(
                                 event,
-                                SessionEvent::Disconnected() | SessionEvent::ProtocolViolation()
+                                MoqtSessionEvent::Disconnected()
+                                    | MoqtSessionEvent::ProtocolViolation()
                             );
 
-                            let relay_event = MoqtRelayEventResolver::resolve(session_id, event);
-                            if let Err(err) = event_sender.send(relay_event) {
+                            let relay_event = RelaySessionEventResolver::resolve(session_id, event);
+                            if let Err(err) = relay_session_event_sender.send(relay_event) {
                                 tracing::error!("Failed to forward session event: {}", err);
                                 break;
                             }
                             if should_stop {
-                                tracing::info!("Stopping session event watcher");
+                                tracing::info!("Stopping session event forwarder");
                                 break;
                             }
                         } else {
@@ -186,10 +188,11 @@ impl SessionRepository {
                         }
                     }
                 }
-                .instrument(session_event_watcher_span),
+                .instrument(session_event_forwarder_span),
             )
             .unwrap();
-        self.thread_manager.add(session_id, join_handle);
+        self.session_event_forward_task_registry
+            .add(session_id, join_handle);
     }
 
     pub(crate) fn subscriber(&self, session_id: SessionId) -> Option<Box<dyn Subscriber>> {
