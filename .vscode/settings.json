@@ -41,9 +41,6 @@
     // "web_sys_unstable_apis"
   ],
   "rust-analyzer.linkedProjects": [
-    "Cargo.toml",
-    "moqt/Cargo.toml",
-    "client/Cargo.toml",
-    "relay/Cargo.toml"
+    "Cargo.toml"
   ]
 }

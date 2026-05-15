@@ -1,12 +1,3 @@
-use crate::modules::{
-    core::handler::{
-        publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
-        subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
-        unsubscribe::UnsubscribeHandler,
-    },
-    types::SessionId,
-};
-
 #[derive(Clone, Debug)]
 pub(crate) struct Location {
     pub(crate) group_id: u64,
@@ -124,14 +115,4 @@ impl ContentExists {
             },
         }
     }
-}
-
-pub(crate) enum MoqtRelayEvent {
-    PublishNameSpace(SessionId, Box<dyn PublishNamespaceHandler>),
-    SubscribeNameSpace(SessionId, Box<dyn SubscribeNamespaceHandler>),
-    Publish(SessionId, Box<dyn PublishHandler>),
-    Subscribe(SessionId, Box<dyn SubscribeHandler>),
-    Unsubscribe(SessionId, Box<dyn UnsubscribeHandler>),
-    Disconnected(SessionId),
-    ProtocolViolation(SessionId),
 }

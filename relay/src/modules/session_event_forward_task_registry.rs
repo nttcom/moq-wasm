@@ -2,11 +2,11 @@ use dashmap::DashMap;
 
 use crate::modules::types::SessionId;
 
-pub(crate) struct ThreadManager {
+pub(crate) struct SessionEventForwardTaskRegistry {
     join_handles_map: DashMap<SessionId, tokio::task::JoinHandle<()>>,
 }
 
-impl ThreadManager {
+impl SessionEventForwardTaskRegistry {
     pub(super) fn new() -> Self {
         let join_handles_map = DashMap::new();
         Self { join_handles_map }
@@ -23,7 +23,7 @@ impl ThreadManager {
     }
 }
 
-impl Drop for ThreadManager {
+impl Drop for SessionEventForwardTaskRegistry {
     fn drop(&mut self) {
         for join_handle in self.join_handles_map.iter() {
             join_handle.value().abort();

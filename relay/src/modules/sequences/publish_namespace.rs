@@ -1,6 +1,6 @@
 use crate::modules::{
     core::handler::publish_namespace::PublishNamespaceHandler,
-    sequences::{notifier::Notifier, tables::table::Table},
+    sequences::{notifier::SessionSignalingDispatcher, tables::table::SignalingStateTable},
     types::SessionId,
 };
 use tracing::Span;
@@ -19,8 +19,8 @@ impl PublishNamespace {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn Table,
-        notifier: &Notifier,
+        table: &dyn SignalingStateTable,
+        notifier: &SessionSignalingDispatcher,
         handler: &dyn PublishNamespaceHandler,
     ) {
         let requested_track_namespace = handler.track_namespace();
@@ -53,7 +53,7 @@ impl PublishNamespace {
     async fn register(
         &self,
         session_id: SessionId,
-        table: &dyn Table,
+        table: &dyn SignalingStateTable,
         handler: &dyn PublishNamespaceHandler,
     ) -> Option<String> {
         let track_namespace = handler.track_namespace();
@@ -85,8 +85,8 @@ impl PublishNamespace {
     async fn notify_to_subscribers(
         &self,
         track_namespace: &str,
-        table: &dyn Table,
-        notifier: &Notifier,
+        table: &dyn SignalingStateTable,
+        notifier: &SessionSignalingDispatcher,
     ) {
         let combined = table.get_namespace_subscribers(track_namespace);
         tracing::debug!("The namespace are subscribed by: {:?}", combined);

@@ -6,7 +6,7 @@ use crate::{
     },
 };
 
-pub(crate) enum StreamWithObject<T: TransportProtocol> {
+pub(crate) enum IncomingTrackData<T: TransportProtocol> {
     StreamHeader {
         stream: UniStreamReceiver<T>,
         header: SubgroupHeader,
