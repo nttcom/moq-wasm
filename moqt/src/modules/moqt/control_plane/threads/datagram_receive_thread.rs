@@ -32,11 +32,15 @@ impl DatagramReceiveThread {
                     tracing::debug!("Datagram Receiver started");
                     loop {
                         tokio::select! {
+                            _ = context.transport_connection.closed() => {
+                                tracing::info!("Datagram Receiver stopped because transport connection closed");
+                                break;
+                            },
                             data = context.transport_connection.receive_datagram() => {
                                 if let Ok(mut data) = data {
                                     Self::on_datagram_received(&context, &mut data).await;
                                 } else {
-                                    tracing::error!("Failed to receive datagram");
+                                    tracing::info!("Datagram Receiver stopped because datagram receive failed after connection close");
                                     break;
                                 }
                             },
@@ -45,7 +49,7 @@ impl DatagramReceiveThread {
                                     let stream = UniStreamReceiver::new(stream, SubgroupDecoder::new());
                                     Self::on_stream_received(&context, stream).await;
                                 } else {
-                                    tracing::error!("Failed to accept uni stream");
+                                    tracing::info!("Datagram Receiver stopped because uni stream accept failed after connection close");
                                     break;
                                 }
                             }
@@ -81,15 +85,18 @@ impl DatagramReceiveThread {
         true
     }
 
-    #[tracing::instrument(level = "info", name = "on_stream_received", skip_all)]
     async fn on_stream_received<T: TransportProtocol>(
         context: &Arc<SessionContext<T>>,
         mut stream: UniStreamReceiver<T>,
     ) -> bool {
         let subgroup = match stream.receive().await {
-            Some(Ok(subgroup)) => subgroup,
-            _ => {
-                tracing::error!("Stream closed before receiving data");
+            Ok(Some(subgroup)) => subgroup,
+            Ok(None) => {
+                tracing::error!("Stream ended before receiving data");
+                return false;
+            }
+            Err(error) => {
+                tracing::error!(%error, "Stream failed before receiving data");
                 return false;
             }
         };
@@ -114,12 +121,6 @@ impl DatagramReceiveThread {
         true
     }
 
-    #[tracing::instrument(
-        level = "info",
-        name = "moqt.datagram_receiver.notify",
-        skip_all,
-        fields(track_alias = track_alias)
-    )]
     async fn notify<T: TransportProtocol>(
         context: &Arc<SessionContext<T>>,
         track_alias: u64,

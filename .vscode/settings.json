@@ -43,7 +43,6 @@
   "rust-analyzer.linkedProjects": [
     "Cargo.toml",
     "moqt/Cargo.toml",
-    "client/Cargo.toml",
     "relay/Cargo.toml"
   ]
 }
