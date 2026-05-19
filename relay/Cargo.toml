@@ -26,6 +26,6 @@ backtrace-on-stack-overflow="0.3.0"
 tracing-panic = "0.1.2"
 opentelemetry = { version = "0.31.0", features = ["trace", "logs"] }
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio", "logs"] }
-opentelemetry-otlp = { version = "0.31.0", features = ["grpc-tonic", "trace", "logs"] }
+opentelemetry-otlp = { version = "0.31.0", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "trace", "logs"] }
 opentelemetry-appender-tracing = "0.31.1"
 tracing-opentelemetry = "0.32.1"

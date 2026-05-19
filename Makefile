@@ -10,7 +10,7 @@ ONVIF_PASSWORD ?=
 MOQT_URL ?= 
 
 relay:
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
+	set -a; [ ! -f .env ] || . ./.env; set +a; RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
 
 browser:
 	cd examples/browser && npm run dev
