@@ -6,7 +6,7 @@ use tracing::Span;
 use crate::Publisher;
 use crate::Subscriber;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
-use crate::modules::moqt::data_plane::streams::stream::stream_receiver::BiStreamReceiver;
+use crate::modules::moqt::data_plane::stream::stream_receiver::BiStreamReceiver;
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::runtime::tasks::{

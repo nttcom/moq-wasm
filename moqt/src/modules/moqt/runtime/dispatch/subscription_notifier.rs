@@ -4,7 +4,7 @@ use crate::{
     TransportProtocol,
     modules::moqt::{
         domains::session_context::SessionContext,
-        runtime::dispatch::incoming_track_data::IncomingTrackData,
+        runtime::dispatch::incoming_object::IncomingObject,
     },
 };
 
@@ -20,13 +20,13 @@ impl SubscriptionNotifier {
     pub(crate) async fn notify<T: TransportProtocol>(
         context: &Arc<SessionContext<T>>,
         track_alias: u64,
-        incoming_track_data: IncomingTrackData<T>,
+        incoming_object: IncomingObject<T>,
     ) {
         let mut count = 0;
         loop {
             if let Some(sender) = context.notification_map.read().await.get(&track_alias) {
-                if let Err(error) = sender.send(incoming_track_data) {
-                    tracing::warn!("Failed to notify incoming track data: {}", error);
+                if let Err(error) = sender.send(incoming_object) {
+                    tracing::warn!("Failed to notify incoming object: {}", error);
                 }
                 break;
             }
