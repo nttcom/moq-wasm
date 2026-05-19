@@ -43,7 +43,10 @@ onvif:
 test:
 	cargo test
 
-
+fmt:
+	cargo clippy --all --fix
+	cargo fmt --all
+	npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path examples/browser/.prettierignore
 
 ffmpeg-rtmp:
 	ffmpeg -re \
