@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tokio::{sync::mpsc, task::JoinSet};
+use tracing::{Instrument, Span};
 
 use crate::modules::{
     core::{
@@ -9,12 +10,14 @@ use crate::modules::{
         publisher::Publisher,
     },
     relay::{cache::track_cache::TrackCache, types::StreamSubgroupId},
+    types::TrackKey,
 };
 
 use super::scheduler::GroupSendTask;
 
 /// Receives `GroupSendTask` entries and spawns per-group send tasks.
 pub(crate) struct GroupSender {
+    track_key: TrackKey,
     cache: Arc<TrackCache>,
     publisher: Box<dyn Publisher>,
     published_resource: PublishedResource,
@@ -23,12 +26,14 @@ pub(crate) struct GroupSender {
 
 impl GroupSender {
     pub(crate) fn new(
+        track_key: TrackKey,
         cache: Arc<TrackCache>,
         publisher: Box<dyn Publisher>,
         published_resource: PublishedResource,
         receiver: mpsc::Receiver<GroupSendTask>,
     ) -> Self {
         Self {
+            track_key,
             cache,
             publisher,
             published_resource,
@@ -52,18 +57,31 @@ impl GroupSender {
                         } => {
                             let factory = stream_factory
                                 .get_or_insert_with(|| self.publisher.new_stream_factory(&self.published_resource));
-                            match factory.next().await {
+                            let span = tracing::info_span!(
+                                "relay.dataplane.egress.stream",
+                                track_key = self.track_key,
+                                track_alias = track_alias,
+                                group_id = group_id,
+                                subgroup_id = tracing::field::debug(&subgroup_id),
+                                start_offset = start_offset,
+                                object_count = tracing::field::Empty,
+                                end_reason = tracing::field::Empty,
+                            );
+                            match async { factory.next().await }.instrument(span.clone()).await {
                                 Ok(sender) => {
                                     joinset.spawn(Self::send_stream_task(
                                         track_alias,
                                         group_id,
                                         subgroup_id,
                                         start_offset,
+                                        self.track_key,
                                         self.cache.clone(),
                                         sender,
-                                    ));
+                                    ).instrument(span));
                                 }
                                 Err(e) => {
+                                    span.record("object_count", 0u64);
+                                    span.record("end_reason", "open_failed");
                                     tracing::error!(?e, "failed to open stream sender");
                                 }
                             }
@@ -98,14 +116,20 @@ impl GroupSender {
         group_id: u64,
         subgroup_id: StreamSubgroupId,
         start_offset: u64,
+        track_key: TrackKey,
         cache: Arc<TrackCache>,
         mut sender: Box<dyn DataSender>,
     ) {
+        let span = Span::current();
+        let mut object_count = 0u64;
         let Some(header) = cache
             .get_stream_object_or_wait(group_id, &subgroup_id, 0)
             .await
         else {
+            span.record("object_count", object_count);
+            span.record("end_reason", "header_unavailable");
             tracing::warn!(
+                track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,
@@ -114,14 +138,18 @@ impl GroupSender {
             return;
         };
         tracing::info!(
+            track_key,
             track_alias,
             group_id,
             subgroup_id = ?subgroup_id,
             "egress sending subgroup header"
         );
         if let Err(error) = sender.send_object((*header).clone()).await {
+            span.record("object_count", object_count);
+            span.record("end_reason", "send_header_failed");
             tracing::error!(
                 ?error,
+                track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,
@@ -141,7 +169,8 @@ impl GroupSender {
                 }
                 _ => None,
             };
-            tracing::info!(
+            tracing::debug!(
+                track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,
@@ -150,7 +179,10 @@ impl GroupSender {
                 "egress sending subgroup object"
             );
             if sender.send_object((*object).clone()).await.is_err() {
+                span.record("object_count", object_count);
+                span.record("end_reason", "send_object_failed");
                 tracing::error!(
+                    track_key,
                     track_alias,
                     group_id,
                     subgroup_id = ?subgroup_id,
@@ -159,8 +191,11 @@ impl GroupSender {
                 );
                 return;
             }
+            object_count += 1;
             next_index += 1;
         }
+        span.record("object_count", object_count);
+        span.record("end_reason", "cache_closed");
     }
 
     async fn send_datagram_task(

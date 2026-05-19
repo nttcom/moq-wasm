@@ -34,7 +34,7 @@ impl SessionHandler {
                 loop {
                     let session_id = generate_session_id();
                     let session_span =
-                        tracing::info_span!(parent: None, "MoQTSession", session_id = session_id);
+                        tracing::info_span!(parent: None, "relay.session", session_id = session_id);
                     let Ok(connecting) = async {
                         endpoint.accept().await.inspect_err(|e| {
                             tracing::error!("failed to accept: {}", e);
