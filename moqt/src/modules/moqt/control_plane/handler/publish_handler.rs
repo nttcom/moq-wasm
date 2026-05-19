@@ -11,7 +11,7 @@ use crate::{
             },
         },
         domains::session_context::SessionContext,
-        runtime::dispatch::incoming_track_data::IncomingTrackData,
+        runtime::dispatch::incoming_object::IncomingObject,
     },
 };
 
@@ -66,7 +66,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
             .send(ControlMessageType::PublishOk, publish_ok.encode())
             .await?;
 
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingTrackData<T>>();
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
         self.session_context
             .notification_map
             .write()

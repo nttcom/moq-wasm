@@ -8,11 +8,11 @@ use crate::{
         moqt::{
             data_plane::{
                 codec::subgroup_decoder::SubgroupDecoder,
-                streams::stream::stream_receiver::UniStreamReceiver,
+                stream::stream_receiver::UniStreamReceiver,
             },
             domains::session_context::SessionContext,
             runtime::dispatch::{
-                incoming_track_data::IncomingTrackData, subscription_notifier::SubscriptionNotifier,
+                incoming_object::IncomingObject, subscription_notifier::SubscriptionNotifier,
             },
         },
         transport::transport_connection::TransportConnection,
@@ -73,7 +73,7 @@ impl UniStreamReceiveTask {
         SubscriptionNotifier::notify(
             context,
             subgroup_header.track_alias,
-            IncomingTrackData::StreamHeader {
+            IncomingObject::StreamHeader {
                 stream,
                 header: subgroup_header,
             },

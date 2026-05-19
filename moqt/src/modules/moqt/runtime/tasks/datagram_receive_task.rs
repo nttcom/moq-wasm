@@ -10,7 +10,7 @@ use crate::{
             data_plane::object::object_datagram::ObjectDatagram,
             domains::session_context::SessionContext,
             runtime::dispatch::{
-                incoming_track_data::IncomingTrackData, subscription_notifier::SubscriptionNotifier,
+                incoming_object::IncomingObject, subscription_notifier::SubscriptionNotifier,
             },
         },
         transport::transport_connection::TransportConnection,
@@ -64,7 +64,7 @@ impl DatagramReceiveTask {
         SubscriptionNotifier::notify(
             context,
             datagram_object.track_alias,
-            IncomingTrackData::Datagram(datagram_object),
+            IncomingObject::Datagram(datagram_object),
         )
         .await;
         true

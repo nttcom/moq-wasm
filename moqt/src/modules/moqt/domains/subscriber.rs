@@ -15,13 +15,13 @@ use crate::{
             },
             enums::ResponseMessage,
         },
-        data_plane::streams::stream::{
+        data_plane::stream::{
             stream_data_receiver::StreamDataReceiver,
             stream_data_receiver_factory::StreamDataReceiverFactory,
         },
         domains::session_context::SessionContext,
         protocol::TransportProtocol,
-        runtime::dispatch::incoming_track_data::IncomingTrackData,
+        runtime::dispatch::incoming_object::IncomingObject,
     },
 };
 
@@ -128,7 +128,7 @@ impl<T: TransportProtocol> Subscriber<T> {
                 } else {
                     tracing::info!("Subscribe ok");
                     let (sender, receiver) =
-                        tokio::sync::mpsc::unbounded_channel::<IncomingTrackData<T>>();
+                        tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
                     self.session
                         .notification_map
                         .write()
@@ -189,13 +189,13 @@ impl<T: TransportProtocol> Subscriber<T> {
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
         match stream_with_object {
-            IncomingTrackData::StreamHeader { stream, header } => {
+            IncomingObject::StreamHeader { stream, header } => {
                 let first = StreamDataReceiver::new(stream, header).await?;
                 Ok(DataReceiver::Stream(StreamDataReceiverFactory::new(
                     first, receiver,
                 )))
             }
-            IncomingTrackData::Datagram(object) => {
+            IncomingObject::Datagram(object) => {
                 let data_receiver = DatagramReceiver::new(object, receiver).await;
                 Ok(DataReceiver::Datagram(data_receiver))
             }

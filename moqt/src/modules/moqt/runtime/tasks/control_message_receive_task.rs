@@ -15,7 +15,7 @@ use crate::{
                 unsubscribe_handler::UnsubscribeHandler,
             },
         },
-        data_plane::streams::stream::{
+        data_plane::stream::{
             received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
         },
         domains::session_context::SessionContext,
