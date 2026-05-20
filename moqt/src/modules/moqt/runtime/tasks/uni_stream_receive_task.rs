@@ -55,8 +55,15 @@ impl UniStreamReceiveTask {
         mut stream: UniStreamReceiver<T>,
     ) -> bool {
         let subgroup = match stream.receive().await {
-            Some(Ok(subgroup)) => subgroup,
-            _ => {
+            Ok(subgroup) => {
+                if let Some(subgroup) = subgroup {
+                    subgroup
+                } else {
+                    tracing::info!("Stream closed before receiving data");
+                    return false;
+                }
+            }
+            Err(_) => {
                 tracing::error!("Stream closed before receiving data");
                 return false;
             }
