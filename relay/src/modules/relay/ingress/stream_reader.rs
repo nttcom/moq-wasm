@@ -45,7 +45,6 @@ impl StreamReader {
                             track_key = cmd.track_key,
                             group_id = tracing::field::Empty,
                             subgroup_id = tracing::field::Empty,
-                            object_count = tracing::field::Empty,
                             end_reason = tracing::field::Empty,
                         );
                         joinset.spawn(Self::read_loop(
@@ -78,12 +77,10 @@ impl StreamReader {
         let span = Span::current();
         let mut group_id = 0u64;
         let mut subgroup_id = StreamSubgroupId::None;
-        let mut object_count = 0u64;
         let mut has_subgroup = false;
         loop {
             let receive_result = tokio::select! {
                 _ = stop_receiver.changed() => {
-                    span.record("object_count", object_count);
                     span.record("end_reason", "stopped");
                     if has_subgroup {
                         let cache = cache_store.get_or_create(track_key);
@@ -121,7 +118,6 @@ impl StreamReader {
                         });
                 }
                 Ok(object) => {
-                    object_count += 1;
                     let end_reason = match &object {
                         DataObject::SubgroupObject(field) => match &field.subgroup_object {
                             moqt::SubgroupObject::Status { code, .. }
@@ -143,7 +139,6 @@ impl StreamReader {
                         .append_stream_object(group_id, &subgroup_id, object)
                         .await;
                     if let Some(end_reason) = end_reason {
-                        span.record("object_count", object_count);
                         span.record("end_reason", end_reason);
                         cache.close_stream_subgroup(group_id, &subgroup_id).await;
                         let _ = sender_map
@@ -153,7 +148,6 @@ impl StreamReader {
                     }
                 }
                 Err(_) => {
-                    span.record("object_count", object_count);
                     span.record("end_reason", "receiver_error");
                     if has_subgroup {
                         let cache = cache_store.get_or_create(track_key);
