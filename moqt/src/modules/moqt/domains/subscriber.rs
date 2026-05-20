@@ -200,10 +200,10 @@ impl<T: TransportProtocol> Subscriber<T> {
             .instrument(span.clone())
             .await?;
             match &stream_with_object {
-                StreamWithObject::StreamHeader { .. } => {
+                &IncomingObject::StreamHeader { .. } => {
                     span.record("object_kind", "stream_header");
                 }
-                StreamWithObject::Datagram(_) => {
+                &IncomingObject::Datagram(_) => {
                     span.record("object_kind", "datagram");
                 }
             }

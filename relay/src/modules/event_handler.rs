@@ -10,8 +10,8 @@ use crate::modules::{
         subscribe::Subscribe,
         subscribe_namespace::SubscribeNameSpace,
         tables::{
-            RemovedSessionSubscriptions, hashmap_table::InMemorySignalingStateTable,
-            table::SignalingStateTable,
+            hashmap_table::InMemorySignalingStateTable,
+            table::{RemovedSessionSubscriptions, SignalingStateTable},
         },
         unsubscribe::Unsubscribe,
     },
@@ -157,7 +157,7 @@ impl EventHandler {
                                     Self::cleanup_removed_session(
                                         session_id,
                                         removed,
-                                        &notifier,
+                                        &session_signaling_dispatcher,
                                         &ingress_sender,
                                         &egress_sender,
                                     )
@@ -184,7 +184,7 @@ impl EventHandler {
                                     Self::cleanup_removed_session(
                                         session_id,
                                         removed,
-                                        &notifier,
+                                        &session_signaling_dispatcher,
                                         &ingress_sender,
                                         &egress_sender,
                                     )
@@ -208,23 +208,23 @@ impl EventHandler {
             .unwrap()
     }
 
-    fn session_event_span(session_span: &Span, event: &MoqtRelayEvent) -> Span {
+    fn session_event_span(session_span: &Span, event: &SessionEvent) -> Span {
         match event {
-            MoqtRelayEvent::PublishNameSpace(session_id, handler) => tracing::info_span!(
+            SessionEvent::PublishNameSpace(session_id, handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "PublishNamespace",
                 track_namespace = %handler.track_namespace(),
             ),
-            MoqtRelayEvent::SubscribeNameSpace(session_id, handler) => tracing::info_span!(
+            SessionEvent::SubscribeNameSpace(session_id, handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "SubscribeNamespace",
                 track_namespace_prefix = %handler.track_namespace_prefix(),
             ),
-            MoqtRelayEvent::Publish(session_id, handler) => tracing::info_span!(
+            SessionEvent::Publish(session_id, handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
@@ -233,7 +233,7 @@ impl EventHandler {
                 track_name = %handler.track_name(),
                 track_alias = handler.track_alias(),
             ),
-            MoqtRelayEvent::Subscribe(session_id, handler) => tracing::info_span!(
+            SessionEvent::Subscribe(session_id, handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
@@ -242,20 +242,20 @@ impl EventHandler {
                 track_namespace = %handler.track_namespace(),
                 track_name = %handler.track_name(),
             ),
-            MoqtRelayEvent::Unsubscribe(session_id, handler) => tracing::info_span!(
+            SessionEvent::Unsubscribe(session_id, handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "Unsubscribe",
                 subscribe_id = handler.subscribe_id(),
             ),
-            MoqtRelayEvent::Disconnected(session_id) => tracing::info_span!(
+            SessionEvent::Disconnected(session_id) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "Disconnected",
             ),
-            MoqtRelayEvent::ProtocolViolation(session_id) => tracing::info_span!(
+            SessionEvent::ProtocolViolation(session_id) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
@@ -267,7 +267,7 @@ impl EventHandler {
     async fn cleanup_removed_session(
         removed_session_id: SessionId,
         removed: RemovedSessionSubscriptions,
-        notifier: &Notifier,
+        session_signaling_dispatcher: &SessionSignalingDispatcher,
         ingress_sender: &mpsc::Sender<IngressCommand>,
         egress_sender: &mpsc::Sender<EgressCommand>,
     ) {
@@ -289,7 +289,7 @@ impl EventHandler {
 
             if removed_downstream.remaining_downstream_subscriber_count == 0 {
                 if removed_downstream.upstream_key.publisher_session_id != removed_session_id
-                    && let Err(err) = notifier
+                    && let Err(err) = session_signaling_dispatcher
                         .unsubscribe(
                             removed_downstream.upstream_key.publisher_session_id,
                             removed_downstream.upstream_subscribe_id,
