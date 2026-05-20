@@ -42,12 +42,16 @@ impl ControlMessageReceiveTask {
                     loop {
                         if let Some(session) = session_context.upgrade() {
                             let received_message = match receive_stream.receive().await {
-                                Some(Ok(received_message)) => {
+                                Ok(Some(received_message)) => {
                                     tracing::info!(message = ?received_message, "Message received");
                                     received_message
                                 }
-                                _ => {
-                                    tracing::error!("Stream ended.");
+                                Ok(None) => {
+                                    tracing::info!("Stream ended.");
+                                    break;
+                                }
+                                Err(error) => {
+                                    tracing::info!(%error, "Stream closed.");
                                     break;
                                 }
                             };

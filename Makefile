@@ -10,7 +10,7 @@ ONVIF_PASSWORD ?=
 MOQT_URL ?= 
 
 relay:
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
+	set -a; [ ! -f .env ] || . ./.env; set +a; RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
 
 browser:
 	cd examples/browser && npm run dev
@@ -43,7 +43,10 @@ onvif:
 test:
 	cargo test
 
-
+fmt:
+	cargo clippy --all --fix
+	cargo fmt --all
+	npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path examples/browser/.prettierignore
 
 ffmpeg-rtmp:
 	ffmpeg -re \

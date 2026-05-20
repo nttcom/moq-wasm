@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::bail;
+use tracing::Instrument;
 
 use crate::{
     DatagramReceiver, SubscribeOption, Subscription,
@@ -184,10 +185,30 @@ impl<T: TransportProtocol> Subscriber<T> {
             .await
             .remove(&track_alias)
             .ok_or_else(|| anyhow::anyhow!("No receiver for track_alias: {}", track_alias))?;
-        let stream_with_object = receiver
-            .recv()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))?;
+        let stream_with_object = {
+            let span = tracing::info_span!(
+                "moqt.subscriber.wait_first_object",
+                track_alias = track_alias,
+                object_kind = tracing::field::Empty,
+            );
+            let stream_with_object = async {
+                receiver
+                    .recv()
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("Failed to receive stream"))
+            }
+            .instrument(span.clone())
+            .await?;
+            match &stream_with_object {
+                StreamWithObject::StreamHeader { .. } => {
+                    span.record("object_kind", "stream_header");
+                }
+                StreamWithObject::Datagram(_) => {
+                    span.record("object_kind", "datagram");
+                }
+            }
+            stream_with_object
+        };
         match stream_with_object {
             IncomingObject::StreamHeader { stream, header } => {
                 let first = StreamDataReceiver::new(stream, header).await?;

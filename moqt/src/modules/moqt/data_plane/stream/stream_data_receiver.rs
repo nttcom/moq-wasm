@@ -2,7 +2,7 @@ use crate::{
     TransportProtocol,
     modules::moqt::data_plane::{
         object::subgroup::{SubgroupHeader, SubgroupObjectField},
-        stream::stream_receiver::UniStreamReceiver,
+        stream::stream_receiver::{StreamReceiveError, UniStreamReceiver},
     },
 };
 
@@ -38,10 +38,18 @@ impl<T: TransportProtocol> StreamDataReceiver<T> {
         }
 
         match self.stream_receiver.receive().await {
-            Some(Ok(subgroup)) => Ok(subgroup),
-            _ => {
-                tracing::error!("Failed to receive data from stream");
-                anyhow::bail!("Failed to receive data from stream")
+            Ok(Some(subgroup)) => Ok(subgroup),
+            Ok(None) => {
+                tracing::info!("Stream data ended");
+                anyhow::bail!("Stream data ended")
+            }
+            Err(StreamReceiveError::Closed(error)) => {
+                tracing::info!(error = %error, "Stream data closed");
+                anyhow::bail!("Stream data closed: {error}")
+            }
+            Err(StreamReceiveError::Decode(error)) => {
+                tracing::error!(error = %error, "Failed to decode data from stream");
+                anyhow::bail!("Failed to decode data from stream: {error}")
             }
         }
     }

@@ -79,10 +79,14 @@ impl SessionContextFactory {
         tracing::info!("Sent client setup.");
 
         let received_message = match receive_stream.receive().await {
-            Some(Ok(b)) => b,
-            _ => {
+            Ok(Some(b)) => b,
+            Ok(None) => {
                 tracing::error!("Stream ended before receiving server setup.");
                 anyhow::bail!("Stream ended before receiving server setup.")
+            }
+            Err(error) => {
+                tracing::error!(%error, "Stream failed before receiving server setup.");
+                anyhow::bail!("Stream failed before receiving server setup: {error}")
             }
         };
         match received_message {
@@ -105,10 +109,14 @@ impl SessionContextFactory {
         receive_stream: &mut BiStreamReceiver<T>,
     ) -> anyhow::Result<()> {
         let received_message = match receive_stream.receive().await {
-            Some(Ok(b)) => b,
-            _ => {
+            Ok(Some(b)) => b,
+            Ok(None) => {
                 tracing::error!("Stream ended before receiving client setup.");
                 anyhow::bail!("Stream ended before receiving client setup.")
+            }
+            Err(error) => {
+                tracing::error!(%error, "Stream failed before receiving client setup.");
+                anyhow::bail!("Stream failed before receiving client setup: {error}")
             }
         };
         match received_message {
