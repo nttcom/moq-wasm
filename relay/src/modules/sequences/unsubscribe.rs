@@ -1,6 +1,6 @@
 use crate::modules::{
     core::handler::unsubscribe::UnsubscribeHandler,
-    relay::egress::coordinator::EgressCommand,
+    relay::{egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressCommand},
     sequences::{notifier::Notifier, tables::table::Table},
     types::SessionId,
 };
@@ -16,12 +16,14 @@ impl Unsubscribe {
         parent = session_span,
         fields(session_id = %session_id)
     )]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
         session_span: &Span,
         table: &dyn Table,
         notifier: &Notifier,
+        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn UnsubscribeHandler>,
     ) {
@@ -81,6 +83,19 @@ impl Unsubscribe {
                     upstream_session_id = %removed.upstream_key.publisher_session_id,
                     subscribe_id = %removed.upstream_subscribe_id,
                     "forwarded upstream unsubscribe"
+                );
+            }
+
+            if ingress_sender
+                .send(IngressCommand::StopTrack {
+                    track_key: removed.track_key,
+                })
+                .await
+                .is_err()
+            {
+                tracing::error!(
+                    track_key = removed.track_key,
+                    "failed to send ingress stop request"
                 );
             }
         }
