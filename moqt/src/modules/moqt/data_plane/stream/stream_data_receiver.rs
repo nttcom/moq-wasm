@@ -1,6 +1,7 @@
 use crate::{
     TransportProtocol,
     modules::moqt::data_plane::{
+        codec::uni_stream_decoder::UniStreamData,
         object::subgroup::{SubgroupHeader, SubgroupObjectField},
         stream::stream_receiver::{StreamReceiveError, UniStreamReceiver},
     },
@@ -38,7 +39,10 @@ impl<T: TransportProtocol> StreamDataReceiver<T> {
         }
 
         match self.stream_receiver.receive().await {
-            Ok(Some(subgroup)) => Ok(subgroup),
+            Ok(Some(UniStreamData::Subgroup(subgroup))) => Ok(subgroup),
+            Ok(Some(UniStreamData::Fetch(_))) => {
+                unreachable!("Unexpected fetch data in subgroup stream")
+            }
             Ok(None) => {
                 tracing::info!("Stream data ended");
                 anyhow::bail!("Stream data ended")

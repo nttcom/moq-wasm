@@ -19,6 +19,20 @@ impl Default for PublishOption {
     }
 }
 
+pub struct FetchOption {
+    pub subscriber_priority: u8,
+    pub group_order: GroupOrder,
+}
+
+impl Default for FetchOption {
+    fn default() -> Self {
+        Self {
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+        }
+    }
+}
+
 pub struct SubscribeOption {
     pub subscriber_priority: u8,
     pub group_order: GroupOrder,

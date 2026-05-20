@@ -181,6 +181,12 @@ impl ControlMessageReceiveTask {
                     ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase);
                 DepacketizeResult::ResponseMessage(request_id, response)
             }
+            ReceivedMessage::FetchOk(fetch_ok) => {
+                tracing::debug!("Event: Fetch ok");
+                let request_id = fetch_ok.request_id;
+                let response = ResponseMessage::FetchOk(fetch_ok);
+                DepacketizeResult::ResponseMessage(request_id, response)
+            }
             _ => todo!(),
         }
     }
