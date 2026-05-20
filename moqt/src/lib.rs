@@ -18,6 +18,8 @@ pub use modules::moqt::control_plane::handler::subscribe_namespace_handler::Subs
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::handler::unsubscribe_handler::UnsubscribeHandler;
 #[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::control_plane::options::FetchOption;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::options::PublishOption;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::options::SubscribeOption;
@@ -34,6 +36,10 @@ pub use modules::moqt::data_plane::object::subgroup::SubgroupHeaderType;
 pub use modules::moqt::data_plane::object::subgroup::SubgroupId;
 pub use modules::moqt::data_plane::object::subgroup::SubgroupObject;
 pub use modules::moqt::data_plane::object::subgroup::SubgroupObjectField;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::data_plane::stream::fetch_data_receiver::Fetch;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::data_plane::stream::fetch_data_receiver::FetchDataReceiver;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::data_plane::stream::stream_data_receiver::StreamDataReceiver;
 #[cfg(not(target_arch = "wasm32"))]
@@ -60,6 +66,8 @@ pub use modules::moqt::domains::endpoint::ClientConfig;
 pub use modules::moqt::domains::endpoint::Endpoint;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::endpoint::ServerConfig;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::fetch_handle::FetchHandle;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::published_resource::PublishedResource;
 #[cfg(not(target_arch = "wasm32"))]

@@ -1,7 +1,9 @@
 use crate::{
     TransportProtocol,
     modules::moqt::control_plane::{
-        control_messages::messages::{publish_ok::PublishOk, subscribe_ok::SubscribeOk},
+        control_messages::messages::{
+            fetch_ok::FetchOk, publish_ok::PublishOk, subscribe_ok::SubscribeOk,
+        },
         handler::{
             publish_handler::PublishHandler, publish_namespace_handler::PublishNamespaceHandler,
             subscribe_handler::SubscribeHandler,
@@ -39,4 +41,6 @@ pub(crate) enum ResponseMessage {
     PublishError(RequestId, ErrorCode, ErrorPhrase),
     SubscribeOk(SubscribeOk),
     SubscribeError(RequestId, ErrorCode, ErrorPhrase),
+    FetchOk(FetchOk),
+    FetchError(RequestId, ErrorCode, ErrorPhrase),
 }

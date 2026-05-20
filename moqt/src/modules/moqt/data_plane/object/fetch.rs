@@ -69,7 +69,7 @@ pub enum FetchObject {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FetchObjectFields {
+pub struct FetchObjectField {
     pub group_id: u64,
     pub subgroup_id: u64,
     pub object_id: u64,
@@ -78,7 +78,7 @@ pub struct FetchObjectFields {
     pub fetch_object: FetchObject,
 }
 
-impl FetchObjectFields {
+impl FetchObjectField {
     pub fn new(
         group_id: u64,
         subgroup_id: u64,
@@ -206,8 +206,8 @@ mod tests {
             assert_eq!(result, expected);
         }
 
-        fn sample_fields(object: FetchObject) -> FetchObjectFields {
-            FetchObjectFields::new(
+        fn sample_fields(object: FetchObject) -> FetchObjectField {
+            FetchObjectField::new(
                 1,   // group_id
                 2,   // subgroup_id
                 3,   // object_id
@@ -242,7 +242,7 @@ mod tests {
             let bytes: [u8; 10] = [1, 2, 3, 128, 0, 4, b'a', b'b', b'c', b'd'];
             let mut buf = bytes::BytesMut::with_capacity(bytes.len());
             buf.extend_from_slice(&bytes);
-            let result = FetchObjectFields::decode(&mut buf).unwrap();
+            let result = FetchObjectField::decode(&mut buf).unwrap();
             let expected = sample_fields(FetchObject::Payload(Bytes::from_static(b"abcd")));
             assert_eq!(result, expected);
         }
@@ -251,7 +251,7 @@ mod tests {
         fn round_trip_with_payload() {
             let expected = sample_fields(FetchObject::Payload(Bytes::from_static(b"hello")));
             let mut buf = expected.encode();
-            let result = FetchObjectFields::decode(&mut buf).unwrap();
+            let result = FetchObjectField::decode(&mut buf).unwrap();
             assert_eq!(result, expected);
         }
 
@@ -259,7 +259,7 @@ mod tests {
         fn round_trip_with_status() {
             let expected = sample_fields(FetchObject::Status(ObjectStatus::DoesNotExist));
             let mut buf = expected.encode();
-            let result = FetchObjectFields::decode(&mut buf).unwrap();
+            let result = FetchObjectField::decode(&mut buf).unwrap();
             assert_eq!(result, expected);
         }
     }
