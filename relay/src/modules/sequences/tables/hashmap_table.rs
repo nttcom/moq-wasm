@@ -6,8 +6,8 @@ use tokio::sync::RwLock;
 use crate::modules::{
     core::handler::publish::PublishHandler,
     sequences::tables::table::{
-        ActiveUpstreamSubscription, RemovedDownstreamSubscription, SignalingStateTable,
-        UpstreamSubscriptionKey,
+        ActiveUpstreamSubscription, RemovedDownstreamSubscription, RemovedSessionSubscriptions,
+        SignalingStateTable, UpstreamSubscriptionKey,
     },
     types::{SessionId, TrackNamespace, TrackNamespacePrefix},
 };
@@ -49,7 +49,9 @@ impl SignalingStateTable for InMemorySignalingStateTable {
         skip_all,
         fields(session_id = %session_id)
     )]
-    async fn remove_session(&self, session_id: SessionId) {
+    async fn remove_session(&self, session_id: SessionId) -> RemovedSessionSubscriptions {
+        let mut removed = RemovedSessionSubscriptions::default();
+
         let namespaces_to_remove: Vec<_> = self
             .publisher_namespaces
             .iter()
@@ -102,19 +104,47 @@ impl SignalingStateTable for InMemorySignalingStateTable {
             .filter_map(|entry| (entry.key().0 == session_id).then_some(*entry.key()))
             .collect();
         for key in downstream_keys {
-            let _ = self.remove_downstream_subscription(key.0, key.1);
+            if let Some(subscription) = self.remove_downstream_subscription(key.0, key.1) {
+                removed.downstream_subscriptions.push(subscription);
+            }
         }
 
-        let upstream_keys: Vec<_> = self
+        let upstream_subscriptions: Vec<_> = self
             .active_upstream_subscriptions
             .iter()
             .filter_map(|entry| {
-                (entry.key().publisher_session_id == session_id).then_some(entry.key().clone())
+                (entry.key().publisher_session_id == session_id)
+                    .then_some((entry.key().clone(), entry.value().clone()))
             })
             .collect();
-        for key in upstream_keys {
-            self.active_upstream_subscriptions.remove(&key);
+        for (upstream_key, active_subscription) in upstream_subscriptions {
+            self.active_upstream_subscriptions.remove(&upstream_key);
+            removed
+                .upstream_track_keys
+                .push(active_subscription.track_key);
+
+            let downstream_keys: Vec<_> = self
+                .downstream_subscriptions
+                .iter()
+                .filter_map(|entry| (entry.value() == &upstream_key).then_some(*entry.key()))
+                .collect();
+            for (downstream_session_id, downstream_subscribe_id) in downstream_keys {
+                self.downstream_subscriptions
+                    .remove(&(downstream_session_id, downstream_subscribe_id));
+                removed
+                    .downstream_subscriptions
+                    .push(RemovedDownstreamSubscription {
+                        downstream_session_id,
+                        downstream_subscribe_id,
+                        upstream_key: upstream_key.clone(),
+                        upstream_subscribe_id: active_subscription.upstream_subscribe_id,
+                        track_key: active_subscription.track_key,
+                        remaining_downstream_subscriber_count: 0,
+                    });
+            }
         }
+
+        removed
     }
 
     #[tracing::instrument(
@@ -372,8 +402,11 @@ impl SignalingStateTable for InMemorySignalingStateTable {
             entry.downstream_subscriber_count -= 1;
         }
         let removed = RemovedDownstreamSubscription {
+            downstream_session_id,
+            downstream_subscribe_id,
             upstream_key: upstream_key.clone(),
             upstream_subscribe_id: entry.upstream_subscribe_id,
+            track_key: entry.track_key,
             remaining_downstream_subscriber_count: entry.downstream_subscriber_count,
         };
         let should_remove = entry.downstream_subscriber_count == 0;

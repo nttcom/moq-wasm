@@ -2,7 +2,7 @@ use crate::modules::{
     core::handler::subscribe::SubscribeHandler,
     relay::{
         egress::coordinator::{EgressCommand, EgressStartRequest},
-        ingress::ingress_coordinator::IngressStartRequest,
+        ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     },
     sequences::{
         notifier::SessionSignalingDispatcher,
@@ -29,7 +29,7 @@ impl Subscribe {
         session_span: &Span,
         table: &dyn SignalingStateTable,
         notifier: &SessionSignalingDispatcher,
-        ingress_sender: &tokio::sync::mpsc::Sender<IngressStartRequest>,
+        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn SubscribeHandler>,
     ) {
@@ -95,7 +95,7 @@ impl Subscribe {
         track_name: &str,
         table: &dyn SignalingStateTable,
         notifier: &SessionSignalingDispatcher,
-        ingress_sender: &tokio::sync::mpsc::Sender<IngressStartRequest>,
+        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &dyn SubscribeHandler,
     ) {
@@ -149,11 +149,14 @@ impl Subscribe {
             table.register_upstream_subscription(upstream_key.clone(), active_upstream.clone());
 
             if ingress_sender
-                .send(IngressStartRequest {
+                .send(IngressCommand::Start(IngressStartRequest {
+                    subscriber_session_id: session_id,
                     publisher_session_id: pub_session_id,
+                    track_namespace: track_namespace.to_string(),
+                    track_name: track_name.to_string(),
                     subscription,
                     parent_span: Span::current(),
-                })
+                }))
                 .await
                 .is_err()
             {
@@ -197,12 +200,15 @@ impl Subscribe {
         }
 
         if egress_sender
-            .send(EgressCommand::StartReader(EgressStartRequest {
+            .send(EgressCommand::StartReader(Box::new(EgressStartRequest {
                 subscriber_session_id: session_id,
                 downstream_subscribe_id: handler.subscribe_id(),
                 track_key: active_upstream.track_key,
+                track_namespace: track_namespace.to_string(),
+                track_name: track_name.to_string(),
                 published_resources: handler.convert_into_publication(subscriber_track_alias),
-            }))
+                parent_span: Span::current(),
+            })))
             .await
             .is_err()
         {

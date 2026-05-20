@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use tokio::{sync::mpsc, task::JoinHandle};
+use tracing::{Instrument, Span};
 
 use crate::modules::{
     core::published_resource::PublishedResource,
@@ -16,11 +17,14 @@ pub(crate) struct EgressStartRequest {
     pub(crate) subscriber_session_id: SessionId,
     pub(crate) downstream_subscribe_id: u64,
     pub(crate) track_key: TrackKey,
+    pub(crate) track_namespace: String,
+    pub(crate) track_name: String,
     pub(crate) published_resources: PublishedResource,
+    pub(crate) parent_span: Span,
 }
 
 pub(crate) enum EgressCommand {
-    StartReader(EgressStartRequest),
+    StartReader(Box<EgressStartRequest>),
     StopReader {
         subscriber_session_id: SessionId,
         downstream_subscribe_id: u64,
@@ -48,6 +52,7 @@ impl EgressCoordinator {
                 };
                 match command {
                     EgressCommand::StartReader(request) => {
+                        let request = *request;
                         let runner_key = (
                             request.subscriber_session_id,
                             request.downstream_subscribe_id,
@@ -105,25 +110,40 @@ impl EgressCoordinator {
             .await
             .publisher(request.subscriber_session_id);
         let Some(publisher) = publisher else {
-            tracing::error!("publisher session not found for egress start");
+            tracing::error!("subscriber session not found for egress start");
             return None;
         };
 
         let cache = cache_store.get_or_create(request.track_key);
         let latest_info_sender = object_notify_producer_map.get_or_create(request.track_key);
+        let track_alias = request.published_resources.track_alias();
+        let egress_track_span = tracing::info_span!(
+            parent: &request.parent_span,
+            "relay.dataplane.egress.track",
+            subscriber_session_id = %request.subscriber_session_id,
+            downstream_subscribe_id = request.downstream_subscribe_id,
+            track_key = request.track_key,
+            track_alias = track_alias,
+            track_namespace = %request.track_namespace,
+            track_name = %request.track_name,
+        );
 
         let runner = EgressRunner::new(
+            request.track_key,
             cache,
             latest_info_sender,
             publisher,
             request.published_resources,
         );
 
-        Some(tokio::spawn(async move {
-            if let Err(e) = runner.run().await {
-                tracing::error!(?e, "egress runner finished with error");
+        Some(tokio::spawn(
+            async move {
+                if let Err(e) = runner.run().await {
+                    tracing::error!(?e, "egress runner finished with error");
+                }
             }
-        }))
+            .instrument(egress_track_span),
+        ))
     }
 }
 

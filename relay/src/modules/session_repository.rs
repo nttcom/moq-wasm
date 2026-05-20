@@ -130,9 +130,16 @@ impl SessionRepository {
     }
 
     pub(crate) fn remove(&mut self, session_id: SessionId) {
-        self.sessions.remove(&session_id);
-        self.session_spans.remove(&session_id);
+        let session_removed = self.sessions.remove(&session_id).is_some();
+        let session_span_removed = self.session_spans.remove(&session_id).is_some();
         self.session_event_forward_task_registry.remove(&session_id);
+        tracing::info!(
+            session_id = %session_id,
+            session_removed,
+            session_span_removed,
+            remaining_session_spans = self.session_spans.len(),
+            "session removed from repository"
+        );
     }
 
     pub(crate) fn session_span(&self, session_id: SessionId) -> Option<Span> {

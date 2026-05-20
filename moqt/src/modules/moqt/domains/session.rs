@@ -36,14 +36,14 @@ impl<T: TransportProtocol> Session<T> {
         let session_span = tracing::info_span!(parent: &parent_span, "moqt.session");
         let control_plane_receiver_span = tracing::info_span!(
             parent: &session_span,
-            "control_plane.receiver"
+            "moqt.control_plane.receiver"
         );
         let datagram_receiver_span =
             tracing::info_span!(parent: &session_span, "data_plane.datagram_receiver");
         let uni_stream_receiver_span =
             tracing::info_span!(parent: &session_span, "data_plane.uni_stream_receiver");
         let transport_close_watcher_span =
-            tracing::info_span!(parent: &session_span, "transport.close_watcher");
+            tracing::info_span!(parent: &session_span, "moqt.transport.close_watcher");
 
         let control_message_receive_task = ControlMessageReceiveTask::run(
             receive_stream,
