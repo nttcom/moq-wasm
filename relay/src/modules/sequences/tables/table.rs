@@ -26,9 +26,18 @@ pub(crate) struct ActiveUpstreamSubscription {
 
 #[derive(Clone, Debug)]
 pub(crate) struct RemovedDownstreamSubscription {
+    pub(crate) downstream_session_id: SessionId,
+    pub(crate) downstream_subscribe_id: u64,
     pub(crate) upstream_key: UpstreamSubscriptionKey,
     pub(crate) upstream_subscribe_id: u64,
+    pub(crate) track_key: TrackKey,
     pub(crate) remaining_downstream_subscriber_count: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RemovedSessionSubscriptions {
+    pub(crate) downstream_subscriptions: Vec<RemovedDownstreamSubscription>,
+    pub(crate) upstream_track_keys: Vec<TrackKey>,
 }
 
 #[async_trait::async_trait]
@@ -36,7 +45,7 @@ pub(crate) trait Table: Send + Sync + 'static + Debug {
     fn new() -> Self
     where
         Self: Sized;
-    async fn remove_session(&self, session_id: SessionId);
+    async fn remove_session(&self, session_id: SessionId) -> RemovedSessionSubscriptions;
     fn register_publish_namespace(&self, session_id: SessionId, track_namespace: String) -> bool;
     fn register_subscribe_namespace(&self, session_id: SessionId, track_namespace_prefix: String);
     async fn register_publish(&self, session_id: SessionId, handler: Arc<dyn PublishHandler>);
