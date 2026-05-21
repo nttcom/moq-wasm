@@ -38,6 +38,7 @@ pub type PublishNamespaceError = RequestError;
 pub type SubscribeNamespaceError = RequestError;
 pub type PublishError = RequestError;
 pub type SubscribeError = RequestError;
+pub type FetchError = RequestError;
 
 pub fn encode_control_message(message_type: ControlMessageType, payload: BytesMut) -> BytesMut {
     let mut buf = BytesMut::new();
