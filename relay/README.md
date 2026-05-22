@@ -19,22 +19,13 @@ cargo run -p relay
 The relay initializes OTLP trace and log exporters from OpenTelemetry environment
 variables.
 
-Example OTLP/gRPC configuration:
-
-```shell
-OTEL_SERVICE_NAME=moqt-relay
-OTEL_EXPORTER_OTLP_PROTOCOL=grpc
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer%20your-token
-```
-
-Example OTLP/HTTP protobuf configuration:
+Example OTLP/HTTP protobuf configuration for a SaaS backend such as Honeycomb:
 
 ```shell
 OTEL_SERVICE_NAME=moqt-relay
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer%20your-token
+OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io
+OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=your-api-key,x-honeycomb-dataset=moqt-relay
 ```
 
 `OTEL_EXPORTER_OTLP_HEADERS` is optional. Set it when your OTLP backend requires

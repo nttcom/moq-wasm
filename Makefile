@@ -1,29 +1,40 @@
-RUSTFLAGS := --cfg tokio_unstable --remap-path-prefix=$(shell pwd)=.
+export RUSTFLAGS := --cfg tokio_unstable --cfg web_sys_unstable_apis --remap-path-prefix=$(shell pwd)=.
 
 -include .env
 
-.PHONY: relay browser live-ingest ffmpeg-rtmp ffmpeg-rtmp-local-pub ffmpeg-rtmp-local-sub chrome onvif onvif-bridge test
+.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp test lint format browser-e2e-media
 
-ONVIF_IP ?=
-ONVIF_USERNAME ?=
-ONVIF_PASSWORD ?=
-MOQT_URL ?= 
-
+# Applications
 relay:
 	set -a; [ ! -f .env ] || . ./.env; set +a; RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
 
 browser:
 	cd examples/browser && npm run dev
 
+chrome:
+	./scripts/chrome_mac.sh
+
+chrome\:linux:
+	./scripts/chrome_linux.sh
+
+# RTMP/SRT Bridges
 live-ingest:
 	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-bridge-live-ingest -- \
 		--rtmp-addr 0.0.0.0:1935 \
 		--srt-addr 0.0.0.0:9000 \
 		--moqt-url https://127.0.0.1:4433
 
-chrome:
-	./scripts/chrome_mac.sh
+## Media helpers
+ffmpeg-rtmp:
+	ffmpeg -re \
+		-f lavfi -i "testsrc=size=1920x1080:rate=30" \
+		-f lavfi -i "sine=frequency=1000:sample_rate=48000" \
+		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
+		-g 60 -sc_threshold 0 \
+		-c:a aac -ar 48000 -ac 2 \
+		-f flv "rtmp://localhost:1935/live/test"
 
+# ONVIF Bridges
 onvif:
 	@if [ -z "$(ONVIF_IP)" ] || [ -z "$(ONVIF_USERNAME)" ] || [ -z "$(ONVIF_PASSWORD)" ]; then \
 		echo "ONVIF_IP/ONVIF_USERNAME/ONVIF_PASSWORD are required (set in .env or environment)"; \
@@ -38,43 +49,6 @@ onvif:
 		--payload-format avcc \
 		--insecure-skip-tls-verify
 
-
-
-test:
-	cargo test
-
-fmt:
-	cargo clippy --all --fix
-	cargo fmt --all
-	npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path examples/browser/.prettierignore
-
-ffmpeg-rtmp:
-	ffmpeg -re \
-		-f lavfi -i "testsrc=size=1920x1080:rate=30" \
-		-f lavfi -i "sine=frequency=1000:sample_rate=48000" \
-		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
-		-g 60 -sc_threshold 0 \
-		-c:a aac -ar 48000 -ac 2 \
-		-f flv "rtmp://localhost:1935/live/test"
-
-ffmpeg-rtmp-local-pub:
-	ffmpeg -re \
-		-f lavfi -i "testsrc=size=1920x1080:rate=30" \
-		-f lavfi -i "sine=frequency=1000:sample_rate=48000" \
-		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
-		-g 60 -sc_threshold 0 \
-		-c:a aac -ar 48000 -ac 2 \
-		-map 0:v:0 -map 1:a:0 \
-		-f tee "[f=flv:onfail=ignore]rtmp://localhost:1935/live/main|[f=flv:onfail=ignore]rtmp://localhost:1936/live/monitor"
-
-ffmpeg-rtmp-local-sub:
-	ffmpeg -listen 1 -i rtmp://0.0.0.0:1936/live/monitor -c copy -f matroska - \
-	| ffplay -fflags +nobuffer -flags low_delay -
-
-.PHONY: chrome chrome\:linux
-chrome\:linux:
-	./scripts/chrome_linux.sh
-
 onvif-controller:
 	@if [ -z "$(ONVIF_IP)" ] || [ -z "$(ONVIF_USERNAME)" ] || [ -z "$(ONVIF_PASSWORD)" ]; then \
 		echo "ONVIF_IP/ONVIF_USERNAME/ONVIF_PASSWORD are required (set in .env or environment)"; \
@@ -84,3 +58,20 @@ onvif-controller:
 		--ip $(ONVIF_IP) \
 		--username $(ONVIF_USERNAME) \
 		--password $(ONVIF_PASSWORD)
+
+
+# Maintenance
+test:
+	cargo test
+
+lint:
+	cargo clippy --workspace --all-targets --all-features --fix
+	cd examples/browser && npm run lint
+
+format:
+	cargo fmt --all
+	npx --prefix examples/browser prettier --write "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path examples/browser/.prettierignore
+
+browser-e2e-media:
+	node scripts/setup-media-e2e.mjs
+	node scripts/run-media-e2e.mjs

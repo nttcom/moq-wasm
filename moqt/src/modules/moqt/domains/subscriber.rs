@@ -15,14 +15,14 @@ use crate::{
                 },
             },
             enums::ResponseMessage,
-            threads::enums::StreamWithObject,
         },
-        data_plane::streams::stream::{
+        data_plane::stream::{
             stream_data_receiver::StreamDataReceiver,
             stream_data_receiver_factory::StreamDataReceiverFactory,
         },
         domains::session_context::SessionContext,
         protocol::TransportProtocol,
+        runtime::dispatch::incoming_object::IncomingObject,
     },
 };
 
@@ -129,7 +129,7 @@ impl<T: TransportProtocol> Subscriber<T> {
                 } else {
                     tracing::info!("Subscribe ok");
                     let (sender, receiver) =
-                        tokio::sync::mpsc::unbounded_channel::<StreamWithObject<T>>();
+                        tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
                     self.session
                         .notification_map
                         .write()
@@ -199,24 +199,24 @@ impl<T: TransportProtocol> Subscriber<T> {
             }
             .instrument(span.clone())
             .await?;
-            match &stream_with_object {
-                StreamWithObject::StreamHeader { .. } => {
+            match stream_with_object {
+                IncomingObject::StreamHeader { .. } => {
                     span.record("object_kind", "stream_header");
                 }
-                StreamWithObject::Datagram(_) => {
+                IncomingObject::Datagram(_) => {
                     span.record("object_kind", "datagram");
                 }
             }
             stream_with_object
         };
         match stream_with_object {
-            StreamWithObject::StreamHeader { stream, header } => {
+            IncomingObject::StreamHeader { stream, header } => {
                 let first = StreamDataReceiver::new(stream, header).await?;
                 Ok(DataReceiver::Stream(StreamDataReceiverFactory::new(
                     first, receiver,
                 )))
             }
-            StreamWithObject::Datagram(object) => {
+            IncomingObject::Datagram(object) => {
                 let data_receiver = DatagramReceiver::new(object, receiver).await;
                 Ok(DataReceiver::Datagram(data_receiver))
             }

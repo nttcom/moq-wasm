@@ -7,7 +7,7 @@ use crate::modules::{
     core::published_resource::PublishedResource,
     relay::{
         cache::store::TrackCacheStore, egress::runner::EgressRunner,
-        notifications::track_notifier::TrackNotifier,
+        notifications::track_notifier::ObjectNotifyProducerMap,
     },
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},
@@ -40,7 +40,7 @@ impl EgressCoordinator {
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<TrackNotifier>,
+        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
     ) -> Self {
         let (command_sender, mut command_receiver) = mpsc::channel::<EgressCommand>(512);
 
@@ -63,7 +63,7 @@ impl EgressCoordinator {
                         if let Some(handle) = Self::spawn_runner(
                             session_repo.clone(),
                             cache_store.clone(),
-                            sender_map.clone(),
+                            object_notify_producer_map.clone(),
                             request,
                         )
                         .await
@@ -102,7 +102,7 @@ impl EgressCoordinator {
     async fn spawn_runner(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<TrackNotifier>,
+        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
         request: EgressStartRequest,
     ) -> Option<JoinHandle<()>> {
         let publisher = session_repo
@@ -115,7 +115,7 @@ impl EgressCoordinator {
         };
 
         let cache = cache_store.get_or_create(request.track_key);
-        let latest_info_sender = sender_map.get_or_create(request.track_key);
+        let latest_info_sender = object_notify_producer_map.get_or_create(request.track_key);
         let track_alias = request.published_resources.track_alias();
         let egress_track_span = tracing::info_span!(
             parent: &request.parent_span,

@@ -14,7 +14,7 @@ use crate::modules::moqt::{
             unsubscribe::Unsubscribe,
         },
     },
-    data_plane::streams::stream::received_message::ReceivedMessage,
+    data_plane::stream::received_message::ReceivedMessage,
 };
 use crate::wire::take_control_message;
 

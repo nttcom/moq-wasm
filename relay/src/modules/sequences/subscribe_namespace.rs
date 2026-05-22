@@ -1,6 +1,6 @@
 use crate::modules::{
     core::handler::subscribe_namespace::SubscribeNamespaceHandler,
-    sequences::{notifier::Notifier, tables::table::Table},
+    sequences::{notifier::SessionSignalingDispatcher, tables::table::SignalingStateTable},
     types::SessionId,
 };
 use tracing::Span;
@@ -19,8 +19,8 @@ impl SubscribeNameSpace {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn Table,
-        notifier: &Notifier,
+        table: &dyn SignalingStateTable,
+        notifier: &SessionSignalingDispatcher,
         handler: &dyn SubscribeNamespaceHandler,
     ) {
         let track_namespace_prefix = handler.track_namespace_prefix();
@@ -44,7 +44,7 @@ impl SubscribeNameSpace {
     async fn register(
         &self,
         session_id: SessionId,
-        table: &dyn Table,
+        table: &dyn SignalingStateTable,
         handler: &dyn SubscribeNamespaceHandler,
     ) -> String {
         let track_namespace_prefix = handler.track_namespace_prefix();
@@ -62,8 +62,8 @@ impl SubscribeNameSpace {
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
-        notifier: &Notifier,
-        table: &dyn Table,
+        notifier: &SessionSignalingDispatcher,
+        table: &dyn SignalingStateTable,
     ) {
         let filtered = table.get_subscribers(track_namespace_prefix).await;
         for (track_namespace, publish_values) in filtered {
