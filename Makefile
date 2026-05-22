@@ -73,4 +73,5 @@ format:
 	npx --prefix examples/browser prettier --write "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path examples/browser/.prettierignore
 
 browser-e2e-media:
-	cd examples/browser && npm run e2e:media
+	node scripts/setup-media-e2e.mjs
+	node scripts/run-media-e2e.mjs
