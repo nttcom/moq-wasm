@@ -1,38 +1,39 @@
+# moqt-bridge-live-ingest
+
+Live ingest bridge for publishing RTMP or SRT media into MoQT.
+
 ## Run
 
-```bash
+Run the bridge:
+
+```shell
 make live-ingest
 ```
 
-## Publish RTMP From ffmpeg
+`make live-ingest` listens for RTMP on `0.0.0.0:1935`, listens for SRT on
+`0.0.0.0:9000`, and publishes to `https://127.0.0.1:4433`.
 
-```bash
-ffmpeg -loglevel info -re \
-  -f lavfi -i "testsrc=size=1280x720:rate=30" \
-  -f lavfi -i "sine=frequency=1000:sample_rate=48000" \
-  -c:v libx264 -profile:v high -level:v 4.0 -preset veryfast -tune zerolatency \
-  -pix_fmt yuv420p \
-  -f flv "rtmp://localhost:1935/live/test"
+## Publish Test RTMP
+
+Publish a generated test video and sine audio stream:
+
+```shell
+make ffmpeg-rtmp
 ```
 
-```bash
-ffmpeg -re \
-  -f lavfi -i "testsrc=size=1280x720:rate=30" \
-  -f lavfi -i "sine=frequency=1000:sample_rate=48000" \
-  -f flv rtmp://localhost:1935/live/test
+## Direct CLI Options
+
+Use `cargo run` directly when you need options that are not exposed by the Makefile helpers.
+
+```shell
+cargo run -p moqt-bridge-live-ingest -- \
+  --rtmp-addr 0.0.0.0:1935 \
+  --srt-addr 0.0.0.0:9000 \
+  --moqt-url https://127.0.0.1:4433
 ```
 
-### Playback With ffplay
+Options:
 
-```bash
-ffplay recordings/live_test.flv
-```
-
-### Publish SRT From ffmpeg
-
-```bash
-ffmpeg -re \
-  -f lavfi -i "testsrc=size=1280x720:rate=30" \
-  -f lavfi -i "sine=frequency=1000:sample_rate=48000" \
-  -f mpegts "srt://localhost:9000?mode=caller&streamid=live/test"
-```
+- `--rtmp-addr`: RTMP listen address
+- `--srt-addr`: SRT listen address
+- `--moqt-url`: MoQT relay URL
