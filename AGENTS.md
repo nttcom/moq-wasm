@@ -47,9 +47,13 @@
 - `pub(super)` — for items accessed only from the parent module.
 - Private (no modifier) — everything else.
 
-## 5. Linting
-- JavaScript: `npx prettier --check`
-- Rust: `cargo clippy`, `cargo fmt`
+## 5. Commands
+- Build: `cargo build`
+- Test: `cargo test`
+- Lint (Rust): `cargo clippy && cargo fmt --check`
+- Lint (JavaScript): `npx prettier --check`
+- Wasm: `wasm-pack build bindings/wasm`
+- Relay: `cargo run --bin relay`
 
 ## 6. Testing Guidelines
 - Structure test code using the Arrange / Act / Assert pattern.
