@@ -42,11 +42,25 @@ make chrome:linux
 
 `make browser` builds the browser WASM bindings before starting Vite.
 
-### Local cleanup commands
+## Test
+
+Run Rust tests:
+
+```shell
+make test
+make browser-e2e-media
+```
+
+`make browser-e2e-media` installs the browser E2E prerequisites, starts the local
+relay and Vite server, waits until both are ready, runs the Playwright media E2E
+test, and then cleans up the child processes. The automated media E2E flow is
+supported on Linux and macOS.
+
+## Validation
+
+Run linters and formatters:
 
 ```shell
 make lint
 make format
 ```
-
-CI runs the full validation suite, including the Linux-only browser media E2E flow.

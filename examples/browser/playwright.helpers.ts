@@ -6,8 +6,8 @@ export const MEDIA_PUBLISHER_PATH = '/moq-wasm/examples/media/publisher/index.ht
 export const MEDIA_SUBSCRIBER_PATH = '/moq-wasm/examples/media/subscriber/index.html'
 
 export function ensureLinuxEnvironment(): void {
-  if (process.platform !== 'linux') {
-    throw new Error('The automated media E2E flow is supported on Linux only.')
+  if (process.platform !== 'linux' && process.platform !== 'darwin') {
+    throw new Error('The automated media E2E flow is supported on Linux and macOS only.')
   }
 }
 
