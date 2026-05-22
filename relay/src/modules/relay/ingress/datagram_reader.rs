@@ -9,7 +9,7 @@ use crate::modules::{
     core::data_receiver::datagram_receiver::DatagramReceiver,
     relay::{
         cache::store::TrackCacheStore,
-        notifications::{track_event::TrackEvent, track_notifier::TrackNotifier},
+        notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
     },
     types::TrackKey,
 };
@@ -32,7 +32,7 @@ impl DatagramReader {
     pub(crate) fn run(
         mut receiver: mpsc::Receiver<DatagramReceiveCommand>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<TrackNotifier>,
+        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
@@ -51,7 +51,7 @@ impl DatagramReader {
 
                                 let track_key = cmd.track_key;
                                 let cache_store = cache_store.clone();
-                                let sender_map = sender_map.clone();
+                                let sender_map = object_notify_producer_map.clone();
                                 joinset.spawn(async move {
                                     Self::read_loop(
                                         track_key,
@@ -95,7 +95,7 @@ impl DatagramReader {
         mut receiver: Box<dyn DatagramReceiver>,
         mut stop_receiver: watch::Receiver<bool>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<TrackNotifier>,
+        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
     ) {
         let mut current_group_id: Option<u64> = None;
         loop {
@@ -120,7 +120,7 @@ impl DatagramReader {
                             cache.close_datagram_group(old_group).await;
                         }
                         current_group_id = Some(group_id);
-                        let _ = sender_map
+                        let _ = object_notify_producer_map
                             .get_or_create(track_key)
                             .send(TrackEvent::DatagramOpened { group_id });
                     }

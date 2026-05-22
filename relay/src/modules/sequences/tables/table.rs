@@ -41,7 +41,7 @@ pub(crate) struct RemovedSessionSubscriptions {
 }
 
 #[async_trait::async_trait]
-pub(crate) trait Table: Send + Sync + 'static + Debug {
+pub(crate) trait SignalingStateTable: Send + Sync + 'static + Debug {
     fn new() -> Self
     where
         Self: Sized;
