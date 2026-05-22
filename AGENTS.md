@@ -62,6 +62,14 @@
 - `pub(super)` — for items accessed only from the parent module.
 - Private (no modifier) — everything else.
 
+### Dependencies
+- Minimize the number of external crates. Prefer existing dependencies over adding new ones.
+- When adding a new crate, create an Architecture Decision Record (ADR) in the `ArchitectureDecisionRecord/` directory of the relevant package. Each ADR must be a separate Markdown file named after the crate (e.g. `ArchitectureDecisionRecord/tokio-util.md`). The ADR must include:
+  1. What — the crate being added and its purpose.
+  2. Context — the problem or requirement that motivates the addition.
+  3. Alternatives — other crates or approaches considered, with trade-offs.
+  4. Decision — the final choice and rationale.
+
 ## 5. Commands
 - Build: `cargo build`
 - Test: `cargo test`
