@@ -33,6 +33,9 @@
 ## 4. Coding Style
 
 ### Naming
+- Follow the naming conventions of the implementation language (e.g. `snake_case` for Rust, `camelCase` for TypeScript).
+- Names must represent the target concept clearly.
+- Abbreviations are allowed, but when used in type declarations, document the meaning in a code-level doc comment.
 - Channel-related variables must be named using the `xxx_sender` or `yyy_receiver` pattern.
 
 ### Error Handling
@@ -45,9 +48,12 @@
 - Place each task struct in a dedicated file within the smallest relevant directory.
 - The struct's constructor `run()` spawns the task and returns `Self`.
 - If the task needs to receive commands, store an `mpsc::Sender` alongside the `JoinHandle` (actor pattern).
+- Place each task file in the directory whose responsibility the task fulfills, not necessarily where it is spawned.
+  - Example: `moqt/src/modules/moqt/runtime/tasks/control_message_receive_task.rs`
 
 ### Module Structure
 - Split modules and structs based on SOLID principles with functional cohesion.
+- Keep each file under 300 lines. If a file exceeds this, consider splitting it.
 - When creating a directory module, use a same-name `.rs` file (e.g. `foo.rs` + `foo/`) instead of `foo/mod.rs`.
 
 ### Visibility
