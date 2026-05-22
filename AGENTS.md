@@ -70,6 +70,10 @@
   3. Alternatives — other crates or approaches considered, with trade-offs.
   4. Decision — the final choice and rationale.
 
+### Unsafe
+- `unsafe` is prohibited in principle.
+- Allowed only when the compiler explicitly requires it or when interfacing with FFI.
+
 ## 5. Commands
 - Build: `cargo build`
 - Test: `cargo test`
@@ -95,3 +99,14 @@ Follow the log level guidelines below.
 | INFO | Key milestones to monitor in production. | · Connection established/closed<br>· Subscribe/Publish started or completed<br>· Session start and teardown |
 | WARN | Recoverable issues that require attention. | · Retrying after a transient connection error<br>· Received an unexpected but non-fatal message type<br>· Stream closed by peer earlier than expected |
 | ERROR | Fatal failures requiring intervention. | · Connection failed after maximum retries<br>· Received a malformed or unrecognized MOQT message<br>· Authentication or TLS handshake failure |
+
+## 8. Git Conventions
+- Follow Conventional Commits: `type(scope): description`
+  - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`
+  - Scope: use the component name (`moqt`, `relay`, `wasm`, `live-ingest`, `onvif`, `msf`, `packages`)
+- One commit per logical change. If the description requires "and", split into multiple commits.
+- PR titles must clearly describe what was changed.
+- PR descriptions must be written in Japanese and include:
+  1. What feature or fix is being addressed.
+  2. What changes were made.
+  3. Why — the intent behind the changes.
