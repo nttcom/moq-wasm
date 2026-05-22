@@ -45,11 +45,18 @@
 ### Async / Tasks
 - No special naming convention for async functions.
 - Background tasks must be encapsulated in a dedicated struct that owns the `JoinHandle`.
-- Place each task struct in a dedicated file within the smallest relevant directory.
 - The struct's constructor `run()` spawns the task and returns `Self`.
 - If the task needs to receive commands, store an `mpsc::Sender` alongside the `JoinHandle` (actor pattern).
 - Place each task file in the directory whose responsibility the task fulfills, not necessarily where it is spawned.
   - Example: `moqt/src/modules/moqt/runtime/tasks/control_message_receive_task.rs`
+
+### Async Primitives
+- In async code, use `tokio` equivalents over `std` for synchronization, file I/O, and time operations.
+- `std::sync::Mutex` is acceptable only when the lock is never held across an `.await` point.
+
+### Imports
+- Use standard `use` declarations. Do not write full paths inline unless disambiguation is needed.
+- When the same type name exists in both `std` and `tokio` within one file, qualify with the module path (e.g. `std::sync::Mutex`) instead of creating aliases.
 
 ### Module Structure
 - Split modules and structs based on SOLID principles with functional cohesion.
@@ -92,6 +99,7 @@
 ## 7. Logging
 Always use the `tracing` crate for log output (e.g. `tracing::info!`, `tracing::debug!`).
 Follow the log level guidelines below.
+
 | Level | Role | Example Events |
 | --- | --- | --- |
 | TRACE | Raw network data. Disabled in normal operation. | · Raw bytes sent/received on a stream<br>· QUIC frame-level events |
