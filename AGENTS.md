@@ -20,6 +20,7 @@
 - Do not consult other drafts unless the task explicitly requires them.
 - When implementation details are unclear, consult the relevant draft before answering questions or making code changes.
 - For definitions shared by clients and servers, verify the draft text carefully and implement behavior accordingly.
+- If ambiguity remains after consulting both the specification and this document, ask the user for clarification rather than guessing.
 
 ## 4. Coding Style
 
