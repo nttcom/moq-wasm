@@ -2,11 +2,11 @@ use crate::{
     TransportProtocol,
     modules::moqt::data_plane::{
         object::{object_datagram::ObjectDatagram, subgroup::SubgroupHeader},
-        streams::stream::stream_receiver::UniStreamReceiver,
+        stream::stream_receiver::UniStreamReceiver,
     },
 };
 
-pub(crate) enum StreamWithObject<T: TransportProtocol> {
+pub(crate) enum IncomingObject<T: TransportProtocol> {
     StreamHeader {
         stream: UniStreamReceiver<T>,
         header: SubgroupHeader,

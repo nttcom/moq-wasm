@@ -11,7 +11,7 @@ use crate::modules::{
     relay::{
         cache::store::TrackCacheStore,
         ingress::stream_reader::{StreamOpened, StreamReader},
-        notifications::track_notifier::TrackNotifier,
+        notifications::track_notifier::ObjectNotifyProducerMap,
     },
     types::TrackKey,
 };
@@ -36,10 +36,10 @@ impl StreamIngressTask {
     pub(crate) fn new(
         mut receiver: mpsc::Receiver<StreamIngressCommand>,
         cache_store: Arc<TrackCacheStore>,
-        sender_map: Arc<TrackNotifier>,
+        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
     ) -> Self {
         let (opened_tx, opened_rx) = mpsc::channel::<StreamOpened>(64);
-        let stream_reader = StreamReader::run(opened_rx, cache_store, sender_map);
+        let stream_reader = StreamReader::run(opened_rx, cache_store, object_notify_producer_map);
 
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();

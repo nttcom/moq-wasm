@@ -7,7 +7,7 @@ use crate::{
             extension_headers::ExtensionHeaders,
             subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
         },
-        streams::stream::stream_sender::StreamSender,
+        stream::stream_sender::StreamSender,
     },
 };
 

@@ -1,21 +1,25 @@
-use crate::modules::{core::session_event::SessionEvent, enums::MoqtRelayEvent, types::SessionId};
+use crate::modules::{
+    core::session_event::MoqtSessionEvent, session_event::SessionEvent, types::SessionId,
+};
 
-pub(crate) struct MoqtRelayEventResolver;
+pub(crate) struct RelaySessionEventResolver;
 
-impl MoqtRelayEventResolver {
-    pub(crate) fn resolve(session_id: SessionId, event: SessionEvent) -> MoqtRelayEvent {
+impl RelaySessionEventResolver {
+    pub(crate) fn resolve(session_id: SessionId, event: MoqtSessionEvent) -> SessionEvent {
         match event {
-            SessionEvent::PublishNamespace(handler) => {
-                MoqtRelayEvent::PublishNameSpace(session_id, handler)
+            MoqtSessionEvent::PublishNamespace(handler) => {
+                SessionEvent::PublishNameSpace(session_id, handler)
             }
-            SessionEvent::SubscribeNamespace(handler) => {
-                MoqtRelayEvent::SubscribeNameSpace(session_id, handler)
+            MoqtSessionEvent::SubscribeNamespace(handler) => {
+                SessionEvent::SubscribeNameSpace(session_id, handler)
             }
-            SessionEvent::Publish(handler) => MoqtRelayEvent::Publish(session_id, handler),
-            SessionEvent::Subscribe(handler) => MoqtRelayEvent::Subscribe(session_id, handler),
-            SessionEvent::Unsubscribe(handler) => MoqtRelayEvent::Unsubscribe(session_id, handler),
-            SessionEvent::Disconnected() => MoqtRelayEvent::Disconnected(session_id),
-            SessionEvent::ProtocolViolation() => MoqtRelayEvent::ProtocolViolation(session_id),
+            MoqtSessionEvent::Publish(handler) => SessionEvent::Publish(session_id, handler),
+            MoqtSessionEvent::Subscribe(handler) => SessionEvent::Subscribe(session_id, handler),
+            MoqtSessionEvent::Unsubscribe(handler) => {
+                SessionEvent::Unsubscribe(session_id, handler)
+            }
+            MoqtSessionEvent::Disconnected() => SessionEvent::Disconnected(session_id),
+            MoqtSessionEvent::ProtocolViolation() => SessionEvent::ProtocolViolation(session_id),
         }
     }
 }
