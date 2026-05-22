@@ -7,14 +7,14 @@ use crate::modules::{
     types::SessionId,
 };
 
-pub(crate) struct Notifier {
+pub(crate) struct SessionSignalingDispatcher {
     pub(crate) repository: Arc<tokio::sync::Mutex<SessionRepository>>,
 }
 
-impl Notifier {
+impl SessionSignalingDispatcher {
     #[tracing::instrument(
         level = "info",
-        name = "relay.notifier.publish_namespace",
+        name = "relay.session_signaling_dispatcher.publish_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace)
     )]
@@ -47,7 +47,7 @@ impl Notifier {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.notifier.publish",
+        name = "relay.session_signaling_dispatcher.publish",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
     )]
@@ -84,7 +84,7 @@ impl Notifier {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.notifier.subscribe",
+        name = "relay.session_signaling_dispatcher.subscribe",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
     )]
@@ -117,7 +117,7 @@ impl Notifier {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.notifier.unsubscribe",
+        name = "relay.session_signaling_dispatcher.unsubscribe",
         skip_all,
         fields(session_id = %session_id, subscribe_id = %subscribe_id)
     )]

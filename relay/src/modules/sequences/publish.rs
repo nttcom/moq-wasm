@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::modules::{
     core::handler::publish::PublishHandler,
     enums::FilterType,
-    sequences::{notifier::Notifier, tables::table::Table},
+    sequences::{notifier::SessionSignalingDispatcher, tables::table::SignalingStateTable},
     types::SessionId,
 };
 use tracing::Span;
@@ -22,8 +22,8 @@ impl Publish {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn Table,
-        notifier: &Notifier,
+        table: &dyn SignalingStateTable,
+        notifier: &SessionSignalingDispatcher,
         handler: Box<dyn PublishHandler>,
     ) {
         let track_namespace = handler.track_namespace().to_string();
@@ -58,8 +58,8 @@ impl Publish {
     async fn broadcast_to_subscribers(
         &self,
         publisher_session_id: SessionId,
-        notifier: &Notifier,
-        table: &dyn Table,
+        notifier: &SessionSignalingDispatcher,
+        table: &dyn SignalingStateTable,
         handler: &dyn PublishHandler,
     ) {
         let track_namespace = handler.track_namespace().to_string();
@@ -115,7 +115,7 @@ impl Publish {
     async fn register_if_response_succeeded(
         &self,
         session_id: SessionId,
-        table: &dyn Table,
+        table: &dyn SignalingStateTable,
         handler: Box<dyn PublishHandler>,
     ) {
         // TODO:

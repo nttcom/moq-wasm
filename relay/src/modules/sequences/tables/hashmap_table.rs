@@ -7,13 +7,13 @@ use crate::modules::{
     core::handler::publish::PublishHandler,
     sequences::tables::table::{
         ActiveUpstreamSubscription, RemovedDownstreamSubscription, RemovedSessionSubscriptions,
-        Table, UpstreamSubscriptionKey,
+        SignalingStateTable, UpstreamSubscriptionKey,
     },
     types::{SessionId, TrackNamespace, TrackNamespacePrefix},
 };
 
 #[derive(Debug)]
-pub(crate) struct HashMapTable {
+pub(crate) struct InMemorySignalingStateTable {
     /**
      * namespace mechanism
      * publish_namespace: room/member
@@ -31,7 +31,7 @@ pub(crate) struct HashMapTable {
 }
 
 #[async_trait::async_trait]
-impl Table for HashMapTable {
+impl SignalingStateTable for InMemorySignalingStateTable {
     fn new() -> Self {
         Self {
             publisher_namespaces: DashMap::new(),
@@ -45,7 +45,7 @@ impl Table for HashMapTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.table.remove_session",
+        name = "relay.signaling_state_table.remove_session",
         skip_all,
         fields(session_id = %session_id)
     )]
@@ -149,7 +149,7 @@ impl Table for HashMapTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.table.register_publish_namespace",
+        name = "relay.signaling_state_table.register_publish_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace)
     )]
@@ -173,7 +173,7 @@ impl Table for HashMapTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.table.register_subscribe_namespace",
+        name = "relay.signaling_state_table.register_subscribe_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
     )]
@@ -195,7 +195,7 @@ impl Table for HashMapTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.table.register_publish",
+        name = "relay.signaling_state_table.register_publish",
         skip_all,
         fields(session_id = %session_id)
     )]
@@ -208,7 +208,7 @@ impl Table for HashMapTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.table.get_namespace_subscribers",
+        name = "relay.signaling_state_table.get_namespace_subscribers",
         skip_all,
         fields(track_namespace = %track_namespace)
     )]
@@ -229,7 +229,7 @@ impl Table for HashMapTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.table.get_subscribers",
+        name = "relay.signaling_state_table.get_subscribers",
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
     )]
@@ -263,7 +263,7 @@ impl Table for HashMapTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.table.get_publish_namespace",
+        name = "relay.signaling_state_table.get_publish_namespace",
         skip_all,
         fields(track_namespace = %track_namespace)
     )]
@@ -274,7 +274,7 @@ impl Table for HashMapTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.table.find_publish_handler_with",
+        name = "relay.signaling_state_table.find_publish_handler_with",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
@@ -296,7 +296,7 @@ impl Table for HashMapTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.table.register_track_alias_link",
+        name = "relay.signaling_state_table.register_track_alias_link",
         skip_all,
         fields(
             publisher_session_id = %publisher_session_id,
@@ -324,7 +324,7 @@ impl Table for HashMapTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.table.find_subscriber_track_alias",
+        name = "relay.signaling_state_table.find_subscriber_track_alias",
         skip_all,
         fields(
             publisher_session_id = %publisher_session_id,
@@ -484,7 +484,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_session_cleans_up_all_session_scoped_entries() {
-        let table = HashMapTable::new();
+        let table = InMemorySignalingStateTable::new();
 
         assert!(table.register_publish_namespace(1, "room/member".to_string()));
         table.register_subscribe_namespace(1, "room/".to_string());
