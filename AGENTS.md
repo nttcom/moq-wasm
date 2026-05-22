@@ -10,9 +10,16 @@
 
 | Component | Description | Related Draft |
 | --- | --- | --- |
-| `moqt` | Core MoQT implementation | `spec/draft-ietf-moq-transport-14.txt` |
-| `relay` | MoQT relay server implementation | `spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
-| `shared/media-streaming-format` | Content format for transporting media over MoQT | `spec/draft-ietf-moq-msf-00.txt` |
+| `moqt` | Core MoQT protocol implementation | `spec/draft-ietf-moq-transport-14.txt` |
+| `relay` | MoQT relay server, extending `moqt` with server-specific logic | `spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
+| `shared/media-streaming-format` | Object format for content transported over MoQT | `spec/draft-ietf-moq-msf-00.txt` |
+| `shared/packages` | Low-overhead container used internally by `media-streaming-format` | — |
+| `bindings/wasm` | WebAssembly bindings to use `moqt` from the browser | — |
+| `bridges/live-ingest` | Bridge converting RTMP/SRT streams into MoQT | — |
+| `bridges/onvif` | Bridge ingesting ONVIF camera streams into MoQT | — |
+| `examples/` | Usage examples and test clients | — |
+
+- `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
 
 ## 3. Specifications
 - MoQT-related specifications are stored in the `spec` directory.
