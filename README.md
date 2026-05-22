@@ -50,10 +50,3 @@ make format
 ```
 
 CI runs the full validation suite, including the Linux-only browser media E2E flow.
-
-### Run moqt-client-onvif
-
-```shell
-cp .env.example .env
-make onvif
-```
