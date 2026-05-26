@@ -8,6 +8,8 @@ pub use modules::moqt::control_plane::control_messages::messages::parameters::lo
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::enums::SessionEvent;
 #[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::control_plane::handler::fetch_handler::FetchHandler;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::handler::publish_handler::PublishHandler;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::handler::publish_namespace_handler::PublishNamespaceHandler;
@@ -30,7 +32,13 @@ pub use modules::moqt::data_plane::datagram::datagram_sender::DatagramSender;
 pub use modules::moqt::data_plane::object::datagram_field::DatagramField;
 pub use modules::moqt::data_plane::object::datagram_field::ObjectDatagramPayload;
 pub use modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::data_plane::object::fetch::FetchObject;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::data_plane::object::fetch::FetchObjectField;
 pub use modules::moqt::data_plane::object::object_datagram::ObjectDatagram;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::data_plane::object::object_status::ObjectStatus;
 pub use modules::moqt::data_plane::object::subgroup::SubgroupHeader;
 pub use modules::moqt::data_plane::object::subgroup::SubgroupHeaderType;
 pub use modules::moqt::data_plane::object::subgroup::SubgroupId;
@@ -40,6 +48,8 @@ pub use modules::moqt::data_plane::object::subgroup::SubgroupObjectField;
 pub use modules::moqt::data_plane::stream::fetch_data_receiver::Fetch;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::data_plane::stream::fetch_data_receiver::FetchDataReceiver;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::data_plane::stream::fetch_data_sender::FetchDataSender;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::data_plane::stream::stream_data_receiver::StreamDataReceiver;
 #[cfg(not(target_arch = "wasm32"))]

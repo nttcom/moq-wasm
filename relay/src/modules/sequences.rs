@@ -1,3 +1,4 @@
+pub(crate) mod fetch;
 pub(crate) mod notifier;
 pub(crate) mod publish;
 pub(crate) mod publish_namespace;

@@ -14,6 +14,8 @@ pub use crate::modules::moqt::control_plane::control_messages::messages::paramet
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::group_order::GroupOrder;
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::setup_parameters::SetupParameter;
+pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::Fetch;
+pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::FetchType;
 pub use crate::modules::moqt::control_plane::control_messages::messages::publish::Publish;
 pub use crate::modules::moqt::control_plane::control_messages::messages::publish_namespace::PublishNamespace;
 pub use crate::modules::moqt::control_plane::control_messages::messages::publish_ok::PublishOk;

@@ -1,8 +1,8 @@
 use crate::modules::moqt::control_plane::control_messages::messages::{
-    client_setup::ClientSetup, fetch_ok::FetchOk, namespace_ok::NamespaceOk, publish::Publish,
-    publish_namespace::PublishNamespace, publish_ok::PublishOk, request_error::RequestError,
-    server_setup::ServerSetup, subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
-    subscribe_ok::SubscribeOk, unsubscribe::Unsubscribe,
+    client_setup::ClientSetup, fetch::Fetch, fetch_ok::FetchOk, namespace_ok::NamespaceOk,
+    publish::Publish, publish_namespace::PublishNamespace, publish_ok::PublishOk,
+    request_error::RequestError, server_setup::ServerSetup, subscribe::Subscribe,
+    subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk, unsubscribe::Unsubscribe,
 };
 
 pub(crate) enum ReceivedMessage {
@@ -21,6 +21,7 @@ pub(crate) enum ReceivedMessage {
     SubscribeOk(SubscribeOk),
     SubscribeError(RequestError),
     Unsubscribe(Unsubscribe),
+    Fetch(Fetch),
     FetchOk(FetchOk),
     FatalError(),
 }
@@ -43,6 +44,7 @@ impl std::fmt::Debug for ReceivedMessage {
             ReceivedMessage::SubscribeOk(_) => "SubscribeOk",
             ReceivedMessage::SubscribeError(_) => "SubscribeError",
             ReceivedMessage::Unsubscribe(_) => "Unsubscribe",
+            ReceivedMessage::Fetch(_) => "Fetch",
             ReceivedMessage::FetchOk(_) => "FetchOk",
             ReceivedMessage::FatalError() => "FatalError",
         };
