@@ -12,6 +12,7 @@ use crate::{
         },
         domains::session_context::SessionContext,
     },
+    modules::transport::transport_send_stream::TransportSendError,
 };
 
 #[derive(Debug, Clone)]
@@ -49,7 +50,11 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         }
     }
 
-    pub async fn ok(&self, expires: u64, content_exists: ContentExists) -> anyhow::Result<u64> {
+    pub async fn ok(
+        &self,
+        expires: u64,
+        content_exists: ContentExists,
+    ) -> Result<u64, TransportSendError> {
         let track_alias = self.session_context.get_track_alias();
         let subscribe_ok = SubscribeOk {
             request_id: self.request_id,
@@ -67,7 +72,11 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         Ok(track_alias)
     }
 
-    pub async fn error(&self, error_code: u64, reason_phrase: String) -> anyhow::Result<()> {
+    pub async fn error(
+        &self,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Result<(), TransportSendError> {
         let err = RequestError {
             // TODO: assign correct request id.
             request_id: self.request_id,

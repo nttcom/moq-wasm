@@ -13,6 +13,7 @@ use crate::{
         domains::session_context::SessionContext,
         runtime::dispatch::incoming_object::IncomingObject,
     },
+    modules::transport::transport_send_stream::TransportSendError,
 };
 
 #[derive(Debug, Clone)]
@@ -52,7 +53,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
         subscriber_priority: u8,
         filter_type: FilterType,
         expires: u64,
-    ) -> anyhow::Result<Subscription> {
+    ) -> Result<Subscription, TransportSendError> {
         let publish_ok = PublishOk {
             request_id: self.request_id,
             forward: self.forward,
@@ -87,7 +88,11 @@ impl<T: TransportProtocol> PublishHandler<T> {
         })
     }
 
-    pub async fn error(&self, error_code: u64, reason_phrase: String) -> anyhow::Result<()> {
+    pub async fn error(
+        &self,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Result<(), TransportSendError> {
         let err = RequestError {
             // TODO: assign correct request id.
             request_id: self.request_id,
@@ -97,6 +102,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
         self.session_context
             .send_stream
             .send(ControlMessageType::PublishError, err.encode())
-            .await
+            .await?;
+        Ok(())
     }
 }

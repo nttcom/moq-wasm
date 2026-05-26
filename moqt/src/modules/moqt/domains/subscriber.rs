@@ -164,7 +164,8 @@ impl<T: TransportProtocol> Subscriber<T> {
         self.session
             .send_stream
             .send(ControlMessageType::UnSubscribe, unsubscribe.encode())
-            .await
+            .await?;
+        Ok(())
     }
 
     #[tracing::instrument(

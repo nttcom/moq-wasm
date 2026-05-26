@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use quinn::{self};
 
-use crate::modules::transport::transport_send_stream::TransportSendStream;
+use crate::modules::transport::transport_send_stream::{TransportSendError, TransportSendStream};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -12,11 +12,29 @@ pub struct QUICSendStream {
 
 #[async_trait]
 impl TransportSendStream for QUICSendStream {
-    async fn send(&mut self, buffer: &BytesMut) -> anyhow::Result<()> {
-        Ok(self.send_stream.write_all(buffer).await?)
+    async fn send(&mut self, buffer: &BytesMut) -> Result<(), TransportSendError> {
+        self.send_stream
+            .write_all(buffer)
+            .await
+            .map_err(quic_write_error_to_transport_send_error)
     }
 
-    async fn close(&mut self) -> anyhow::Result<()> {
-        Ok(self.send_stream.finish()?)
+    async fn close(&mut self) -> Result<(), TransportSendError> {
+        self.send_stream
+            .finish()
+            .map_err(|_| TransportSendError::ClosedStream)
+    }
+}
+
+fn quic_write_error_to_transport_send_error(error: quinn::WriteError) -> TransportSendError {
+    match error {
+        quinn::WriteError::Stopped(code) => TransportSendError::Stopped {
+            code: code.into_inner(),
+        },
+        quinn::WriteError::ConnectionLost(error) => TransportSendError::ConnectionLost {
+            reason: error.to_string(),
+        },
+        quinn::WriteError::ClosedStream => TransportSendError::ClosedStream,
+        quinn::WriteError::ZeroRttRejected => TransportSendError::ZeroRttRejected,
     }
 }
