@@ -47,6 +47,16 @@ pub enum SubgroupId {
     Value(u64),
 }
 
+impl SubgroupId {
+    // TODO: FirstObjectIdDelta should use the first object's object_id as subgroup_id
+    pub fn resolve(&self) -> u64 {
+        match self {
+            SubgroupId::None | SubgroupId::FirstObjectIdDelta => 0,
+            SubgroupId::Value(id) => *id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub struct SubgroupHeaderType(u64);
 
@@ -294,6 +304,13 @@ pub struct SubgroupObjectField {
 impl SubgroupObjectField {
     pub fn is_end_of_group(&self) -> bool {
         self.message_type.has_end_of_group()
+    }
+
+    pub fn resolve_object_id(&self, prev: Option<u64>) -> u64 {
+        match prev {
+            None => self.object_id_delta,
+            Some(prev) => prev + 1 + self.object_id_delta,
+        }
     }
 
     pub fn decode(

@@ -7,7 +7,7 @@ use crate::modules::moqt::{
     control_plane::control_messages::{
         control_message_type::ControlMessageType,
         messages::{
-            client_setup::ClientSetup, fetch_ok::FetchOk, namespace_ok::NamespaceOk,
+            client_setup::ClientSetup, fetch::Fetch, fetch_ok::FetchOk, namespace_ok::NamespaceOk,
             publish::Publish, publish_namespace::PublishNamespace, publish_ok::PublishOk,
             request_error::RequestError, server_setup::ServerSetup, subscribe::Subscribe,
             subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
@@ -145,7 +145,16 @@ impl ControlMessageDecoder {
                     }
                 }
             }
-            ControlMessageType::Fetch => todo!(),
+            ControlMessageType::Fetch => {
+                tracing::debug!("Event: Fetch");
+                match Fetch::decode(&mut cursor_buf) {
+                    Some(v) => ReceivedMessage::Fetch(v),
+                    None => {
+                        tracing::error!("Protocol violation is detected.");
+                        ReceivedMessage::FatalError()
+                    }
+                }
+            }
             ControlMessageType::FetchOk => {
                 tracing::debug!("Event: Fetch ok");
                 match FetchOk::decode(&mut cursor_buf) {

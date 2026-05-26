@@ -129,6 +129,9 @@ impl<T: TransportProtocol> Client<T> {
                         moqt::SessionEvent::ProtocolViolation() => {
                             tracing::info!("Received: {} ProtocolViolation", _label);
                         }
+                        moqt::SessionEvent::Fetch(_) => {
+                            todo!()
+                        }
                     };
                 }
             })

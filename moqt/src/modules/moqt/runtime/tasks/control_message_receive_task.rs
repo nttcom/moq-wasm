@@ -8,7 +8,7 @@ use crate::{
         control_plane::{
             enums::ResponseMessage,
             handler::{
-                publish_handler::PublishHandler,
+                fetch_handler::FetchHandler, publish_handler::PublishHandler,
                 publish_namespace_handler::PublishNamespaceHandler,
                 subscribe_handler::SubscribeHandler,
                 subscribe_namespace_handler::SubscribeNamespaceHandler,
@@ -180,6 +180,11 @@ impl ControlMessageReceiveTask {
                 let response =
                     ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase);
                 DepacketizeResult::ResponseMessage(request_id, response)
+            }
+            ReceivedMessage::Fetch(fetch) => {
+                tracing::debug!("Event: Fetch");
+                let fetch_handler = FetchHandler::new(session.clone(), fetch);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::Fetch(fetch_handler))
             }
             ReceivedMessage::FetchOk(fetch_ok) => {
                 tracing::debug!("Event: Fetch ok");
