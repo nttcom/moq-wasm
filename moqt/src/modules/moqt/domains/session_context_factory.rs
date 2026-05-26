@@ -140,10 +140,10 @@ impl SessionContextFactory {
             moq_implementation: Some("MOQ-WASM".to_string()),
         };
         let payload = ServerSetup::new(MOQ_TRANSPORT_VERSION, setup_param).encode();
-        send_stream
+        Ok(send_stream
             .send(ControlMessageType::ServerSetup, payload)
             .await
             .inspect_err(|e| tracing::error!("failed to send. :{}", e.to_string()))
-            .inspect(|_| tracing::debug!("ServerSetup is sent."))
+            .inspect(|_| tracing::debug!("ServerSetup is sent."))?)
     }
 }

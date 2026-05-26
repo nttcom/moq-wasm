@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bytes::BytesMut;
 
-use crate::modules::transport::transport_send_stream::TransportSendStream;
+use crate::modules::transport::transport_send_stream::{TransportSendError, TransportSendStream};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -13,11 +13,35 @@ pub struct WtSendStream {
 
 #[async_trait]
 impl TransportSendStream for WtSendStream {
-    async fn send(&mut self, buffer: &BytesMut) -> anyhow::Result<()> {
-        Ok(self.send_stream.write_all(buffer).await?)
+    async fn send(&mut self, buffer: &BytesMut) -> Result<(), TransportSendError> {
+        self.send_stream
+            .write_all(buffer)
+            .await
+            .map_err(webtransport_write_error_to_transport_send_error)
     }
 
-    async fn close(&mut self) -> anyhow::Result<()> {
-        Ok(self.send_stream.finish()?)
+    async fn close(&mut self) -> Result<(), TransportSendError> {
+        self.send_stream
+            .finish()
+            .map_err(|_| TransportSendError::ClosedStream)
+    }
+}
+
+fn webtransport_write_error_to_transport_send_error(
+    error: web_transport_quinn::WriteError,
+) -> TransportSendError {
+    match error {
+        web_transport_quinn::WriteError::Stopped(code) => TransportSendError::Stopped {
+            code: u64::from(code),
+        },
+        web_transport_quinn::WriteError::InvalidStopped(code) => {
+            TransportSendError::InvalidStopped {
+                code: code.into_inner(),
+            }
+        }
+        web_transport_quinn::WriteError::SessionError(error) => TransportSendError::SessionError {
+            reason: error.to_string(),
+        },
+        web_transport_quinn::WriteError::ClosedStream => TransportSendError::ClosedStream,
     }
 }

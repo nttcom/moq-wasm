@@ -27,8 +27,12 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
         subscriber_priority: u8,
         filter_type: FilterType,
         expires: u64,
-    ) -> anyhow::Result<()>;
-    async fn _error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
+    ) -> Result<(), moqt::TransportSendError>;
+    async fn _error(
+        &self,
+        code: u64,
+        reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError>;
 }
 
 #[async_trait]
@@ -66,13 +70,17 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
         subscriber_priority: u8,
         filter_type: FilterType,
         expires: u64,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), moqt::TransportSendError> {
         self.ok(subscriber_priority, filter_type.as_moqt(), expires)
             .await
             .map(|_| ())
     }
 
-    async fn _error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()> {
+    async fn _error(
+        &self,
+        code: u64,
+        reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError> {
         self.error(code, reason_phrase).await
     }
 }
