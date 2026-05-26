@@ -54,12 +54,16 @@ pub(crate) trait SignalingStateTable: Send + Sync + 'static + Debug {
         &self,
         track_namespace_prefix: &str,
     ) -> DashSet<(String, (Option<String>, Option<u64>))>;
-    fn get_publish_namespace(&self, track_namespace: &str) -> Option<SessionId>;
-    async fn find_publish_handler_with(
+    fn find_active_upstream_subscriptions(
         &self,
         track_namespace: &str,
         track_name: &str,
-    ) -> Option<(SessionId, Arc<dyn PublishHandler>)>;
+    ) -> Vec<UpstreamSubscriptionKey>;
+    async fn find_upstream_publishers(
+        &self,
+        track_namespace: &str,
+        track_name: &str,
+    ) -> Vec<UpstreamSubscriptionKey>;
     fn register_track_alias_link(
         &self,
         publisher_session_id: SessionId,
