@@ -4,7 +4,7 @@ use crate::{
     TransportProtocol,
     modules::{
         moqt::control_plane::control_messages::control_message_type::ControlMessageType,
-        transport::transport_send_stream::TransportSendStream,
+        transport::transport_send_stream::{TransportSendError, TransportSendStream},
     },
     wire::encode_control_message,
 };
@@ -25,7 +25,7 @@ impl<T: TransportProtocol> BiStreamSender<T> {
         &self,
         message_type: ControlMessageType,
         bytes: BytesMut,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), TransportSendError> {
         let message_bytes = encode_control_message(message_type, bytes);
         let mut stream_sender = self.stream_sender.lock().await;
         stream_sender.send(&message_bytes).await
@@ -33,7 +33,7 @@ impl<T: TransportProtocol> BiStreamSender<T> {
 
     // GoAway message is implemented then we can use this function to send GoAway message.
     #[allow(dead_code)]
-    pub(crate) async fn close(&self) -> anyhow::Result<()> {
+    pub(crate) async fn close(&self) -> Result<(), TransportSendError> {
         let mut stream_sender = self.stream_sender.lock().await;
         stream_sender.close().await
     }

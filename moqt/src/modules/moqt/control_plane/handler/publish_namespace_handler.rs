@@ -12,6 +12,7 @@ use crate::{
         },
         domains::session_context::SessionContext,
     },
+    modules::transport::transport_send_stream::TransportSendError,
 };
 
 #[derive(Debug, Clone)]
@@ -35,7 +36,7 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
         }
     }
 
-    pub async fn ok(&self) -> anyhow::Result<()> {
+    pub async fn ok(&self) -> Result<(), TransportSendError> {
         let publish_namespace_ok = NamespaceOk {
             request_id: self.request_id,
         };
@@ -48,7 +49,11 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
             .await
     }
 
-    pub async fn error(&self, error_code: u64, reason_phrase: String) -> anyhow::Result<()> {
+    pub async fn error(
+        &self,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Result<(), TransportSendError> {
         let err = RequestError {
             // TODO: assign correct request id.
             request_id: self.request_id,
