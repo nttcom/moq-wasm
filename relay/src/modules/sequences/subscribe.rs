@@ -64,7 +64,7 @@ impl Subscribe {
         );
 
         let (upstream_key, active_upstream) = match self
-            .prepare_upstream_subscription(
+            .get_or_create_upstream_subscription(
                 session_id,
                 track_namespace,
                 track_name,
@@ -112,7 +112,7 @@ impl Subscribe {
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         level = "info",
-        name = "relay.sequence.subscribe.prepare_upstream_subscription",
+        name = "relay.sequence.subscribe.get_or_create_upstream_subscription",
         skip_all,
         fields(
             session_id = %session_id,
@@ -120,7 +120,7 @@ impl Subscribe {
             track_name = %track_name
         )
     )]
-    async fn prepare_upstream_subscription(
+    async fn get_or_create_upstream_subscription(
         &self,
         session_id: SessionId,
         track_namespace: &str,
@@ -165,7 +165,7 @@ impl Subscribe {
         table
             .find_active_upstream_subscriptions(track_namespace, track_name)
             .into_iter()
-            .min_by_key(|candidate| candidate.publisher_session_id)
+            .min_by_key(|publisher| publisher.publisher_session_id)
             .and_then(|upstream_key| {
                 let active_upstream = table.get_active_upstream_subscription(
                     upstream_key.publisher_session_id,
@@ -198,10 +198,10 @@ impl Subscribe {
     ) -> Result<(UpstreamSubscriptionKey, ActiveUpstreamSubscription), UpstreamSubscriptionError>
     {
         let upstream_key = table
-            .find_upstream_publisher_subscriptions(track_namespace, track_name)
+            .find_upstream_publishers(track_namespace, track_name)
             .await
             .into_iter()
-            .min_by_key(|candidate| candidate.publisher_session_id)
+            .min_by_key(|publisher| publisher.publisher_session_id)
             .ok_or(UpstreamSubscriptionError::PublisherNotFound)?;
 
         let pub_session_id = upstream_key.publisher_session_id;

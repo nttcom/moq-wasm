@@ -59,7 +59,7 @@ pub(crate) trait SignalingStateTable: Send + Sync + 'static + Debug {
         track_namespace: &str,
         track_name: &str,
     ) -> Vec<UpstreamSubscriptionKey>;
-    async fn find_upstream_publisher_subscriptions(
+    async fn find_upstream_publishers(
         &self,
         track_namespace: &str,
         track_name: &str,
