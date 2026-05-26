@@ -80,3 +80,5 @@ pub use modules::moqt::protocol::QUIC;
 pub use modules::moqt::protocol::TransportProtocol;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::protocol::WEBTRANSPORT;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::transport::transport_send_stream::TransportSendError;

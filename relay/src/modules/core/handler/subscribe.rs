@@ -17,8 +17,13 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     fn _authorization_token(&self) -> Option<String>;
     fn _max_cache_duration(&self) -> Option<u64>;
     fn _delivery_timeout(&self) -> Option<u64>;
-    async fn ok(&self, expires: u64, content_exists: ContentExists) -> anyhow::Result<u64>;
-    async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()>;
+    async fn ok(
+        &self,
+        expires: u64,
+        content_exists: ContentExists,
+    ) -> Result<u64, moqt::TransportSendError>;
+    async fn error(&self, code: u64, reason_phrase: String)
+    -> Result<(), moqt::TransportSendError>;
     fn convert_into_publication(&self, track_alias: u64) -> PublishedResource;
 }
 
@@ -55,11 +60,19 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
         self.delivery_timeout
     }
 
-    async fn ok(&self, expires: u64, content_exists: ContentExists) -> anyhow::Result<u64> {
+    async fn ok(
+        &self,
+        expires: u64,
+        content_exists: ContentExists,
+    ) -> Result<u64, moqt::TransportSendError> {
         self.ok(expires, content_exists.as_moqt()).await
     }
 
-    async fn error(&self, code: u64, reason_phrase: String) -> anyhow::Result<()> {
+    async fn error(
+        &self,
+        code: u64,
+        reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError> {
         self.error(code, reason_phrase).await
     }
 

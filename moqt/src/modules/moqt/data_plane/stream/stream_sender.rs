@@ -18,10 +18,10 @@ impl<T: TransportProtocol> StreamSender<T> {
 
     pub async fn send(&self, bytes: &BytesMut) -> anyhow::Result<()> {
         tracing::debug!("bytes length: {}", bytes.len());
-        self.send_stream.lock().await.send(bytes).await
+        Ok(self.send_stream.lock().await.send(bytes).await?)
     }
 
     pub async fn close(&self) -> anyhow::Result<()> {
-        self.send_stream.lock().await.close().await
+        Ok(self.send_stream.lock().await.close().await?)
     }
 }
