@@ -281,19 +281,19 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.find_upstream_publisher_subscriptions",
+        name = "relay.signaling_state_table.find_upstream_publishers",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
-    async fn find_upstream_publisher_subscriptions(
+    async fn find_upstream_publishers(
         &self,
         track_namespace: &str,
         track_name: &str,
     ) -> Vec<UpstreamSubscriptionKey> {
-        let candidates = DashSet::new();
+        let publishers = DashSet::new();
         if let Some(namespace_publishers) = self.publisher_namespaces.get(track_namespace) {
             for session_id in namespace_publishers.iter() {
-                candidates.insert(*session_id);
+                publishers.insert(*session_id);
             }
         }
 
@@ -303,9 +303,9 @@ impl SignalingStateTable for InMemorySignalingStateTable {
             .filter(|(_, h)| h.track_namespace() == track_namespace && h.track_name() == track_name)
             .map(|(session_id, _)| *session_id)
         {
-            candidates.insert(session_id);
+            publishers.insert(session_id);
         }
-        candidates
+        publishers
             .into_iter()
             .map(|publisher_session_id| UpstreamSubscriptionKey {
                 publisher_session_id,
@@ -509,7 +509,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_session_cleans_up_all_session_scoped_entries() {
-        // Arrange: セッションに紐づく namespace / track / alias の状態を登録する。
+        // Arrange: Register namespace, track, and alias state for the session.
         let table = InMemorySignalingStateTable::new();
 
         assert!(table.register_publish_namespace(1, "room/member".to_string()));
@@ -530,13 +530,11 @@ mod tests {
         table.register_track_alias_link(1, 10, 2, 20);
         table.register_track_alias_link(2, 30, 1, 40);
 
-        // Act: セッション1の切断時クリーンアップを実行する。
+        // Act: Remove all state associated with session 1.
         table.remove_session(1).await;
 
-        // Assert: 同じ namespace の他 publisher は残しつつ、セッション1の状態だけ削除される。
-        let upstream_subscriptions = table
-            .find_upstream_publisher_subscriptions("room/member", "video")
-            .await;
+        // Assert: Remove only session 1 state while keeping other publishers in the same namespace.
+        let upstream_subscriptions = table.find_upstream_publishers("room/member", "video").await;
         let publisher_session_ids: Vec<_> = upstream_subscriptions
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
@@ -554,7 +552,7 @@ mod tests {
 
     #[tokio::test]
     async fn allows_multiple_publishers_for_the_same_namespace_and_track() {
-        // Arrange: 同じ namespace と track を複数 publisher から登録する。
+        // Arrange: Register multiple publishers for the same namespace and track.
         let table = InMemorySignalingStateTable::new();
 
         table.register_publish_namespace(1, "room/member".to_string());
@@ -580,22 +578,22 @@ mod tests {
             )
             .await;
 
-        // Act: subscribe 時に利用できる upstream publisher 候補を取得する。
+        // Act: Find upstream publishers available for subscribe.
         let mut upstream_publishers: Vec<_> = table
-            .find_upstream_publisher_subscriptions("room/member", "video")
+            .find_upstream_publishers("room/member", "video")
             .await
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
             .collect();
         upstream_publishers.sort();
 
-        // Assert: namespace / track の由来を問わず、複数 publisher が候補として保持される。
+        // Assert: Keep multiple publishers regardless of whether they came from namespace or track state.
         assert_eq!(upstream_publishers, vec![1, 2]);
     }
 
     #[tokio::test]
     async fn finds_active_upstream_subscriptions_separately_from_publishers() {
-        // Arrange: publisher 候補とは別に、既存 upstream subscription を登録する。
+        // Arrange: Register an active upstream subscription separately from publishers.
         let table = InMemorySignalingStateTable::new();
         table.register_publish_namespace(1, "room/member".to_string());
         let upstream_key = UpstreamSubscriptionKey {
@@ -614,13 +612,11 @@ mod tests {
             },
         );
 
-        // Act: 既存 upstream subscription と publisher 候補をそれぞれ取得する。
+        // Act: Fetch the active upstream subscription and upstream publishers separately.
         let active_subscriptions = table.find_active_upstream_subscriptions("room/member", "video");
-        let publisher_subscriptions = table
-            .find_upstream_publisher_subscriptions("room/member", "video")
-            .await;
+        let publisher_subscriptions = table.find_upstream_publishers("room/member", "video").await;
 
-        // Assert: 既存 subscription は active 側で取得でき、publisher 候補も別途取得できる。
+        // Assert: Active subscriptions and upstream publishers are both discoverable.
         assert_eq!(active_subscriptions, vec![upstream_key.clone()]);
         assert_eq!(publisher_subscriptions, vec![upstream_key]);
     }
