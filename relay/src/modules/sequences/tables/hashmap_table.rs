@@ -473,11 +473,15 @@ mod tests {
             _subscriber_priority: u8,
             _filter_type: FilterType,
             _expires: u64,
-        ) -> anyhow::Result<()> {
+        ) -> Result<(), moqt::TransportSendError> {
             Ok(())
         }
 
-        async fn _error(&self, _code: u64, _reason_phrase: String) -> anyhow::Result<()> {
+        async fn _error(
+            &self,
+            _code: u64,
+            _reason_phrase: String,
+        ) -> Result<(), moqt::TransportSendError> {
             Ok(())
         }
     }
