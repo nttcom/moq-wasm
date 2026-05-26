@@ -21,7 +21,7 @@ pub(crate) struct InMemorySignalingStateTable {
      * publish: room/member + video
      * subscribe: room/member/video
      */
-    pub(crate) publisher_namespaces: DashMap<TrackNamespace, SessionId>,
+    pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashSet<SessionId>>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashSet<SessionId>>,
     pub(crate) published_handlers: RwLock<Vec<(SessionId, Arc<dyn PublishHandler>)>>,
     pub(crate) track_alias_links: DashMap<(SessionId, u64, SessionId), u64>,
@@ -52,12 +52,15 @@ impl SignalingStateTable for InMemorySignalingStateTable {
     async fn remove_session(&self, session_id: SessionId) -> RemovedSessionSubscriptions {
         let mut removed = RemovedSessionSubscriptions::default();
 
-        let namespaces_to_remove: Vec<_> = self
+        let empty_namespaces: Vec<_> = self
             .publisher_namespaces
             .iter()
-            .filter_map(|entry| (*entry.value() == session_id).then(|| entry.key().clone()))
+            .filter_map(|entry| {
+                entry.value().remove(&session_id);
+                entry.value().is_empty().then(|| entry.key().clone())
+            })
             .collect();
-        for track_namespace in namespaces_to_remove {
+        for track_namespace in empty_namespaces {
             self.publisher_namespaces.remove(&track_namespace);
         }
 
@@ -154,21 +157,15 @@ impl SignalingStateTable for InMemorySignalingStateTable {
         fields(session_id = %session_id, track_namespace = %track_namespace)
     )]
     fn register_publish_namespace(&self, session_id: SessionId, track_namespace: String) -> bool {
-        if self
-            .publisher_namespaces
-            .get_mut(&track_namespace)
-            .is_some()
-        {
-            tracing::error!(
-                "'{}' is registered for namespace publication.",
-                track_namespace
-            );
-            false
+        if let Some(publisher_session_ids) = self.publisher_namespaces.get_mut(&track_namespace) {
+            publisher_session_ids.insert(session_id);
         } else {
+            let publisher_session_ids = DashSet::new();
+            publisher_session_ids.insert(session_id);
             self.publisher_namespaces
-                .insert(track_namespace.to_string(), session_id);
-            true
+                .insert(track_namespace.to_string(), publisher_session_ids);
         }
+        true
     }
 
     #[tracing::instrument(
@@ -263,35 +260,59 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.get_publish_namespace",
+        name = "relay.signaling_state_table.find_active_upstream_subscriptions",
         skip_all,
-        fields(track_namespace = %track_namespace)
+        fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
-    fn get_publish_namespace(&self, track_namespace: &str) -> Option<SessionId> {
-        let result = self.publisher_namespaces.get(track_namespace)?;
-        Some(*result)
+    fn find_active_upstream_subscriptions(
+        &self,
+        track_namespace: &str,
+        track_name: &str,
+    ) -> Vec<UpstreamSubscriptionKey> {
+        self.active_upstream_subscriptions
+            .iter()
+            .filter(|entry| {
+                entry.key().track_namespace == track_namespace
+                    && entry.key().track_name == track_name
+            })
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.find_publish_handler_with",
+        name = "relay.signaling_state_table.find_upstream_publisher_subscriptions",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
-    async fn find_publish_handler_with(
+    async fn find_upstream_publisher_subscriptions(
         &self,
         track_namespace: &str,
         track_name: &str,
-    ) -> Option<(SessionId, Arc<dyn PublishHandler>)> {
-        let handlers = self.published_handlers.read().await;
-        if let Some((session_id, handler)) = handlers
-            .iter()
-            .find(|(_, h)| h.track_namespace() == track_namespace && h.track_name() == track_name)
-        {
-            Some((*session_id, handler.clone()))
-        } else {
-            None
+    ) -> Vec<UpstreamSubscriptionKey> {
+        let candidates = DashSet::new();
+        if let Some(namespace_publishers) = self.publisher_namespaces.get(track_namespace) {
+            for session_id in namespace_publishers.iter() {
+                candidates.insert(*session_id);
+            }
         }
+
+        let handlers = self.published_handlers.read().await;
+        for session_id in handlers
+            .iter()
+            .filter(|(_, h)| h.track_namespace() == track_namespace && h.track_name() == track_name)
+            .map(|(session_id, _)| *session_id)
+        {
+            candidates.insert(session_id);
+        }
+        candidates
+            .into_iter()
+            .map(|publisher_session_id| UpstreamSubscriptionKey {
+                publisher_session_id,
+                track_namespace: track_namespace.to_string(),
+                track_name: track_name.to_string(),
+            })
+            .collect()
     }
 
     #[tracing::instrument(
@@ -473,20 +494,26 @@ mod tests {
             _subscriber_priority: u8,
             _filter_type: FilterType,
             _expires: u64,
-        ) -> anyhow::Result<()> {
+        ) -> Result<(), moqt::TransportSendError> {
             Ok(())
         }
 
-        async fn _error(&self, _code: u64, _reason_phrase: String) -> anyhow::Result<()> {
+        async fn _error(
+            &self,
+            _code: u64,
+            _reason_phrase: String,
+        ) -> Result<(), moqt::TransportSendError> {
             Ok(())
         }
     }
 
     #[tokio::test]
     async fn remove_session_cleans_up_all_session_scoped_entries() {
+        // Arrange: セッションに紐づく namespace / track / alias の状態を登録する。
         let table = InMemorySignalingStateTable::new();
 
         assert!(table.register_publish_namespace(1, "room/member".to_string()));
+        assert!(table.register_publish_namespace(2, "room/member".to_string()));
         table.register_subscribe_namespace(1, "room/".to_string());
         table.register_subscribe_namespace(2, "room/".to_string());
         table.register_subscribe_namespace(1, "solo/".to_string());
@@ -503,15 +530,18 @@ mod tests {
         table.register_track_alias_link(1, 10, 2, 20);
         table.register_track_alias_link(2, 30, 1, 40);
 
+        // Act: セッション1の切断時クリーンアップを実行する。
         table.remove_session(1).await;
 
-        assert!(table.get_publish_namespace("room/member").is_none());
-        assert!(
-            table
-                .find_publish_handler_with("room/member", "video")
-                .await
-                .is_none()
-        );
+        // Assert: 同じ namespace の他 publisher は残しつつ、セッション1の状態だけ削除される。
+        let upstream_subscriptions = table
+            .find_upstream_publisher_subscriptions("room/member", "video")
+            .await;
+        let publisher_session_ids: Vec<_> = upstream_subscriptions
+            .into_iter()
+            .map(|subscription| subscription.publisher_session_id)
+            .collect();
+        assert_eq!(publisher_session_ids, vec![2]);
         assert!(table._find_subscriber_track_alias(1, 10, 2).is_none());
         assert!(table._find_subscriber_track_alias(2, 30, 1).is_none());
 
@@ -520,5 +550,78 @@ mod tests {
         assert!(!room_subscribers.contains(&1));
 
         assert!(table.subscriber_namespaces.get("solo/").is_none());
+    }
+
+    #[tokio::test]
+    async fn allows_multiple_publishers_for_the_same_namespace_and_track() {
+        // Arrange: 同じ namespace と track を複数 publisher から登録する。
+        let table = InMemorySignalingStateTable::new();
+
+        table.register_publish_namespace(1, "room/member".to_string());
+        table.register_publish_namespace(2, "room/member".to_string());
+        table
+            .register_publish(
+                1,
+                Arc::new(StubPublishHandler {
+                    track_namespace: "room/member".to_string(),
+                    track_name: "video".to_string(),
+                    track_alias: 10,
+                }),
+            )
+            .await;
+        table
+            .register_publish(
+                2,
+                Arc::new(StubPublishHandler {
+                    track_namespace: "room/member".to_string(),
+                    track_name: "video".to_string(),
+                    track_alias: 20,
+                }),
+            )
+            .await;
+
+        // Act: subscribe 時に利用できる upstream publisher 候補を取得する。
+        let mut upstream_publishers: Vec<_> = table
+            .find_upstream_publisher_subscriptions("room/member", "video")
+            .await
+            .into_iter()
+            .map(|subscription| subscription.publisher_session_id)
+            .collect();
+        upstream_publishers.sort();
+
+        // Assert: namespace / track の由来を問わず、複数 publisher が候補として保持される。
+        assert_eq!(upstream_publishers, vec![1, 2]);
+    }
+
+    #[tokio::test]
+    async fn finds_active_upstream_subscriptions_separately_from_publishers() {
+        // Arrange: publisher 候補とは別に、既存 upstream subscription を登録する。
+        let table = InMemorySignalingStateTable::new();
+        table.register_publish_namespace(1, "room/member".to_string());
+        let upstream_key = UpstreamSubscriptionKey {
+            publisher_session_id: 1,
+            track_namespace: "room/member".to_string(),
+            track_name: "video".to_string(),
+        };
+        table.register_upstream_subscription(
+            upstream_key.clone(),
+            ActiveUpstreamSubscription {
+                upstream_subscribe_id: 10,
+                track_key: 20,
+                expires: 30,
+                content_exists: ContentExists::False,
+                downstream_subscriber_count: 1,
+            },
+        );
+
+        // Act: 既存 upstream subscription と publisher 候補をそれぞれ取得する。
+        let active_subscriptions = table.find_active_upstream_subscriptions("room/member", "video");
+        let publisher_subscriptions = table
+            .find_upstream_publisher_subscriptions("room/member", "video")
+            .await;
+
+        // Assert: 既存 subscription は active 側で取得でき、publisher 候補も別途取得できる。
+        assert_eq!(active_subscriptions, vec![upstream_key.clone()]);
+        assert_eq!(publisher_subscriptions, vec![upstream_key]);
     }
 }
