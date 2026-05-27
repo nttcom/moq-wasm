@@ -566,5 +566,51 @@ mod tests {
             let buf = h.encode();
             assert_eq!(buf[0], 0x1D);
         }
+
+        // --- resolve_object_id Tests ---
+
+        fn make_field(delta: u64) -> SubgroupObjectField {
+            SubgroupObjectField {
+                message_type: SubgroupHeaderType::new(0x10).unwrap(),
+                object_id_delta: delta,
+                extension_headers: ExtensionHeaders {
+                    prior_group_id_gap: vec![],
+                    prior_object_id_gap: vec![],
+                    immutable_extensions: vec![],
+                },
+                subgroup_object: SubgroupObject::new_payload(bytes::Bytes::new()),
+            }
+        }
+
+        // --- resolve_object_id Tests ---
+
+        #[test]
+        fn resolve_object_id_first_object() {
+            // First object: delta IS the object_id
+            assert_eq!(make_field(0).resolve_object_id(None), 0);
+            assert_eq!(make_field(5).resolve_object_id(None), 5);
+        }
+
+        #[test]
+        fn resolve_object_id_sequential() {
+            // Sequential 0,1,2,3: all deltas are 0
+            let mut prev = None;
+            for expected in 0..4 {
+                let id = make_field(0).resolve_object_id(prev);
+                assert_eq!(id, expected);
+                prev = Some(id);
+            }
+        }
+
+        #[test]
+        fn resolve_object_id_with_gap() {
+            // 0, 5, 10: deltas are 0, 4, 4
+            let id0 = make_field(0).resolve_object_id(None);
+            assert_eq!(id0, 0);
+            let id1 = make_field(4).resolve_object_id(Some(id0));
+            assert_eq!(id1, 5);
+            let id2 = make_field(4).resolve_object_id(Some(id1));
+            assert_eq!(id2, 10);
+        }
     }
 }
