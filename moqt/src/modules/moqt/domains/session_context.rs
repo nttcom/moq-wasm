@@ -1,5 +1,6 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
+    fmt,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -12,7 +13,6 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
 pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) transport_connection: T::Connection,
     pub(crate) send_stream: BiStreamSender<T>,
@@ -25,6 +25,8 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
         tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>>>,
     pub(crate) receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>>>,
+    pub(crate) pending_incoming_objects:
+        tokio::sync::Mutex<HashMap<u64, VecDeque<IncomingObject<T>>>>,
 }
 
 impl<T: TransportProtocol> SessionContext<T> {
@@ -43,6 +45,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
             notification_map: tokio::sync::RwLock::new(HashMap::new()),
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
+            pending_incoming_objects: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -57,6 +60,12 @@ impl<T: TransportProtocol> SessionContext<T> {
         let track_alias = self.track_alias.fetch_add(1, Ordering::SeqCst);
         tracing::debug!("track_alias: {}", track_alias);
         track_alias
+    }
+}
+
+impl<T: TransportProtocol> fmt::Debug for SessionContext<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionContext").finish_non_exhaustive()
     }
 }
 

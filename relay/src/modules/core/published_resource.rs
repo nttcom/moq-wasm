@@ -1,5 +1,6 @@
 use crate::modules::enums::{FilterType, GroupOrder};
 
+#[derive(Clone)]
 pub(crate) struct PublishedResource {
     published_resource: moqt::PublishedResource,
 }

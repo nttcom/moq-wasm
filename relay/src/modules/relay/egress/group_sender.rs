@@ -196,6 +196,16 @@ impl GroupSender {
         }
         span.record("object_count", object_count);
         span.record("end_reason", "cache_closed");
+        if let Err(error) = sender.close().await {
+            tracing::warn!(
+                ?error,
+                track_key,
+                track_alias,
+                group_id,
+                subgroup_id = ?subgroup_id,
+                "failed to close egress stream sender"
+            );
+        }
     }
 
     async fn send_datagram_task(

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::modules::{
     core::{published_resource::PublishedResource, publisher::Publisher},
@@ -16,6 +16,7 @@ pub(crate) struct EgressRunner {
     latest_info_sender: broadcast::Sender<TrackEvent>,
     publisher: Box<dyn Publisher>,
     published_resource: PublishedResource,
+    ready_sender: oneshot::Sender<anyhow::Result<()>>,
 }
 
 impl EgressRunner {
@@ -25,6 +26,7 @@ impl EgressRunner {
         latest_info_sender: broadcast::Sender<TrackEvent>,
         publisher: Box<dyn Publisher>,
         published_resource: PublishedResource,
+        ready_sender: oneshot::Sender<anyhow::Result<()>>,
     ) -> Self {
         Self {
             track_key,
@@ -32,6 +34,7 @@ impl EgressRunner {
             latest_info_sender,
             publisher,
             published_resource,
+            ready_sender,
         }
     }
 
@@ -46,6 +49,7 @@ impl EgressRunner {
             filter_type,
             group_order,
             sender,
+            self.ready_sender,
         );
         let group_sender = GroupSender::new(
             self.track_key,

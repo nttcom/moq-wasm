@@ -134,7 +134,30 @@ impl<T: TransportProtocol> Subscriber<T> {
                         .notification_map
                         .write()
                         .await
-                        .insert(message.track_alias, sender);
+                        .insert(message.track_alias, sender.clone());
+                    if let Some(mut pending_objects) = self
+                        .session
+                        .pending_incoming_objects
+                        .lock()
+                        .await
+                        .remove(&message.track_alias)
+                    {
+                        tracing::info!(
+                            track_alias = message.track_alias,
+                            pending_objects = pending_objects.len(),
+                            "draining pending incoming objects after SUBSCRIBE_OK"
+                        );
+                        while let Some(incoming_object) = pending_objects.pop_front() {
+                            if let Err(error) = sender.send(incoming_object) {
+                                tracing::warn!(
+                                    track_alias = message.track_alias,
+                                    ?error,
+                                    "failed to drain pending incoming object"
+                                );
+                                break;
+                            }
+                        }
+                    }
                     self.session
                         .receiver_map
                         .lock()

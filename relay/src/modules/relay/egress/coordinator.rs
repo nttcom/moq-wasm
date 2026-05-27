@@ -1,6 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 use tracing::{Instrument, Span};
 
 use crate::modules::{
@@ -21,6 +24,7 @@ pub(crate) struct EgressStartRequest {
     pub(crate) track_name: String,
     pub(crate) published_resources: PublishedResource,
     pub(crate) parent_span: Span,
+    pub(crate) ready_sender: oneshot::Sender<anyhow::Result<()>>,
 }
 
 pub(crate) enum EgressCommand {
@@ -111,6 +115,9 @@ impl EgressCoordinator {
             .publisher(request.subscriber_session_id);
         let Some(publisher) = publisher else {
             tracing::error!("subscriber session not found for egress start");
+            let _ = request
+                .ready_sender
+                .send(Err(anyhow::anyhow!("subscriber session not found")));
             return None;
         };
 
@@ -133,7 +140,8 @@ impl EgressCoordinator {
             cache,
             latest_info_sender,
             publisher,
-            request.published_resources,
+            request.published_resources.clone(),
+            request.ready_sender,
         );
 
         Some(tokio::spawn(

@@ -304,25 +304,7 @@ impl Subscribe {
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &dyn SubscribeHandler,
     ) {
-        let Ok(subscriber_track_alias) = handler
-            .ok(
-                active_upstream.expires,
-                active_upstream.content_exists.clone(),
-            )
-            .await
-        else {
-            tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
-            // TODO: send_unsubscribe
-            // TODO: close session
-            return;
-        };
-        tracing::info!(
-            session_id = %session_id,
-            track_namespace = %upstream_key.track_namespace,
-            track_name = %upstream_key.track_name,
-            subscriber_track_alias = subscriber_track_alias,
-            "downstream subscribe ok sent"
-        );
+        let subscriber_track_alias = handler.allocate_track_alias();
 
         if !table.register_downstream_subscription(
             session_id,
@@ -333,21 +315,57 @@ impl Subscribe {
             return;
         }
 
+        let (ready_sender, ready_receiver) = tokio::sync::oneshot::channel();
         if egress_sender
             .send(EgressCommand::StartReader(Box::new(EgressStartRequest {
                 subscriber_session_id: session_id,
                 downstream_subscribe_id: handler.subscribe_id(),
                 track_key: active_upstream.track_key,
-                track_namespace: upstream_key.track_namespace,
-                track_name: upstream_key.track_name,
+                track_namespace: upstream_key.track_namespace.clone(),
+                track_name: upstream_key.track_name.clone(),
                 published_resources: handler.convert_into_publication(subscriber_track_alias),
                 parent_span: Span::current(),
+                ready_sender,
             })))
             .await
             .is_err()
         {
             tracing::error!("Failed to send EgressStartRequest. Session close.");
+            return;
         }
+        match ready_receiver.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::error!(?error, "Failed to start egress runner. Session close.");
+                return;
+            }
+            Err(error) => {
+                tracing::error!(?error, "Egress runner readiness dropped. Session close.");
+                return;
+            }
+        }
+
+        if handler
+            .ok_with_track_alias(
+                subscriber_track_alias,
+                active_upstream.expires,
+                active_upstream.content_exists,
+            )
+            .await
+            .is_err()
+        {
+            tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
+            // TODO: send_unsubscribe
+            // TODO: close session
+            return;
+        }
+        tracing::info!(
+            session_id = %session_id,
+            track_namespace = %upstream_key.track_namespace,
+            track_name = %upstream_key.track_name,
+            subscriber_track_alias = subscriber_track_alias,
+            "downstream subscribe ok sent"
+        );
     }
 
     #[tracing::instrument(

@@ -17,11 +17,13 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     fn _authorization_token(&self) -> Option<String>;
     fn _max_cache_duration(&self) -> Option<u64>;
     fn _delivery_timeout(&self) -> Option<u64>;
-    async fn ok(
+    fn allocate_track_alias(&self) -> u64;
+    async fn ok_with_track_alias(
         &self,
+        track_alias: u64,
         expires: u64,
         content_exists: ContentExists,
-    ) -> Result<u64, moqt::TransportSendError>;
+    ) -> Result<(), moqt::TransportSendError>;
     async fn error(&self, code: u64, reason_phrase: String)
     -> Result<(), moqt::TransportSendError>;
     fn convert_into_publication(&self, track_alias: u64) -> PublishedResource;
@@ -59,13 +61,23 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
     fn _delivery_timeout(&self) -> Option<u64> {
         self.delivery_timeout
     }
+    fn allocate_track_alias(&self) -> u64 {
+        moqt::SubscribeHandler::allocate_track_alias(self)
+    }
 
-    async fn ok(
+    async fn ok_with_track_alias(
         &self,
+        track_alias: u64,
         expires: u64,
         content_exists: ContentExists,
-    ) -> Result<u64, moqt::TransportSendError> {
-        self.ok(expires, content_exists.as_moqt()).await
+    ) -> Result<(), moqt::TransportSendError> {
+        moqt::SubscribeHandler::ok_with_track_alias(
+            self,
+            track_alias,
+            expires,
+            content_exists.as_moqt(),
+        )
+        .await
     }
 
     async fn error(

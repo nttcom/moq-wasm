@@ -11,6 +11,8 @@ use crate::{
 pub(crate) struct SubscriptionNotifier;
 
 impl SubscriptionNotifier {
+    const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 64;
+
     #[tracing::instrument(
         level = "info",
         name = "moqt.subscription_notifier.notify",
@@ -22,26 +24,28 @@ impl SubscriptionNotifier {
         track_alias: u64,
         incoming_object: IncomingObject<T>,
     ) {
-        let mut count = 0;
-        loop {
-            if let Some(sender) = context.notification_map.read().await.get(&track_alias) {
-                if let Err(error) = sender.send(incoming_object) {
-                    tracing::warn!("Failed to notify incoming object: {}", error);
-                }
-                break;
+        if let Some(sender) = context.notification_map.read().await.get(&track_alias) {
+            if let Err(error) = sender.send(incoming_object) {
+                tracing::warn!("Failed to notify incoming object: {}", error);
             }
-
-            if count > 10 {
-                tracing::error!(
-                    "No sender found for track alias: {} after multiple attempts",
-                    track_alias
-                );
-                break;
-            }
-
-            tracing::warn!("No sender found for track alias: {}", track_alias);
-            count += 1;
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            return;
         }
+
+        let mut pending = context.pending_incoming_objects.lock().await;
+        let objects = pending.entry(track_alias).or_default();
+        if objects.len() >= Self::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS {
+            objects.pop_front();
+            tracing::warn!(
+                track_alias,
+                max_pending_objects = Self::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS,
+                "pending incoming object buffer is full; dropping oldest object"
+            );
+        }
+        objects.push_back(incoming_object);
+        tracing::info!(
+            track_alias,
+            pending_objects = objects.len(),
+            "buffered incoming object until track alias is registered"
+        );
     }
 }

@@ -55,7 +55,18 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         expires: u64,
         content_exists: ContentExists,
     ) -> Result<u64, TransportSendError> {
-        let track_alias = self.session_context.get_track_alias();
+        let track_alias = self.allocate_track_alias();
+        self.ok_with_track_alias(track_alias, expires, content_exists)
+            .await?;
+        Ok(track_alias)
+    }
+
+    pub async fn ok_with_track_alias(
+        &self,
+        track_alias: u64,
+        expires: u64,
+        content_exists: ContentExists,
+    ) -> Result<(), TransportSendError> {
         let subscribe_ok = SubscribeOk {
             request_id: self.request_id,
             track_alias,
@@ -69,7 +80,11 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
             .send_stream
             .send(ControlMessageType::SubscribeOk, subscribe_ok.encode())
             .await?;
-        Ok(track_alias)
+        Ok(())
+    }
+
+    pub fn allocate_track_alias(&self) -> u64 {
+        self.session_context.get_track_alias()
     }
 
     pub async fn error(
