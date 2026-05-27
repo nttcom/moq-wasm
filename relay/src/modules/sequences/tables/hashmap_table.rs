@@ -6,14 +6,14 @@ use tokio::sync::RwLock;
 use crate::modules::{
     core::handler::publish::PublishHandler,
     sequences::tables::table::{
-        ActiveUpstreamSubscription, RemovedDownstreamSubscription, RemovedSessionSubscriptions,
-        SignalingStateTable, UpstreamSubscriptionKey,
+        ActiveUpstreamSubscription, LocalPubSubDirectory, RemovedDownstreamSubscription,
+        RemovedSessionSubscriptions, UpstreamSubscriptionKey,
     },
     types::{SessionId, TrackNamespace, TrackNamespacePrefix},
 };
 
 #[derive(Debug)]
-pub(crate) struct InMemorySignalingStateTable {
+pub(crate) struct InMemoryLocalPubSubDirectory {
     /**
      * namespace mechanism
      * publish_namespace: room/member
@@ -31,7 +31,7 @@ pub(crate) struct InMemorySignalingStateTable {
 }
 
 #[async_trait::async_trait]
-impl SignalingStateTable for InMemorySignalingStateTable {
+impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
     fn new() -> Self {
         Self {
             publisher_namespaces: DashMap::new(),
@@ -45,7 +45,7 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.remove_session",
+        name = "relay.local_pub_sub_directory.remove_session",
         skip_all,
         fields(session_id = %session_id)
     )]
@@ -74,6 +74,9 @@ impl SignalingStateTable for InMemorySignalingStateTable {
             .collect();
         for track_namespace_prefix in empty_prefixes {
             self.subscriber_namespaces.remove(&track_namespace_prefix);
+            removed
+                .subscribe_namespace_prefixes
+                .push(track_namespace_prefix);
         }
 
         self.published_handlers
@@ -152,7 +155,7 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.register_publish_namespace",
+        name = "relay.local_pub_sub_directory.register_publish_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace)
     )]
@@ -170,7 +173,7 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.register_subscribe_namespace",
+        name = "relay.local_pub_sub_directory.register_subscribe_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
     )]
@@ -192,7 +195,7 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.register_publish",
+        name = "relay.local_pub_sub_directory.register_publish",
         skip_all,
         fields(session_id = %session_id)
     )]
@@ -205,7 +208,7 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.get_namespace_subscribers",
+        name = "relay.local_pub_sub_directory.get_namespace_subscribers",
         skip_all,
         fields(track_namespace = %track_namespace)
     )]
@@ -226,7 +229,7 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.get_subscribers",
+        name = "relay.local_pub_sub_directory.get_subscribers",
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
     )]
@@ -260,7 +263,7 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.find_active_upstream_subscriptions",
+        name = "relay.local_pub_sub_directory.find_active_upstream_subscriptions",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
@@ -281,7 +284,7 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.find_upstream_publishers",
+        name = "relay.local_pub_sub_directory.find_upstream_publishers",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
@@ -317,7 +320,7 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.register_track_alias_link",
+        name = "relay.local_pub_sub_directory.register_track_alias_link",
         skip_all,
         fields(
             publisher_session_id = %publisher_session_id,
@@ -345,7 +348,7 @@ impl SignalingStateTable for InMemorySignalingStateTable {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.signaling_state_table.find_subscriber_track_alias",
+        name = "relay.local_pub_sub_directory.find_subscriber_track_alias",
         skip_all,
         fields(
             publisher_session_id = %publisher_session_id,
@@ -510,7 +513,7 @@ mod tests {
     #[tokio::test]
     async fn remove_session_cleans_up_all_session_scoped_entries() {
         // Arrange: Register namespace, track, and alias state for the session.
-        let table = InMemorySignalingStateTable::new();
+        let table = InMemoryLocalPubSubDirectory::new();
 
         assert!(table.register_publish_namespace(1, "room/member".to_string()));
         assert!(table.register_publish_namespace(2, "room/member".to_string()));
@@ -531,7 +534,7 @@ mod tests {
         table.register_track_alias_link(2, 30, 1, 40);
 
         // Act: Remove all state associated with session 1.
-        table.remove_session(1).await;
+        let removed = table.remove_session(1).await;
 
         // Assert: Remove only session 1 state while keeping other publishers in the same namespace.
         let upstream_subscriptions = table.find_upstream_publishers("room/member", "video").await;
@@ -548,12 +551,16 @@ mod tests {
         assert!(!room_subscribers.contains(&1));
 
         assert!(table.subscriber_namespaces.get("solo/").is_none());
+        assert_eq!(
+            removed.subscribe_namespace_prefixes,
+            vec!["solo/".to_string()]
+        );
     }
 
     #[tokio::test]
     async fn allows_multiple_publishers_for_the_same_namespace_and_track() {
         // Arrange: Register multiple publishers for the same namespace and track.
-        let table = InMemorySignalingStateTable::new();
+        let table = InMemoryLocalPubSubDirectory::new();
 
         table.register_publish_namespace(1, "room/member".to_string());
         table.register_publish_namespace(2, "room/member".to_string());
@@ -594,7 +601,7 @@ mod tests {
     #[tokio::test]
     async fn finds_active_upstream_subscriptions_separately_from_publishers() {
         // Arrange: Register an active upstream subscription separately from publishers.
-        let table = InMemorySignalingStateTable::new();
+        let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string());
         let upstream_key = UpstreamSubscriptionKey {
             publisher_session_id: 1,

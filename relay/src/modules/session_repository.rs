@@ -18,6 +18,29 @@ pub(crate) struct SessionRepository {
     session_event_forward_task_registry: SessionEventForwardTaskRegistry,
     sessions: DashMap<SessionId, Arc<dyn Session>>,
     session_spans: DashMap<SessionId, Span>,
+    session_peers: DashMap<SessionId, SessionPeer>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SessionPeer {
+    Client,
+    Relay { relay_id: Option<String> },
+}
+
+impl SessionPeer {
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Self::Client => "client",
+            Self::Relay { .. } => "relay",
+        }
+    }
+
+    pub(crate) fn relay_id(&self) -> Option<&str> {
+        match self {
+            Self::Client => None,
+            Self::Relay { relay_id } => relay_id.as_deref(),
+        }
+    }
 }
 
 fn filter_type_label(filter_type: &crate::modules::enums::FilterType) -> String {
@@ -108,19 +131,58 @@ impl SessionRepository {
             session_event_forward_task_registry: SessionEventForwardTaskRegistry::new(),
             sessions: DashMap::new(),
             session_spans: DashMap::new(),
+            session_peers: DashMap::new(),
         }
     }
 
-    pub(crate) async fn add(
+    pub(crate) async fn add_client(
         &mut self,
         session_id: SessionId,
         session: Box<dyn Session>,
         relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         session_span: Span,
     ) {
+        self.add_with_peer(
+            session_id,
+            session,
+            relay_session_event_sender,
+            session_span,
+            SessionPeer::Client,
+        )
+        .await;
+    }
+
+    pub(crate) async fn add_relay(
+        &mut self,
+        session_id: SessionId,
+        session: Box<dyn Session>,
+        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        session_span: Span,
+        relay_id: Option<String>,
+    ) {
+        self.add_with_peer(
+            session_id,
+            session,
+            relay_session_event_sender,
+            session_span,
+            SessionPeer::Relay { relay_id },
+        )
+        .await;
+    }
+
+    async fn add_with_peer(
+        &mut self,
+        session_id: SessionId,
+        session: Box<dyn Session>,
+        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        session_span: Span,
+        peer: SessionPeer,
+    ) {
         let arc_session: Arc<dyn Session> = Arc::from(session);
+        tracing::info!(session_id = %session_id, peer = ?peer, "session peer classified");
         self.sessions.insert(session_id, arc_session.clone());
         self.session_spans.insert(session_id, session_span.clone());
+        self.session_peers.insert(session_id, peer);
         self.start_session_event_forwarding(
             session_id,
             Arc::downgrade(&arc_session),
@@ -132,11 +194,13 @@ impl SessionRepository {
     pub(crate) fn remove(&mut self, session_id: SessionId) {
         let session_removed = self.sessions.remove(&session_id).is_some();
         let session_span_removed = self.session_spans.remove(&session_id).is_some();
+        let session_peer_removed = self.session_peers.remove(&session_id).is_some();
         self.session_event_forward_task_registry.remove(&session_id);
         tracing::info!(
             session_id = %session_id,
             session_removed,
             session_span_removed,
+            session_peer_removed,
             remaining_session_spans = self.session_spans.len(),
             "session removed from repository"
         );
@@ -144,6 +208,20 @@ impl SessionRepository {
 
     pub(crate) fn session_span(&self, session_id: SessionId) -> Option<Span> {
         self.session_spans.get(&session_id).map(|span| span.clone())
+    }
+
+    pub(crate) fn has_session(&self, session_id: SessionId) -> bool {
+        self.sessions.contains_key(&session_id)
+    }
+
+    pub(crate) fn peer(&self, session_id: SessionId) -> Option<SessionPeer> {
+        self.session_peers
+            .get(&session_id)
+            .map(|peer| peer.value().clone())
+    }
+
+    pub(crate) fn is_client_session(&self, session_id: SessionId) -> bool {
+        matches!(self.peer(session_id), Some(SessionPeer::Client))
     }
 
     fn start_session_event_forwarding(

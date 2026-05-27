@@ -1,6 +1,11 @@
+use std::collections::HashSet;
+
 use crate::modules::{
+    control_message_forwarder::ControlMessageForwarder,
     core::handler::publish_namespace::PublishNamespaceHandler,
-    sequences::{notifier::SessionSignalingDispatcher, tables::table::SignalingStateTable},
+    inter_relay::InterRelayConnectionManager,
+    route_registry::{RelayRouteRegistry, RouteStatus},
+    sequences::{CascadingRelayContext, tables::table::LocalPubSubDirectory},
     types::SessionId,
 };
 use tracing::Span;
@@ -19,8 +24,9 @@ impl PublishNamespace {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn SignalingStateTable,
-        notifier: &SessionSignalingDispatcher,
+        table: &dyn LocalPubSubDirectory,
+        forwarder: &ControlMessageForwarder,
+        cascading_relay_context: CascadingRelayContext<'_>,
         handler: &dyn PublishNamespaceHandler,
     ) {
         let requested_track_namespace = handler.track_namespace();
@@ -38,10 +44,32 @@ impl PublishNamespace {
         // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
 
         // Convert DashMap<Namespace, DashSet<SessionId>> to DashMap<SessionId, DashSet<Namespace>>
-        self.notify_to_subscribers(&track_namespace, table, notifier)
+        self.notify_to_subscribers(&track_namespace, table, forwarder)
             .await;
 
-        self.response(handler).await;
+        if self.response(handler).await && self.is_origin_client(session_id, forwarder).await {
+            self.register_route(cascading_relay_context.route_registry, &track_namespace)
+                .await;
+            self.notify_remote_subscribers(
+                &track_namespace,
+                forwarder,
+                cascading_relay_context.route_registry,
+                cascading_relay_context.inter_relay_connection_manager,
+            )
+            .await;
+        }
+    }
+
+    async fn is_origin_client(
+        &self,
+        session_id: SessionId,
+        forwarder: &ControlMessageForwarder,
+    ) -> bool {
+        forwarder
+            .repository
+            .lock()
+            .await
+            .is_client_session(session_id)
     }
 
     #[tracing::instrument(
@@ -53,7 +81,7 @@ impl PublishNamespace {
     async fn register(
         &self,
         session_id: SessionId,
-        table: &dyn SignalingStateTable,
+        table: &dyn LocalPubSubDirectory,
         handler: &dyn PublishNamespaceHandler,
     ) -> Option<String> {
         let track_namespace = handler.track_namespace();
@@ -85,13 +113,13 @@ impl PublishNamespace {
     async fn notify_to_subscribers(
         &self,
         track_namespace: &str,
-        table: &dyn SignalingStateTable,
-        notifier: &SessionSignalingDispatcher,
+        table: &dyn LocalPubSubDirectory,
+        forwarder: &ControlMessageForwarder,
     ) {
         let combined = table.get_namespace_subscribers(track_namespace);
         tracing::debug!("The namespace are subscribed by: {:?}", combined);
         for session_id in combined {
-            if notifier
+            if forwarder
                 .publish_namespace(session_id, track_namespace.to_string())
                 .await
             {
@@ -111,11 +139,114 @@ impl PublishNamespace {
         name = "relay.sequence.publish_namespace.response",
         skip_all
     )]
-    async fn response(&self, handler: &dyn PublishNamespaceHandler) {
+    async fn response(&self, handler: &dyn PublishNamespaceHandler) -> bool {
         match handler.ok().await {
-            Ok(_) => (),
+            Ok(_) => true,
             Err(e) => {
                 tracing::error!("Publish Namespace Error: {:?}", e);
+                false
+            }
+        }
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.publish_namespace.register_route",
+        skip_all,
+        fields(track_namespace = %track_namespace)
+    )]
+    async fn register_route(&self, route_registry: &dyn RelayRouteRegistry, track_namespace: &str) {
+        if let Err(err) = route_registry
+            .register_namespace_route(track_namespace, RouteStatus::Active)
+            .await
+        {
+            tracing::warn!(?err, track_namespace = %track_namespace, "failed to register namespace route");
+        }
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.publish_namespace.notify_remote_subscribers",
+        skip_all,
+        fields(track_namespace = %track_namespace)
+    )]
+    async fn notify_remote_subscribers(
+        &self,
+        track_namespace: &str,
+        forwarder: &ControlMessageForwarder,
+        route_registry: &dyn RelayRouteRegistry,
+        inter_relay_connection_manager: &InterRelayConnectionManager,
+    ) {
+        let routes = match route_registry
+            .find_active_namespace_subscribers(track_namespace)
+            .await
+        {
+            Ok(routes) => routes,
+            Err(err) => {
+                tracing::warn!(
+                    ?err,
+                    track_namespace = %track_namespace,
+                    "failed to find remote namespace subscribers"
+                );
+                return;
+            }
+        };
+        let publisher_relay_ids = match route_registry
+            .find_active_namespace_routes(track_namespace)
+            .await
+        {
+            Ok(routes) => routes
+                .into_iter()
+                .map(|route| route.relay.relay_id)
+                .collect::<HashSet<_>>(),
+            Err(err) => {
+                tracing::warn!(
+                    ?err,
+                    track_namespace = %track_namespace,
+                    "failed to find namespace publisher routes"
+                );
+                HashSet::new()
+            }
+        };
+
+        for route in routes {
+            if publisher_relay_ids.contains(&route.relay.relay_id) {
+                continue;
+            }
+
+            let session_id = match inter_relay_connection_manager
+                .get_or_connect(&route.relay)
+                .await
+            {
+                Ok(session_id) => session_id,
+                Err(err) => {
+                    tracing::warn!(
+                        ?err,
+                        relay_id = %route.relay.relay_id,
+                        track_namespace = %track_namespace,
+                        "failed to connect remote namespace subscriber"
+                    );
+                    continue;
+                }
+            };
+
+            if forwarder
+                .publish_namespace(session_id, track_namespace.to_string())
+                .await
+            {
+                tracing::info!(
+                    relay_id = %route.relay.relay_id,
+                    session_id = session_id,
+                    track_namespace = %track_namespace,
+                    "forwarded PUBLISH_NAMESPACE to remote relay"
+                );
+            } else {
+                tracing::warn!(
+                    relay_id = %route.relay.relay_id,
+                    session_id = session_id,
+                    track_namespace = %track_namespace,
+                    "failed to forward PUBLISH_NAMESPACE to remote relay"
+                );
             }
         }
     }

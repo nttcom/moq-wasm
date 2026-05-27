@@ -1,14 +1,15 @@
 use crate::modules::{
+    control_message_forwarder::ControlMessageForwarder,
     core::handler::subscribe::SubscribeHandler,
     relay::{
         egress::coordinator::{EgressCommand, EgressStartRequest},
         ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     },
-    sequences::{
-        notifier::SessionSignalingDispatcher,
-        tables::table::{ActiveUpstreamSubscription, SignalingStateTable, UpstreamSubscriptionKey},
+    sequences::tables::table::{
+        ActiveUpstreamSubscription, LocalPubSubDirectory, UpstreamSubscriptionKey,
     },
     types::{SessionId, compose_session_track_key},
+    upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 use tracing::Span;
 
@@ -48,10 +49,11 @@ impl Subscribe {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn SignalingStateTable,
-        notifier: &SessionSignalingDispatcher,
+        table: &dyn LocalPubSubDirectory,
+        forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
+        upstream_publisher_resolver: &UpstreamPublisherResolver,
         handler: Box<dyn SubscribeHandler>,
     ) {
         let track_namespace = handler.track_namespace();
@@ -69,8 +71,9 @@ impl Subscribe {
                 track_namespace,
                 track_name,
                 table,
-                notifier,
+                forwarder,
                 ingress_sender,
+                upstream_publisher_resolver,
             )
             .await
         {
@@ -125,9 +128,10 @@ impl Subscribe {
         session_id: SessionId,
         track_namespace: &str,
         track_name: &str,
-        table: &dyn SignalingStateTable,
-        notifier: &SessionSignalingDispatcher,
+        table: &dyn LocalPubSubDirectory,
+        forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
+        upstream_publisher_resolver: &UpstreamPublisherResolver,
     ) -> Result<(UpstreamSubscriptionKey, ActiveUpstreamSubscription), UpstreamSubscriptionError>
     {
         if let Some(upstream_subscription) =
@@ -141,8 +145,9 @@ impl Subscribe {
             track_namespace,
             track_name,
             table,
-            notifier,
+            forwarder,
             ingress_sender,
+            upstream_publisher_resolver,
         )
         .await
     }
@@ -158,7 +163,7 @@ impl Subscribe {
     )]
     fn find_active_upstream_subscription(
         &self,
-        table: &dyn SignalingStateTable,
+        table: &dyn LocalPubSubDirectory,
         track_namespace: &str,
         track_name: &str,
     ) -> Option<(UpstreamSubscriptionKey, ActiveUpstreamSubscription)> {
@@ -192,20 +197,28 @@ impl Subscribe {
         session_id: SessionId,
         track_namespace: &str,
         track_name: &str,
-        table: &dyn SignalingStateTable,
-        notifier: &SessionSignalingDispatcher,
+        table: &dyn LocalPubSubDirectory,
+        forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
+        upstream_publisher_resolver: &UpstreamPublisherResolver,
     ) -> Result<(UpstreamSubscriptionKey, ActiveUpstreamSubscription), UpstreamSubscriptionError>
     {
-        let upstream_key = table
-            .find_upstream_publishers(track_namespace, track_name)
+        let upstream_key = upstream_publisher_resolver
+            .resolve(table, track_namespace, track_name)
             .await
-            .into_iter()
-            .min_by_key(|publisher| publisher.publisher_session_id)
+            .map_err(|err| {
+                tracing::warn!(
+                    ?err,
+                    track_namespace = %track_namespace,
+                    track_name = %track_name,
+                    "failed to resolve upstream publisher"
+                );
+                UpstreamSubscriptionError::PublisherNotFound
+            })?
             .ok_or(UpstreamSubscriptionError::PublisherNotFound)?;
 
         let pub_session_id = upstream_key.publisher_session_id;
-        let Ok(subscription) = notifier
+        let Ok(subscription) = forwarder
             .subscribe(
                 pub_session_id,
                 upstream_key.track_namespace.clone(),
@@ -287,7 +300,7 @@ impl Subscribe {
         session_id: SessionId,
         upstream_key: UpstreamSubscriptionKey,
         active_upstream: ActiveUpstreamSubscription,
-        table: &dyn SignalingStateTable,
+        table: &dyn LocalPubSubDirectory,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &dyn SubscribeHandler,
     ) {
