@@ -113,11 +113,25 @@ fn otel_service_name(default_service_name: &str) -> String {
     std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| default_service_name.to_string())
 }
 
+fn relay_hostname() -> String {
+    std::env::var("RELAY_HOSTNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn relay_id() -> String {
+    std::env::var("RELAY_ID").unwrap_or_else(|_| "relay-local".to_string())
+}
+
 fn otel_resource(service_name: &str) -> Resource {
+    let relay_hostname = relay_hostname();
     Resource::builder_empty()
         .with_attributes([
             opentelemetry::KeyValue::new("service.name", service_name.to_string()),
             opentelemetry::KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+            opentelemetry::KeyValue::new("host.name", relay_hostname.clone()),
+            opentelemetry::KeyValue::new("relay.hostname", relay_hostname),
+            opentelemetry::KeyValue::new("relay.id", relay_id()),
         ])
         .build()
 }
@@ -258,6 +272,8 @@ pub fn init_logging(default_service_name: &str) -> Result<LoggingGuards> {
 
     tracing::info!(
         service_name = %service_name,
+        relay_hostname = %relay_hostname(),
+        relay_id = %relay_id(),
         otel_enabled = tracer_provider.is_some(),
         otlp_protocol = %otel_protocol_name(protocol),
         otlp_endpoint = %otel_endpoint(protocol),

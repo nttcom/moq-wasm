@@ -38,10 +38,11 @@ pub(crate) struct RemovedDownstreamSubscription {
 pub(crate) struct RemovedSessionSubscriptions {
     pub(crate) downstream_subscriptions: Vec<RemovedDownstreamSubscription>,
     pub(crate) upstream_track_keys: Vec<TrackKey>,
+    pub(crate) subscribe_namespace_prefixes: Vec<String>,
 }
 
 #[async_trait::async_trait]
-pub(crate) trait SignalingStateTable: Send + Sync + 'static + Debug {
+pub(crate) trait LocalPubSubDirectory: Send + Sync + 'static + Debug {
     fn new() -> Self
     where
         Self: Sized;

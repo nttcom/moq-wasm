@@ -2,22 +2,26 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::modules::{
+    control_message_forwarder::ControlMessageForwarder,
+    inter_relay::InterRelayConnectionManager,
     relay::{egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressCommand},
+    route_registry::RelayRouteRegistry,
     sequences::{
-        notifier::SessionSignalingDispatcher,
+        CascadingRelayContext,
         publish::Publish,
         publish_namespace::PublishNamespace,
         subscribe::Subscribe,
         subscribe_namespace::SubscribeNameSpace,
         tables::{
-            hashmap_table::InMemorySignalingStateTable,
-            table::{RemovedSessionSubscriptions, SignalingStateTable},
+            hashmap_table::InMemoryLocalPubSubDirectory,
+            table::{LocalPubSubDirectory, RemovedSessionSubscriptions},
         },
         unsubscribe::Unsubscribe,
     },
     session_event::SessionEvent,
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},
+    upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 use tracing::{Instrument, Span};
 
@@ -31,12 +35,18 @@ impl EventHandler {
         relay_event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
         ingress_sender: mpsc::Sender<IngressCommand>,
         egress_sender: mpsc::Sender<EgressCommand>,
+        route_registry: Arc<dyn RelayRouteRegistry>,
+        inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
+        upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
     ) -> Self {
         let relay_session_event_handler = Self::create_relay_session_event_handler(
             repo,
             relay_event_receiver,
             ingress_sender,
             egress_sender,
+            route_registry,
+            inter_relay_connection_manager,
+            upstream_publisher_resolver,
         );
         Self {
             relay_session_event_handler,
@@ -48,14 +58,17 @@ impl EventHandler {
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
         ingress_sender: mpsc::Sender<IngressCommand>,
         egress_sender: mpsc::Sender<EgressCommand>,
+        route_registry: Arc<dyn RelayRouteRegistry>,
+        inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
+        upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Relay Session Event Handler")
             .spawn(async move {
-                let session_signaling_dispatcher = SessionSignalingDispatcher {
+                let control_message_forwarder = ControlMessageForwarder {
                     repository: repo.clone(),
                 };
-                let signaling_state_table = Box::new(InMemorySignalingStateTable::new());
+                let local_pub_sub_directory = Box::new(InMemoryLocalPubSubDirectory::new());
                 loop {
                     if let Some(event) = receiver.recv().await {
                         let session_id = match &event {
@@ -86,8 +99,13 @@ impl EventHandler {
                                     .handle(
                                         session_id,
                                         &session_span,
-                                        signaling_state_table.as_ref(),
-                                        &session_signaling_dispatcher,
+                                        local_pub_sub_directory.as_ref(),
+                                        &control_message_forwarder,
+                                        CascadingRelayContext {
+                                            route_registry: route_registry.as_ref(),
+                                            inter_relay_connection_manager:
+                                                inter_relay_connection_manager.as_ref(),
+                                        },
                                         handler.as_ref(),
                                     )
                                     .await;
@@ -98,8 +116,9 @@ impl EventHandler {
                                     .handle(
                                         session_id,
                                         &session_span,
-                                        signaling_state_table.as_ref(),
-                                        &session_signaling_dispatcher,
+                                        local_pub_sub_directory.as_ref(),
+                                        &control_message_forwarder,
+                                        route_registry.as_ref(),
                                         handler.as_ref(),
                                     )
                                     .await;
@@ -110,8 +129,13 @@ impl EventHandler {
                                     .handle(
                                         session_id,
                                         &session_span,
-                                        signaling_state_table.as_ref(),
-                                        &session_signaling_dispatcher,
+                                        local_pub_sub_directory.as_ref(),
+                                        &control_message_forwarder,
+                                        CascadingRelayContext {
+                                            route_registry: route_registry.as_ref(),
+                                            inter_relay_connection_manager:
+                                                inter_relay_connection_manager.as_ref(),
+                                        },
                                         handler,
                                     )
                                     .await;
@@ -122,10 +146,11 @@ impl EventHandler {
                                     .handle(
                                         session_id,
                                         &session_span,
-                                        signaling_state_table.as_ref(),
-                                        &session_signaling_dispatcher,
+                                        local_pub_sub_directory.as_ref(),
+                                        &control_message_forwarder,
                                         &ingress_sender,
                                         &egress_sender,
+                                        upstream_publisher_resolver.as_ref(),
                                         handler,
                                     )
                                     .await;
@@ -136,8 +161,8 @@ impl EventHandler {
                                     .handle(
                                         session_id,
                                         &session_span,
-                                        signaling_state_table.as_ref(),
-                                        &session_signaling_dispatcher,
+                                        local_pub_sub_directory.as_ref(),
+                                        &control_message_forwarder,
                                         &ingress_sender,
                                         &egress_sender,
                                         handler,
@@ -153,16 +178,16 @@ impl EventHandler {
                                 async {
                                     tracing::info!("Session disconnected: {}", session_id);
                                     let removed =
-                                        signaling_state_table.remove_session(session_id).await;
+                                        local_pub_sub_directory.remove_session(session_id).await;
                                     Self::cleanup_removed_session(
                                         session_id,
                                         removed,
-                                        &session_signaling_dispatcher,
+                                        &control_message_forwarder,
                                         &ingress_sender,
                                         &egress_sender,
                                     )
                                     .await;
-                                    session_signaling_dispatcher
+                                    control_message_forwarder
                                         .repository
                                         .lock()
                                         .await
@@ -180,16 +205,16 @@ impl EventHandler {
                                 async {
                                     tracing::error!("Session protocol violation: {}", session_id);
                                     let removed =
-                                        signaling_state_table.remove_session(session_id).await;
+                                        local_pub_sub_directory.remove_session(session_id).await;
                                     Self::cleanup_removed_session(
                                         session_id,
                                         removed,
-                                        &session_signaling_dispatcher,
+                                        &control_message_forwarder,
                                         &ingress_sender,
                                         &egress_sender,
                                     )
                                     .await;
-                                    session_signaling_dispatcher
+                                    control_message_forwarder
                                         .repository
                                         .lock()
                                         .await
@@ -267,7 +292,7 @@ impl EventHandler {
     async fn cleanup_removed_session(
         removed_session_id: SessionId,
         removed: RemovedSessionSubscriptions,
-        session_signaling_dispatcher: &SessionSignalingDispatcher,
+        control_message_forwarder: &ControlMessageForwarder,
         ingress_sender: &mpsc::Sender<IngressCommand>,
         egress_sender: &mpsc::Sender<EgressCommand>,
     ) {
@@ -289,7 +314,7 @@ impl EventHandler {
 
             if removed_downstream.remaining_downstream_subscriber_count == 0 {
                 if removed_downstream.upstream_key.publisher_session_id != removed_session_id
-                    && let Err(err) = session_signaling_dispatcher
+                    && let Err(err) = control_message_forwarder
                         .unsubscribe(
                             removed_downstream.upstream_key.publisher_session_id,
                             removed_downstream.upstream_subscribe_id,

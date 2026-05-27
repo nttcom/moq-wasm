@@ -9,14 +9,19 @@ interface JoinRoomFormProps {
 
 const RELAY_OPTIONS = [
   {
+    label: 'Relay A (127.0.0.1:4433)',
+    value: 'https://127.0.0.1:4433',
+    helper: 'Docker compose relay-a'
+  },
+  {
+    label: 'Relay B (127.0.0.1:4434)',
+    value: 'https://127.0.0.1:4434',
+    helper: 'Docker compose relay-b'
+  },
+  {
     label: 'moqt.research.skyway.io:4433',
     value: 'https://moqt.research.skyway.io:4433',
     helper: 'Domain relay'
-  },
-  {
-    label: '127.0.0.1:4433',
-    value: 'https://127.0.0.1:4433',
-    helper: 'Local relay'
   }
 ] as const
 
