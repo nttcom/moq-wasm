@@ -11,6 +11,7 @@ use crate::{
 pub enum Fetch {
     Header(FetchHeader),
     Object(FetchObjectField),
+    End,
 }
 
 #[derive(Debug)]
@@ -40,8 +41,9 @@ impl<T: TransportProtocol> FetchDataReceiver<T> {
             Ok(Some(UniStreamData::Subgroup(_))) => {
                 unreachable!("Unexpected subgroup data in fetch stream")
             }
-            _ => {
-                tracing::error!("Failed to receive data from fetch stream");
+            None => Ok(Fetch::End),
+            Some(Err(e)) => {
+                tracing::error!(?e, "Failed to receive data from fetch stream");
                 anyhow::bail!("Failed to receive data from fetch stream")
             }
         }

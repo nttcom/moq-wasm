@@ -53,6 +53,9 @@ impl FetchDecoder {
     }
 
     fn decode_object(&self, src: &mut BytesMut) -> Result<Option<Fetch>, std::io::Error> {
+        if src.is_empty() {
+            return Ok(None);
+        }
         match FetchObjectField::decode(src) {
             Ok(fields) => Ok(Some(Fetch::Object(fields))),
             Err(DecodeError::NeedMoreData) => Ok(None),
