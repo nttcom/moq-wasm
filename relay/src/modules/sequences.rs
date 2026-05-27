@@ -4,6 +4,7 @@ pub(crate) mod subscribe;
 pub(crate) mod subscribe_namespace;
 pub(crate) mod tables;
 pub(crate) mod unsubscribe;
+pub(crate) mod unsubscribe_namespace;
 
 use crate::modules::{
     inter_relay::InterRelayConnectionManager, route_registry::RelayRouteRegistry,

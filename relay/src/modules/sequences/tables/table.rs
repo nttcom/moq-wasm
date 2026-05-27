@@ -49,6 +49,11 @@ pub(crate) trait LocalPubSubDirectory: Send + Sync + 'static + Debug {
     async fn remove_session(&self, session_id: SessionId) -> RemovedSessionSubscriptions;
     fn register_publish_namespace(&self, session_id: SessionId, track_namespace: String) -> bool;
     fn register_subscribe_namespace(&self, session_id: SessionId, track_namespace_prefix: String);
+    fn unregister_subscribe_namespace(
+        &self,
+        session_id: SessionId,
+        track_namespace_prefix: &str,
+    ) -> bool;
     async fn register_publish(&self, session_id: SessionId, handler: Arc<dyn PublishHandler>);
     fn get_namespace_subscribers(&self, track_namespace: &str) -> DashSet<SessionId>;
     async fn get_subscribers(

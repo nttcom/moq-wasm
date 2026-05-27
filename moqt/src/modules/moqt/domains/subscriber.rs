@@ -11,7 +11,7 @@ use crate::{
                 control_message_type::ControlMessageType,
                 messages::{
                     subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
-                    unsubscribe::Unsubscribe,
+                    unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
                 },
             },
             enums::ResponseMessage,
@@ -164,6 +164,25 @@ impl<T: TransportProtocol> Subscriber<T> {
         self.session
             .send_stream
             .send(ControlMessageType::UnSubscribe, unsubscribe.encode())
+            .await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "moqt.subscriber.unsubscribe_namespace",
+        skip_all,
+        fields(namespace = %namespace)
+    )]
+    pub async fn unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
+        let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
+        let unsubscribe_namespace = UnsubscribeNamespace::new(vec_namespace);
+        self.session
+            .send_stream
+            .send(
+                ControlMessageType::UnSubscribeNamespace,
+                unsubscribe_namespace.encode(),
+            )
             .await?;
         Ok(())
     }

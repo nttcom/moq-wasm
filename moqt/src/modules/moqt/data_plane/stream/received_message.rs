@@ -3,6 +3,7 @@ use crate::modules::moqt::control_plane::control_messages::messages::{
     publish_namespace::PublishNamespace, publish_ok::PublishOk, request_error::RequestError,
     server_setup::ServerSetup, subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
     subscribe_ok::SubscribeOk, unsubscribe::Unsubscribe,
+    unsubscribe_namespace::UnsubscribeNamespace,
 };
 
 pub(crate) enum ReceivedMessage {
@@ -14,6 +15,7 @@ pub(crate) enum ReceivedMessage {
     SubscribeNamespace(SubscribeNamespace),
     SubscribeNamespaceOk(NamespaceOk),
     SubscribeNamespaceError(RequestError),
+    UnsubscribeNamespace(UnsubscribeNamespace),
     Publish(Publish),
     PublishOk(PublishOk),
     PublishError(RequestError),
@@ -35,6 +37,7 @@ impl std::fmt::Debug for ReceivedMessage {
             ReceivedMessage::SubscribeNamespace(_) => "SubscribeNamespace",
             ReceivedMessage::SubscribeNamespaceOk(_) => "SubscribeNamespaceOk",
             ReceivedMessage::SubscribeNamespaceError(_) => "SubscribeNamespaceError",
+            ReceivedMessage::UnsubscribeNamespace(_) => "UnsubscribeNamespace",
             ReceivedMessage::Publish(_) => "Publish",
             ReceivedMessage::PublishOk(_) => "PublishOk",
             ReceivedMessage::PublishError(_) => "PublishError",
