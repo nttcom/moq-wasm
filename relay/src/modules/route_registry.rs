@@ -63,6 +63,10 @@ pub(crate) trait RelayRouteRegistry: Send + Sync {
         track_namespace_prefix: &str,
         status: RouteStatus,
     ) -> anyhow::Result<()>;
+    async fn unregister_namespace_subscription(
+        &self,
+        track_namespace_prefix: &str,
+    ) -> anyhow::Result<()>;
     async fn find_active_track_routes(
         &self,
         track_namespace: &str,
@@ -112,6 +116,13 @@ impl RelayRouteRegistry for NoopRelayRouteRegistry {
         &self,
         _track_namespace_prefix: &str,
         _status: RouteStatus,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn unregister_namespace_subscription(
+        &self,
+        _track_namespace_prefix: &str,
     ) -> anyhow::Result<()> {
         Ok(())
     }
@@ -314,6 +325,16 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
         let _: () = connection
             .expire(key, Self::ROUTE_TTL_SECONDS as i64)
             .await?;
+        Ok(())
+    }
+
+    async fn unregister_namespace_subscription(
+        &self,
+        track_namespace_prefix: &str,
+    ) -> anyhow::Result<()> {
+        let mut connection = self.connection.clone();
+        let key = Self::namespace_subscription_key(track_namespace_prefix);
+        let _: () = connection.hdel(&key, &self.relay.relay_id).await?;
         Ok(())
     }
 

@@ -450,6 +450,13 @@ async fn handle_session_event(
             );
             Ok(None)
         }
+        SessionEvent::UnsubscribeNamespace(handler) => {
+            log::info!(
+                "Command/media unsubscribe namespace event received: prefix={}",
+                handler.track_namespace_prefix()
+            );
+            Ok(None)
+        }
         SessionEvent::Disconnected() => {
             bail!("moqt session disconnected");
         }

@@ -13,6 +13,7 @@ use crate::{
                 subscribe_handler::SubscribeHandler,
                 subscribe_namespace_handler::SubscribeNamespaceHandler,
                 unsubscribe_handler::UnsubscribeHandler,
+                unsubscribe_namespace_handler::UnsubscribeNamespaceHandler,
             },
         },
         data_plane::stream::{
@@ -180,6 +181,14 @@ impl ControlMessageReceiveTask {
                 let response =
                     ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase);
                 DepacketizeResult::ResponseMessage(request_id, response)
+            }
+            ReceivedMessage::UnsubscribeNamespace(unsubscribe_namespace) => {
+                tracing::debug!("Event: Unsubscribe namespace");
+                let unsubscribe_namespace_handler =
+                    UnsubscribeNamespaceHandler::new(unsubscribe_namespace);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::UnsubscribeNamespace(
+                    unsubscribe_namespace_handler,
+                ))
             }
             _ => todo!(),
         }

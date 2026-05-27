@@ -30,6 +30,9 @@ impl<T: moqt::TransportProtocol> Session for moqt::Session<T> {
             moqt::SessionEvent::SubscribeNameSpace(subscribe_namespace_handler) => {
                 MoqtSessionEvent::SubscribeNamespace(Box::new(subscribe_namespace_handler))
             }
+            moqt::SessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler) => {
+                MoqtSessionEvent::UnsubscribeNamespace(Box::new(unsubscribe_namespace_handler))
+            }
             moqt::SessionEvent::Publish(publish_handler) => {
                 MoqtSessionEvent::Publish(Box::new(publish_handler))
             }

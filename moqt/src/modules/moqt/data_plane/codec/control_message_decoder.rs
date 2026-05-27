@@ -11,7 +11,7 @@ use crate::modules::moqt::{
             publish_namespace::PublishNamespace, publish_ok::PublishOk,
             request_error::RequestError, server_setup::ServerSetup, subscribe::Subscribe,
             subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
-            unsubscribe::Unsubscribe,
+            unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
         },
     },
     data_plane::stream::received_message::ReceivedMessage,
@@ -213,7 +213,16 @@ impl ControlMessageDecoder {
                     }
                 }
             }
-            ControlMessageType::UnSubscribeNamespace => todo!(),
+            ControlMessageType::UnSubscribeNamespace => {
+                tracing::debug!("Event: Unsubscribe namespace");
+                match UnsubscribeNamespace::decode(&mut cursor_buf) {
+                    Some(v) => ReceivedMessage::UnsubscribeNamespace(v),
+                    None => {
+                        tracing::error!("Protocol violation is detected.");
+                        ReceivedMessage::FatalError()
+                    }
+                }
+            }
         }
     }
 }

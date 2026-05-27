@@ -77,6 +77,13 @@ fn log_session_event(event: &MoqtSessionEvent) {
                 "Received session event"
             );
         }
+        MoqtSessionEvent::UnsubscribeNamespace(handler) => {
+            tracing::info!(
+                event = "UnsubscribeNamespace",
+                track_namespace_prefix = %handler.track_namespace_prefix(),
+                "Received session event"
+            );
+        }
         MoqtSessionEvent::Publish(handler) => {
             tracing::info!(
                 event = "Publish",
