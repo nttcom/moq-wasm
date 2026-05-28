@@ -3,8 +3,8 @@ use std::str::FromStr;
 
 use moqt::{
     ContentExists, DataReceiver, Endpoint, ExtensionHeaders, Fetch, FetchDataReceiver, FetchObject,
-    FetchOption, FilterType, GroupOrder, Location, Session, StreamDataReceiverFactory,
-    StreamDataSenderFactory, Subgroup, SubgroupId, SubgroupObject, SubscribeOption, QUIC,
+    FetchOption, FilterType, GroupOrder, Location, QUIC, Session, StreamDataReceiverFactory,
+    StreamDataSenderFactory, Subgroup, SubgroupId, SubgroupObject, SubscribeOption,
 };
 
 const RELAY_URL: &str = "moqt://localhost:4433";
@@ -23,7 +23,7 @@ async fn new_session(cert_path: &str) -> anyhow::Result<Session<QUIC>> {
         .unwrap();
     let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, cert_path)?;
     let connecting = endpoint.connect(remote, host).await?;
-    Ok(connecting.await?)
+    connecting.await
 }
 
 async fn send_group(factory: &StreamDataSenderFactory<QUIC>, group_id: u64) -> anyhow::Result<()> {
@@ -54,7 +54,10 @@ async fn run_fetch(
 ) -> anyhow::Result<()> {
     tracing::info!(
         "[bob] fetching g{}:o{}..g{}:o{}",
-        start.group_id, start.object_id, end.group_id, end.object_id
+        start.group_id,
+        start.object_id,
+        end.group_id,
+        end.object_id
     );
     let handle = subscriber
         .fetch(
@@ -79,14 +82,21 @@ async fn run_fetch(
             Ok(Fetch::End) => {
                 tracing::info!(
                     "[bob] fetch done g{}:o{}..g{}:o{}",
-                    start.group_id, start.object_id, end.group_id, end.object_id
+                    start.group_id,
+                    start.object_id,
+                    end.group_id,
+                    end.object_id
                 );
                 break;
             }
             Err(e) => {
                 tracing::info!(
                     "[bob] fetch done (error) g{}:o{}..g{}:o{}: {}",
-                    start.group_id, start.object_id, end.group_id, end.object_id, e
+                    start.group_id,
+                    start.object_id,
+                    end.group_id,
+                    end.object_id,
+                    e
                 );
                 break;
             }
@@ -144,7 +154,10 @@ async fn bob(cert_path: String) -> anyhow::Result<()> {
             },
         )
         .await?;
-    tracing::info!("[bob] subscribe ok, track_alias={}", subscription.track_alias);
+    tracing::info!(
+        "[bob] subscribe ok, track_alias={}",
+        subscription.track_alias
+    );
 
     let data_receiver = subscriber.accept_data_receiver(&subscription).await?;
     let mut factory: StreamDataReceiverFactory<QUIC> = match data_receiver {
@@ -172,11 +185,44 @@ async fn bob(cert_path: String) -> anyhow::Result<()> {
     tracing::info!("[bob] detect done, issuing fetches");
 
     // fetch A: g0/o0 .. g1/o2 (8 objects)
-    run_fetch(&mut subscriber, Location { group_id: 0, object_id: 0 }, Location { group_id: 1, object_id: 2 }).await?;
+    run_fetch(
+        &mut subscriber,
+        Location {
+            group_id: 0,
+            object_id: 0,
+        },
+        Location {
+            group_id: 1,
+            object_id: 2,
+        },
+    )
+    .await?;
     // fetch B: g1/o2 .. g2/o3 (7 objects)
-    run_fetch(&mut subscriber, Location { group_id: 1, object_id: 2 }, Location { group_id: 2, object_id: 3 }).await?;
+    run_fetch(
+        &mut subscriber,
+        Location {
+            group_id: 1,
+            object_id: 2,
+        },
+        Location {
+            group_id: 2,
+            object_id: 3,
+        },
+    )
+    .await?;
     // fetch C: g1/o0 .. g1/o0 = entire group 1 (5 objects)
-    run_fetch(&mut subscriber, Location { group_id: 1, object_id: 0 }, Location { group_id: 1, object_id: 0 }).await?;
+    run_fetch(
+        &mut subscriber,
+        Location {
+            group_id: 1,
+            object_id: 0,
+        },
+        Location {
+            group_id: 1,
+            object_id: 0,
+        },
+    )
+    .await?;
 
     tracing::info!("[bob] all done");
     Ok(())
