@@ -127,7 +127,6 @@ async fn run(config: Config) -> anyhow::Result<()> {
     )
     .await?;
 
-    /*
     run_pub_sub_scenario(
         "dual relay pub/sub relay-a to relay-b",
         &config.relay_a_url,
@@ -170,7 +169,6 @@ async fn run(config: Config) -> anyhow::Result<()> {
         &config.track_name,
     )
     .await?;
-    */
 
     tracing::info!("cascading relay e2e passed");
     println!("cascading relay e2e passed");

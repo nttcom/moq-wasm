@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     TransportProtocol,
     modules::moqt::{
-        domains::session_context::SessionContext,
+        domains::session_context::{IncomingObjectNotification, SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
     },
 };
@@ -24,29 +24,37 @@ impl SubscriptionNotifier {
         track_alias: u64,
         incoming_object: IncomingObject<T>,
     ) {
-        if let Some(sender) = context.notification_map.read().await.get(&track_alias) {
-            tracing::info!(track_alias, "notifying registered incoming object receiver");
-            if let Err(error) = sender.send(incoming_object) {
-                tracing::warn!("Failed to notify incoming object: {}", error);
-            }
-            return;
-        }
-
-        let mut pending = context.pending_incoming_objects.lock().await;
-        let objects = pending.entry(track_alias).or_default();
-        if objects.len() >= Self::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS {
-            objects.pop_front();
-            tracing::warn!(
+        match context
+            .notify_incoming_object(
                 track_alias,
-                max_pending_objects = Self::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS,
-                "pending incoming object buffer is full; dropping oldest object"
-            );
+                incoming_object,
+                Self::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS,
+            )
+            .await
+        {
+            IncomingObjectNotification::Notified => {
+                tracing::info!(track_alias, "notifying registered incoming object receiver");
+            }
+            IncomingObjectNotification::Buffered {
+                pending_objects,
+                dropped_oldest,
+            } => {
+                if dropped_oldest {
+                    tracing::warn!(
+                        track_alias,
+                        max_pending_objects = Self::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS,
+                        "pending incoming object buffer is full; dropping oldest object"
+                    );
+                }
+                tracing::info!(
+                    track_alias,
+                    pending_objects,
+                    "buffered incoming object until track alias is registered"
+                );
+            }
+            IncomingObjectNotification::ReceiverClosed => {
+                tracing::warn!("Failed to notify incoming object: receiver closed");
+            }
         }
-        objects.push_back(incoming_object);
-        tracing::info!(
-            track_alias,
-            pending_objects = objects.len(),
-            "buffered incoming object until track alias is registered"
-        );
     }
 }

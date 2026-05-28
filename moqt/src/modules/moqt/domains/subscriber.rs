@@ -130,35 +130,35 @@ impl<T: TransportProtocol> Subscriber<T> {
                     tracing::info!("Subscribe ok");
                     let (sender, receiver) =
                         tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
-                    let replaced_notification_sender = self
+                    let registration = self
                         .session
-                        .notification_map
-                        .write()
-                        .await
-                        .insert(message.track_alias, sender.clone())
-                        .is_some();
-                    if let Some(mut pending_objects) = self
-                        .session
-                        .pending_incoming_objects
-                        .lock()
-                        .await
-                        .remove(&message.track_alias)
-                    {
+                        .register_incoming_object_receiver(message.track_alias, sender)
+                        .await;
+                    if registration.already_registered {
                         tracing::info!(
                             track_alias = message.track_alias,
-                            pending_objects = pending_objects.len(),
+                            "subscriber incoming object receiver is already registered"
+                        );
+                        return Ok(Subscription::SubscriberInitiated(
+                            SubscriberInitiatedSubscription::new(
+                                track_namespace,
+                                track_name,
+                                message,
+                            ),
+                        ));
+                    }
+                    if registration.pending_objects > 0 {
+                        tracing::info!(
+                            track_alias = message.track_alias,
+                            pending_objects = registration.pending_objects,
                             "draining pending incoming objects after SUBSCRIBE_OK"
                         );
-                        while let Some(incoming_object) = pending_objects.pop_front() {
-                            if let Err(error) = sender.send(incoming_object) {
-                                tracing::warn!(
-                                    track_alias = message.track_alias,
-                                    ?error,
-                                    "failed to drain pending incoming object"
-                                );
-                                break;
-                            }
-                        }
+                    }
+                    if registration.failed_to_drain {
+                        tracing::warn!(
+                            track_alias = message.track_alias,
+                            "failed to drain pending incoming object"
+                        );
                     }
                     let replaced_receiver = self
                         .session
@@ -169,7 +169,7 @@ impl<T: TransportProtocol> Subscriber<T> {
                         .is_some();
                     tracing::info!(
                         track_alias = message.track_alias,
-                        replaced_notification_sender,
+                        replaced_notification_sender = false,
                         replaced_receiver,
                         "subscriber registered incoming object receiver after SUBSCRIBE_OK"
                     );

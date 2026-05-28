@@ -54,27 +54,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
         filter_type: FilterType,
         expires: u64,
     ) -> Result<Subscription, TransportSendError> {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
-        let replaced_notification_sender = self
-            .session_context
-            .notification_map
-            .write()
-            .await
-            .insert(self.track_alias, sender)
-            .is_some();
-        let replaced_receiver = self
-            .session_context
-            .receiver_map
-            .lock()
-            .await
-            .insert(self.track_alias, receiver)
-            .is_some();
-        tracing::info!(
-            track_alias = self.track_alias,
-            replaced_notification_sender,
-            replaced_receiver,
-            "publish handler registered incoming object receiver"
-        );
+        self.prepare_data_receiver().await;
 
         let publish_ok = PublishOk {
             request_id: self.request_id,
@@ -104,6 +84,47 @@ impl<T: TransportProtocol> PublishHandler<T> {
                 delivery_timeout: self.delivery_timeout,
             },
         ))
+    }
+
+    pub async fn prepare_data_receiver(&self) {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
+        let registration = self
+            .session_context
+            .register_incoming_object_receiver(self.track_alias, sender)
+            .await;
+        if registration.already_registered {
+            tracing::info!(
+                track_alias = self.track_alias,
+                "publish handler incoming object receiver is already registered"
+            );
+            return;
+        }
+        if registration.pending_objects > 0 {
+            tracing::info!(
+                track_alias = self.track_alias,
+                pending_objects = registration.pending_objects,
+                "draining pending incoming objects after PUBLISH receiver registration"
+            );
+        }
+        if registration.failed_to_drain {
+            tracing::warn!(
+                track_alias = self.track_alias,
+                "failed to drain pending incoming object"
+            );
+        }
+        let replaced_receiver = self
+            .session_context
+            .receiver_map
+            .lock()
+            .await
+            .insert(self.track_alias, receiver)
+            .is_some();
+        tracing::info!(
+            track_alias = self.track_alias,
+            replaced_notification_sender = false,
+            replaced_receiver,
+            "publish handler registered incoming object receiver"
+        );
     }
 
     pub async fn error(

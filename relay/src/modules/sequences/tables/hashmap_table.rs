@@ -550,6 +550,8 @@ mod tests {
             Ok(())
         }
 
+        async fn prepare_data_receiver(&self) {}
+
         async fn error(
             &self,
             _code: u64,
