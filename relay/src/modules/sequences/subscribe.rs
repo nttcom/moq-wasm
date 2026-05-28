@@ -7,6 +7,7 @@ use crate::modules::{
     },
     sequences::tables::table::{
         ActiveUpstreamSubscription, LocalPubSubDirectory, UpstreamSubscriptionKey,
+        UpstreamSubscriptionOrigin,
     },
     types::{SessionId, compose_session_track_key},
     upstream_publisher_resolver::UpstreamPublisherResolver,
@@ -239,17 +240,18 @@ impl Subscribe {
             track_namespace = %upstream_key.track_namespace,
             track_name = %upstream_key.track_name,
             track_alias = subscription.track_alias(),
-            expires = subscription.expires(),
+            expires = subscription.expires().unwrap_or(0),
             "upstream subscribe ok received"
         );
 
         let track_key = compose_session_track_key(pub_session_id, subscription.track_alias());
         let active_upstream = ActiveUpstreamSubscription {
-            upstream_subscribe_id: subscription.request_id(),
+            upstream_request_id: subscription.request_id(),
             track_key,
             expires: subscription.expires(),
             content_exists: subscription.content_exists(),
             downstream_subscriber_count: 0,
+            origin: UpstreamSubscriptionOrigin::Subscribe,
         };
 
         if ingress_sender
@@ -348,7 +350,7 @@ impl Subscribe {
         if handler
             .ok_with_track_alias(
                 subscriber_track_alias,
-                active_upstream.expires,
+                active_upstream.expires.unwrap_or(0),
                 active_upstream.content_exists,
             )
             .await

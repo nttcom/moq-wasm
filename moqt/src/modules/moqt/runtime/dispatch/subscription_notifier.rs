@@ -25,6 +25,7 @@ impl SubscriptionNotifier {
         incoming_object: IncomingObject<T>,
     ) {
         if let Some(sender) = context.notification_map.read().await.get(&track_alias) {
+            tracing::info!(track_alias, "notifying registered incoming object receiver");
             if let Err(error) = sender.send(incoming_object) {
                 tracing::warn!("Failed to notify incoming object: {}", error);
             }

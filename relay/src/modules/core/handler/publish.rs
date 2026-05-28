@@ -2,7 +2,10 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 
-use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
+use crate::modules::{
+    core::subscription::UpstreamSubscription,
+    enums::{ContentExists, FilterType, GroupOrder},
+};
 
 pub(crate) struct SubscribeOption {
     pub(crate) subscriber_priority: u8,
@@ -22,17 +25,15 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
     fn _authorization_token(&self) -> Option<String>;
     fn _delivery_timeout(&self) -> Option<u64>;
     fn _max_cache_duration(&self) -> Option<u64>;
-    async fn ok(
+    fn subscription(
         &self,
         subscriber_priority: u8,
         filter_type: FilterType,
-        expires: u64,
-    ) -> Result<(), moqt::TransportSendError>;
-    async fn _error(
-        &self,
-        code: u64,
-        reason_phrase: String,
-    ) -> Result<(), moqt::TransportSendError>;
+    ) -> UpstreamSubscription;
+    async fn ok(&self, subscription: &UpstreamSubscription)
+    -> Result<(), moqt::TransportSendError>;
+    async fn error(&self, code: u64, reason_phrase: String)
+    -> Result<(), moqt::TransportSendError>;
 }
 
 #[async_trait]
@@ -65,18 +66,39 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
         self.max_cache_duration
     }
 
-    async fn ok(
+    fn subscription(
         &self,
         subscriber_priority: u8,
         filter_type: FilterType,
-        expires: u64,
+    ) -> UpstreamSubscription {
+        UpstreamSubscription::from(moqt::PublisherInitiatedSubscription {
+            request_id: self.request_id,
+            track_namespace: self.track_namespace.clone(),
+            track_name: self.track_name.clone(),
+            track_alias: self.track_alias,
+            group_order: self.group_order,
+            content_exists: self.content_exists,
+            subscriber_priority,
+            forward: self.forward,
+            filter_type: filter_type.as_moqt(),
+            delivery_timeout: self.delivery_timeout,
+        })
+    }
+
+    async fn ok(
+        &self,
+        subscription: &UpstreamSubscription,
     ) -> Result<(), moqt::TransportSendError> {
-        self.ok(subscriber_priority, filter_type.as_moqt(), expires)
+        let Some((subscriber_priority, filter_type)) = subscription.publish_accept_options() else {
+            tracing::error!("PUBLISH_OK requires publisher-initiated upstream subscription");
+            return Ok(());
+        };
+        self.ok(subscriber_priority, filter_type.as_moqt(), 0)
             .await
             .map(|_| ())
     }
 
-    async fn _error(
+    async fn error(
         &self,
         code: u64,
         reason_phrase: String,

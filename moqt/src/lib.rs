@@ -63,8 +63,6 @@ pub use modules::moqt::domains::endpoint::Endpoint;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::endpoint::ServerConfig;
 #[cfg(not(target_arch = "wasm32"))]
-pub use modules::moqt::domains::published_resource::PublishedResource;
-#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::publisher::Publisher;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::session::Session;
@@ -72,6 +70,10 @@ pub use modules::moqt::domains::session::Session;
 pub use modules::moqt::domains::subscriber::DataReceiver;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::subscriber::Subscriber;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::subscription::PublisherInitiatedSubscription;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::subscription::SubscriberInitiatedSubscription;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::subscription::Subscription;
 #[cfg(not(target_arch = "wasm32"))]

@@ -34,6 +34,7 @@ impl UniStreamReceiveTask {
                     loop {
                         match context.transport_connection.accept_uni().await {
                             Ok(stream) => {
+                                tracing::info!("accepted incoming uni stream");
                                 let stream = UniStreamReceiver::new(stream, SubgroupDecoder::new());
                                 Self::on_stream_received(&context, stream).await;
                             }
@@ -70,7 +71,14 @@ impl UniStreamReceiveTask {
         };
 
         let subgroup_header = match subgroup {
-            Subgroup::Header(header) => header,
+            Subgroup::Header(header) => {
+                tracing::info!(
+                    track_alias = header.track_alias,
+                    group_id = header.group_id,
+                    "received subgroup header"
+                );
+                header
+            }
             _ => {
                 tracing::error!("First message in stream is not a subgroup header");
                 return false;

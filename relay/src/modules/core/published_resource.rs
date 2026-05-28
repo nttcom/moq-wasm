@@ -2,15 +2,15 @@ use crate::modules::enums::{FilterType, GroupOrder};
 
 #[derive(Clone)]
 pub(crate) struct PublishedResource {
-    published_resource: moqt::PublishedResource,
+    published_resource: moqt::PublisherInitiatedSubscription,
 }
 
 impl PublishedResource {
-    pub(crate) fn from(published_resource: moqt::PublishedResource) -> Self {
+    pub(crate) fn from(published_resource: moqt::PublisherInitiatedSubscription) -> Self {
         Self { published_resource }
     }
 
-    pub(crate) fn as_moqt(&self) -> &moqt::PublishedResource {
+    pub(crate) fn as_moqt(&self) -> &moqt::PublisherInitiatedSubscription {
         &self.published_resource
     }
 

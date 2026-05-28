@@ -14,7 +14,9 @@ use crate::modules::{
         subscribe_namespace::SubscribeNameSpace,
         tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
-            table::{LocalPubSubDirectory, RemovedSessionSubscriptions},
+            table::{
+                LocalPubSubDirectory, RemovedSessionSubscriptions, UpstreamSubscriptionOrigin,
+            },
         },
         unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace,
@@ -150,6 +152,7 @@ impl EventHandler {
                                         &session_span,
                                         local_pub_sub_directory.as_ref(),
                                         &control_message_forwarder,
+                                        &ingress_sender,
                                         CascadingRelayContext {
                                             route_registry: route_registry.as_ref(),
                                             inter_relay_connection_manager:
@@ -344,19 +347,21 @@ impl EventHandler {
                 );
             }
 
-            if removed_downstream.remaining_downstream_subscriber_count == 0 {
+            if removed_downstream.remaining_downstream_subscriber_count == 0
+                && removed_downstream.upstream_origin == UpstreamSubscriptionOrigin::Subscribe
+            {
                 if removed_downstream.upstream_key.publisher_session_id != removed_session_id
                     && let Err(err) = control_message_forwarder
                         .unsubscribe(
                             removed_downstream.upstream_key.publisher_session_id,
-                            removed_downstream.upstream_subscribe_id,
+                            removed_downstream.upstream_request_id,
                         )
                         .await
                 {
                     tracing::debug!(
                         ?err,
                         upstream_session_id = removed_downstream.upstream_key.publisher_session_id,
-                        subscribe_id = removed_downstream.upstream_subscribe_id,
+                        request_id = removed_downstream.upstream_request_id,
                         "failed to forward upstream unsubscribe during session cleanup"
                     );
                 }

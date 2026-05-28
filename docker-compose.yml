@@ -23,6 +23,10 @@ services:
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
+      RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
+      RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
     volumes:
       - ./relay/keys:/workspace/relay/keys:ro
     ports:
@@ -40,6 +44,10 @@ services:
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
+      RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
+      RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
     volumes:
       - ./relay/keys:/workspace/relay/keys:ro
     ports:

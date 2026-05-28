@@ -37,7 +37,10 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
     ) -> anyhow::Result<PublishedResource> {
         let option = moqt::PublishOption::default();
         let result = self.publish(track_namespace, track_name, option).await?;
-        Ok(PublishedResource::from(result))
+        let moqt::Subscription::PublisherInitiated(subscription) = result else {
+            anyhow::bail!("publisher returned non-publisher-initiated subscription");
+        };
+        Ok(PublishedResource::from(subscription))
     }
 
     fn new_stream_factory(

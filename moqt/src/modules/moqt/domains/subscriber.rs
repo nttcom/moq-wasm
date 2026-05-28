@@ -4,7 +4,7 @@ use anyhow::bail;
 use tracing::Instrument;
 
 use crate::{
-    DatagramReceiver, SubscribeOption, Subscription,
+    DatagramReceiver, SubscribeOption, SubscriberInitiatedSubscription, Subscription,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -105,7 +105,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         let subscribe = Subscribe {
             request_id,
             track_namespace: vec_namespace,
-            track_name,
+            track_name: track_name.clone(),
             subscriber_priority: option.subscriber_priority,
             group_order: option.group_order,
             forward: option.forward,
@@ -130,11 +130,13 @@ impl<T: TransportProtocol> Subscriber<T> {
                     tracing::info!("Subscribe ok");
                     let (sender, receiver) =
                         tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
-                    self.session
+                    let replaced_notification_sender = self
+                        .session
                         .notification_map
                         .write()
                         .await
-                        .insert(message.track_alias, sender.clone());
+                        .insert(message.track_alias, sender.clone())
+                        .is_some();
                     if let Some(mut pending_objects) = self
                         .session
                         .pending_incoming_objects
@@ -158,12 +160,22 @@ impl<T: TransportProtocol> Subscriber<T> {
                             }
                         }
                     }
-                    self.session
+                    let replaced_receiver = self
+                        .session
                         .receiver_map
                         .lock()
                         .await
-                        .insert(message.track_alias, receiver);
-                    Ok(Subscription::new(message))
+                        .insert(message.track_alias, receiver)
+                        .is_some();
+                    tracing::info!(
+                        track_alias = message.track_alias,
+                        replaced_notification_sender,
+                        replaced_receiver,
+                        "subscriber registered incoming object receiver after SUBSCRIBE_OK"
+                    );
+                    Ok(Subscription::SubscriberInitiated(
+                        SubscriberInitiatedSubscription::new(track_namespace, track_name, message),
+                    ))
                 }
             }
             ResponseMessage::SubscribeError(_, _, _) => {
@@ -214,13 +226,13 @@ impl<T: TransportProtocol> Subscriber<T> {
         level = "info",
         name = "moqt.subscriber.accept_data_receiver",
         skip_all,
-        fields(track_alias = subscription.track_alias)
+        fields(track_alias = subscription.track_alias())
     )]
     pub async fn accept_data_receiver(
         &mut self,
         subscription: &Subscription,
     ) -> anyhow::Result<DataReceiver<T>> {
-        let track_alias = subscription.track_alias;
+        let track_alias = subscription.track_alias();
         let mut receiver = self
             .session
             .receiver_map

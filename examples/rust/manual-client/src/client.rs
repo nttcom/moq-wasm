@@ -7,7 +7,10 @@ use std::{
     },
 };
 
-use moqt::{DatagramField, Endpoint, Session, SubscribeOption, TransportProtocol};
+use moqt::{
+    DatagramField, Endpoint, PublisherInitiatedSubscription, Session, SubscribeOption,
+    TransportProtocol,
+};
 
 use crate::stream_runner::StreamTaskRunner;
 
@@ -183,7 +186,7 @@ impl<T: TransportProtocol> Client<T> {
             .publisher()
             .publish(track_namespace, track_name, option)
             .await;
-        if let Ok(p) = pub_result {
+        if let Ok(moqt::Subscription::PublisherInitiated(p)) = pub_result {
             tracing::info!("{}: publish ok", self.label);
             self.track_alias
                 .fetch_add(p.track_alias, std::sync::atomic::Ordering::SeqCst);
@@ -240,7 +243,7 @@ impl<T: TransportProtocol> Client<T> {
     async fn create_stream(
         label: String,
         session: Arc<Session<T>>,
-        publication: moqt::PublishedResource,
+        publication: PublisherInitiatedSubscription,
         runner: &StreamTaskRunner,
     ) {
         tracing::info!("{} :create stream", label);
@@ -296,7 +299,7 @@ impl<T: TransportProtocol> Client<T> {
     async fn create_datagram(
         label: String,
         publisher: &moqt::Publisher<T>,
-        publication: moqt::PublishedResource,
+        publication: PublisherInitiatedSubscription,
         runner: &StreamTaskRunner,
     ) {
         tracing::info!("{} :create datagram", label);

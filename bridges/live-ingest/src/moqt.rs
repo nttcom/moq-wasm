@@ -11,8 +11,8 @@ use media_streaming_format::{
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
 use moqt::{
-    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, PublishedResource, QUIC, Session,
-    SessionEvent, SubgroupId, SubgroupObject, SubgroupObjectSender, TransportProtocol,
+    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, PublisherInitiatedSubscription, QUIC,
+    Session, SessionEvent, SubgroupId, SubgroupObject, SubgroupObjectSender, TransportProtocol,
     WEBTRANSPORT,
 };
 use tokio::sync::Mutex;
@@ -35,7 +35,7 @@ struct ManagerState {
 }
 
 struct TrackInfo<T: TransportProtocol> {
-    publication: Option<PublishedResource>,
+    publication: Option<PublisherInitiatedSubscription>,
     stream: Option<SubgroupObjectSender<T>>,
     object_id: u64,
     group_id: u64,

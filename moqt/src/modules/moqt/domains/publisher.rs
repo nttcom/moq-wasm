@@ -15,7 +15,10 @@ use crate::{
             options::PublishOption,
         },
         data_plane::stream::stream_data_sender_factory::StreamDataSenderFactory,
-        domains::{published_resource::PublishedResource, session_context::SessionContext},
+        domains::{
+            session_context::SessionContext,
+            subscription::{PublisherInitiatedSubscription, Subscription},
+        },
         protocol::TransportProtocol,
     },
 };
@@ -73,7 +76,7 @@ impl<T: TransportProtocol> Publisher<T> {
         track_namespace: String,
         track_name: String,
         option: PublishOption,
-    ) -> anyhow::Result<PublishedResource> {
+    ) -> anyhow::Result<Subscription> {
         let track_alias = Self::next_track_alias();
         tracing::debug!("track alias: {}", track_alias);
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
@@ -84,13 +87,14 @@ impl<T: TransportProtocol> Publisher<T> {
             .lock()
             .await
             .insert(request_id, sender);
+        let content_exists = option.content_exists;
         let publish = Publish {
             request_id,
             track_namespace_tuple: vec_namespace,
             track_name: track_name.clone(),
             track_alias,
             group_order: option.group_order,
-            content_exists: option.content_exists,
+            content_exists,
             forward: option.forward,
             authorization_tokens: vec![],
             delivery_timeout: None,
@@ -112,11 +116,14 @@ impl<T: TransportProtocol> Publisher<T> {
                     bail!("Protocol violation")
                 } else {
                     tracing::info!("Publish ok");
-                    Ok(PublishedResource::new(
-                        track_namespace,
-                        track_name,
-                        track_alias,
-                        message,
+                    Ok(Subscription::PublisherInitiated(
+                        PublisherInitiatedSubscription::new(
+                            track_namespace,
+                            track_name,
+                            track_alias,
+                            message,
+                        )
+                        .with_content_exists(content_exists),
                     ))
                 }
             }
@@ -130,12 +137,15 @@ impl<T: TransportProtocol> Publisher<T> {
 
     pub fn create_stream(
         &self,
-        published_resource: &PublishedResource,
+        subscription: &PublisherInitiatedSubscription,
     ) -> StreamDataSenderFactory<T> {
-        StreamDataSenderFactory::new(published_resource.track_alias, self.session.clone())
+        StreamDataSenderFactory::new(subscription.track_alias, self.session.clone())
     }
 
-    pub fn create_datagram(&self, published_resource: &PublishedResource) -> DatagramSender<T> {
-        DatagramSender::new(published_resource.track_alias, self.session.clone())
+    pub fn create_datagram(
+        &self,
+        subscription: &PublisherInitiatedSubscription,
+    ) -> DatagramSender<T> {
+        DatagramSender::new(subscription.track_alias, self.session.clone())
     }
 }

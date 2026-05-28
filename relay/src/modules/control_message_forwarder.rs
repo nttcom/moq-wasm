@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::modules::{
-    core::{handler::publish::SubscribeOption, subscription::Subscription},
+    core::{handler::publish::SubscribeOption, subscription::UpstreamSubscription},
     enums::{FilterType, GroupOrder},
     session_repository::SessionRepository,
     types::SessionId,
@@ -89,7 +89,7 @@ impl ControlMessageForwarder {
         session_id: SessionId,
         track_namespace: String,
         track_name: String,
-    ) -> anyhow::Result<Subscription> {
+    ) -> anyhow::Result<UpstreamSubscription> {
         if let Some(mut subscriber) = self.repository.lock().await.subscriber(session_id) {
             let option = SubscribeOption {
                 subscriber_priority: 128,

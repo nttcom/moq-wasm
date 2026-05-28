@@ -7,8 +7,8 @@ use media_streaming_format::{
 };
 use moqt::{
     ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
-    ObjectDatagramPayload, PublishedResource, Session, SessionEvent, SubgroupId, SubgroupObject,
-    SubgroupObjectSender, SubscribeOption, WEBTRANSPORT,
+    ObjectDatagramPayload, PublisherInitiatedSubscription, Session, SessionEvent, SubgroupId,
+    SubgroupObject, SubgroupObjectSender, SubscribeOption, WEBTRANSPORT,
 };
 use moqt_bridge_onvif::{
     app_config, cli, onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker, rtsp_decoder,
@@ -220,8 +220,8 @@ async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
 
     let expected_namespace = publish_namespace.join("/");
     let mut selected_profile_index: Option<usize> = None;
-    let mut video_publication: Option<PublishedResource> = None;
-    let mut audio_publication: Option<PublishedResource> = None;
+    let mut video_publication: Option<PublisherInitiatedSubscription> = None;
+    let mut audio_publication: Option<PublisherInitiatedSubscription> = None;
     let mut video_state = VideoStreamState::default();
     let mut audio_state = AudioStreamState::default();
     let mut dump_state = dump_keyframe.map(KeyframeDump::new);
@@ -386,8 +386,8 @@ async fn handle_session_event(
     publisher_priority: u8,
     catalog_state: &mut CatalogUpdateState,
     selected_profile_index: &mut Option<usize>,
-    video_publication: &mut Option<PublishedResource>,
-    audio_publication: &mut Option<PublishedResource>,
+    video_publication: &mut Option<PublisherInitiatedSubscription>,
+    audio_publication: &mut Option<PublisherInitiatedSubscription>,
     video_state: &mut VideoStreamState,
     audio_state: &mut AudioStreamState,
     command_subscriber: &mut Option<moqt::Subscriber<WEBTRANSPORT>>,
@@ -488,8 +488,8 @@ async fn handle_media_subscribe_event(
     publisher_priority: u8,
     catalog_state: &mut CatalogUpdateState,
     selected_profile_index: &mut Option<usize>,
-    video_publication: &mut Option<PublishedResource>,
-    audio_publication: &mut Option<PublishedResource>,
+    video_publication: &mut Option<PublisherInitiatedSubscription>,
+    audio_publication: &mut Option<PublisherInitiatedSubscription>,
     video_state: &mut VideoStreamState,
     audio_state: &mut AudioStreamState,
 ) -> Result<Option<ProfileTrack>> {
@@ -669,7 +669,7 @@ async fn handle_command_publish_event(
         )
         .await
         .context("accept command publish")?;
-    let track_alias = subscription.track_alias;
+    let track_alias = subscription.track_alias();
     spawn_command_receiver(command_subscriber, subscription, command_sender.clone())?;
     *command_subscription_active = true;
     log::info!(
@@ -715,7 +715,7 @@ async fn ensure_command_track_subscription(
                 command_namespace, command_track
             )
         })?;
-    let track_alias = subscription.track_alias;
+    let track_alias = subscription.track_alias();
     spawn_command_receiver(command_subscriber, subscription, command_sender.clone())?;
     *command_subscription_active = true;
     log::info!(
@@ -730,7 +730,7 @@ async fn ensure_command_track_subscription(
 async fn send_video_packet(
     publisher: &moqt::Publisher<WEBTRANSPORT>,
     state: &mut VideoStreamState,
-    publication: &PublishedResource,
+    publication: &PublisherInitiatedSubscription,
     publisher_priority: u8,
     dump_state: &mut Option<KeyframeDump>,
     packet: EncodedPacket,
@@ -793,7 +793,7 @@ async fn send_video_packet(
 async fn send_audio_packet(
     publisher: &moqt::Publisher<WEBTRANSPORT>,
     state: &mut AudioStreamState,
-    publication: &PublishedResource,
+    publication: &PublisherInitiatedSubscription,
     publisher_priority: u8,
     packet: EncodedAudioPacket,
 ) -> Result<()> {
@@ -925,7 +925,7 @@ fn serialize_audio_chunk_payload(packet: &EncodedAudioPacket) -> Result<Vec<u8>>
 #[allow(clippy::too_many_arguments)]
 async fn send_catalog(
     publisher: &moqt::Publisher<WEBTRANSPORT>,
-    publication: &PublishedResource,
+    publication: &PublisherInitiatedSubscription,
     group_id: u64,
     publisher_priority: u8,
     namespace: &[String],
@@ -1200,7 +1200,7 @@ impl VideoStreamState {
     async fn start_group(
         &mut self,
         publisher: &moqt::Publisher<WEBTRANSPORT>,
-        publication: &PublishedResource,
+        publication: &PublisherInitiatedSubscription,
         publisher_priority: u8,
     ) -> Result<Option<PendingGroupClose>> {
         let mut pending_close = None;
@@ -1258,7 +1258,7 @@ impl AudioStreamState {
     async fn start_group(
         &mut self,
         publisher: &moqt::Publisher<WEBTRANSPORT>,
-        publication: &PublishedResource,
+        publication: &PublisherInitiatedSubscription,
         publisher_priority: u8,
     ) -> Result<Option<PendingGroupClose>> {
         let mut pending_close = None;
@@ -1423,7 +1423,7 @@ fn resolve_profile_track<'a>(
 }
 
 struct CatalogUpdateState {
-    track_publication: Option<PublishedResource>,
+    track_publication: Option<PublisherInitiatedSubscription>,
     next_group_id: u64,
     last_video_codec: Option<String>,
     last_audio: Option<CatalogAudioSnapshot>,
