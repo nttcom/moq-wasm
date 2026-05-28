@@ -244,7 +244,7 @@ impl Publish {
             origin: UpstreamSubscriptionOrigin::Publish,
         };
 
-        handler.prepare_data_receiver().await;
+        handler.accept_data_receiver().await;
 
         if ingress_sender
             .send(IngressCommand::Start(IngressStartRequest {

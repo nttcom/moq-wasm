@@ -128,11 +128,9 @@ impl<T: TransportProtocol> Subscriber<T> {
                     bail!("Protocol violation")
                 } else {
                     tracing::info!("Subscribe ok");
-                    let (sender, receiver) =
-                        tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
                     let registration = self
                         .session
-                        .register_incoming_object_receiver(message.track_alias, sender)
+                        .register_data_receiver(message.track_alias)
                         .await;
                     if registration.already_registered {
                         tracing::info!(
@@ -147,30 +145,16 @@ impl<T: TransportProtocol> Subscriber<T> {
                             ),
                         ));
                     }
-                    if registration.pending_objects > 0 {
-                        tracing::info!(
-                            track_alias = message.track_alias,
-                            pending_objects = registration.pending_objects,
-                            "draining pending incoming objects after SUBSCRIBE_OK"
-                        );
-                    }
                     if registration.failed_to_drain {
                         tracing::warn!(
                             track_alias = message.track_alias,
                             "failed to drain pending incoming object"
                         );
                     }
-                    let replaced_receiver = self
-                        .session
-                        .receiver_map
-                        .lock()
-                        .await
-                        .insert(message.track_alias, receiver)
-                        .is_some();
                     tracing::info!(
                         track_alias = message.track_alias,
-                        replaced_notification_sender = false,
-                        replaced_receiver,
+                        drained_pending = registration.drained_pending,
+                        replaced_receiver = registration.replaced_receiver,
                         "subscriber registered incoming object receiver after SUBSCRIBE_OK"
                     );
                     Ok(Subscription::SubscriberInitiated(

@@ -23,12 +23,12 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
         tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
     pub(crate) receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>>>,
-    incoming_object_routes: tokio::sync::Mutex<HashMap<u64, IncomingObjectRoute<T>>>,
+    object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink<T>>>,
 }
 
-enum IncomingObjectRoute<T: TransportProtocol> {
-    Pending(VecDeque<IncomingObject<T>>),
-    Ready(tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>),
+enum ObjectSink<T: TransportProtocol> {
+    Buffering(VecDeque<IncomingObject<T>>),
+    Live(tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>),
 }
 
 pub(crate) enum IncomingObjectNotification {
@@ -40,10 +40,12 @@ pub(crate) enum IncomingObjectNotification {
     ReceiverClosed,
 }
 
-pub(crate) struct IncomingObjectReceiverRegistration {
+/// Outcome of attaching a data receiver to a track, used for logging by callers.
+pub(crate) struct DataReceiverRegistration {
     pub(crate) already_registered: bool,
-    pub(crate) pending_objects: usize,
+    pub(crate) drained_pending: usize,
     pub(crate) failed_to_drain: bool,
+    pub(crate) replaced_receiver: bool,
 }
 
 impl<T: TransportProtocol> SessionContext<T> {
@@ -61,7 +63,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             event_sender,
             sender_map: tokio::sync::Mutex::new(HashMap::new()),
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
-            incoming_object_routes: tokio::sync::Mutex::new(HashMap::new()),
+            object_sinks: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -84,17 +86,26 @@ impl<T: TransportProtocol> SessionContext<T> {
         incoming_object: IncomingObject<T>,
         max_pending_objects: usize,
     ) -> IncomingObjectNotification {
-        let mut routes = self.incoming_object_routes.lock().await;
-        match routes.entry(track_alias) {
+        let mut sinks = self.object_sinks.lock().await;
+        match sinks.entry(track_alias) {
+            Entry::Vacant(entry) => {
+                let mut objects = VecDeque::new();
+                objects.push_back(incoming_object);
+                entry.insert(ObjectSink::Buffering(objects));
+                IncomingObjectNotification::Buffered {
+                    pending_objects: 1,
+                    dropped_oldest: false,
+                }
+            }
             Entry::Occupied(mut entry) => match entry.get_mut() {
-                IncomingObjectRoute::Ready(sender) => {
+                ObjectSink::Live(sender) => {
                     if sender.send(incoming_object).is_err() {
                         IncomingObjectNotification::ReceiverClosed
                     } else {
                         IncomingObjectNotification::Notified
                     }
                 }
-                IncomingObjectRoute::Pending(objects) => {
+                ObjectSink::Buffering(objects) => {
                     let dropped_oldest = objects.len() >= max_pending_objects;
                     if dropped_oldest {
                         objects.pop_front();
@@ -106,35 +117,34 @@ impl<T: TransportProtocol> SessionContext<T> {
                     }
                 }
             },
-            Entry::Vacant(entry) => {
-                let mut objects = VecDeque::new();
-                objects.push_back(incoming_object);
-                entry.insert(IncomingObjectRoute::Pending(objects));
-                IncomingObjectNotification::Buffered {
-                    pending_objects: 1,
-                    dropped_oldest: false,
-                }
-            }
         }
     }
 
-    pub(crate) async fn register_incoming_object_receiver(
-        &self,
-        track_alias: u64,
-        sender: tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>,
-    ) -> IncomingObjectReceiverRegistration {
-        let mut routes = self.incoming_object_routes.lock().await;
-        match routes.remove(&track_alias) {
-            Some(IncomingObjectRoute::Ready(existing_sender)) => {
-                routes.insert(track_alias, IncomingObjectRoute::Ready(existing_sender));
-                IncomingObjectReceiverRegistration {
-                    already_registered: true,
-                    pending_objects: 0,
-                    failed_to_drain: false,
-                }
-            }
-            Some(IncomingObjectRoute::Pending(mut pending_objects)) => {
-                let pending_object_count = pending_objects.len();
+    /// Attaches a data receiver to `track_alias` and returns it ready to consume.
+    ///
+    /// This owns the whole hand-off in one place: it creates the channel, flushes
+    /// any objects that arrived before the receiver was registered (buffered by
+    /// [`Self::notify_incoming_object`]), promotes the sink to `Live`, and stores
+    /// the receiving end in `receiver_map`. Both maps are updated under the object-sinks
+    /// lock so the registration is atomic. If a receiver is already attached the
+    /// existing one is left untouched and `already_registered` is returned.
+    pub(crate) async fn register_data_receiver(&self, track_alias: u64) -> DataReceiverRegistration {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
+        let mut sinks = self.object_sinks.lock().await;
+
+        if let Some(ObjectSink::Live(_)) = sinks.get(&track_alias) {
+            return DataReceiverRegistration {
+                already_registered: true,
+                drained_pending: 0,
+                failed_to_drain: false,
+                replaced_receiver: false,
+            };
+        }
+
+        // Flush objects that arrived before this receiver existed, then go Live.
+        let (drained_pending, failed_to_drain) = match sinks.remove(&track_alias) {
+            Some(ObjectSink::Buffering(mut pending_objects)) => {
+                let count = pending_objects.len();
                 let mut failed_to_drain = false;
                 while let Some(incoming_object) = pending_objects.pop_front() {
                     if sender.send(incoming_object).is_err() {
@@ -142,21 +152,24 @@ impl<T: TransportProtocol> SessionContext<T> {
                         break;
                     }
                 }
-                routes.insert(track_alias, IncomingObjectRoute::Ready(sender));
-                IncomingObjectReceiverRegistration {
-                    already_registered: false,
-                    pending_objects: pending_object_count,
-                    failed_to_drain,
-                }
+                (count, failed_to_drain)
             }
-            None => {
-                routes.insert(track_alias, IncomingObjectRoute::Ready(sender));
-                IncomingObjectReceiverRegistration {
-                    already_registered: false,
-                    pending_objects: 0,
-                    failed_to_drain: false,
-                }
-            }
+            _ => (0, false),
+        };
+        sinks.insert(track_alias, ObjectSink::Live(sender));
+
+        let replaced_receiver = self
+            .receiver_map
+            .lock()
+            .await
+            .insert(track_alias, receiver)
+            .is_some();
+
+        DataReceiverRegistration {
+            already_registered: false,
+            drained_pending,
+            failed_to_drain,
+            replaced_receiver,
         }
     }
 }

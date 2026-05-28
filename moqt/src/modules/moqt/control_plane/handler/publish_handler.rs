@@ -11,7 +11,6 @@ use crate::{
             },
         },
         domains::session_context::SessionContext,
-        runtime::dispatch::incoming_object::IncomingObject,
     },
     modules::transport::transport_send_stream::TransportSendError,
 };
@@ -54,8 +53,6 @@ impl<T: TransportProtocol> PublishHandler<T> {
         filter_type: FilterType,
         expires: u64,
     ) -> Result<Subscription, TransportSendError> {
-        self.prepare_data_receiver().await;
-
         let publish_ok = PublishOk {
             request_id: self.request_id,
             forward: self.forward,
@@ -86,11 +83,10 @@ impl<T: TransportProtocol> PublishHandler<T> {
         ))
     }
 
-    pub async fn prepare_data_receiver(&self) {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
+    pub async fn accept_data_receiver(&self) {
         let registration = self
             .session_context
-            .register_incoming_object_receiver(self.track_alias, sender)
+            .register_data_receiver(self.track_alias)
             .await;
         if registration.already_registered {
             tracing::info!(
@@ -99,30 +95,16 @@ impl<T: TransportProtocol> PublishHandler<T> {
             );
             return;
         }
-        if registration.pending_objects > 0 {
-            tracing::info!(
-                track_alias = self.track_alias,
-                pending_objects = registration.pending_objects,
-                "draining pending incoming objects after PUBLISH receiver registration"
-            );
-        }
         if registration.failed_to_drain {
             tracing::warn!(
                 track_alias = self.track_alias,
                 "failed to drain pending incoming object"
             );
         }
-        let replaced_receiver = self
-            .session_context
-            .receiver_map
-            .lock()
-            .await
-            .insert(self.track_alias, receiver)
-            .is_some();
         tracing::info!(
             track_alias = self.track_alias,
-            replaced_notification_sender = false,
-            replaced_receiver,
+            drained_pending = registration.drained_pending,
+            replaced_receiver = registration.replaced_receiver,
             "publish handler registered incoming object receiver"
         );
     }

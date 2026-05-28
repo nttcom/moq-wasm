@@ -30,7 +30,7 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
         subscriber_priority: u8,
         filter_type: FilterType,
     ) -> UpstreamSubscription;
-    async fn prepare_data_receiver(&self);
+    async fn accept_data_receiver(&self);
     async fn ok(&self, subscription: &UpstreamSubscription)
     -> Result<(), moqt::TransportSendError>;
     async fn error(&self, code: u64, reason_phrase: String)
@@ -99,8 +99,8 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
             .map(|_| ())
     }
 
-    async fn prepare_data_receiver(&self) {
-        self.prepare_data_receiver().await;
+    async fn accept_data_receiver(&self) {
+        self.accept_data_receiver().await;
     }
 
     async fn error(
