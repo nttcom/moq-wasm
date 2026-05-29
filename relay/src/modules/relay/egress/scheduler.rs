@@ -93,7 +93,7 @@ impl EgressScheduler {
         let mut start_offset_remaining = absolute_start.map(|(_, start_offset)| start_offset);
 
         if matches!(self.filter_type, FilterType::LargestObject)
-            && let Some(location) = self.cache.latest_location().await
+            && let Some(location) = self.cache.latest_cache_location().await
         {
             self.schedule_location(location, &mut scheduled).await;
         }
