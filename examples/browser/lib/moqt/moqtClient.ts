@@ -1,4 +1,6 @@
 import init, {
+  FetchObjectMessage,
+  FetchOkMessage,
   MOQTClient,
   NamespaceOkMessage,
   ObjectDatagramMessage,
@@ -20,7 +22,9 @@ import {
 
 type SetupResolver = ((value: void) => void) | null
 type PendingVoidResolver = { resolve: () => void; reject: (error: Error) => void }
-type PendingSubscribeResolver = { resolve: (trackAlias: bigint) => void; reject: (error: Error) => void }
+type PendingSubscribeResolver = { resolve: (response: SubscribeOkMessage) => void; reject: (error: Error) => void }
+type FetchResponseHandler = ((response: FetchOkMessage | RequestErrorMessage) => void) | null
+type FetchObjectHandler = ((message: FetchObjectMessage) => void) | null
 type SubscribeResponseHandler = ((response: SubscribeOkMessage | RequestErrorMessage) => void) | null
 type NamespaceResponseHandler = ((response: NamespaceOkMessage | RequestErrorMessage) => void) | null
 type ConnectionClosedHandler = (() => void) | null
@@ -92,6 +96,8 @@ export class MoqtClientWrapper {
   private onObjectDatagramHandler: ObjectDatagramHandler = null
   private onObjectDatagramStatusHandler: ObjectDatagramStatusHandler = null
   private onSubgroupHeaderHandler: SubgroupHeaderHandler = null
+  private onFetchResponseHandler: FetchResponseHandler = null
+  private readonly fetchObjectHandlers = new Map<bigint, FetchObjectHandler>()
   private readonly subscriptionState: SubscriptionStateStore
   private readonly pendingPublishNamespace = new Map<bigint, PendingVoidResolver>()
   private readonly pendingSubscribeNamespace = new Map<bigint, PendingVoidResolver>()
@@ -268,14 +274,16 @@ export class MoqtClientWrapper {
     trackName: string,
     authInfo: string,
     options: SubscribeOptions = {}
-  ): Promise<bigint> {
+  ): Promise<SubscribeOkMessage> {
     const client = this.requireConnectedClient()
     const existingTrackAlias = this.subscriptionTrackAliases.get(requestId)
     if (existingTrackAlias !== undefined) {
-      return existingTrackAlias
+      // Reconstruct a minimal SubscribeOkMessage-like object is not possible here;
+      // callers that hit this branch only need trackAlias, so we throw to surface the issue.
+      throw new Error(`subscribe: requestId ${requestId} already has trackAlias ${existingTrackAlias}`)
     }
 
-    const response = new Promise<bigint>((resolve, reject) => {
+    const response = new Promise<SubscribeOkMessage>((resolve, reject) => {
       this.pendingSubscribe.set(requestId, { resolve, reject })
     })
 
@@ -295,6 +303,47 @@ export class MoqtClientWrapper {
     )
 
     return response
+  }
+
+  async fetch(
+    requestId: bigint,
+    trackNamespace: string[],
+    trackName: string,
+    startGroupId: bigint,
+    startObjectId: bigint,
+    endGroupId: bigint,
+    endObjectId: bigint
+  ): Promise<FetchOkMessage> {
+    const client = this.requireConnectedClient()
+    const response = new Promise<FetchOkMessage>((resolve, reject) => {
+      const handler: FetchResponseHandler = (msg) => {
+        this.onFetchResponseHandler = null
+        if (msg instanceof FetchOkMessage) {
+          resolve(msg)
+        } else {
+          reject(new Error(`FETCH_ERROR: ${(msg as RequestErrorMessage).reasonPhrase}`))
+        }
+      }
+      this.onFetchResponseHandler = handler
+    })
+    await client.sendFetch(
+      requestId,
+      trackNamespace,
+      trackName,
+      startGroupId,
+      startObjectId,
+      endGroupId,
+      endObjectId
+    )
+    return response
+  }
+
+  setOnFetchObjectHandler(requestId: bigint, handler: FetchObjectHandler): void {
+    this.fetchObjectHandlers.set(requestId, handler)
+  }
+
+  clearFetchObjectHandler(requestId: bigint): void {
+    this.fetchObjectHandlers.delete(requestId)
   }
 
   async unsubscribe(requestId: bigint): Promise<void> {
@@ -410,7 +459,7 @@ export class MoqtClientWrapper {
         const pending = this.pendingSubscribe.get(response.requestId)
         if (pending) {
           this.pendingSubscribe.delete(response.requestId)
-          pending.resolve(response.trackAlias)
+          pending.resolve(response)
         }
       }
       this.onSubscribeResponseHandler?.(response)
@@ -444,6 +493,13 @@ export class MoqtClientWrapper {
         return
       }
       this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, subgroupObject)
+    })
+    this.client.onFetchResponse((response: FetchOkMessage | RequestErrorMessage) => {
+      this.onFetchResponseHandler?.(response)
+    })
+    this.client.onFetchObject((message: FetchObjectMessage) => {
+      const handler = this.fetchObjectHandlers.get(BigInt(message.requestId))
+      handler?.(message)
     })
     this.client.onConnectionClosed(() => this.handleConnectionClosed())
   }

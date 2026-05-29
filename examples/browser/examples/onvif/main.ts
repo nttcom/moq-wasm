@@ -1189,7 +1189,7 @@ async function subscribeCatalog(): Promise<void> {
     return
   }
 
-  const catalogAlias = await moqtClient.subscribe(catalogSubscribeId, subscribeNamespace, catalogTrack, authInfo)
+  const catalogAlias = (await moqtClient.subscribe(catalogSubscribeId, subscribeNamespace, catalogTrack, authInfo)).trackAlias
   ;(document.getElementById('catalog-track-alias') as HTMLInputElement).value = catalogAlias.toString()
   setupCatalogCallbacks(catalogAlias)
   catalogTrackAlias = catalogAlias
@@ -1213,7 +1213,7 @@ async function subscribeSelectedVideo(): Promise<void> {
     return
   }
 
-  const videoTrackAlias = await moqtClient.subscribe(videoSubscribeId, subscribeNamespace, videoTrack, authInfo)
+  const videoTrackAlias = (await moqtClient.subscribe(videoSubscribeId, subscribeNamespace, videoTrack, authInfo)).trackAlias
   ;(document.getElementById('video-track-alias') as HTMLInputElement).value = videoTrackAlias.toString()
   setupVideoCallbacks(videoTrackAlias)
   videoSubscribed = true
@@ -1236,7 +1236,7 @@ async function subscribeSelectedAudio(): Promise<void> {
     return
   }
 
-  const audioTrackAlias = await moqtClient.subscribe(audioSubscribeId, subscribeNamespace, audioTrack, authInfo)
+  const audioTrackAlias = (await moqtClient.subscribe(audioSubscribeId, subscribeNamespace, audioTrack, authInfo)).trackAlias
   ;(document.getElementById('audio-track-alias') as HTMLInputElement).value = audioTrackAlias.toString()
   setupAudioCallbacks(audioTrackAlias)
   audioSubscribed = true

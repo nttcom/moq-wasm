@@ -765,12 +765,12 @@ const sendCatalogSubscribeButtonClickHandler = (): void => {
       setCatalogTrackStatus('Catalog track is required')
       return
     }
-    const catalogTrackAlias = await moqtClient.subscribe(
+    const catalogTrackAlias = (await moqtClient.subscribe(
       catalogSubscribeId,
       trackNamespace,
       catalogTrackName,
       AUTH_INFO
-    )
+    )).trackAlias
     form['catalog-track-alias'].value = catalogTrackAlias.toString()
     setupCatalogCallbacks(catalogTrackAlias)
     setCatalogTrackStatus(`Catalog subscribed: ${catalogTrackName}`)
@@ -800,11 +800,11 @@ const sendSubscribeButtonClickHandler = (): void => {
     }
 
     setupMediaSource(videoTrack.codec, audioTrack.codec)
-    const videoTrackAlias = await moqtClient.subscribe(videoSubscribeId, trackNamespace, selectedVideoTrack, AUTH_INFO)
+    const videoTrackAlias = (await moqtClient.subscribe(videoSubscribeId, trackNamespace, selectedVideoTrack, AUTH_INFO)).trackAlias
     form['video-track-alias'].value = videoTrackAlias.toString()
     setupVideoObjectCallbacks(videoTrackAlias)
 
-    const audioTrackAlias = await moqtClient.subscribe(audioSubscribeId, trackNamespace, audioTrack.name, AUTH_INFO)
+    const audioTrackAlias = (await moqtClient.subscribe(audioSubscribeId, trackNamespace, audioTrack.name, AUTH_INFO)).trackAlias
     form['audio-track-alias'].value = audioTrackAlias.toString()
     setupAudioObjectCallbacks(audioTrackAlias)
     setCatalogTrackStatus(`Subscribed video=${selectedVideoTrack} audio=${audioTrack.name}`)
