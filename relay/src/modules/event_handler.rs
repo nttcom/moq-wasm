@@ -2,7 +2,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::modules::{
-    relay::{egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressCommand},
+    relay::{
+        cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
+        ingress::ingress_coordinator::IngressCommand,
+    },
     sequences::{
         fetch::Fetch,
         notifier::SessionSignalingDispatcher,
@@ -32,12 +35,14 @@ impl EventHandler {
         relay_event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
         ingress_sender: mpsc::Sender<IngressCommand>,
         egress_sender: mpsc::Sender<EgressCommand>,
+        cache_store: Arc<TrackCacheStore>,
     ) -> Self {
         let relay_session_event_handler = Self::create_relay_session_event_handler(
             repo,
             relay_event_receiver,
             ingress_sender,
             egress_sender,
+            cache_store,
         );
         Self {
             relay_session_event_handler,
@@ -49,6 +54,7 @@ impl EventHandler {
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
         ingress_sender: mpsc::Sender<IngressCommand>,
         egress_sender: mpsc::Sender<EgressCommand>,
+        cache_store: Arc<TrackCacheStore>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Relay Session Event Handler")
@@ -128,6 +134,7 @@ impl EventHandler {
                                         &session_signaling_dispatcher,
                                         &ingress_sender,
                                         &egress_sender,
+                                        &cache_store,
                                         handler,
                                     )
                                     .await;
