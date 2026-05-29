@@ -93,7 +93,15 @@ export class LocalSession {
 
   setOnSubscribeResponseHandler(handler: (response: SubscribeOkMessage | RequestErrorMessage) => void): void {
     this.client.setOnSubscribeResponseHandler((response) => {
-      console.info('[call][moqt] received SUBSCRIBE response', response)
+      if (response instanceof SubscribeOkMessage) {
+        console.info('[call][moqt] received SUBSCRIBE_OK', {
+          contentExists: (response as any).contentExists ?? (response as any).content_exists,
+          largestGroupId: response.largestGroupId?.toString(),
+          largestObjectId: response.largestObjectId?.toString(),
+        })
+      } else {
+        console.info('[call][moqt] received SUBSCRIBE response', response)
+      }
       handler(response)
     })
   }
@@ -167,7 +175,8 @@ export class LocalSession {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot subscribe when session state is "${this.state}"`)
     }
-    const trackAlias = await this.client.subscribe(subscribeId, trackNamespace, trackName, authInfo)
+    const subscribeOk = await this.client.subscribe(subscribeId, trackNamespace, trackName, authInfo)
+    const trackAlias = subscribeOk.trackAlias
     this.subscribeTrackAliases.set(subscribeId, trackAlias)
     const remoteUser = trackNamespace[1] ?? `alias-${trackAlias.toString()}`
 
@@ -228,44 +237,60 @@ export class LocalSession {
         reject(new Error('Catalog subscribe timed out'))
       }, timeoutMs)
 
+      const handleCatalogPayload = (payload: string) => {
+        try {
+          const tracks = parseCallCatalogTracks(payload)
+          onTracksUpdated?.(tracks)
+          if (settled) return
+          settled = true
+          window.clearTimeout(timeoutId)
+          resolve(tracks)
+        } catch (error) {
+          if (settled) {
+            console.error('Failed to parse updated catalog payload:', error)
+            return
+          }
+          settled = true
+          window.clearTimeout(timeoutId)
+          reject(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
+        }
+      }
+
       this.client
         .subscribe(subscribeId, trackNamespace, 'catalog', authInfo)
-        .then((trackAlias) => {
+        .then(async (subscribeOk) => {
+          const trackAlias = subscribeOk.trackAlias
           this.subscribeTrackAliases.set(subscribeId, trackAlias)
-          this.client.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroup) => {
-            console.info('[call][moqt] received subgroup object', {
-              trackAlias: trackAlias.toString(),
-              groupId: _groupId.toString(),
-              subgroupId: subgroup.subgroupId?.toString() ?? '0',
-              objectIdDelta: subgroup.objectIdDelta.toString(),
-              objectPayloadLength: subgroup.objectPayloadLength,
-              objectStatus: subgroup.objectStatus
+
+          // If content exists, fetch the catalog directly instead of waiting for stream.
+          const contentExists = (subscribeOk as any).contentExists ?? (subscribeOk as any).content_exists
+          const largestGroupId: bigint | undefined = subscribeOk.largestGroupId
+          const largestObjectId: bigint | undefined = subscribeOk.largestObjectId
+          if (contentExists && largestGroupId !== undefined && largestObjectId !== undefined) {
+            const fetchId = subscribeId + 1000000n
+            this.client.setOnFetchObjectHandler(fetchId, (msg) => {
+              if (msg.objectPayload.length > 0) {
+                handleCatalogPayload(new TextDecoder().decode(new Uint8Array(msg.objectPayload)))
+              }
             })
-            try {
-              const payload = new TextDecoder().decode(new Uint8Array(subgroup.objectPayload))
-              const tracks = parseCallCatalogTracks(payload)
-              onTracksUpdated?.(tracks)
-              if (settled) {
-                return
-              }
-              settled = true
-              window.clearTimeout(timeoutId)
-              resolve(tracks)
-            } catch (error) {
-              if (settled) {
-                console.error('Failed to parse updated catalog payload:', error)
-                return
-              }
-              settled = true
-              window.clearTimeout(timeoutId)
-              reject(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
-            }
+            await this.client.fetch(
+              fetchId,
+              trackNamespace,
+              'catalog',
+              largestGroupId,
+              largestObjectId,
+              largestGroupId,
+              largestObjectId
+            )
+          }
+
+          // Always set up stream handler for future catalog updates.
+          this.client.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroup) => {
+            handleCatalogPayload(new TextDecoder().decode(new Uint8Array(subgroup.objectPayload)))
           })
         })
         .catch((error) => {
-          if (settled) {
-            return
-          }
+          if (settled) return
           settled = true
           window.clearTimeout(timeoutId)
           reject(error instanceof Error ? error : new Error('Catalog subscribe failed'))

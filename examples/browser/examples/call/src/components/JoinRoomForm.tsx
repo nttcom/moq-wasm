@@ -21,9 +21,15 @@ const RELAY_OPTIONS = [
 ] as const
 
 export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
-  const [roomName, setRoomName] = useState('')
+  const [roomName, setRoomName] = useState(() => {
+    const now = new Date()
+    const MM = String(now.getMonth() + 1).padStart(2, '0')
+    const DD = String(now.getDate()).padStart(2, '0')
+    const mm = String(now.getMinutes()).padStart(2, '0')
+    return `test-${MM}${DD}${mm}`
+  })
   const [userName, setUserName] = useState('')
-  const [relayUrl, setRelayUrl] = useState<string>(RELAY_OPTIONS[0].value)
+  const [relayUrl, setRelayUrl] = useState<string>(RELAY_OPTIONS[1].value)
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
