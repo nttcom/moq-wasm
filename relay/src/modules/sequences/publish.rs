@@ -47,6 +47,7 @@ impl Publish {
         parent = session_span,
         fields(session_id = %session_id)
     )]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
@@ -217,6 +218,7 @@ impl Publish {
         skip_all,
         fields(session_id = %session_id)
     )]
+    #[allow(clippy::too_many_arguments)]
     async fn register_upstream_subscription(
         &self,
         session_id: SessionId,
@@ -247,14 +249,14 @@ impl Publish {
         handler.accept_data_receiver().await;
 
         if ingress_sender
-            .send(IngressCommand::Start(IngressStartRequest {
+            .send(IngressCommand::Start(Box::new(IngressStartRequest {
                 subscriber_session_id: session_id,
                 publisher_session_id: session_id,
                 track_namespace: track_namespace.clone(),
                 track_name: track_name.clone(),
                 subscription: subscription.clone(),
                 parent_span: Span::current(),
-            }))
+            })))
             .await
             .is_err()
         {

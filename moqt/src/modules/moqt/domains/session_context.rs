@@ -124,10 +124,12 @@ impl<T: TransportProtocol> SessionContext<T> {
     ///
     /// This owns the whole hand-off in one place: it creates the channel, flushes
     /// any objects that arrived before the receiver was registered (buffered by
-    /// [`Self::notify_incoming_object`]), promotes the sink to `Live`, and stores
-    /// the receiving end in `receiver_map`. Both maps are updated under the object-sinks
-    /// lock so the registration is atomic. If a receiver is already attached the
-    /// existing one is left untouched and `already_registered` is returned.
+    /// [`Self::notify_incoming_object`] — data objects can reach a relay before the
+    /// matching PUBLISH/SUBSCRIBE_OK), promotes the sink to `Live`, and stores the
+    /// receiving end in `receiver_map` so it can be picked up later. Both maps are
+    /// updated under the object-sinks lock so the registration is atomic. If a
+    /// receiver is already attached the existing one is left untouched and
+    /// `already_registered` is returned.
     pub(crate) async fn register_data_receiver(&self, track_alias: u64) -> DataReceiverRegistration {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
         let mut sinks = self.object_sinks.lock().await;

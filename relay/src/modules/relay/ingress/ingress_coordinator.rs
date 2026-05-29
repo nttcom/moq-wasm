@@ -29,7 +29,7 @@ pub(crate) struct IngressStartRequest {
 }
 
 pub(crate) enum IngressCommand {
-    Start(IngressStartRequest),
+    Start(Box<IngressStartRequest>),
     StopTrack { track_key: TrackKey },
 }
 

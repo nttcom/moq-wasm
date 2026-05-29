@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::modules::{
-    core::published_resource::PublishedResource,
+    core::subscription::DownstreamSubscription,
     enums::{ContentExists, FilterType, GroupOrder},
 };
 
@@ -26,7 +26,7 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     ) -> Result<(), moqt::TransportSendError>;
     async fn error(&self, code: u64, reason_phrase: String)
     -> Result<(), moqt::TransportSendError>;
-    fn convert_into_publication(&self, track_alias: u64) -> PublishedResource;
+    fn to_downstream_subscription(&self, track_alias: u64) -> DownstreamSubscription;
 }
 
 #[async_trait]
@@ -88,7 +88,7 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
         self.error(code, reason_phrase).await
     }
 
-    fn convert_into_publication(&self, track_alias: u64) -> PublishedResource {
-        PublishedResource::from(self.into_publication(track_alias))
+    fn to_downstream_subscription(&self, track_alias: u64) -> DownstreamSubscription {
+        DownstreamSubscription::from(self.into_subscriber_initiated_subscription(track_alias))
     }
 }

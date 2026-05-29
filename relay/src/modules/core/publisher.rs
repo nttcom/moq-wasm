@@ -6,7 +6,7 @@ use crate::modules::core::{
         datagram_sender::DatagramSender,
         stream_sender_factory::{ConcreteStreamSenderFactory, StreamSenderFactory},
     },
-    published_resource::PublishedResource,
+    subscription::DownstreamSubscription,
 };
 
 #[async_trait]
@@ -16,12 +16,12 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         &self,
         track_namespace: String,
         track_name: String,
-    ) -> anyhow::Result<PublishedResource>;
+    ) -> anyhow::Result<DownstreamSubscription>;
     fn new_stream_factory(
         &self,
-        published_resource: &PublishedResource,
+        downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn StreamSenderFactory>;
-    fn new_datagram(&self, published_resource: &PublishedResource) -> Box<dyn DataSender>;
+    fn new_datagram(&self, downstream_subscription: &DownstreamSubscription) -> Box<dyn DataSender>;
 }
 
 #[async_trait]
@@ -34,29 +34,26 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         &self,
         track_namespace: String,
         track_name: String,
-    ) -> anyhow::Result<PublishedResource> {
+    ) -> anyhow::Result<DownstreamSubscription> {
         let option = moqt::PublishOption::default();
-        let result = self.publish(track_namespace, track_name, option).await?;
-        let moqt::Subscription::PublisherInitiated(subscription) = result else {
-            anyhow::bail!("publisher returned non-publisher-initiated subscription");
-        };
-        Ok(PublishedResource::from(subscription))
+        let subscription = self.publish(track_namespace, track_name, option).await?;
+        Ok(DownstreamSubscription::from(subscription))
     }
 
     fn new_stream_factory(
         &self,
-        published_resource: &PublishedResource,
+        downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn StreamSenderFactory> {
-        let subscriber_track_alias = published_resource.track_alias();
-        let inner = self.create_stream(published_resource.as_moqt());
+        let subscriber_track_alias = downstream_subscription.track_alias();
+        let inner = self.create_stream(downstream_subscription.as_moqt());
         Box::new(ConcreteStreamSenderFactory::new(
             inner,
             subscriber_track_alias,
         ))
     }
 
-    fn new_datagram(&self, published_resource: &PublishedResource) -> Box<dyn DataSender> {
-        let sender = self.create_datagram(published_resource.as_moqt());
+    fn new_datagram(&self, downstream_subscription: &DownstreamSubscription) -> Box<dyn DataSender> {
+        let sender = self.create_datagram(downstream_subscription.as_moqt());
         let sender = DatagramSender::new(sender);
         Box::new(sender)
     }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    FilterType, GroupOrder, PublisherInitiatedSubscription, TransportProtocol,
+    FilterType, GroupOrder, SubscriberInitiatedSubscription, Subscription, TransportProtocol,
     modules::moqt::{
         control_plane::control_messages::{
             control_message_type::ControlMessageType,
@@ -108,7 +108,12 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         self.request_id
     }
 
-    pub fn into_publication(&self, track_alias: u64) -> PublisherInitiatedSubscription {
-        PublisherInitiatedSubscription::from_subscribe_handler(track_alias, self)
+    /// Builds the subscription this handler represents. Receiving a SUBSCRIBE
+    /// makes it subscriber-initiated.
+    pub fn into_subscriber_initiated_subscription(&self, track_alias: u64) -> Subscription {
+        Subscription::SubscriberInitiated(SubscriberInitiatedSubscription::from_subscribe_handler(
+            track_alias,
+            self,
+        ))
     }
 }

@@ -255,14 +255,14 @@ impl Subscribe {
         };
 
         if ingress_sender
-            .send(IngressCommand::Start(IngressStartRequest {
+            .send(IngressCommand::Start(Box::new(IngressStartRequest {
                 subscriber_session_id: session_id,
                 publisher_session_id: pub_session_id,
                 track_namespace: upstream_key.track_namespace.clone(),
                 track_name: upstream_key.track_name.clone(),
                 subscription,
                 parent_span: Span::current(),
-            }))
+            })))
             .await
             .is_err()
         {
@@ -325,7 +325,7 @@ impl Subscribe {
                 track_key: active_upstream.track_key,
                 track_namespace: upstream_key.track_namespace.clone(),
                 track_name: upstream_key.track_name.clone(),
-                published_resources: handler.convert_into_publication(subscriber_track_alias),
+                downstream_subscription: handler.to_downstream_subscription(subscriber_track_alias),
                 parent_span: Span::current(),
                 ready_sender,
             })))

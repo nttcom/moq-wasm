@@ -11,7 +11,7 @@ use crate::{
 pub(crate) struct SubscriptionNotifier;
 
 impl SubscriptionNotifier {
-    const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 64;
+    const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
 
     #[tracing::instrument(
         level = "info",

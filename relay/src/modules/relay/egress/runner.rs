@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::modules::{
-    core::{published_resource::PublishedResource, publisher::Publisher},
+    core::{publisher::Publisher, subscription::DownstreamSubscription},
     relay::{cache::track_cache::TrackCache, notifications::track_event::TrackEvent},
     types::TrackKey,
 };
@@ -15,7 +15,7 @@ pub(crate) struct EgressRunner {
     cache: Arc<TrackCache>,
     latest_info_sender: broadcast::Sender<TrackEvent>,
     publisher: Box<dyn Publisher>,
-    published_resource: PublishedResource,
+    downstream_subscription: DownstreamSubscription,
     ready_sender: oneshot::Sender<anyhow::Result<()>>,
 }
 
@@ -25,7 +25,7 @@ impl EgressRunner {
         cache: Arc<TrackCache>,
         latest_info_sender: broadcast::Sender<TrackEvent>,
         publisher: Box<dyn Publisher>,
-        published_resource: PublishedResource,
+        downstream_subscription: DownstreamSubscription,
         ready_sender: oneshot::Sender<anyhow::Result<()>>,
     ) -> Self {
         Self {
@@ -33,7 +33,7 @@ impl EgressRunner {
             cache,
             latest_info_sender,
             publisher,
-            published_resource,
+            downstream_subscription,
             ready_sender,
         }
     }
@@ -41,8 +41,8 @@ impl EgressRunner {
     pub(crate) async fn run(self) -> anyhow::Result<()> {
         let (sender, receiver) = mpsc::channel(64);
 
-        let filter_type = self.published_resource.filter_type();
-        let group_order = self.published_resource.group_order();
+        let filter_type = self.downstream_subscription.filter_type();
+        let group_order = self.downstream_subscription.group_order();
         let scheduler = EgressScheduler::new(
             self.cache.clone(),
             self.latest_info_sender,
@@ -55,7 +55,7 @@ impl EgressRunner {
             self.track_key,
             self.cache,
             self.publisher,
-            self.published_resource,
+            self.downstream_subscription,
             receiver,
         );
 

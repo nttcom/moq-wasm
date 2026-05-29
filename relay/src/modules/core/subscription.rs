@@ -1,13 +1,16 @@
-use crate::modules::enums::{ContentExists, FilterType};
+use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
 
 #[derive(Clone)]
 pub struct UpstreamSubscription {
     inner: moqt::Subscription,
 }
 
-#[allow(dead_code)]
+/// A subscription the relay serves toward a downstream subscriber. Mirrors
+/// `UpstreamSubscription`: it holds the moqt `Subscription` and the relay sends
+/// objects on it. Receiving a SUBSCRIBE makes it subscriber-initiated; the relay
+/// forwarding a PUBLISH makes it publisher-initiated.
 #[derive(Clone)]
-pub struct DownstreamSubscription {
+pub(crate) struct DownstreamSubscription {
     inner: moqt::Subscription,
 }
 
@@ -65,10 +68,21 @@ impl From<moqt::PublisherInitiatedSubscription> for UpstreamSubscription {
     }
 }
 
-#[allow(dead_code)]
 impl DownstreamSubscription {
     pub(crate) fn as_moqt(&self) -> &moqt::Subscription {
         &self.inner
+    }
+
+    pub(crate) fn track_alias(&self) -> u64 {
+        self.inner.track_alias()
+    }
+
+    pub(crate) fn filter_type(&self) -> FilterType {
+        FilterType::from(self.inner.filter_type())
+    }
+
+    pub(crate) fn group_order(&self) -> GroupOrder {
+        GroupOrder::from(self.inner.group_order())
     }
 }
 

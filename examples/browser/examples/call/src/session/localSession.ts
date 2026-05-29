@@ -229,7 +229,10 @@ export class LocalSession {
       }, timeoutMs)
 
       this.client
-        .subscribe(subscribeId, trackNamespace, 'catalog', authInfo)
+        // filterType 2 = LargestObject: deliver the already-published catalog
+        // group immediately. NextGroupStart (the default) would skip the existing
+        // catalog and wait for a newer group that never comes, causing a timeout.
+        .subscribe(subscribeId, trackNamespace, 'catalog', authInfo, { filterType: 2 })
         .then((trackAlias) => {
           this.subscribeTrackAliases.set(subscribeId, trackAlias)
           this.client.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroup) => {

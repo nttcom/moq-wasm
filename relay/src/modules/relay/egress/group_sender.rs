@@ -6,8 +6,8 @@ use tracing::{Instrument, Span};
 use crate::modules::{
     core::{
         data_sender::{DataSender, stream_sender_factory::StreamSenderFactory},
-        published_resource::PublishedResource,
         publisher::Publisher,
+        subscription::DownstreamSubscription,
     },
     relay::{cache::track_cache::TrackCache, types::StreamSubgroupId},
     types::TrackKey,
@@ -20,7 +20,7 @@ pub(crate) struct GroupSender {
     track_key: TrackKey,
     cache: Arc<TrackCache>,
     publisher: Box<dyn Publisher>,
-    published_resource: PublishedResource,
+    downstream_subscription: DownstreamSubscription,
     receiver: mpsc::Receiver<GroupSendTask>,
 }
 
@@ -29,14 +29,14 @@ impl GroupSender {
         track_key: TrackKey,
         cache: Arc<TrackCache>,
         publisher: Box<dyn Publisher>,
-        published_resource: PublishedResource,
+        downstream_subscription: DownstreamSubscription,
         receiver: mpsc::Receiver<GroupSendTask>,
     ) -> Self {
         Self {
             track_key,
             cache,
             publisher,
-            published_resource,
+            downstream_subscription,
             receiver,
         }
     }
@@ -44,7 +44,7 @@ impl GroupSender {
     pub(crate) async fn run(mut self) {
         let mut stream_factory: Option<Box<dyn StreamSenderFactory>> = None;
         let mut joinset = JoinSet::<()>::new();
-        let track_alias = self.published_resource.track_alias();
+        let track_alias = self.downstream_subscription.track_alias();
 
         loop {
             tokio::select! {
@@ -56,7 +56,7 @@ impl GroupSender {
                             start_offset,
                         } => {
                             let factory = stream_factory
-                                .get_or_insert_with(|| self.publisher.new_stream_factory(&self.published_resource));
+                                .get_or_insert_with(|| self.publisher.new_stream_factory(&self.downstream_subscription));
                             let span = tracing::info_span!(
                                 "relay.dataplane.egress.stream",
                                 track_key = self.track_key,
@@ -90,7 +90,7 @@ impl GroupSender {
                             group_id,
                             start_offset,
                         } => {
-                            let sender = self.publisher.new_datagram(&self.published_resource);
+                            let sender = self.publisher.new_datagram(&self.downstream_subscription);
                             joinset.spawn(Self::send_datagram_task(
                                 track_alias,
                                 group_id,

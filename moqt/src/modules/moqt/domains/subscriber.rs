@@ -95,6 +95,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         option: SubscribeOption,
     ) -> anyhow::Result<Subscription> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
+        let filter_type = option.filter_type;
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
         self.session
@@ -142,6 +143,7 @@ impl<T: TransportProtocol> Subscriber<T> {
                                 track_namespace,
                                 track_name,
                                 message,
+                                filter_type,
                             ),
                         ));
                     }
@@ -158,7 +160,12 @@ impl<T: TransportProtocol> Subscriber<T> {
                         "subscriber registered incoming object receiver after SUBSCRIBE_OK"
                     );
                     Ok(Subscription::SubscriberInitiated(
-                        SubscriberInitiatedSubscription::new(track_namespace, track_name, message),
+                        SubscriberInitiatedSubscription::new(
+                            track_namespace,
+                            track_name,
+                            message,
+                            filter_type,
+                        ),
                     ))
                 }
             }

@@ -10,7 +10,7 @@ use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use moqt::{
     ClientConfig, ContentExists, DatagramField, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
-    PublisherInitiatedSubscription, QUIC, Session, SessionEvent, Subgroup, SubgroupId,
+    QUIC, Session, SessionEvent, Subgroup, SubgroupId,
     SubgroupObject, SubscribeOption, Subscription,
 };
 use redis::AsyncCommands;
@@ -21,6 +21,9 @@ const DEFAULT_REDIS_URL: &str = "redis://localhost:6379";
 const DEFAULT_TRACK_NAMESPACE: &str = "App/Channel/UserA";
 const DEFAULT_TRACK_NAME: &str = "video";
 const TEST_PAYLOAD: &[u8] = b"cascading relay e2e payload";
+const CATALOG_TRACK_NAME: &str = "catalog";
+const CATALOG_PAYLOAD: &[u8] = b"cascading relay e2e catalog payload";
+const ORDERED_OBJECT_COUNT: usize = 50;
 
 #[derive(Debug)]
 struct Config {
@@ -160,6 +163,25 @@ async fn run(config: Config) -> anyhow::Result<()> {
     )
     .await?;
 
+    run_namespace_catalog_track_scenario(
+        "dual relay namespace -> catalog -> track relay-a to relay-b",
+        &config.relay_a_url,
+        &config.relay_b_url,
+        &scenario_namespace(&config.track_namespace, &run_id, "catalog-track-a-to-b"),
+        &config.track_name,
+    )
+    .await?;
+
+    run_ordered_objects_scenario(
+        "dual relay ordered objects relay-a to relay-b",
+        &config.relay_a_url,
+        &config.relay_b_url,
+        &scenario_namespace(&config.track_namespace, &run_id, "ordered-a-to-b"),
+        &config.track_name,
+        ORDERED_OBJECT_COUNT,
+    )
+    .await?;
+
     run_namespace_cleanup_scenario(
         &config.redis_url,
         "relay-b",
@@ -264,9 +286,6 @@ async fn run_pub_sub_scenario(
             )
             .await
             .context("publisher failed to publish track")?;
-        let Subscription::PublisherInitiated(subscription) = subscription else {
-            bail!("publisher returned non-publisher-initiated subscription");
-        };
         Some(subscription)
     } else {
         None
@@ -338,6 +357,349 @@ async fn run_pub_sub_scenario(
     })
 }
 
+/// Exercises the realistic call flow end to end across two relays:
+/// publisher PUBLISH_NAMESPACE on relay-a, subscriber SUBSCRIBE_NAMESPACE on
+/// relay-b (and observes the resulting PUBLISH_NAMESPACE), then SUBSCRIBE the
+/// `catalog` track and a media track, verifying the right object arrives on each.
+async fn run_namespace_catalog_track_scenario(
+    name: &str,
+    publisher_url: &str,
+    subscriber_url: &str,
+    track_namespace: &str,
+    media_track_name: &str,
+) -> anyhow::Result<()> {
+    tracing::info!(
+        scenario = name,
+        %publisher_url,
+        %subscriber_url,
+        %track_namespace,
+        catalog_track_name = CATALOG_TRACK_NAME,
+        %media_track_name,
+        "running namespace -> catalog -> track scenario"
+    );
+
+    // Publisher: announce the namespace and answer SUBSCRIBE for catalog + media.
+    let publisher_session = Arc::new(connect_with_retry(publisher_url).await?);
+    publisher_session
+        .publisher()
+        .publish_namespace(track_namespace.to_string())
+        .await
+        .context("publisher failed to publish namespace")?;
+    let publisher_task = spawn_catalog_track_publisher_loop(
+        publisher_session.clone(),
+        media_track_name.to_string(),
+    );
+
+    // Give the namespace route time to propagate to the subscriber relay.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Subscriber: SUBSCRIBE_NAMESPACE and wait for the matching PUBLISH_NAMESPACE.
+    let subscriber_session = Arc::new(connect_with_retry(subscriber_url).await?);
+    let (discovered_tx, mut discovered_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let subscriber_task = spawn_subscriber_namespace_discovery_loop(
+        subscriber_session.clone(),
+        discovered_tx,
+    );
+
+    tracing::info!(track_namespace_prefix = %track_namespace, "subscriber sending SUBSCRIBE_NAMESPACE");
+    subscriber_session
+        .subscriber()
+        .subscribe_namespace(track_namespace.to_string())
+        .await
+        .context("subscriber failed to subscribe namespace")?;
+
+    let discovered = tokio::time::timeout(Duration::from_secs(15), discovered_rx.recv())
+        .await
+        .context("timed out waiting for PUBLISH_NAMESPACE")?
+        .context("subscriber namespace discovery loop closed before PUBLISH_NAMESPACE")?;
+    if !discovered.starts_with(track_namespace) {
+        bail!(
+            "discovered namespace {discovered:?} does not match expected prefix {track_namespace:?}"
+        );
+    }
+    tracing::info!(%discovered, "subscriber discovered namespace via PUBLISH_NAMESPACE");
+
+    // SUBSCRIBE the catalog track and verify its object.
+    let catalog = subscribe_and_receive_one_object(
+        subscriber_session.clone(),
+        track_namespace.to_string(),
+        CATALOG_TRACK_NAME.to_string(),
+    )
+    .await
+    .context("subscriber failed to receive catalog object")?;
+    if catalog != CATALOG_PAYLOAD {
+        bail!(
+            "unexpected catalog payload in {name}: expected {:?}, got {:?}",
+            CATALOG_PAYLOAD,
+            catalog
+        );
+    }
+    tracing::info!("subscriber received expected catalog object");
+
+    // SUBSCRIBE the media track and verify its object.
+    let media = subscribe_and_receive_one_object(
+        subscriber_session.clone(),
+        track_namespace.to_string(),
+        media_track_name.to_string(),
+    )
+    .await
+    .context("subscriber failed to receive track object")?;
+    if media != TEST_PAYLOAD {
+        bail!(
+            "unexpected track payload in {name}: expected {:?}, got {:?}",
+            TEST_PAYLOAD,
+            media
+        );
+    }
+    tracing::info!("subscriber received expected track object");
+
+    publisher_task.abort();
+    subscriber_task.abort();
+    tracing::info!(scenario = name, "namespace -> catalog -> track scenario passed");
+    Ok(())
+}
+
+/// Publisher event loop that answers SUBSCRIBE for the catalog and media tracks,
+/// sending a distinct payload on each so the subscriber can tell them apart.
+fn spawn_catalog_track_publisher_loop(
+    session: Arc<Session<QUIC>>,
+    media_track_name: String,
+) -> tokio::task::JoinHandle<anyhow::Result<()>> {
+    tokio::spawn(async move {
+        loop {
+            let event = session.receive_event().await?;
+            match event {
+                SessionEvent::Subscribe(handler) => {
+                    let track_name = handler.track_name.clone();
+                    let payload: &'static [u8] = if track_name == CATALOG_TRACK_NAME {
+                        CATALOG_PAYLOAD
+                    } else if track_name == media_track_name {
+                        TEST_PAYLOAD
+                    } else {
+                        tracing::warn!(%track_name, "publisher ignoring subscribe for unexpected track");
+                        continue;
+                    };
+                    tracing::info!(
+                        track_namespace = %handler.track_namespace,
+                        %track_name,
+                        "publisher received subscribe; responding with object"
+                    );
+                    // `ok()` allocates and returns the track_alias for this track;
+                    // send objects on that same alias so the relay can route them.
+                    // Hardcoding 0 collides once a second track is subscribed.
+                    let track_alias = handler.ok(1_000_000, ContentExists::False).await?;
+                    let publication = handler.into_subscriber_initiated_subscription(track_alias);
+                    send_test_object(session.clone(), publication, payload).await?;
+                }
+                SessionEvent::ProtocolViolation() => bail!("publisher protocol violation"),
+                SessionEvent::Disconnected() => return Ok(()),
+                _ => {}
+            }
+        }
+    })
+}
+
+/// Subscriber event loop that ACKs PUBLISH_NAMESPACE and reports each discovered
+/// namespace back to the scenario through `discovered_tx`.
+fn spawn_subscriber_namespace_discovery_loop(
+    session: Arc<Session<QUIC>>,
+    discovered_tx: tokio::sync::mpsc::UnboundedSender<String>,
+) -> tokio::task::JoinHandle<anyhow::Result<()>> {
+    tokio::spawn(async move {
+        loop {
+            let event = session.receive_event().await?;
+            match event {
+                SessionEvent::PublishNamespace(handler) => {
+                    let namespace = handler.track_namespace.clone();
+                    tracing::info!(
+                        track_namespace = %namespace,
+                        "subscriber received PUBLISH_NAMESPACE"
+                    );
+                    handler.ok().await?;
+                    let _ = discovered_tx.send(namespace);
+                }
+                SessionEvent::ProtocolViolation() => bail!("subscriber protocol violation"),
+                SessionEvent::Disconnected() => return Ok(()),
+                _ => {}
+            }
+        }
+    })
+}
+
+/// Publisher sends `count` objects in order on a single subgroup stream, then the
+/// subscriber reads them back and the scenario verifies they arrive in the same
+/// order with no gaps or reordering. Runs across two relays (relay-a -> relay-b).
+async fn run_ordered_objects_scenario(
+    name: &str,
+    publisher_url: &str,
+    subscriber_url: &str,
+    track_namespace: &str,
+    track_name: &str,
+    count: usize,
+) -> anyhow::Result<()> {
+    tracing::info!(
+        scenario = name,
+        %publisher_url,
+        %subscriber_url,
+        %track_namespace,
+        %track_name,
+        count,
+        "running ordered objects scenario"
+    );
+
+    let publisher_session = Arc::new(connect_with_retry(publisher_url).await?);
+    publisher_session
+        .publisher()
+        .publish_namespace(track_namespace.to_string())
+        .await
+        .context("publisher failed to publish namespace")?;
+    let publisher_task = spawn_ordered_objects_publisher_loop(publisher_session.clone(), count);
+
+    // Give the namespace route time to propagate to the subscriber relay.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let subscriber_session = Arc::new(connect_with_retry(subscriber_url).await?);
+    let received = tokio::time::timeout(
+        Duration::from_secs(30),
+        subscribe_and_receive_ordered_objects(
+            subscriber_session.clone(),
+            track_namespace.to_string(),
+            track_name.to_string(),
+            count,
+        ),
+    )
+    .await
+    .context("timed out waiting for ordered objects")??;
+
+    publisher_task.abort();
+
+    if received.len() != count {
+        bail!(
+            "expected {count} objects in {name}, got {}",
+            received.len()
+        );
+    }
+    for (index, payload) in received.iter().enumerate() {
+        let expected = ordered_object_payload(index);
+        if payload != &expected {
+            bail!(
+                "ordered objects out of order in {name} at index {index}: expected {:?}, got {:?}",
+                String::from_utf8_lossy(&expected),
+                String::from_utf8_lossy(payload)
+            );
+        }
+    }
+
+    tracing::info!(scenario = name, count, "ordered objects scenario passed (received in order)");
+    Ok(())
+}
+
+/// Publisher event loop that answers each SUBSCRIBE by sending `count` ordered
+/// objects (payload `ordered-object-{i}`) on a single subgroup stream.
+fn spawn_ordered_objects_publisher_loop(
+    session: Arc<Session<QUIC>>,
+    count: usize,
+) -> tokio::task::JoinHandle<anyhow::Result<()>> {
+    tokio::spawn(async move {
+        loop {
+            match session.receive_event().await? {
+                SessionEvent::Subscribe(handler) => {
+                    tracing::info!(
+                        track_namespace = %handler.track_namespace,
+                        track_name = %handler.track_name,
+                        count,
+                        "publisher received subscribe; sending ordered objects"
+                    );
+                    let track_alias = handler.ok(1_000_000, ContentExists::False).await?;
+                    let publication = handler.into_subscriber_initiated_subscription(track_alias);
+                    send_ordered_objects(session.clone(), publication, count).await?;
+                }
+                SessionEvent::ProtocolViolation() => bail!("publisher protocol violation"),
+                SessionEvent::Disconnected() => return Ok(()),
+                _ => {}
+            }
+        }
+    })
+}
+
+/// Sends `count` objects on one subgroup stream with sequential object ids
+/// (delta 0 for the first object, 1 for each subsequent one).
+async fn send_ordered_objects(
+    session: Arc<Session<QUIC>>,
+    publication: Subscription,
+    count: usize,
+) -> anyhow::Result<()> {
+    let stream_factory = session.publisher().create_stream(&publication);
+    let uninitialized = stream_factory.next().await?;
+    let header = uninitialized.create_header(0, SubgroupId::None, 128, false, false);
+    let mut stream = uninitialized.send_header(header).await?;
+    for index in 0..count {
+        let object_id_delta = if index == 0 { 0 } else { 1 };
+        let object = stream.create_object_field(
+            object_id_delta,
+            ExtensionHeaders {
+                prior_group_id_gap: vec![],
+                prior_object_id_gap: vec![],
+                immutable_extensions: vec![],
+            },
+            SubgroupObject::new_payload(Bytes::from(ordered_object_payload(index))),
+        );
+        stream.send(object).await?;
+    }
+    stream.close().await?;
+    tracing::info!(count, "publisher sent ordered objects");
+    Ok(())
+}
+
+/// Subscribes and reads exactly `count` payload objects in arrival order.
+async fn subscribe_and_receive_ordered_objects(
+    session: Arc<Session<QUIC>>,
+    track_namespace: String,
+    track_name: String,
+    count: usize,
+) -> anyhow::Result<Vec<Vec<u8>>> {
+    let option = SubscribeOption {
+        subscriber_priority: 128,
+        group_order: GroupOrder::Ascending,
+        forward: true,
+        filter_type: FilterType::LargestObject,
+    };
+    tracing::info!(%track_namespace, %track_name, count, "subscriber sending SUBSCRIBE for ordered objects");
+    let subscription = session
+        .subscriber()
+        .subscribe(track_namespace, track_name, option)
+        .await
+        .context("subscriber failed to subscribe")?;
+    let receiver = session
+        .subscriber()
+        .accept_data_receiver(&subscription)
+        .await
+        .context("subscriber failed to accept data receiver")?;
+
+    let mut payloads = Vec::with_capacity(count);
+    match receiver {
+        moqt::DataReceiver::Stream(mut factory) => {
+            let mut stream = factory.next().await?;
+            while payloads.len() < count {
+                if let Subgroup::Object(field) = stream.receive().await?
+                    && let SubgroupObject::Payload { data, .. } = field.subgroup_object
+                {
+                    payloads.push(data.to_vec());
+                }
+            }
+        }
+        moqt::DataReceiver::Datagram(_) => {
+            bail!("expected stream data receiver for ordered objects");
+        }
+    }
+    tracing::info!(received = payloads.len(), "subscriber received ordered objects");
+    Ok(payloads)
+}
+
+fn ordered_object_payload(index: usize) -> Vec<u8> {
+    format!("ordered-object-{index}").into_bytes()
+}
+
 async fn connect(url: &str) -> anyhow::Result<Session<QUIC>> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
@@ -395,7 +757,7 @@ fn spawn_publisher_event_loop(
                         "publisher received subscribe"
                     );
                     handler.ok(1_000_000, ContentExists::False).await?;
-                    let publication = handler.into_publication(0);
+                    let publication = handler.into_subscriber_initiated_subscription(0);
                     send_test_object(session.clone(), publication, payload).await?;
                     return Ok(());
                 }
@@ -409,7 +771,7 @@ fn spawn_publisher_event_loop(
 
 async fn send_test_object(
     session: Arc<Session<QUIC>>,
-    publication: PublisherInitiatedSubscription,
+    publication: Subscription,
     payload: &'static [u8],
 ) -> anyhow::Result<()> {
     let stream_factory = session.publisher().create_stream(&publication);

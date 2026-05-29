@@ -65,41 +65,41 @@ impl Unsubscribe {
             "downstream unsubscribe processed"
         );
 
-        if removed.remaining_downstream_subscriber_count == 0 {
-            if removed.upstream_origin == UpstreamSubscriptionOrigin::Subscribe {
-                if let Err(err) = forwarder
-                    .unsubscribe(
-                        removed.upstream_key.publisher_session_id,
-                        removed.upstream_request_id,
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        ?err,
-                        upstream_session_id = %removed.upstream_key.publisher_session_id,
-                        request_id = %removed.upstream_request_id,
-                        "failed to forward upstream unsubscribe"
-                    );
-                } else {
-                    tracing::info!(
-                        upstream_session_id = %removed.upstream_key.publisher_session_id,
-                        request_id = %removed.upstream_request_id,
-                        "forwarded upstream unsubscribe"
-                    );
-                }
+        if removed.remaining_downstream_subscriber_count == 0
+            && removed.upstream_origin == UpstreamSubscriptionOrigin::Subscribe
+        {
+            if let Err(err) = forwarder
+                .unsubscribe(
+                    removed.upstream_key.publisher_session_id,
+                    removed.upstream_request_id,
+                )
+                .await
+            {
+                tracing::warn!(
+                    ?err,
+                    upstream_session_id = %removed.upstream_key.publisher_session_id,
+                    request_id = %removed.upstream_request_id,
+                    "failed to forward upstream unsubscribe"
+                );
+            } else {
+                tracing::info!(
+                    upstream_session_id = %removed.upstream_key.publisher_session_id,
+                    request_id = %removed.upstream_request_id,
+                    "forwarded upstream unsubscribe"
+                );
+            }
 
-                if ingress_sender
-                    .send(IngressCommand::StopTrack {
-                        track_key: removed.track_key,
-                    })
-                    .await
-                    .is_err()
-                {
-                    tracing::error!(
-                        track_key = removed.track_key,
-                        "failed to send ingress stop request"
-                    );
-                }
+            if ingress_sender
+                .send(IngressCommand::StopTrack {
+                    track_key: removed.track_key,
+                })
+                .await
+                .is_err()
+            {
+                tracing::error!(
+                    track_key = removed.track_key,
+                    "failed to send ingress stop request"
+                );
             }
         }
     }

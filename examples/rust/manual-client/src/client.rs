@@ -8,7 +8,7 @@ use std::{
 };
 
 use moqt::{
-    DatagramField, Endpoint, PublisherInitiatedSubscription, Session, SubscribeOption,
+    DatagramField, Endpoint, Session, Subscription, SubscribeOption,
     TransportProtocol,
 };
 
@@ -109,7 +109,7 @@ impl<T: TransportProtocol> Client<T> {
                             let _ = subscribe_handler
                                 .ok(1000000, moqt::ContentExists::False)
                                 .await;
-                            let publication = subscribe_handler.into_publication(track_alias);
+                            let publication = subscribe_handler.into_subscriber_initiated_subscription(track_alias);
                             Self::create_stream(
                                 _label.clone(),
                                 session.clone(),
@@ -243,7 +243,7 @@ impl<T: TransportProtocol> Client<T> {
     async fn create_stream(
         label: String,
         session: Arc<Session<T>>,
-        publication: PublisherInitiatedSubscription,
+        publication: Subscription,
         runner: &StreamTaskRunner,
     ) {
         tracing::info!("{} :create stream", label);
@@ -299,7 +299,7 @@ impl<T: TransportProtocol> Client<T> {
     async fn create_datagram(
         label: String,
         publisher: &moqt::Publisher<T>,
-        publication: PublisherInitiatedSubscription,
+        publication: Subscription,
         runner: &StreamTaskRunner,
     ) {
         tracing::info!("{} :create datagram", label);

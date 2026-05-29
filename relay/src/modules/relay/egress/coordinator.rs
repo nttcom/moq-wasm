@@ -7,7 +7,7 @@ use tokio::{
 use tracing::{Instrument, Span};
 
 use crate::modules::{
-    core::published_resource::PublishedResource,
+    core::subscription::DownstreamSubscription,
     relay::{
         cache::store::TrackCacheStore, egress::runner::EgressRunner,
         notifications::track_notifier::ObjectNotifyProducerMap,
@@ -22,7 +22,7 @@ pub(crate) struct EgressStartRequest {
     pub(crate) track_key: TrackKey,
     pub(crate) track_namespace: String,
     pub(crate) track_name: String,
-    pub(crate) published_resources: PublishedResource,
+    pub(crate) downstream_subscription: DownstreamSubscription,
     pub(crate) parent_span: Span,
     pub(crate) ready_sender: oneshot::Sender<anyhow::Result<()>>,
 }
@@ -123,7 +123,7 @@ impl EgressCoordinator {
 
         let cache = cache_store.get_or_create(request.track_key);
         let latest_info_sender = object_notify_producer_map.get_or_create(request.track_key);
-        let track_alias = request.published_resources.track_alias();
+        let track_alias = request.downstream_subscription.track_alias();
         let egress_track_span = tracing::info_span!(
             parent: &request.parent_span,
             "relay.dataplane.egress.track",
@@ -140,7 +140,7 @@ impl EgressCoordinator {
             cache,
             latest_info_sender,
             publisher,
-            request.published_resources.clone(),
+            request.downstream_subscription.clone(),
             request.ready_sender,
         );
 

@@ -11,7 +11,7 @@ use media_streaming_format::{
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
 use moqt::{
-    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, PublisherInitiatedSubscription, QUIC,
+    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, QUIC, Subscription,
     Session, SessionEvent, SubgroupId, SubgroupObject, SubgroupObjectSender, TransportProtocol,
     WEBTRANSPORT,
 };
@@ -35,7 +35,7 @@ struct ManagerState {
 }
 
 struct TrackInfo<T: TransportProtocol> {
-    publication: Option<PublisherInitiatedSubscription>,
+    publication: Option<Subscription>,
     stream: Option<SubgroupObjectSender<T>>,
     object_id: u64,
     group_id: u64,
@@ -340,7 +340,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                             }
                         };
 
-                        let publication = handler.into_publication(track_alias);
+                        let publication = handler.into_subscriber_initiated_subscription(track_alias);
                         let should_send_catalog = track_name == CATALOG_TRACK_NAME;
                         let mut guard = state.lock().await;
                         guard.catalogs.entry(namespace.clone()).or_default();

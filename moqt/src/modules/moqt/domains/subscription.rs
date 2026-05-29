@@ -53,6 +53,20 @@ impl Subscription {
             Self::SubscriberInitiated(subscription) => Some(subscription.expires),
         }
     }
+
+    pub fn group_order(&self) -> GroupOrder {
+        match self {
+            Self::PublisherInitiated(subscription) => subscription.group_order,
+            Self::SubscriberInitiated(subscription) => subscription.group_order,
+        }
+    }
+
+    pub fn filter_type(&self) -> FilterType {
+        match self {
+            Self::PublisherInitiated(subscription) => subscription.filter_type,
+            Self::SubscriberInitiated(subscription) => subscription.filter_type,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +78,7 @@ pub struct SubscriberInitiatedSubscription {
     pub expires: u64,
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,
+    pub filter_type: FilterType,
     pub delivery_timeout: Option<u64>,
 }
 
@@ -72,6 +87,7 @@ impl SubscriberInitiatedSubscription {
         track_namespace: String,
         track_name: String,
         subscribe_ok: SubscribeOk,
+        filter_type: FilterType,
     ) -> Self {
         Self {
             request_id: subscribe_ok.request_id,
@@ -81,7 +97,25 @@ impl SubscriberInitiatedSubscription {
             expires: subscribe_ok.expires,
             group_order: subscribe_ok.group_order,
             content_exists: subscribe_ok.content_exists,
+            filter_type,
             delivery_timeout: None,
+        }
+    }
+
+    pub(crate) fn from_subscribe_handler<T: TransportProtocol>(
+        track_alias: u64,
+        handler: &SubscribeHandler<T>,
+    ) -> Self {
+        Self {
+            request_id: handler.request_id(),
+            track_namespace: handler.track_namespace.clone(),
+            track_name: handler.track_name.clone(),
+            track_alias,
+            expires: 0,
+            group_order: handler.group_order,
+            content_exists: ContentExists::False,
+            filter_type: handler.filter_type,
+            delivery_timeout: handler.delivery_timeout,
         }
     }
 }
@@ -124,23 +158,5 @@ impl PublisherInitiatedSubscription {
     pub(crate) fn with_content_exists(mut self, content_exists: ContentExists) -> Self {
         self.content_exists = content_exists;
         self
-    }
-
-    pub(crate) fn from_subscribe_handler<T: TransportProtocol>(
-        track_alias: u64,
-        handler: &SubscribeHandler<T>,
-    ) -> Self {
-        Self {
-            request_id: handler.request_id(),
-            track_namespace: handler.track_namespace.clone(),
-            track_name: handler.track_name.clone(),
-            track_alias,
-            group_order: handler.group_order,
-            content_exists: ContentExists::False,
-            subscriber_priority: handler.subscriber_priority,
-            forward: handler.forward,
-            filter_type: handler.filter_type,
-            delivery_timeout: None,
-        }
     }
 }
