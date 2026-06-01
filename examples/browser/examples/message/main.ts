@@ -385,15 +385,17 @@ function setupActionButtons(): void {
       return
     }
 
-    const trackAlias = (await moqtClient.subscribe(requestId, trackNamespace, trackName, authInfo, {
-      subscriberPriority,
-      groupOrder,
-      filterType,
-      startGroup,
-      startObject,
-      endGroup,
-      forward
-    })).trackAlias
+    const trackAlias = (
+      await moqtClient.subscribe(requestId, trackNamespace, trackName, authInfo, {
+        subscriberPriority,
+        groupOrder,
+        filterType,
+        startGroup,
+        startObject,
+        endGroup,
+        forward
+      })
+    ).trackAlias
 
     registerTrackAlias(requestId, trackAlias, {
       trackNamespace: [...trackNamespace],
