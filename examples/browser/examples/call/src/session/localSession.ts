@@ -97,7 +97,7 @@ export class LocalSession {
         console.info('[call][moqt] received SUBSCRIBE_OK', {
           contentExists: (response as any).contentExists ?? (response as any).content_exists,
           largestGroupId: response.largestGroupId?.toString(),
-          largestObjectId: response.largestObjectId?.toString(),
+          largestObjectId: response.largestObjectId?.toString()
         })
       } else {
         console.info('[call][moqt] received SUBSCRIBE response', response)
@@ -273,7 +273,7 @@ export class LocalSession {
             console.info('[call][catalog] content exists; fetching via Standalone Fetch', {
               trackNamespace,
               largestGroupId: largestGroupId.toString(),
-              largestObjectId: largestObjectId.toString(),
+              largestObjectId: largestObjectId.toString()
             })
             const fetchId = subscribeId + 1000000n
             this.client.setOnFetchObjectHandler(fetchId, (msg) => {
@@ -298,7 +298,7 @@ export class LocalSession {
           // Always set up stream handler for future catalog updates.
           this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroup) => {
             console.info('[call][catalog] payload received via subscribe stream', {
-              groupId: groupId.toString(),
+              groupId: groupId.toString()
             })
             handleCatalogPayload(new TextDecoder().decode(new Uint8Array(subgroup.objectPayload)))
           })

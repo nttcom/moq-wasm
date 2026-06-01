@@ -326,15 +326,7 @@ export class MoqtClientWrapper {
       }
       this.onFetchResponseHandler = handler
     })
-    await client.sendFetch(
-      requestId,
-      trackNamespace,
-      trackName,
-      startGroupId,
-      startObjectId,
-      endGroupId,
-      endObjectId
-    )
+    await client.sendFetch(requestId, trackNamespace, trackName, startGroupId, startObjectId, endGroupId, endObjectId)
     return response
   }
 
