@@ -257,7 +257,10 @@ export class LocalSession {
       }
 
       this.client
-        .subscribe(subscribeId, trackNamespace, 'catalog', authInfo)
+        // Largest Object (0x2) filter: receive catalog updates after the current
+        // largest object (fetched separately below). Prepares for a future move
+        // to Joining Fetch.
+        .subscribe(subscribeId, trackNamespace, 'catalog', authInfo, { filterType: 2 })
         .then(async (subscribeOk) => {
           const trackAlias = subscribeOk.trackAlias
           this.subscribeTrackAliases.set(subscribeId, trackAlias)
@@ -267,9 +270,15 @@ export class LocalSession {
           const largestGroupId: bigint | undefined = subscribeOk.largestGroupId
           const largestObjectId: bigint | undefined = subscribeOk.largestObjectId
           if (contentExists && largestGroupId !== undefined && largestObjectId !== undefined) {
+            console.info('[call][catalog] content exists; fetching via Standalone Fetch', {
+              trackNamespace,
+              largestGroupId: largestGroupId.toString(),
+              largestObjectId: largestObjectId.toString(),
+            })
             const fetchId = subscribeId + 1000000n
             this.client.setOnFetchObjectHandler(fetchId, (msg) => {
               if (msg.objectPayload.length > 0) {
+                console.info('[call][catalog] payload received via Standalone Fetch')
                 handleCatalogPayload(new TextDecoder().decode(new Uint8Array(msg.objectPayload)))
               }
             })
@@ -282,10 +291,15 @@ export class LocalSession {
               largestGroupId,
               largestObjectId
             )
+          } else {
+            console.info('[call][catalog] no content yet; waiting for subscribe stream', { trackNamespace })
           }
 
           // Always set up stream handler for future catalog updates.
-          this.client.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroup) => {
+          this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroup) => {
+            console.info('[call][catalog] payload received via subscribe stream', {
+              groupId: groupId.toString(),
+            })
             handleCatalogPayload(new TextDecoder().decode(new Uint8Array(subgroup.objectPayload)))
           })
         })
