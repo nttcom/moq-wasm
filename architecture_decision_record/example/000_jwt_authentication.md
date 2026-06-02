@@ -1,5 +1,8 @@
 # ADR 000: Example - JWT Authentication
 
+> [!WARNING]
+> This document is an example. No relation to product.
+
 ## Status
 Accepted
 
