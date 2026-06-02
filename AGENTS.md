@@ -6,24 +6,32 @@
 
 ## 2. Project Scope
 - This repository implements Media over QUIC Transport (MoQT), a low-latency, QUIC-based application-layer transport protocol.
-- The project is organized around the following components:
+- The project is organized around the following components.
+
+Library components (draft-governed):
 
 | Component | Description | Related Draft |
 | --- | --- | --- |
 | `moqt` | Core MoQT protocol implementation | `spec/draft-ietf-moq-transport-14.txt` |
 | `relay` | MoQT relay server, extending `moqt` with server-specific logic | `spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
 | `shared/media-streaming-format` | Object format for content transported over MoQT | `spec/draft-ietf-moq-msf-00.txt` |
-| `shared/packages` | Low-overhead container used internally by `media-streaming-format` | — |
-| `bindings/wasm` | WebAssembly bindings to use `moqt` from the browser | — |
-| `bridges/live-ingest` | Bridge converting RTMP/SRT streams into MoQT | — |
-| `bridges/onvif` | Bridge ingesting ONVIF camera streams into MoQT | — |
-| `examples/` | Usage examples and test clients | — |
+| `shared/packages` | Low-overhead container used internally by `media-streaming-format` | `spec/draft-ietf-moq-msf-00.txt` |
+
+Application and integration components (draft reference is normally not required):
+
+| Component | Description |
+| --- | --- |
+| `bindings/wasm` | WebAssembly bindings to use `moqt` from the browser |
+| `bridges/live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
+| `bridges/onvif` | Bridge ingesting ONVIF camera streams into MoQT |
+| `examples/` | Usage examples and test clients |
 
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
 
 ## 3. Specifications
 - MoQT-related specifications are stored in the `spec` directory.
-- Use only the draft listed in `Related Draft` as the authoritative specification for the component you are changing.
+- For library components listed in the draft-governed table above, use only the draft listed in `Related Draft` as the authoritative specification.
+- For application and integration components, draft lookup is not required unless the task explicitly asks for specification-level alignment.
 - Do not consult other drafts unless the task explicitly requires them.
 - When implementation details are unclear, consult the relevant draft before answering questions or making code changes.
 - For definitions shared by clients and servers, verify the draft text carefully and implement behavior accordingly.
