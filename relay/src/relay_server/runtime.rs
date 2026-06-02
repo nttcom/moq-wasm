@@ -54,6 +54,7 @@ impl RelayRuntime {
             route_registry,
             inter_relay_connection_manager,
             upstream_publisher_resolver,
+            store.cache_store.clone(),
         );
         (
             sender,

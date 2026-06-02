@@ -17,10 +17,11 @@ use bytes::{Buf, Bytes, BytesMut};
 #[cfg(feature = "web_sys_unstable_apis")]
 use moqt::wire::{
     AuthorizationToken, BufGetExt, BufPutExt, ClientSetup, ContentExists, ControlMessageType,
-    DatagramField, ExtensionHeaders, FilterType, GroupOrder, Location, NamespaceOk, ObjectDatagram,
-    ObjectStatus, Publish, PublishNamespace, PublishOk, RequestError, ServerSetup, SetupParameter,
-    SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace,
-    SubscribeOk, encode_control_message, take_control_message,
+    DatagramField, ExtensionHeaders, Fetch, FetchHeader, FetchObjectField, FetchOk, FetchType,
+    FilterType, GroupOrder, Location, NamespaceOk, ObjectDatagram, ObjectStatus, Publish,
+    PublishNamespace, PublishOk, RequestError, ServerSetup, SetupParameter, SubgroupHeader,
+    SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace, SubscribeOk,
+    encode_control_message, take_control_message,
 };
 #[cfg(feature = "web_sys_unstable_apis")]
 use std::{
@@ -399,6 +400,16 @@ impl MOQTClient {
         self.callbacks.borrow_mut().subgroup_object_callback = Some(callback);
     }
 
+    #[wasm_bindgen(js_name = onFetchResponse)]
+    pub fn set_fetch_response_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().fetch_response_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onFetchObject)]
+    pub fn set_fetch_object_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().fetch_object_callback = Some(callback);
+    }
+
     #[wasm_bindgen(js_name = onConnectionClosed)]
     pub fn set_connection_closed_callback(&mut self, callback: js_sys::Function) {
         self.callbacks.borrow_mut().connection_closed_callback = Some(callback);
@@ -628,6 +639,41 @@ impl MOQTClient {
             .borrow_mut()
             .start_outgoing_subscription(request_id, TrackKey::new(track_namespace, track_name));
         self.send_control_message(ControlMessageType::Subscribe, payload)
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendFetch)]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_fetch(
+        &self,
+        request_id: u64,
+        track_namespace: Vec<String>,
+        track_name: String,
+        start_group: u64,
+        start_object: u64,
+        end_group: u64,
+        end_object: u64,
+    ) -> Result<(), JsValue> {
+        let payload = Fetch {
+            request_id,
+            subscriber_priority: 0,
+            group_order: GroupOrder::Ascending,
+            fetch_type: FetchType::Standalone {
+                track_namespace,
+                track_name,
+                start_location: Location {
+                    group_id: start_group,
+                    object_id: start_object,
+                },
+                end_location: Location {
+                    group_id: end_group,
+                    object_id: end_object,
+                },
+            },
+            authorization_tokens: vec![],
+        }
+        .encode();
+        self.send_control_message(ControlMessageType::Fetch, payload)
             .await
     }
 
@@ -1153,9 +1199,14 @@ async fn uni_directional_stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
 ) -> Result<(), JsValue> {
-    let mut header: Option<SubgroupHeader> = None;
     let mut buf = BytesMut::new();
     let mut stream_snapshot = Vec::new();
+    // fetch stream state
+    let mut fetch_request_id: Option<u64> = None;
+    // subgroup stream state
+    let mut subgroup_header: Option<SubgroupHeader> = None;
+    // None = undecided, Some(true) = fetch, Some(false) = subgroup
+    let mut is_fetch_stream: Option<bool> = None;
 
     while let Some(chunk) = read_byte_chunk(reader).await? {
         let new_bytes = normalize_stream_chunk(&mut stream_snapshot, chunk);
@@ -1164,33 +1215,73 @@ async fn uni_directional_stream_read_thread(
         }
         buf.extend_from_slice(&new_bytes);
 
-        loop {
-            if header.is_none() {
-                match take_subgroup_header(&mut buf) {
-                    Ok(Some(parsed_header)) => {
-                        emit_subgroup_header(callbacks.clone(), &parsed_header)?;
-                        header = Some(parsed_header);
-                        continue;
+        // Detect stream type from the first varint if not yet determined.
+        if is_fetch_stream.is_none() {
+            let first_varint = {
+                let mut cursor = Cursor::new(buf.as_ref());
+                cursor.try_get_varint().ok()
+            };
+            match first_varint {
+                Some(FetchHeader::TYPE) => is_fetch_stream = Some(true),
+                Some(_) => is_fetch_stream = Some(false),
+                None => continue,
+            }
+        }
+
+        if is_fetch_stream == Some(true) {
+            // Parse FetchHeader to obtain request_id if not yet done.
+            if fetch_request_id.is_none() {
+                let mut cursor = Cursor::new(buf.as_ref());
+                match FetchHeader::decode(&mut cursor) {
+                    Ok(header) => {
+                        let consumed = cursor.position() as usize;
+                        buf.advance(consumed);
+                        fetch_request_id = Some(header.request_id);
                     }
-                    Ok(None) => break,
-                    Err(error) => return Err(js_error(error.to_string())),
+                    Err(moqt::wire::DecodeError::NeedMoreData) => continue,
+                    Err(moqt::wire::DecodeError::Fatal(error)) => return Err(js_error(error)),
                 }
             }
-
-            let parsed_header = header.clone().expect("subgroup header");
-            match SubgroupObjectField::decode(parsed_header.message_type, &mut buf) {
-                Ok(field) => {
-                    let object_id_delta = field.object_id_delta;
-                    emit_subgroup_object(
-                        callbacks.clone(),
-                        &parsed_header,
-                        field,
-                        object_id_delta,
-                    )?;
-                    continue;
+            let request_id = fetch_request_id.expect("request_id");
+            loop {
+                match FetchObjectField::decode(&mut buf) {
+                    Ok(field) => {
+                        emit_fetch_object(callbacks.clone(), request_id, &field)?;
+                        continue;
+                    }
+                    Err(moqt::wire::DecodeError::NeedMoreData) => break,
+                    Err(moqt::wire::DecodeError::Fatal(error)) => return Err(js_error(error)),
                 }
-                Err(moqt::wire::DecodeError::NeedMoreData) => break,
-                Err(moqt::wire::DecodeError::Fatal(error)) => return Err(js_error(error)),
+            }
+        } else {
+            loop {
+                if subgroup_header.is_none() {
+                    match take_subgroup_header(&mut buf) {
+                        Ok(Some(parsed_header)) => {
+                            emit_subgroup_header(callbacks.clone(), &parsed_header)?;
+                            subgroup_header = Some(parsed_header);
+                            continue;
+                        }
+                        Ok(None) => break,
+                        Err(error) => return Err(js_error(error.to_string())),
+                    }
+                }
+
+                let parsed_header = subgroup_header.clone().expect("subgroup header");
+                match SubgroupObjectField::decode(parsed_header.message_type, &mut buf) {
+                    Ok(field) => {
+                        let object_id_delta = field.object_id_delta;
+                        emit_subgroup_object(
+                            callbacks.clone(),
+                            &parsed_header,
+                            field,
+                            object_id_delta,
+                        )?;
+                        continue;
+                    }
+                    Err(moqt::wire::DecodeError::NeedMoreData) => break,
+                    Err(moqt::wire::DecodeError::Fatal(error)) => return Err(js_error(error)),
+                }
             }
         }
     }
@@ -1368,6 +1459,22 @@ async fn handle_control_message(
                 );
             }
         }
+        ControlMessageType::FetchOk => {
+            let message = FetchOk::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode FETCH_OK"))?;
+            if let Some(callback) = callbacks.borrow().fetch_response_callback.clone() {
+                let wrapper = FetchOkMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::FetchError => {
+            let message = RequestError::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode FETCH_ERROR"))?;
+            if let Some(callback) = callbacks.borrow().fetch_response_callback.clone() {
+                let wrapper = RequestErrorMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
         _ => {
             console_log!("Unhandled control message: {:?}", message_type);
         }
@@ -1527,6 +1634,19 @@ fn emit_subgroup_header(
             subgroup_id,
             header.publisher_priority,
         );
+        let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "web_sys_unstable_apis")]
+fn emit_fetch_object(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    request_id: u64,
+    field: &FetchObjectField,
+) -> Result<(), JsValue> {
+    if let Some(callback) = callbacks.borrow().fetch_object_callback.clone() {
+        let wrapper = FetchObjectMessage::new(request_id, field);
         let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
     }
     Ok(())
@@ -1752,6 +1872,8 @@ struct MOQTCallbacks {
     object_datagram_status_callback: Option<js_sys::Function>,
     subgroup_header_callback: Option<js_sys::Function>,
     subgroup_object_callback: Option<js_sys::Function>,
+    fetch_response_callback: Option<js_sys::Function>,
+    fetch_object_callback: Option<js_sys::Function>,
     connection_closed_callback: Option<js_sys::Function>,
 }
 
