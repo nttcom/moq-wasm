@@ -71,11 +71,12 @@
 
 ### Dependencies
 - Minimize the number of external crates. Prefer existing dependencies over adding new ones.
-- When adding a new crate, create an Architecture Decision Record (ADR) in the `architecture_decision_record/` directory of the relevant package. Each ADR must be a separate Markdown file named after the crate (e.g. `architecture_decision_record/tokio-util.md`). The ADR must include:
+- When adding a new crate, create an Architecture Decision Record (ADR) under the repository root `architecture_decision_record/`, using a package-specific subdirectory (e.g. `architecture_decision_record/moqt/tokio-util.md`). Each ADR must be a separate Markdown file named after the crate. The ADR must include:
   1. What — the crate being added and its purpose.
   2. Context — the problem or requirement that motivates the addition.
   3. Alternatives — other crates or approaches considered, with trade-offs.
   4. Decision — the final choice and rationale.
+- If you are unsure about ADR writing style or structure, refer to `architecture_decision_record/example/000_jwt_authentication.md` as a reference.
 
 ### Unsafe
 - `unsafe` is prohibited in principle.
