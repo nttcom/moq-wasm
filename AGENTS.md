@@ -106,6 +106,7 @@ Application and integration components (draft reference is normally not required
 - Lint (JavaScript): `npx prettier --check`
 - Wasm: `wasm-pack build bindings/wasm`
 - Relay: `cargo run --bin relay`
+- E2E Test: `node scripts/run-media-e2e.mjs`
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 
 ## 6. Testing Guidelines
