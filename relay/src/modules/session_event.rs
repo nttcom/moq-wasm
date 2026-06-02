@@ -1,5 +1,5 @@
 use crate::modules::core::handler::{
-    publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
+    fetch::FetchHandler, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
     subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
     unsubscribe::UnsubscribeHandler,
 };
@@ -11,6 +11,7 @@ pub(crate) enum SessionEvent {
     Publish(SessionId, Box<dyn PublishHandler>),
     Subscribe(SessionId, Box<dyn SubscribeHandler>),
     Unsubscribe(SessionId, Box<dyn UnsubscribeHandler>),
+    Fetch(SessionId, Box<dyn FetchHandler>),
     Disconnected(SessionId),
     ProtocolViolation(SessionId),
 }
