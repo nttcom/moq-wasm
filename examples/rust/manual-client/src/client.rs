@@ -109,7 +109,7 @@ impl<T: TransportProtocol> Client<T> {
                             let _ = subscribe_handler
                                 .ok(1000000, moqt::ContentExists::False)
                                 .await;
-                            let publication = subscribe_handler.into_subscriber_initiated_subscription(track_alias);
+                            let publication = subscribe_handler.into_subscription(track_alias);
                             Self::create_stream(
                                 _label.clone(),
                                 session.clone(),

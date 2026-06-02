@@ -521,7 +521,7 @@ async fn handle_media_subscribe_event(
             track_name,
             alias
         );
-        let publication = handler.into_subscriber_initiated_subscription(alias);
+        let publication = handler.into_subscription(alias);
         catalog_state.track_publication = Some(publication.clone());
         log::info!(
             "Sending initial catalog object: namespace={} track={} group_id={} track_alias={}",
@@ -569,7 +569,7 @@ async fn handle_media_subscribe_event(
 
     let should_start_rtsp = selected_profile_index.is_none();
     let alias = handler.ok(1_000_000, ContentExists::False).await?;
-    let publication = handler.into_subscriber_initiated_subscription(alias);
+    let publication = handler.into_subscription(alias);
     if let Some(selected_index) = selected_profile_index {
         debug_assert_eq!(*selected_index, profile_index);
     } else {

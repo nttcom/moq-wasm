@@ -340,7 +340,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                             }
                         };
 
-                        let publication = handler.into_subscriber_initiated_subscription(track_alias);
+                        let publication = handler.into_subscription(track_alias);
                         let should_send_catalog = track_name == CATALOG_TRACK_NAME;
                         let mut guard = state.lock().await;
                         guard.catalogs.entry(namespace.clone()).or_default();

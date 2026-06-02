@@ -89,6 +89,6 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
     }
 
     fn to_downstream_subscription(&self, track_alias: u64) -> DownstreamSubscription {
-        DownstreamSubscription::from(self.into_subscriber_initiated_subscription(track_alias))
+        DownstreamSubscription::from(self.into_subscription(track_alias))
     }
 }

@@ -110,7 +110,7 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
 
     /// Builds the subscription this handler represents. Receiving a SUBSCRIBE
     /// makes it subscriber-initiated.
-    pub fn into_subscriber_initiated_subscription(&self, track_alias: u64) -> Subscription {
+    pub fn into_subscription(&self, track_alias: u64) -> Subscription {
         Subscription::SubscriberInitiated(SubscriberInitiatedSubscription::from_subscribe_handler(
             track_alias,
             self,

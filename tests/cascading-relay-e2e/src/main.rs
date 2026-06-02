@@ -488,8 +488,8 @@ fn spawn_catalog_track_publisher_loop(
                     // send objects on that same alias so the relay can route them.
                     // Hardcoding 0 collides once a second track is subscribed.
                     let track_alias = handler.ok(1_000_000, ContentExists::False).await?;
-                    let publication = handler.into_subscriber_initiated_subscription(track_alias);
-                    send_test_object(session.clone(), publication, payload).await?;
+                    let downstream_subscription = handler.into_subscription(track_alias);
+                    send_test_object(session.clone(), downstream_subscription, payload).await?;
                 }
                 SessionEvent::ProtocolViolation() => bail!("publisher protocol violation"),
                 SessionEvent::Disconnected() => return Ok(()),
@@ -611,8 +611,8 @@ fn spawn_ordered_objects_publisher_loop(
                         "publisher received subscribe; sending ordered objects"
                     );
                     let track_alias = handler.ok(1_000_000, ContentExists::False).await?;
-                    let publication = handler.into_subscriber_initiated_subscription(track_alias);
-                    send_ordered_objects(session.clone(), publication, count).await?;
+                    let downstream_subscription = handler.into_subscription(track_alias);
+                    send_ordered_objects(session.clone(), downstream_subscription, count).await?;
                 }
                 SessionEvent::ProtocolViolation() => bail!("publisher protocol violation"),
                 SessionEvent::Disconnected() => return Ok(()),
@@ -626,10 +626,10 @@ fn spawn_ordered_objects_publisher_loop(
 /// (delta 0 for the first object, 1 for each subsequent one).
 async fn send_ordered_objects(
     session: Arc<Session<QUIC>>,
-    publication: Subscription,
+    downstream_subscription: Subscription,
     count: usize,
 ) -> anyhow::Result<()> {
-    let stream_factory = session.publisher().create_stream(&publication);
+    let stream_factory = session.publisher().create_stream(&downstream_subscription);
     let uninitialized = stream_factory.next().await?;
     let header = uninitialized.create_header(0, SubgroupId::None, 128, false, false);
     let mut stream = uninitialized.send_header(header).await?;
@@ -757,8 +757,8 @@ fn spawn_publisher_event_loop(
                         "publisher received subscribe"
                     );
                     handler.ok(1_000_000, ContentExists::False).await?;
-                    let publication = handler.into_subscriber_initiated_subscription(0);
-                    send_test_object(session.clone(), publication, payload).await?;
+                    let downstream_subscription = handler.into_subscription(0);
+                    send_test_object(session.clone(), downstream_subscription, payload).await?;
                     return Ok(());
                 }
                 SessionEvent::ProtocolViolation() => bail!("publisher protocol violation"),
@@ -771,10 +771,10 @@ fn spawn_publisher_event_loop(
 
 async fn send_test_object(
     session: Arc<Session<QUIC>>,
-    publication: Subscription,
+    downstream_subscription: Subscription,
     payload: &'static [u8],
 ) -> anyhow::Result<()> {
-    let stream_factory = session.publisher().create_stream(&publication);
+    let stream_factory = session.publisher().create_stream(&downstream_subscription);
     let uninitialized = stream_factory.next().await?;
     let header = uninitialized.create_header(0, SubgroupId::None, 128, false, false);
     let mut stream = uninitialized.send_header(header).await?;
