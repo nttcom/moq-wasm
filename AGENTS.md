@@ -36,6 +36,7 @@ Application and integration components (draft reference is normally not required
 - When implementation details are unclear, consult the relevant draft before answering questions or making code changes.
 - For definitions shared by clients and servers, verify the draft text carefully and implement behavior accordingly.
 - If ambiguity remains after consulting both the specification and this document, ask the user for clarification rather than guessing.
+- When the draft uses MUST, SHOULD, or MAY (RFC 2119 keywords), ask the user how far to implement before proceeding.
 - Do not read the entire draft. Search for the relevant section heading or keyword to locate the needed content.
 
 ## 4. Coding Style
@@ -106,8 +107,10 @@ Application and integration components (draft reference is normally not required
 - Lint (JavaScript): `npx prettier --check`
 - Wasm: `wasm-pack build bindings/wasm`
 - Relay: `cargo run --bin relay`
+- After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 
 ## 6. Testing Guidelines
+- Write unit tests inside the target module using `#[cfg(test)] mod tests`.
 - Structure test code using the Arrange / Act / Assert pattern.
 - Extract Arrange-phase setup into shared utility files; do not duplicate setup across test files.
 - In the Act and Assert phases, add comments at an appropriate granularity so the test intent and verification points are easy to scan.
