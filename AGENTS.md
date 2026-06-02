@@ -30,14 +30,13 @@ Application and integration components (draft reference is normally not required
 
 ## 3. Specifications
 - MoQT-related specifications are stored in the `spec` directory.
-- For library components listed in the draft-governed table above, use only the draft listed in `Related Draft` as the authoritative specification.
+- For library components listed in the draft-governed table above, use only the draft listed in `Related Draft` as the authoritative specification. Do not consult other drafts unless the task explicitly requires them.
 - For application and integration components, draft lookup is not required unless the task explicitly asks for specification-level alignment.
-- Do not consult other drafts unless the task explicitly requires them.
-- When implementation details are unclear, consult the relevant draft before answering questions or making code changes.
-- For definitions shared by clients and servers, verify the draft text carefully and implement behavior accordingly.
-- If ambiguity remains after consulting both the specification and this document, ask the user for clarification rather than guessing.
-- When the draft uses MUST, SHOULD, or MAY (RFC 2119 keywords), ask the user how far to implement before proceeding.
 - Do not read the entire draft. Search for the relevant section heading or keyword to locate the needed content.
+- When implementation details are unclear, consult the relevant draft before answering questions or making code changes.
+  - For definitions shared by clients and servers, verify the draft text carefully and implement behavior accordingly.
+- When the draft uses MUST, SHOULD, or MAY (RFC 2119 keywords), ask the user how far to implement before proceeding.
+- If ambiguity remains after consulting both the specification and this document, ask the user for clarification rather than guessing.
 
 ## 4. Coding Style
 
