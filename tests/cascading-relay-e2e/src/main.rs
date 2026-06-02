@@ -10,8 +10,8 @@ use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use moqt::{
     ClientConfig, ContentExists, DatagramField, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
-    QUIC, Session, SessionEvent, Subgroup, SubgroupId,
-    SubgroupObject, SubscribeOption, Subscription,
+    QUIC, Session, SessionEvent, Subgroup, SubgroupId, SubgroupObject, SubscribeOption,
+    Subscription,
 };
 use redis::AsyncCommands;
 
@@ -385,10 +385,8 @@ async fn run_namespace_catalog_track_scenario(
         .publish_namespace(track_namespace.to_string())
         .await
         .context("publisher failed to publish namespace")?;
-    let publisher_task = spawn_catalog_track_publisher_loop(
-        publisher_session.clone(),
-        media_track_name.to_string(),
-    );
+    let publisher_task =
+        spawn_catalog_track_publisher_loop(publisher_session.clone(), media_track_name.to_string());
 
     // Give the namespace route time to propagate to the subscriber relay.
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -396,10 +394,8 @@ async fn run_namespace_catalog_track_scenario(
     // Subscriber: SUBSCRIBE_NAMESPACE and wait for the matching PUBLISH_NAMESPACE.
     let subscriber_session = Arc::new(connect_with_retry(subscriber_url).await?);
     let (discovered_tx, mut discovered_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let subscriber_task = spawn_subscriber_namespace_discovery_loop(
-        subscriber_session.clone(),
-        discovered_tx,
-    );
+    let subscriber_task =
+        spawn_subscriber_namespace_discovery_loop(subscriber_session.clone(), discovered_tx);
 
     tracing::info!(track_namespace_prefix = %track_namespace, "subscriber sending SUBSCRIBE_NAMESPACE");
     subscriber_session
@@ -455,7 +451,10 @@ async fn run_namespace_catalog_track_scenario(
 
     publisher_task.abort();
     subscriber_task.abort();
-    tracing::info!(scenario = name, "namespace -> catalog -> track scenario passed");
+    tracing::info!(
+        scenario = name,
+        "namespace -> catalog -> track scenario passed"
+    );
     Ok(())
 }
 
@@ -574,10 +573,7 @@ async fn run_ordered_objects_scenario(
     publisher_task.abort();
 
     if received.len() != count {
-        bail!(
-            "expected {count} objects in {name}, got {}",
-            received.len()
-        );
+        bail!("expected {count} objects in {name}, got {}", received.len());
     }
     for (index, payload) in received.iter().enumerate() {
         let expected = ordered_object_payload(index);
@@ -590,7 +586,11 @@ async fn run_ordered_objects_scenario(
         }
     }
 
-    tracing::info!(scenario = name, count, "ordered objects scenario passed (received in order)");
+    tracing::info!(
+        scenario = name,
+        count,
+        "ordered objects scenario passed (received in order)"
+    );
     Ok(())
 }
 
@@ -692,7 +692,10 @@ async fn subscribe_and_receive_ordered_objects(
             bail!("expected stream data receiver for ordered objects");
         }
     }
-    tracing::info!(received = payloads.len(), "subscriber received ordered objects");
+    tracing::info!(
+        received = payloads.len(),
+        "subscriber received ordered objects"
+    );
     Ok(payloads)
 }
 

@@ -130,7 +130,10 @@ impl<T: TransportProtocol> SessionContext<T> {
     /// updated under the object-sinks lock so the registration is atomic. If a
     /// receiver is already attached the existing one is left untouched and
     /// `already_registered` is returned.
-    pub(crate) async fn register_data_receiver(&self, track_alias: u64) -> DataReceiverRegistration {
+    pub(crate) async fn register_data_receiver(
+        &self,
+        track_alias: u64,
+    ) -> DataReceiverRegistration {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
         let mut sinks = self.object_sinks.lock().await;
 

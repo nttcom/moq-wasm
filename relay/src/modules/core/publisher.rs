@@ -21,7 +21,8 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         &self,
         downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn StreamSenderFactory>;
-    fn new_datagram(&self, downstream_subscription: &DownstreamSubscription) -> Box<dyn DataSender>;
+    fn new_datagram(&self, downstream_subscription: &DownstreamSubscription)
+    -> Box<dyn DataSender>;
 }
 
 #[async_trait]
@@ -52,7 +53,10 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         ))
     }
 
-    fn new_datagram(&self, downstream_subscription: &DownstreamSubscription) -> Box<dyn DataSender> {
+    fn new_datagram(
+        &self,
+        downstream_subscription: &DownstreamSubscription,
+    ) -> Box<dyn DataSender> {
         let sender = self.create_datagram(downstream_subscription.as_moqt());
         let sender = DatagramSender::new(sender);
         Box::new(sender)

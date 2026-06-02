@@ -7,10 +7,7 @@ use std::{
     },
 };
 
-use moqt::{
-    DatagramField, Endpoint, Session, Subscription, SubscribeOption,
-    TransportProtocol,
-};
+use moqt::{DatagramField, Endpoint, Session, SubscribeOption, Subscription, TransportProtocol};
 
 use crate::stream_runner::StreamTaskRunner;
 

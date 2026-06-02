@@ -11,8 +11,8 @@ use media_streaming_format::{
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
 use moqt::{
-    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, QUIC, Subscription,
-    Session, SessionEvent, SubgroupId, SubgroupObject, SubgroupObjectSender, TransportProtocol,
+    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, QUIC, Session, SessionEvent,
+    SubgroupId, SubgroupObject, SubgroupObjectSender, Subscription, TransportProtocol,
     WEBTRANSPORT,
 };
 use tokio::sync::Mutex;
