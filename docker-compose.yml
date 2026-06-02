@@ -16,7 +16,8 @@ services:
   relay-a:
     image: moqt-relay:local
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       RELAY_ID: relay-a
       RELAY_ADVERTISE_HOST: relay-a
@@ -37,7 +38,8 @@ services:
   relay-b:
     image: moqt-relay:local
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       RELAY_ID: relay-b
       RELAY_ADVERTISE_HOST: relay-b
