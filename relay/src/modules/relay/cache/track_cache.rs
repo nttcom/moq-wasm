@@ -118,11 +118,12 @@ impl TrackCache {
     /// Ideally, the cache should track {group_id, object_id} directly at ingestion time
     /// to make this O(1). Deferred to a cache redesign task.
     pub(crate) async fn largest_location(&self) -> Option<moqt::Location> {
-        let groups = self.stream_groups.read().await;
-        let (&group_id, subgroups) = groups.iter().next_back()?;
-        let (_, cache) = subgroups.iter().next_back()?;
-        let cache = cache.clone();
-        drop(groups);
+        let (group_id, cache) = {
+            let groups = self.stream_groups.read().await;
+            let (&group_id, subgroups) = groups.iter().next_back()?;
+            let (_, cache) = subgroups.iter().next_back()?;
+            (group_id, cache.clone())
+        };
 
         let objects = cache.snapshot().await;
         let mut prev_object_id: Option<u64> = None;
