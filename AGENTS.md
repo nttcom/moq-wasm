@@ -49,6 +49,9 @@ Application and integration components (draft reference is normally not required
 ### Error Handling
 - Use `anyhow::Result` by default.
 - Use `std::io::Result` only when explicitly instructed.
+- For recoverable failures, do not use `panic!`/`unwrap`; return `Result` instead.
+- `panic!`/`unwrap` is allowed during initialization/startup only when the process cannot continue safely.
+- `panic!`/`unreachable!` is allowed for proven unreachable states only; in this case, add a comment that explains the invariant.
 - Choose `bool` / `Option` / `Result` in this order:
   1. If the caller needs the failure reason or recovery action, use `Result`.
   2. Otherwise, if a value may be absent as a normal case, use `Option`.
