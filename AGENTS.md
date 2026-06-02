@@ -79,7 +79,7 @@ Application and integration components (draft reference is normally not required
 
 ### Dependencies
 - Minimize the number of external crates. Prefer existing dependencies over adding new ones.
-- When adding a new crate, create an Architecture Decision Record (ADR) under the repository root `architecture_decision_record/`, using a package-specific subdirectory (e.g. `architecture_decision_record/moqt/tokio-util.md`). Each ADR must be a separate Markdown file named after the crate. The ADR must include:
+- When adding a new crate, create an Architecture Decision Record (ADR) under `architecture_decision_record/${package_name}/` at the repository root. Use the target package's `name` value in `Cargo.toml` as `${package_name}` (e.g. `architecture_decision_record/media-streaming-format/tokio-util.md` for `shared/media-streaming-format`). Each ADR must be a separate Markdown file named after the crate. The ADR must include:
   1. What — the crate being added and its purpose.
   2. Context — the problem or requirement that motivates the addition.
   3. Alternatives — other crates or approaches considered, with trade-offs.
