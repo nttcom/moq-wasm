@@ -34,7 +34,13 @@ impl RelayRuntime {
             store.cache_store.clone(),
             store.object_notify_producer_map.clone(),
         );
-        let manager = EventHandler::run(repo, receiver, ingress.sender(), egress.sender());
+        let manager = EventHandler::run(
+            repo,
+            receiver,
+            ingress.sender(),
+            egress.sender(),
+            store.cache_store.clone(),
+        );
         (
             sender,
             Self {
