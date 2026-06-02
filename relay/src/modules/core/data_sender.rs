@@ -1,4 +1,5 @@
 pub(crate) mod datagram_sender;
+pub(crate) mod fetch_sender;
 pub(crate) mod stream_sender;
 pub(crate) mod stream_sender_factory;
 
