@@ -71,7 +71,7 @@
 
 ### Dependencies
 - Minimize the number of external crates. Prefer existing dependencies over adding new ones.
-- When adding a new crate, create an Architecture Decision Record (ADR) in the `ArchitectureDecisionRecord/` directory of the relevant package. Each ADR must be a separate Markdown file named after the crate (e.g. `ArchitectureDecisionRecord/tokio-util.md`). The ADR must include:
+- When adding a new crate, create an Architecture Decision Record (ADR) in the `architecture_decision_record/` directory of the relevant package. Each ADR must be a separate Markdown file named after the crate (e.g. `architecture_decision_record/tokio-util.md`). The ADR must include:
   1. What — the crate being added and its purpose.
   2. Context — the problem or requirement that motivates the addition.
   3. Alternatives — other crates or approaches considered, with trade-offs.
@@ -92,9 +92,9 @@
 ## 6. Testing Guidelines
 - Structure test code using the Arrange / Act / Assert pattern.
 - Extract Arrange-phase setup into shared utility files; do not duplicate setup across test files.
-- In the Act and Assert phases, add Japanese comments at an appropriate granularity so the test intent and verification points are easy to scan.
+- In the Act and Assert phases, add comments at an appropriate granularity so the test intent and verification points are easy to scan.
 - If the flow of operations or the expected result is not immediately obvious, do not leave the Act and Assert phases without comments.
-- When modifying tests, confirm that shared Arrange utilities still have reusable responsibilities and scope, and that the Japanese comments in Act and Assert remain sufficiently descriptive.
+- When modifying tests, confirm that shared Arrange utilities still have reusable responsibilities and scope, and that the comments in Act and Assert remain sufficiently descriptive.
 
 ## 7. Logging
 Always use the `tracing` crate for log output (e.g. `tracing::info!`, `tracing::debug!`).
