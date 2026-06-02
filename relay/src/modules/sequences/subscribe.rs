@@ -1,7 +1,11 @@
+use std::sync::Arc;
+
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::subscribe::SubscribeHandler,
+    enums::{ContentExists, Location},
     relay::{
+        cache::store::TrackCacheStore,
         egress::coordinator::{EgressCommand, EgressStartRequest},
         ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     },
@@ -54,6 +58,7 @@ impl Subscribe {
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
+        cache_store: &Arc<TrackCacheStore>,
         handler: Box<dyn SubscribeHandler>,
     ) {
         let track_namespace = handler.track_namespace();
@@ -107,6 +112,7 @@ impl Subscribe {
             active_upstream,
             table,
             egress_sender,
+            cache_store,
             handler.as_ref(),
         )
         .await;
@@ -302,14 +308,22 @@ impl Subscribe {
         active_upstream: ActiveUpstreamSubscription,
         table: &dyn LocalPubSubDirectory,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
+        cache_store: &Arc<TrackCacheStore>,
         handler: &dyn SubscribeHandler,
     ) {
-        let Ok(subscriber_track_alias) = handler
-            .ok(
-                active_upstream.expires,
-                active_upstream.content_exists.clone(),
-            )
-            .await
+        let content_exists = match cache_store.get(active_upstream.track_key) {
+            Some(cache) => match cache.largest_location().await {
+                Some(loc) => ContentExists::True {
+                    location: Location {
+                        group_id: loc.group_id,
+                        object_id: loc.object_id,
+                    },
+                },
+                None => active_upstream.content_exists.clone(),
+            },
+            None => active_upstream.content_exists.clone(),
+        };
+        let Ok(subscriber_track_alias) = handler.ok(active_upstream.expires, content_exists).await
         else {
             tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
             // TODO: send_unsubscribe

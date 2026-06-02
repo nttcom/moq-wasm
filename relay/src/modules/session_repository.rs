@@ -123,6 +123,14 @@ fn log_session_event(event: &MoqtSessionEvent) {
                 "Received session event"
             );
         }
+        MoqtSessionEvent::Fetch(handler) => {
+            tracing::info!(
+                event = "Fetch",
+                request_id = handler.request_id(),
+                fetch_type = ?handler.fetch_type(),
+                "Received session event"
+            );
+        }
         MoqtSessionEvent::Disconnected() => {
             tracing::info!(event = "Disconnected", "Received session event");
         }

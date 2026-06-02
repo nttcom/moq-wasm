@@ -44,6 +44,9 @@ impl<T: moqt::TransportProtocol> Session for moqt::Session<T> {
             }
             moqt::SessionEvent::Disconnected() => MoqtSessionEvent::Disconnected(),
             moqt::SessionEvent::ProtocolViolation() => MoqtSessionEvent::ProtocolViolation(),
+            moqt::SessionEvent::Fetch(fetch_handler) => {
+                MoqtSessionEvent::Fetch(Box::new(fetch_handler))
+            }
         };
         Ok(result)
     }
