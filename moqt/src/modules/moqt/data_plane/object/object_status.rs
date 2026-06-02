@@ -1,7 +1,7 @@
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
 
-#[derive(Debug, Serialize, Clone, PartialEq, TryFromPrimitive, IntoPrimitive, Copy)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
 #[repr(u8)]
 pub enum ObjectStatus {
     Normal = 0x0,

@@ -58,4 +58,8 @@ impl GroupCache {
     pub(crate) async fn is_closed(&self) -> bool {
         *self.end_of_group.read().await
     }
+
+    pub(crate) async fn snapshot(&self) -> Vec<Arc<DataObject>> {
+        self.objects.read().await.clone()
+    }
 }

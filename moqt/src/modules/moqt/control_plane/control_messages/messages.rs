@@ -1,4 +1,6 @@
 pub mod client_setup;
+pub mod fetch;
+pub mod fetch_ok;
 pub mod go_away;
 pub mod namespace_ok;
 pub mod parameters;
