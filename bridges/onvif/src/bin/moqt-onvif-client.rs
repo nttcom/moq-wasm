@@ -466,6 +466,9 @@ async fn handle_session_event(
                 .await;
             Ok(None)
         }
+        SessionEvent::Fetch(_) => {
+            todo!()
+        }
     }
 }
 

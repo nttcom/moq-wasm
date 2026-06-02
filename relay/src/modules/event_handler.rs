@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 use crate::modules::{
     relay::{egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressCommand},
     sequences::{
+        fetch::Fetch,
         notifier::SessionSignalingDispatcher,
         publish::Publish,
         publish_namespace::PublishNamespace,
@@ -64,6 +65,7 @@ impl EventHandler {
                             | SessionEvent::Publish(session_id, _)
                             | SessionEvent::Subscribe(session_id, _)
                             | SessionEvent::Unsubscribe(session_id, _)
+                            | SessionEvent::Fetch(session_id, _)
                             | SessionEvent::Disconnected(session_id)
                             | SessionEvent::ProtocolViolation(session_id) => *session_id,
                         };
@@ -139,6 +141,18 @@ impl EventHandler {
                                         signaling_state_table.as_ref(),
                                         &session_signaling_dispatcher,
                                         &ingress_sender,
+                                        &egress_sender,
+                                        handler,
+                                    )
+                                    .await;
+                            }
+                            SessionEvent::Fetch(session_id, handler) => {
+                                let fetch = Fetch {};
+                                fetch
+                                    .handle(
+                                        session_id,
+                                        &session_span,
+                                        signaling_state_table.as_ref(),
                                         &egress_sender,
                                         handler,
                                     )
@@ -254,6 +268,13 @@ impl EventHandler {
                 "relay.session.event",
                 session_id = %session_id,
                 event = "Disconnected",
+            ),
+            SessionEvent::Fetch(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "Fetch",
+                request_id = handler.request_id(),
             ),
             SessionEvent::ProtocolViolation(session_id) => tracing::info_span!(
                 parent: session_span,

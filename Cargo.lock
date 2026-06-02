@@ -1808,6 +1808,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fetch-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "moqt",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "ffmpeg-next"
 version = "8.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

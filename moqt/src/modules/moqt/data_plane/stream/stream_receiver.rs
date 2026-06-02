@@ -3,14 +3,14 @@ use tokio_util::codec::{Decoder, FramedRead};
 
 use crate::modules::moqt::{
     data_plane::codec::{
-        control_message_decoder::ControlMessageDecoder, subgroup_decoder::SubgroupDecoder,
-        tokio_reader::Reader,
+        control_message_decoder::ControlMessageDecoder, tokio_reader::Reader,
+        uni_stream_decoder::UniStreamDecoder,
     },
     protocol::TransportProtocol,
 };
 
 pub(crate) type BiStreamReceiver<T> = StreamReceiver<T, 1024, ControlMessageDecoder>;
-pub(crate) type UniStreamReceiver<T> = StreamReceiver<T, { 64 * 1024 }, SubgroupDecoder>;
+pub(crate) type UniStreamReceiver<T> = StreamReceiver<T, { 64 * 1024 }, UniStreamDecoder>;
 
 #[derive(Debug)]
 pub(crate) enum StreamReceiveError {

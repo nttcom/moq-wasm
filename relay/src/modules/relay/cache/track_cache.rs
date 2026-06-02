@@ -158,4 +158,95 @@ impl TrackCache {
             .map(|subgroups| subgroups.keys().cloned().collect())
             .unwrap_or_default()
     }
+
+    pub(crate) async fn get_fetch_objects(
+        &self,
+        start: moqt::Location,
+        end: moqt::Location,
+    ) -> Vec<moqt::FetchObjectField> {
+        // Collect all GroupCaches in the requested group range, tagged with their group_id.
+        // Example for start={group=1, object=3}, end={group=2, object=5}:
+        //   [(1, GroupCache),  // group=1, subgroup=0
+        //    (1, GroupCache),  // group=1, subgroup=1  <- group 1 has 2 subgroups
+        //    (2, GroupCache)]  // group=2, subgroup=0
+        let caches_in_range: Vec<(u64, Arc<GroupCache>)> = {
+            // NOTE: Datagram objects are not included.
+            let groups = self.stream_groups.read().await;
+            let mut caches_in_range = Vec::new();
+            for (&group_id, subgroup_map) in groups.range(start.group_id..=end.group_id) {
+                for cache in subgroup_map.values() {
+                    caches_in_range.push((group_id, cache.clone()));
+                }
+            }
+            caches_in_range
+        };
+
+        // Convert each GroupCache into FetchObjectFields.
+        // For the first and last group, filter objects by object_id.
+        // Example for start={group=1, object=3}, end={group=2, object=5}:
+        //   group=1: skip object_id 0,1,2 -> include 3,4,...
+        //   group=2: include object_id 0,1,2,3,4 -> stop before 5 (exclusive)
+        let mut fetch_objects = Vec::new();
+        for (group_id, cache) in caches_in_range {
+            let subgroup_objects = cache.snapshot().await;
+
+            let Some(header) = subgroup_objects.first() else {
+                tracing::error!("unexpected: GroupCache is empty");
+                continue;
+            };
+            let (publisher_priority, subgroup_id) = match header.as_ref() {
+                DataObject::SubgroupHeader(h) => (h.publisher_priority, h.subgroup_id.resolve()),
+                _ => {
+                    tracing::error!("unexpected: GroupCache does not start with SubgroupHeader");
+                    continue;
+                }
+            };
+
+            let mut prev_object_id: Option<u64> = None;
+            // skip index=0 which is SubgroupHeader
+            for obj in subgroup_objects.iter().skip(1) {
+                let field = match obj.as_ref() {
+                    DataObject::SubgroupObject(f) => f,
+                    _ => continue,
+                };
+                // Resolve absolute object_id from object_id_delta
+                let current_object_id = field.resolve_object_id(prev_object_id);
+                prev_object_id = Some(current_object_id);
+
+                // Apply range filter for first and last groups
+                if group_id == start.group_id && current_object_id < start.object_id {
+                    continue;
+                }
+                // end.object_id == 0 means entire group is requested
+                if group_id == end.group_id
+                    && end.object_id != 0
+                    && current_object_id > end.object_id
+                {
+                    break;
+                }
+
+                // Convert to FetchObjectField and append to fetch_objects
+                let fetch_object = match &field.subgroup_object {
+                    moqt::SubgroupObject::Payload { data, .. } => {
+                        moqt::FetchObject::Payload(data.clone())
+                    }
+                    moqt::SubgroupObject::Status { code, .. } => {
+                        let Ok(status) = moqt::ObjectStatus::try_from(*code as u8) else {
+                            continue;
+                        };
+                        moqt::FetchObject::Status(status)
+                    }
+                };
+                fetch_objects.push(moqt::FetchObjectField::new(
+                    group_id,
+                    subgroup_id,
+                    current_object_id,
+                    publisher_priority,
+                    field.extension_headers.clone(),
+                    fetch_object,
+                ));
+            }
+        }
+        fetch_objects
+    }
 }
