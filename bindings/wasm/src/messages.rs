@@ -1,8 +1,9 @@
 mod subgroup_state;
 
 use moqt::wire::{
-    ContentExists, FilterType, NamespaceOk, ObjectStatus, Publish, PublishNamespace, PublishOk,
-    RequestError, ServerSetup, Subscribe, SubscribeNamespace, SubscribeOk,
+    ContentExists, FetchObject, FetchObjectField, FetchOk, FilterType, NamespaceOk, ObjectStatus,
+    Publish, PublishNamespace, PublishOk, RequestError, ServerSetup, Subscribe, SubscribeNamespace,
+    SubscribeOk,
 };
 use packages::loc::LocHeader;
 pub use subgroup_state::SubgroupState;
@@ -758,6 +759,94 @@ impl SubgroupObjectMessage {
             object_payload_length: object_payload.len() as u32,
             object_payload,
             loc_header,
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub struct FetchOkMessage {
+    request_id: u64,
+    end_group_id: u64,
+    end_object_id: u64,
+    end_of_track: bool,
+}
+
+#[wasm_bindgen]
+impl FetchOkMessage {
+    #[wasm_bindgen(getter, js_name = requestId)]
+    pub fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
+    #[wasm_bindgen(getter, js_name = endGroupId)]
+    pub fn end_group_id(&self) -> u64 {
+        self.end_group_id
+    }
+
+    #[wasm_bindgen(getter, js_name = endObjectId)]
+    pub fn end_object_id(&self) -> u64 {
+        self.end_object_id
+    }
+
+    #[wasm_bindgen(getter, js_name = endOfTrack)]
+    pub fn end_of_track(&self) -> bool {
+        self.end_of_track
+    }
+}
+
+impl From<&FetchOk> for FetchOkMessage {
+    fn from(message: &FetchOk) -> Self {
+        Self {
+            request_id: message.request_id,
+            end_group_id: message.end_location.group_id,
+            end_object_id: message.end_location.object_id,
+            end_of_track: message.end_of_track,
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub struct FetchObjectMessage {
+    request_id: u64,
+    group_id: u64,
+    object_id: u64,
+    object_payload: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl FetchObjectMessage {
+    #[wasm_bindgen(getter, js_name = requestId)]
+    pub fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
+    #[wasm_bindgen(getter, js_name = groupId)]
+    pub fn group_id(&self) -> u64 {
+        self.group_id
+    }
+
+    #[wasm_bindgen(getter, js_name = objectId)]
+    pub fn object_id(&self) -> u64 {
+        self.object_id
+    }
+
+    #[wasm_bindgen(getter, js_name = objectPayload)]
+    pub fn object_payload(&self) -> Vec<u8> {
+        self.object_payload.clone()
+    }
+}
+
+impl FetchObjectMessage {
+    pub(crate) fn new(request_id: u64, field: &FetchObjectField) -> Self {
+        let payload = match &field.fetch_object {
+            FetchObject::Payload(data) => data.to_vec(),
+            FetchObject::Status(_) => Vec::new(),
+        };
+        Self {
+            request_id,
+            group_id: field.group_id,
+            object_id: field.object_id,
+            object_payload: payload,
         }
     }
 }

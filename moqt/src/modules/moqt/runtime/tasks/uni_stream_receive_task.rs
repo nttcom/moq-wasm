@@ -7,12 +7,13 @@ use crate::{
     modules::{
         moqt::{
             data_plane::{
-                codec::subgroup_decoder::SubgroupDecoder,
-                stream::stream_receiver::UniStreamReceiver,
+                codec::uni_stream_decoder::{UniStreamData, UniStreamDecoder},
+                stream::{fetch_data_receiver::Fetch, stream_receiver::UniStreamReceiver},
             },
             domains::session_context::SessionContext,
             runtime::dispatch::{
-                incoming_object::IncomingObject, subscription_notifier::SubscriptionNotifier,
+                fetch_notifier::FetchNotifier, incoming_object::IncomingObject,
+                subscription_notifier::SubscriptionNotifier,
             },
         },
         transport::transport_connection::TransportConnection,
@@ -35,7 +36,8 @@ impl UniStreamReceiveTask {
                         match context.transport_connection.accept_uni().await {
                             Ok(stream) => {
                                 tracing::info!("accepted incoming uni stream");
-                                let stream = UniStreamReceiver::new(stream, SubgroupDecoder::new());
+                                let stream =
+                                    UniStreamReceiver::new(stream, UniStreamDecoder::new());
                                 Self::on_stream_received(&context, stream).await;
                             }
                             Err(_) => {
@@ -55,14 +57,11 @@ impl UniStreamReceiveTask {
         context: &Arc<SessionContext<T>>,
         mut stream: UniStreamReceiver<T>,
     ) -> bool {
-        let subgroup = match stream.receive().await {
-            Ok(subgroup) => {
-                if let Some(subgroup) = subgroup {
-                    subgroup
-                } else {
-                    tracing::info!("Stream closed before receiving data");
-                    return false;
-                }
+        let stream_data = match stream.receive().await {
+            Ok(Some(stream_data)) => stream_data,
+            Ok(None) => {
+                tracing::info!("Stream closed before receiving data");
+                return false;
             }
             Err(_) => {
                 tracing::error!("Stream closed before receiving data");
@@ -70,30 +69,33 @@ impl UniStreamReceiveTask {
             }
         };
 
-        let subgroup_header = match subgroup {
-            Subgroup::Header(header) => {
+        match stream_data {
+            UniStreamData::Subgroup(Subgroup::Header(header)) => {
                 tracing::info!(
                     track_alias = header.track_alias,
                     group_id = header.group_id,
                     "received subgroup header"
                 );
-                header
+                SubscriptionNotifier::notify(
+                    context,
+                    header.track_alias,
+                    IncomingObject::StreamHeader { stream, header },
+                )
+                .await;
+            }
+            UniStreamData::Fetch(Fetch::Header(header)) => {
+                FetchNotifier::notify(
+                    context,
+                    header.request_id,
+                    IncomingObject::Fetch { stream, header },
+                )
+                .await;
             }
             _ => {
-                tracing::error!("First message in stream is not a subgroup header");
+                tracing::error!("First message in stream is not a header");
                 return false;
             }
-        };
-
-        SubscriptionNotifier::notify(
-            context,
-            subgroup_header.track_alias,
-            IncomingObject::StreamHeader {
-                stream,
-                header: subgroup_header,
-            },
-        )
-        .await;
+        }
         true
     }
 }

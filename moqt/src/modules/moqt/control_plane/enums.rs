@@ -1,9 +1,12 @@
 use crate::{
     TransportProtocol,
     modules::moqt::control_plane::{
-        control_messages::messages::{publish_ok::PublishOk, subscribe_ok::SubscribeOk},
+        control_messages::messages::{
+            fetch_ok::FetchOk, publish_ok::PublishOk, subscribe_ok::SubscribeOk,
+        },
         handler::{
-            publish_handler::PublishHandler, publish_namespace_handler::PublishNamespaceHandler,
+            fetch_handler::FetchHandler, publish_handler::PublishHandler,
+            publish_namespace_handler::PublishNamespaceHandler,
             subscribe_handler::SubscribeHandler,
             subscribe_namespace_handler::SubscribeNamespaceHandler,
             unsubscribe_handler::UnsubscribeHandler,
@@ -26,6 +29,7 @@ pub enum SessionEvent<T: TransportProtocol> {
     Publish(PublishHandler<T>),
     Subscribe(SubscribeHandler<T>),
     Unsubscribe(UnsubscribeHandler<T>),
+    Fetch(FetchHandler<T>),
     Disconnected(),
     ProtocolViolation(),
 }
@@ -41,4 +45,6 @@ pub(crate) enum ResponseMessage {
     PublishError(RequestId, ErrorCode, ErrorPhrase),
     SubscribeOk(SubscribeOk),
     SubscribeError(RequestId, ErrorCode, ErrorPhrase),
+    FetchOk(FetchOk),
+    FetchError(RequestId, ErrorCode, ErrorPhrase),
 }

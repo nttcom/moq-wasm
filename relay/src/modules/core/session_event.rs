@@ -1,5 +1,5 @@
 use crate::modules::core::handler::{
-    publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
+    fetch::FetchHandler, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
     subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
     unsubscribe::UnsubscribeHandler, unsubscribe_namespace::UnsubscribeNamespaceHandler,
 };
@@ -11,6 +11,7 @@ pub(crate) enum MoqtSessionEvent {
     Publish(Box<dyn PublishHandler>),
     Subscribe(Box<dyn SubscribeHandler>),
     Unsubscribe(Box<dyn UnsubscribeHandler>),
+    Fetch(Box<dyn FetchHandler>),
     Disconnected(),
     ProtocolViolation(),
 }
@@ -24,6 +25,7 @@ impl std::fmt::Debug for MoqtSessionEvent {
             MoqtSessionEvent::Publish(_) => "Publish",
             MoqtSessionEvent::Subscribe(_) => "Subscribe",
             MoqtSessionEvent::Unsubscribe(_) => "Unsubscribe",
+            MoqtSessionEvent::Fetch(_) => "Fetch",
             MoqtSessionEvent::Disconnected() => "Disconnected",
             MoqtSessionEvent::ProtocolViolation() => "ProtocolViolation",
         };

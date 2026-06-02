@@ -27,12 +27,21 @@ pub(crate) struct EgressStartRequest {
     pub(crate) ready_sender: oneshot::Sender<anyhow::Result<()>>,
 }
 
+pub(crate) struct EgressFetchRequest {
+    pub(crate) subscriber_session_id: SessionId,
+    pub(crate) request_id: u64,
+    pub(crate) track_key: TrackKey,
+    pub(crate) start_location: moqt::Location,
+    pub(crate) end_location: moqt::Location,
+}
+
 pub(crate) enum EgressCommand {
     StartReader(Box<EgressStartRequest>),
     StopReader {
         subscriber_session_id: SessionId,
         downstream_subscribe_id: u64,
     },
+    StartFetch(EgressFetchRequest),
 }
 
 pub(crate) struct EgressCoordinator {
@@ -85,6 +94,14 @@ impl EgressCoordinator {
                             handle.abort();
                         }
                     }
+                    EgressCommand::StartFetch(request) => {
+                        Self::spawn_fetch_delivery(
+                            session_repo.clone(),
+                            cache_store.clone(),
+                            request,
+                        )
+                        .await;
+                    }
                 }
             }
 
@@ -101,6 +118,49 @@ impl EgressCoordinator {
 
     pub(crate) fn sender(&self) -> mpsc::Sender<EgressCommand> {
         self.command_sender.clone()
+    }
+
+    async fn spawn_fetch_delivery(
+        session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+        cache_store: Arc<TrackCacheStore>,
+        request: EgressFetchRequest,
+    ) {
+        // publisher = relay's outbound handle to the session that issued FETCH
+        let publisher = session_repo
+            .lock()
+            .await
+            .publisher(request.subscriber_session_id);
+        let Some(publisher) = publisher else {
+            tracing::error!("session not found for fetch");
+            return;
+        };
+
+        let Some(cache) = cache_store.get(request.track_key) else {
+            tracing::error!("cache not found for fetch");
+            return;
+        };
+
+        tokio::spawn(async move {
+            let sender = match publisher.new_fetch_sender(request.request_id).await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(?e, "failed to create fetch sender");
+                    return;
+                }
+            };
+            let objects = cache
+                .get_fetch_objects(request.start_location, request.end_location)
+                .await;
+            for object in objects {
+                if let Err(e) = sender.send(object).await {
+                    tracing::error!(?e, "failed to send fetch object");
+                    return;
+                }
+            }
+            if let Err(e) = sender.close().await {
+                tracing::error!(?e, "failed to close fetch stream");
+            }
+        });
     }
 
     async fn spawn_runner(

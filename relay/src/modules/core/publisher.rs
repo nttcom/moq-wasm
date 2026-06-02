@@ -4,6 +4,7 @@ use crate::modules::core::{
     data_sender::{
         DataSender,
         datagram_sender::DatagramSender,
+        fetch_sender::FetchSender,
         stream_sender_factory::{ConcreteStreamSenderFactory, StreamSenderFactory},
     },
     subscription::DownstreamSubscription,
@@ -23,6 +24,7 @@ pub(crate) trait Publisher: 'static + Send + Sync {
     ) -> Box<dyn StreamSenderFactory>;
     fn new_datagram(&self, downstream_subscription: &DownstreamSubscription)
     -> Box<dyn DataSender>;
+    async fn new_fetch_sender(&self, request_id: u64) -> anyhow::Result<Box<dyn FetchSender>>;
 }
 
 #[async_trait]
@@ -60,5 +62,10 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         let sender = self.create_datagram(downstream_subscription.as_moqt());
         let sender = DatagramSender::new(sender);
         Box::new(sender)
+    }
+
+    async fn new_fetch_sender(&self, request_id: u64) -> anyhow::Result<Box<dyn FetchSender>> {
+        let sender = self.create_fetch_stream(request_id).await?;
+        Ok(Box::new(sender))
     }
 }

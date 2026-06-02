@@ -21,6 +21,7 @@ impl RelaySessionEventResolver {
             MoqtSessionEvent::Unsubscribe(handler) => {
                 SessionEvent::Unsubscribe(session_id, handler)
             }
+            MoqtSessionEvent::Fetch(handler) => SessionEvent::Fetch(session_id, handler),
             MoqtSessionEvent::Disconnected() => SessionEvent::Disconnected(session_id),
             MoqtSessionEvent::ProtocolViolation() => SessionEvent::ProtocolViolation(session_id),
         }

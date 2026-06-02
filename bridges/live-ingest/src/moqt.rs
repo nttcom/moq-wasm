@@ -387,6 +387,9 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                             handler.track_namespace, handler.track_name
                         );
                     }
+                    SessionEvent::Fetch(_) => {
+                        todo!()
+                    }
                 }
             }
         })

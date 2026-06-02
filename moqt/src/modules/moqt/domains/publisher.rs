@@ -5,21 +5,30 @@ use anyhow::bail;
 
 use crate::{
     DatagramSender,
-    modules::moqt::{
-        control_plane::{
-            control_messages::{
-                control_message_type::ControlMessageType,
-                messages::{publish::Publish, publish_namespace::PublishNamespace},
+    modules::{
+        moqt::{
+            control_plane::{
+                control_messages::{
+                    control_message_type::ControlMessageType,
+                    messages::{publish::Publish, publish_namespace::PublishNamespace},
+                },
+                enums::ResponseMessage,
+                options::PublishOption,
             },
-            enums::ResponseMessage,
-            options::PublishOption,
+            data_plane::{
+                object::fetch::FetchHeader,
+                stream::{
+                    fetch_data_sender::FetchDataSender,
+                    stream_data_sender_factory::StreamDataSenderFactory,
+                },
+            },
+            domains::{
+                session_context::SessionContext,
+                subscription::{PublisherInitiatedSubscription, Subscription},
+            },
+            protocol::TransportProtocol,
         },
-        data_plane::stream::stream_data_sender_factory::StreamDataSenderFactory,
-        domains::{
-            session_context::SessionContext,
-            subscription::{PublisherInitiatedSubscription, Subscription},
-        },
-        protocol::TransportProtocol,
+        transport::transport_connection::TransportConnection,
     },
 };
 
@@ -141,5 +150,10 @@ impl<T: TransportProtocol> Publisher<T> {
 
     pub fn create_datagram(&self, subscription: &Subscription) -> DatagramSender<T> {
         DatagramSender::new(subscription.track_alias(), self.session.clone())
+    }
+
+    pub async fn create_fetch_stream(&self, request_id: u64) -> anyhow::Result<FetchDataSender<T>> {
+        let send_stream = self.session.transport_connection.open_uni().await?;
+        FetchDataSender::new(send_stream, FetchHeader::new(request_id)).await
     }
 }

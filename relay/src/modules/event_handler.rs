@@ -4,10 +4,14 @@ use tokio::sync::mpsc;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     inter_relay::InterRelayConnectionManager,
-    relay::{egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressCommand},
+    relay::{
+        cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
+        ingress::ingress_coordinator::IngressCommand,
+    },
     route_registry::RelayRouteRegistry,
     sequences::{
         CascadingRelayContext,
+        fetch::Fetch,
         publish::Publish,
         publish_namespace::PublishNamespace,
         subscribe::Subscribe,
@@ -41,6 +45,7 @@ impl EventHandler {
         route_registry: Arc<dyn RelayRouteRegistry>,
         inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
         upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
+        cache_store: Arc<TrackCacheStore>,
     ) -> Self {
         let relay_session_event_handler = Self::create_relay_session_event_handler(
             repo,
@@ -50,6 +55,7 @@ impl EventHandler {
             route_registry,
             inter_relay_connection_manager,
             upstream_publisher_resolver,
+            cache_store,
         );
         Self {
             relay_session_event_handler,
@@ -64,6 +70,7 @@ impl EventHandler {
         route_registry: Arc<dyn RelayRouteRegistry>,
         inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
         upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
+        cache_store: Arc<TrackCacheStore>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Relay Session Event Handler")
@@ -81,6 +88,7 @@ impl EventHandler {
                             | SessionEvent::Publish(session_id, _)
                             | SessionEvent::Subscribe(session_id, _)
                             | SessionEvent::Unsubscribe(session_id, _)
+                            | SessionEvent::Fetch(session_id, _)
                             | SessionEvent::Disconnected(session_id)
                             | SessionEvent::ProtocolViolation(session_id) => *session_id,
                         };
@@ -173,6 +181,7 @@ impl EventHandler {
                                         &ingress_sender,
                                         &egress_sender,
                                         upstream_publisher_resolver.as_ref(),
+                                        &cache_store,
                                         handler,
                                     )
                                     .await;
@@ -186,6 +195,18 @@ impl EventHandler {
                                         local_pub_sub_directory.as_ref(),
                                         &control_message_forwarder,
                                         &ingress_sender,
+                                        &egress_sender,
+                                        handler,
+                                    )
+                                    .await;
+                            }
+                            SessionEvent::Fetch(session_id, handler) => {
+                                let fetch = Fetch {};
+                                fetch
+                                    .handle(
+                                        session_id,
+                                        &session_span,
+                                        local_pub_sub_directory.as_ref(),
                                         &egress_sender,
                                         handler,
                                     )
@@ -312,6 +333,13 @@ impl EventHandler {
                 "relay.session.event",
                 session_id = %session_id,
                 event = "Disconnected",
+            ),
+            SessionEvent::Fetch(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "Fetch",
+                request_id = handler.request_id(),
             ),
             SessionEvent::ProtocolViolation(session_id) => tracing::info_span!(
                 parent: session_span,
