@@ -49,6 +49,12 @@ Application and integration components (draft reference is normally not required
 ### Error Handling
 - Use `anyhow::Result` by default.
 - Use `std::io::Result` only when explicitly instructed.
+- Choose `bool` / `Option` / `Result` in this order:
+  1. If the caller needs the failure reason or recovery action, use `Result`.
+  2. Otherwise, if a value may be absent as a normal case, use `Option`.
+  3. Otherwise, use `bool` for pure yes/no semantics.
+- Use `Option` only when `None` is an expected and non-error state.
+- If the return state may expand beyond true/false in the future, prefer a dedicated enum over `bool`.
 
 ### Async / Tasks
 - No special naming convention for async functions.
