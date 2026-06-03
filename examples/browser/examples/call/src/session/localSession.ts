@@ -282,15 +282,9 @@ export class LocalSession {
                 handleCatalogPayload(new TextDecoder().decode(new Uint8Array(msg.objectPayload)))
               }
             })
-            await this.client.fetch(
-              fetchId,
-              trackNamespace,
-              'catalog',
-              largestGroupId,
-              largestObjectId,
-              largestGroupId,
-              largestObjectId
-            )
+            // Catalog = one object per group (object_id always 0). End is exclusive, but
+            // object_id==0 means "whole group", so this fetches exactly the latest catalog.
+            await this.client.fetch(fetchId, trackNamespace, 'catalog', largestGroupId, 0n, largestGroupId, 0n)
           } else {
             console.info('[call][catalog] no content yet; waiting for subscribe stream', { trackNamespace })
           }
