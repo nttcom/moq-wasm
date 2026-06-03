@@ -6,6 +6,7 @@ use crate::{
     SessionEvent, TransportProtocol,
     modules::moqt::{
         control_plane::{
+            constants::TerminationErrorCode,
             enums::ResponseMessage,
             handler::{
                 fetch_handler::FetchHandler, publish_handler::PublishHandler,
@@ -71,7 +72,15 @@ impl ControlMessageReceiveTask {
                                             tracing::error!("failed to send message: {:?}", error);
                                         }
                                     } else {
-                                        tracing::error!("Protocol violation");
+                                        tracing::error!(
+                                            request_id,
+                                            "Protocol violation: response for unknown or already-completed Request ID; closing session"
+                                        );
+                                        session.close_with_error(
+                                            TerminationErrorCode::ProtocolViolation,
+                                            "received response for unknown or already-completed Request ID",
+                                        );
+                                        break;
                                     }
                                 }
                             }

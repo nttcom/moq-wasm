@@ -84,27 +84,23 @@ impl<T: TransportProtocol> PublishHandler<T> {
     }
 
     pub async fn accept_data_receiver(&self) {
-        let registration = self
+        if let Err(code) = self
             .session_context
             .register_data_receiver(self.track_alias)
-            .await;
-        if registration.already_registered {
-            tracing::info!(
+            .await
+        {
+            // The track alias is already bound to another active subscription.
+            // draft-14 §9.8: close the session with DUPLICATE_TRACK_ALIAS.
+            tracing::error!(
                 track_alias = self.track_alias,
-                "publish handler incoming object receiver is already registered"
+                "PUBLISH reused an in-use track alias; closing session"
             );
+            self.session_context
+                .close_with_error(code, "PUBLISH reused an in-use track alias");
             return;
-        }
-        if registration.failed_to_drain {
-            tracing::warn!(
-                track_alias = self.track_alias,
-                "failed to drain pending incoming object"
-            );
         }
         tracing::info!(
             track_alias = self.track_alias,
-            drained_pending = registration.drained_pending,
-            replaced_receiver = registration.replaced_receiver,
             "publish handler registered incoming object receiver"
         );
     }

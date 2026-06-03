@@ -131,34 +131,23 @@ impl<T: TransportProtocol> Subscriber<T> {
                     bail!("Protocol violation")
                 } else {
                     tracing::info!("Subscribe ok");
-                    let registration = self
+                    if let Err(code) = self
                         .session
                         .register_data_receiver(message.track_alias)
-                        .await;
-                    if registration.already_registered {
-                        tracing::info!(
+                        .await
+                    {
+                        // The track alias is already bound to another active subscription.
+                        // draft-14 §9.8: the subscriber MUST close with DUPLICATE_TRACK_ALIAS.
+                        tracing::error!(
                             track_alias = message.track_alias,
-                            "subscriber incoming object receiver is already registered"
+                            "SUBSCRIBE_OK reused an in-use track alias; closing session"
                         );
-                        return Ok(Subscription::SubscriberInitiated(
-                            SubscriberInitiatedSubscription::new(
-                                track_namespace,
-                                track_name,
-                                message,
-                                filter_type,
-                            ),
-                        ));
-                    }
-                    if registration.failed_to_drain {
-                        tracing::warn!(
-                            track_alias = message.track_alias,
-                            "failed to drain pending incoming object"
-                        );
+                        self.session
+                            .close_with_error(code, "SUBSCRIBE_OK reused an in-use track alias");
+                        bail!("Duplicate track alias")
                     }
                     tracing::info!(
                         track_alias = message.track_alias,
-                        drained_pending = registration.drained_pending,
-                        replaced_receiver = registration.replaced_receiver,
                         "subscriber registered incoming object receiver after SUBSCRIBE_OK"
                     );
                     Ok(Subscription::SubscriberInitiated(

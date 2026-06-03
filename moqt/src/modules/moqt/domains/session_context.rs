@@ -6,10 +6,16 @@ use std::{
 
 use crate::{
     SessionEvent, TransportProtocol,
-    modules::moqt::{
-        control_plane::enums::{RequestId, ResponseMessage},
-        data_plane::stream::bi_stream_sender::BiStreamSender,
-        runtime::dispatch::incoming_object::IncomingObject,
+    modules::{
+        moqt::{
+            control_plane::{
+                constants::TerminationErrorCode,
+                enums::{RequestId, ResponseMessage},
+            },
+            data_plane::stream::bi_stream_sender::BiStreamSender,
+            runtime::dispatch::incoming_object::IncomingObject,
+        },
+        transport::transport_connection::TransportConnection,
     },
 };
 
@@ -31,8 +37,15 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
 }
 
 enum ObjectSink<T: TransportProtocol> {
-    Buffering(VecDeque<IncomingObject<T>>),
-    Live(tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>),
+    /// Buffers objects that arrive before the receiver is registered.
+    Buffer(VecDeque<IncomingObject<T>>),
+    Receiver(tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>),
+}
+
+impl<T: TransportProtocol> ObjectSink<T> {
+    fn is_receiver_registered(&self) -> bool {
+        matches!(self, ObjectSink::Receiver(_))
+    }
 }
 
 pub(crate) enum IncomingObjectNotification {
@@ -42,14 +55,6 @@ pub(crate) enum IncomingObjectNotification {
         dropped_oldest: bool,
     },
     ReceiverClosed,
-}
-
-/// Outcome of attaching a data receiver to a track, used for logging by callers.
-pub(crate) struct DataReceiverRegistration {
-    pub(crate) already_registered: bool,
-    pub(crate) drained_pending: usize,
-    pub(crate) failed_to_drain: bool,
-    pub(crate) replaced_receiver: bool,
 }
 
 impl<T: TransportProtocol> SessionContext<T> {
@@ -97,21 +102,21 @@ impl<T: TransportProtocol> SessionContext<T> {
             Entry::Vacant(entry) => {
                 let mut objects = VecDeque::new();
                 objects.push_back(incoming_object);
-                entry.insert(ObjectSink::Buffering(objects));
+                entry.insert(ObjectSink::Buffer(objects));
                 IncomingObjectNotification::Buffered {
                     pending_objects: 1,
                     dropped_oldest: false,
                 }
             }
             Entry::Occupied(mut entry) => match entry.get_mut() {
-                ObjectSink::Live(sender) => {
+                ObjectSink::Receiver(sender) => {
                     if sender.send(incoming_object).is_err() {
                         IncomingObjectNotification::ReceiverClosed
                     } else {
                         IncomingObjectNotification::Notified
                     }
                 }
-                ObjectSink::Buffering(objects) => {
+                ObjectSink::Buffer(objects) => {
                     let dropped_oldest = objects.len() >= max_pending_objects;
                     if dropped_oldest {
                         objects.pop_front();
@@ -126,62 +131,40 @@ impl<T: TransportProtocol> SessionContext<T> {
         }
     }
 
-    /// Attaches a data receiver to `track_alias` and returns it ready to consume.
-    ///
-    /// This owns the whole hand-off in one place: it creates the channel, flushes
-    /// any objects that arrived before the receiver was registered (buffered by
-    /// [`Self::notify_incoming_object`] — data objects can reach a relay before the
-    /// matching PUBLISH/SUBSCRIBE_OK), promotes the sink to `Live`, and stores the
-    /// receiving end in `receiver_map` so it can be picked up later. Both maps are
-    /// updated under the object-sinks lock so the registration is atomic. If a
-    /// receiver is already attached the existing one is left untouched and
-    /// `already_registered` is returned.
+    /// Drains objects buffered before SUBSCRIBE_OK into a new receiver and goes Live,
+    /// updating both maps under the object-sinks lock so the registration is atomic.
+    /// Returns `Err(TerminationErrorCode::DuplicateTrackAlias)` if a receiver already exists.
     pub(crate) async fn register_data_receiver(
         &self,
         track_alias: u64,
-    ) -> DataReceiverRegistration {
+    ) -> Result<(), TerminationErrorCode> {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
         let mut sinks = self.object_sinks.lock().await;
 
-        if let Some(ObjectSink::Live(_)) = sinks.get(&track_alias) {
-            return DataReceiverRegistration {
-                already_registered: true,
-                drained_pending: 0,
-                failed_to_drain: false,
-                replaced_receiver: false,
-            };
+        if sinks
+            .get(&track_alias)
+            .is_some_and(ObjectSink::is_receiver_registered)
+        {
+            return Err(TerminationErrorCode::DuplicateTrackAlias);
         }
 
-        // Flush objects that arrived before this receiver existed, then go Live.
-        let (drained_pending, failed_to_drain) = match sinks.remove(&track_alias) {
-            Some(ObjectSink::Buffering(mut pending_objects)) => {
-                let count = pending_objects.len();
-                let mut failed_to_drain = false;
-                while let Some(incoming_object) = pending_objects.pop_front() {
-                    if sender.send(incoming_object).is_err() {
-                        failed_to_drain = true;
-                        break;
-                    }
-                }
-                (count, failed_to_drain)
+        if let Some(ObjectSink::Buffer(mut pending_objects)) = sinks.remove(&track_alias) {
+            while let Some(incoming_object) = pending_objects.pop_front() {
+                let _ = sender.send(incoming_object);
             }
-            _ => (0, false),
-        };
-        sinks.insert(track_alias, ObjectSink::Live(sender));
-
-        let replaced_receiver = self
-            .receiver_map
-            .lock()
-            .await
-            .insert(track_alias, receiver)
-            .is_some();
-
-        DataReceiverRegistration {
-            already_registered: false,
-            drained_pending,
-            failed_to_drain,
-            replaced_receiver,
         }
+        sinks.insert(track_alias, ObjectSink::Receiver(sender));
+
+        self.receiver_map.lock().await.insert(track_alias, receiver);
+
+        Ok(())
+    }
+
+    pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
+        if let Err(error) = self.event_sender.send(SessionEvent::ProtocolViolation()) {
+            tracing::error!(?error, "failed to send protocol violation event");
+        }
+        self.transport_connection.close(code as u32, reason);
     }
 }
 
