@@ -1,0 +1,24 @@
+name: Install FFmpeg build dependencies
+description: Install FFmpeg and related build dependencies on Debian/Ubuntu
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          ffmpeg \
+          pkg-config \
+          libavutil-dev \
+          libavfilter-dev \
+          libavcodec-dev \
+          libavformat-dev \
+          libavdevice-dev \
+          libswscale-dev \
+          libswresample-dev \
+          clang \
+          libclang-dev \
+          llvm-dev
+        echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+        echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
