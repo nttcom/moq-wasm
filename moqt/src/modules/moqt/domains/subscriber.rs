@@ -237,6 +237,78 @@ impl<T: TransportProtocol> Subscriber<T> {
 
     #[tracing::instrument(
         level = "info",
+        name = "moqt.subscriber.fetch_relative_joining",
+        skip_all,
+        fields(joining_request_id = %joining_request_id, joining_start = %joining_start)
+    )]
+    pub async fn fetch_relative_joining(
+        &mut self,
+        joining_request_id: u64,
+        joining_start: u64,
+        option: FetchOption,
+    ) -> anyhow::Result<FetchHandle> {
+        let request_id = self.session.get_request_id();
+
+        let (fetch_stream_tx, fetch_stream_rx) =
+            tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
+        self.session
+            .fetch_notification_map
+            .write()
+            .await
+            .insert(request_id, fetch_stream_tx);
+        self.session
+            .fetch_receiver_map
+            .lock()
+            .await
+            .insert(request_id, fetch_stream_rx);
+
+        let (fetch_message_tx, fetch_message_rx) =
+            tokio::sync::oneshot::channel::<ResponseMessage>();
+        self.session
+            .sender_map
+            .lock()
+            .expect("sender_map poisoned")
+            .insert(request_id, fetch_message_tx);
+        let fetch = Fetch {
+            request_id,
+            subscriber_priority: option.subscriber_priority,
+            group_order: option.group_order,
+            fetch_type: FetchType::RelativeJoining {
+                joining_request_id,
+                joining_start,
+            },
+            authorization_tokens: vec![],
+        };
+        self.session
+            .send_stream
+            .send(ControlMessageType::Fetch, fetch.encode())
+            .await?;
+        let result = fetch_message_rx.await;
+        if let Err(e) = result {
+            bail!("Failed to receive message: {}", e)
+        }
+        let response = result.unwrap();
+        match response {
+            ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
+            ResponseMessage::FetchError(_, _, _) => {
+                self.session
+                    .fetch_notification_map
+                    .write()
+                    .await
+                    .remove(&request_id);
+                self.session
+                    .fetch_receiver_map
+                    .lock()
+                    .await
+                    .remove(&request_id);
+                bail!("Fetch error")
+            }
+            _ => bail!("Protocol violation"),
+        }
+    }
+
+    #[tracing::instrument(
+        level = "info",
         name = "moqt.subscriber.unsubscribe",
         skip_all,
         fields(subscribe_id = %subscribe_id)
