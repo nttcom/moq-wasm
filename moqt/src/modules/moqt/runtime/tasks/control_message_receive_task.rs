@@ -213,6 +213,15 @@ impl ControlMessageReceiveTask {
                 let response = ResponseMessage::FetchOk(fetch_ok);
                 DepacketizeResult::ResponseMessage(request_id, response)
             }
+            ReceivedMessage::FetchError(fetch_error) => {
+                tracing::debug!("Event: Fetch error");
+                let response = ResponseMessage::FetchError(
+                    fetch_error.request_id,
+                    fetch_error.error_code,
+                    fetch_error.reason_phrase,
+                );
+                DepacketizeResult::ResponseMessage(fetch_error.request_id, response)
+            }
             _ => todo!(),
         }
     }
