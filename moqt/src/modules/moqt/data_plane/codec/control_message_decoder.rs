@@ -165,7 +165,16 @@ impl ControlMessageDecoder {
                     }
                 }
             }
-            ControlMessageType::FetchError => todo!(),
+            ControlMessageType::FetchError => {
+                tracing::debug!("Event: Fetch error");
+                match RequestError::decode(&mut cursor_buf) {
+                    Some(v) => ReceivedMessage::FetchError(v),
+                    None => {
+                        tracing::error!("Protocol violation is detected.");
+                        ReceivedMessage::FatalError()
+                    }
+                }
+            }
             ControlMessageType::FetchCancel => todo!(),
             ControlMessageType::TrackStatusRequest => todo!(),
             ControlMessageType::TrackStatus => todo!(),

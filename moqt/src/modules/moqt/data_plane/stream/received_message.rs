@@ -25,6 +25,7 @@ pub(crate) enum ReceivedMessage {
     Unsubscribe(Unsubscribe),
     Fetch(Fetch),
     FetchOk(FetchOk),
+    FetchError(RequestError),
     FatalError(),
 }
 
@@ -49,6 +50,7 @@ impl std::fmt::Debug for ReceivedMessage {
             ReceivedMessage::Unsubscribe(_) => "Unsubscribe",
             ReceivedMessage::Fetch(_) => "Fetch",
             ReceivedMessage::FetchOk(_) => "FetchOk",
+            ReceivedMessage::FetchError(_) => "FetchError",
             ReceivedMessage::FatalError() => "FatalError",
         };
 
