@@ -32,6 +32,12 @@ pub(crate) enum UpstreamSubscriptionOrigin {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct DownstreamSubscription {
+    pub(crate) upstream_key: UpstreamSubscriptionKey,
+    pub(crate) largest_at_subscribe: Option<moqt::Location>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct RemovedDownstreamSubscription {
     pub(crate) downstream_session_id: SessionId,
     pub(crate) downstream_subscribe_id: u64,
@@ -97,6 +103,14 @@ pub(crate) trait LocalPubSubDirectory: Send + Sync + 'static + Debug {
         track_namespace: &str,
         track_name: &str,
     ) -> Option<ActiveUpstreamSubscription>;
+    /// Resolves the upstream subscription key linked to a downstream
+    /// subscription identified by its Request ID, scoped to the given session.
+    /// Used by Joining Fetch to find the subscription it joins.
+    fn get_downstream_subscription(
+        &self,
+        downstream_session_id: SessionId,
+        downstream_subscribe_id: u64,
+    ) -> Option<DownstreamSubscription>;
     fn register_upstream_subscription(
         &self,
         key: UpstreamSubscriptionKey,
@@ -107,6 +121,7 @@ pub(crate) trait LocalPubSubDirectory: Send + Sync + 'static + Debug {
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
         upstream_key: UpstreamSubscriptionKey,
+        largest_at_subscribe: Option<moqt::Location>,
     ) -> bool;
     fn remove_downstream_subscription(
         &self,

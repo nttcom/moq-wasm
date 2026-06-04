@@ -6,8 +6,9 @@ use tokio::sync::RwLock;
 use crate::modules::{
     core::handler::publish::PublishHandler,
     sequences::tables::table::{
-        ActiveUpstreamSubscription, LocalPubSubDirectory, RemovedDownstreamSubscription,
-        RemovedSessionSubscriptions, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
+        ActiveUpstreamSubscription, DownstreamSubscription, LocalPubSubDirectory,
+        RemovedDownstreamSubscription, RemovedSessionSubscriptions, UpstreamSubscriptionKey,
+        UpstreamSubscriptionOrigin,
     },
     types::{SessionId, TrackNamespace, TrackNamespacePrefix},
 };
@@ -27,7 +28,7 @@ pub(crate) struct InMemoryLocalPubSubDirectory {
     pub(crate) track_alias_links: DashMap<(SessionId, u64, SessionId), u64>,
     pub(crate) active_upstream_subscriptions:
         DashMap<UpstreamSubscriptionKey, ActiveUpstreamSubscription>,
-    pub(crate) downstream_subscriptions: DashMap<(SessionId, u64), UpstreamSubscriptionKey>,
+    pub(crate) downstream_subscriptions: DashMap<(SessionId, u64), DownstreamSubscription>,
 }
 
 #[async_trait::async_trait]
@@ -132,7 +133,9 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             let downstream_keys: Vec<_> = self
                 .downstream_subscriptions
                 .iter()
-                .filter_map(|entry| (entry.value() == &upstream_key).then_some(*entry.key()))
+                .filter_map(|entry| {
+                    (entry.value().upstream_key == upstream_key).then_some(*entry.key())
+                })
                 .collect();
             for (downstream_session_id, downstream_subscribe_id) in downstream_keys {
                 self.downstream_subscriptions
@@ -414,6 +417,16 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             .map(|entry| entry.value().clone())
     }
 
+    fn get_downstream_subscription(
+        &self,
+        downstream_session_id: SessionId,
+        downstream_subscribe_id: u64,
+    ) -> Option<DownstreamSubscription> {
+        self.downstream_subscriptions
+            .get(&(downstream_session_id, downstream_subscribe_id))
+            .map(|entry| entry.value().clone())
+    }
+
     fn register_upstream_subscription(
         &self,
         key: UpstreamSubscriptionKey,
@@ -427,6 +440,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
         upstream_key: UpstreamSubscriptionKey,
+        largest_at_subscribe: Option<moqt::Location>,
     ) -> bool {
         let Some(mut entry) = self.active_upstream_subscriptions.get_mut(&upstream_key) else {
             return false;
@@ -436,7 +450,10 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
 
         self.downstream_subscriptions.insert(
             (downstream_session_id, downstream_subscribe_id),
-            upstream_key,
+            DownstreamSubscription {
+                upstream_key,
+                largest_at_subscribe,
+            },
         );
         true
     }
@@ -446,9 +463,10 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
     ) -> Option<RemovedDownstreamSubscription> {
-        let (_, upstream_key) = self
+        let (_, downstream_sub) = self
             .downstream_subscriptions
             .remove(&(downstream_session_id, downstream_subscribe_id))?;
+        let upstream_key = downstream_sub.upstream_key;
         let mut entry = self.active_upstream_subscriptions.get_mut(&upstream_key)?;
         if entry.downstream_subscriber_count > 0 {
             entry.downstream_subscriber_count -= 1;
@@ -664,6 +682,75 @@ mod tests {
 
         // Assert: Keep multiple publishers regardless of whether they came from namespace or track state.
         assert_eq!(upstream_publishers, vec![1, 2]);
+    }
+
+    #[tokio::test]
+    async fn register_downstream_subscription_stores_largest_at_subscribe() {
+        let table = InMemoryLocalPubSubDirectory::new();
+        let upstream_key = UpstreamSubscriptionKey {
+            publisher_session_id: 1,
+            track_namespace: "ns".to_string(),
+            track_name: "track".to_string(),
+        };
+        table.register_upstream_subscription(
+            upstream_key.clone(),
+            ActiveUpstreamSubscription {
+                upstream_request_id: 1,
+                track_key: 42,
+                expires: None,
+                content_exists: ContentExists::False,
+                downstream_subscriber_count: 0,
+                origin: UpstreamSubscriptionOrigin::Subscribe,
+            },
+        );
+        let largest = moqt::Location {
+            group_id: 5,
+            object_id: 3,
+        };
+
+        assert!(table.register_downstream_subscription(
+            2,
+            100,
+            upstream_key.clone(),
+            Some(largest)
+        ));
+
+        let sub = table.get_downstream_subscription(2, 100).unwrap();
+        assert_eq!(sub.upstream_key, upstream_key);
+        assert_eq!(
+            sub.largest_at_subscribe,
+            Some(moqt::Location {
+                group_id: 5,
+                object_id: 3
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn register_downstream_subscription_none_largest_at_subscribe() {
+        let table = InMemoryLocalPubSubDirectory::new();
+        let upstream_key = UpstreamSubscriptionKey {
+            publisher_session_id: 1,
+            track_namespace: "ns".to_string(),
+            track_name: "track".to_string(),
+        };
+        table.register_upstream_subscription(
+            upstream_key.clone(),
+            ActiveUpstreamSubscription {
+                upstream_request_id: 1,
+                track_key: 42,
+                expires: None,
+                content_exists: ContentExists::False,
+                downstream_subscriber_count: 0,
+                origin: UpstreamSubscriptionOrigin::Subscribe,
+            },
+        );
+
+        assert!(table.register_downstream_subscription(2, 100, upstream_key.clone(), None));
+
+        let sub = table.get_downstream_subscription(2, 100).unwrap();
+        assert_eq!(sub.upstream_key, upstream_key);
+        assert!(sub.largest_at_subscribe.is_none());
     }
 
     #[tokio::test]
