@@ -1,7 +1,10 @@
 use std::{
     collections::{HashMap, VecDeque, hash_map::Entry},
     fmt,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use crate::{
@@ -26,7 +29,7 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
     track_alias: AtomicU64,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
     pub(crate) sender_map:
-        tokio::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
+        std::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
     pub(crate) receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>>>,
     object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink<T>>>,
@@ -57,6 +60,22 @@ pub(crate) enum IncomingObjectNotification {
     ReceiverClosed,
 }
 
+/// Holds the `sender_map` registration for an in-flight request. Removes the
+/// entry on drop, so a cancelled request does not leave an orphaned sender behind.
+#[must_use = "dropping this removes the sender from sender_map; bind it for the lifetime of the request"]
+pub(crate) struct RegisteredSender<T: TransportProtocol> {
+    session: Arc<SessionContext<T>>,
+    request_id: RequestId,
+}
+
+impl<T: TransportProtocol> Drop for RegisteredSender<T> {
+    fn drop(&mut self) {
+        if let Ok(mut senders) = self.session.sender_map.lock() {
+            senders.remove(&self.request_id);
+        }
+    }
+}
+
 impl<T: TransportProtocol> SessionContext<T> {
     pub(crate) fn new(
         transport_connection: T::Connection,
@@ -70,7 +89,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             request_id,
             track_alias: AtomicU64::new(0),
             event_sender,
-            sender_map: tokio::sync::Mutex::new(HashMap::new()),
+            sender_map: std::sync::Mutex::new(HashMap::new()),
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             object_sinks: tokio::sync::Mutex::new(HashMap::new()),
             fetch_notification_map: tokio::sync::RwLock::new(HashMap::new()),
@@ -89,6 +108,23 @@ impl<T: TransportProtocol> SessionContext<T> {
         let track_alias = self.track_alias.fetch_add(1, Ordering::SeqCst);
         tracing::debug!("track_alias: {}", track_alias);
         track_alias
+    }
+
+    /// Inserts the sender into `sender_map` and returns a `RegisteredSender` that
+    /// removes it on drop, ensuring cleanup on both normal completion and cancellation.
+    pub(crate) fn register_response_sender(
+        self: &Arc<Self>,
+        request_id: RequestId,
+        sender: tokio::sync::oneshot::Sender<ResponseMessage>,
+    ) -> RegisteredSender<T> {
+        self.sender_map
+            .lock()
+            .expect("sender_map poisoned")
+            .insert(request_id, sender);
+        RegisteredSender {
+            session: self.clone(),
+            request_id,
+        }
     }
 
     pub(crate) async fn notify_incoming_object(

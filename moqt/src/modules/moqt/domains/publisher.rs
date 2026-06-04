@@ -47,11 +47,7 @@ impl<T: TransportProtocol> Publisher<T> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
-        self.session
-            .sender_map
-            .lock()
-            .await
-            .insert(request_id, sender);
+        let _registered_sender = self.session.register_response_sender(request_id, sender);
         let publish_namespace = PublishNamespace::new(request_id, vec_namespace, vec![]);
         self.session
             .send_stream
@@ -91,11 +87,7 @@ impl<T: TransportProtocol> Publisher<T> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
-        self.session
-            .sender_map
-            .lock()
-            .await
-            .insert(request_id, sender);
+        let _registered_sender = self.session.register_response_sender(request_id, sender);
         let content_exists = option.content_exists;
         let publish = Publish {
             request_id,

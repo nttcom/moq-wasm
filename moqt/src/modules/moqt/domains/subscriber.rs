@@ -48,11 +48,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
-        self.session
-            .sender_map
-            .lock()
-            .await
-            .insert(request_id, sender);
+        let _registered_sender = self.session.register_response_sender(request_id, sender);
         let subscribe_namespace = SubscribeNamespace::new(request_id, vec_namespace, vec![]);
         self.session
             .send_stream
@@ -100,11 +96,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         let filter_type = option.filter_type;
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
-        self.session
-            .sender_map
-            .lock()
-            .await
-            .insert(request_id, sender);
+        let _registered_sender = self.session.register_response_sender(request_id, sender);
         let subscribe = Subscribe {
             request_id,
             track_namespace: vec_namespace,
@@ -200,11 +192,9 @@ impl<T: TransportProtocol> Subscriber<T> {
 
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
-        self.session
-            .sender_map
-            .lock()
-            .await
-            .insert(request_id, fetch_message_tx);
+        let _registered_sender = self
+            .session
+            .register_response_sender(request_id, fetch_message_tx);
         let fetch = Fetch {
             request_id,
             subscriber_priority: option.subscriber_priority,

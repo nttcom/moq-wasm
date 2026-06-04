@@ -65,9 +65,12 @@ impl ControlMessageReceiveTask {
                                     }
                                 }
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
-                                    if let Some(sender) =
-                                        session.sender_map.lock().await.remove(&request_id)
-                                    {
+                                    let sender = session
+                                        .sender_map
+                                        .lock()
+                                        .expect("sender_map poisoned")
+                                        .remove(&request_id);
+                                    if let Some(sender) = sender {
                                         if let Err(error) = sender.send(message) {
                                             tracing::error!("failed to send message: {:?}", error);
                                         }
