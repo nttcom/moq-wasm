@@ -330,6 +330,27 @@ export class MoqtClientWrapper {
     return response
   }
 
+  async relativeJoiningFetch(
+    requestId: bigint,
+    joiningRequestId: bigint,
+    joiningStart: bigint
+  ): Promise<FetchOkMessage> {
+    const client = this.requireConnectedClient()
+    const response = new Promise<FetchOkMessage>((resolve, reject) => {
+      const handler: FetchResponseHandler = (msg) => {
+        this.onFetchResponseHandler = null
+        if (msg instanceof FetchOkMessage) {
+          resolve(msg)
+        } else {
+          reject(new Error(`FETCH_ERROR: ${(msg as RequestErrorMessage).reasonPhrase}`))
+        }
+      }
+      this.onFetchResponseHandler = handler
+    })
+    await client.sendRelativeJoiningFetch(requestId, joiningRequestId, joiningStart)
+    return response
+  }
+
   setOnFetchObjectHandler(requestId: bigint, handler: FetchObjectHandler): void {
     this.fetchObjectHandlers.set(requestId, handler)
   }
