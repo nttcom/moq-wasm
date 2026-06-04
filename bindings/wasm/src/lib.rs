@@ -676,6 +676,28 @@ impl MOQTClient {
             .await
     }
 
+    #[wasm_bindgen(js_name = sendRelativeJoiningFetch)]
+    pub async fn send_relative_joining_fetch(
+        &self,
+        request_id: u64,
+        joining_request_id: u64,
+        joining_start: u64,
+    ) -> Result<(), JsValue> {
+        let payload = Fetch {
+            request_id,
+            subscriber_priority: 0,
+            group_order: GroupOrder::Ascending,
+            fetch_type: FetchType::RelativeJoining {
+                joining_request_id,
+                joining_start,
+            },
+            authorization_tokens: vec![],
+        }
+        .encode();
+        self.send_control_message(ControlMessageType::Fetch, payload)
+            .await
+    }
+
     #[wasm_bindgen(js_name = isSubscribed)]
     pub fn is_subscribed(&self, request_id: u64) -> bool {
         self.state
