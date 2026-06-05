@@ -1,7 +1,7 @@
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::subscribe_namespace::SubscribeNamespaceHandler,
-    route_registry::{RelayRouteRegistry, RouteStatus},
+    route_registry::{RegisterNamespaceSubscriberError, RelayRouteRegistry, RouteStatus},
     sequences::tables::table::LocalPubSubDirectory,
     types::SessionId,
 };
@@ -34,8 +34,12 @@ impl SubscribeNameSpace {
         );
         let track_namespace_prefix = self.register(session_id, table, handler).await;
         if self.is_origin_client(session_id, forwarder).await {
-            self.register_route(route_registry, &track_namespace_prefix)
-                .await;
+            if !self
+                .register_route(route_registry, &track_namespace_prefix, handler)
+                .await
+            {
+                return;
+            }
         }
         self.broadcast_to_subscribers(session_id, &track_namespace_prefix, forwarder, table)
             .await;
@@ -88,16 +92,25 @@ impl SubscribeNameSpace {
         &self,
         route_registry: &dyn RelayRouteRegistry,
         track_namespace_prefix: &str,
-    ) {
-        if let Err(err) = route_registry
-            .register_namespace_subscription(track_namespace_prefix, RouteStatus::Active)
+        handler: &dyn SubscribeNamespaceHandler,
+    ) -> bool {
+        match route_registry
+            .register_namespace_subscriber(track_namespace_prefix, RouteStatus::Active)
             .await
         {
-            tracing::warn!(
-                ?err,
-                track_namespace_prefix = %track_namespace_prefix,
-                "failed to register namespace subscription route"
-            );
+            Ok(()) => true,
+            Err(RegisterNamespaceSubscriberError::Conflict) => {
+                tracing::warn!(track_namespace_prefix = %track_namespace_prefix, "namespace already has an active subscriber");
+                match handler.error(0, "namespace already subscribed".to_string()).await {
+                    Ok(_) => tracing::info!("sent `SUBSCRIBE_NAMESPACE_ERROR` ok"),
+                    Err(_) => tracing::error!("failed to send `SUBSCRIBE_NAMESPACE_ERROR`"),
+                }
+                false
+            }
+            Err(err) => {
+                tracing::warn!(?err, track_namespace_prefix = %track_namespace_prefix, "failed to register namespace subscription route");
+                false
+            }
         }
     }
 
@@ -162,7 +175,7 @@ impl SubscribeNameSpace {
         route_registry: &dyn RelayRouteRegistry,
     ) {
         let routes = match route_registry
-            .find_active_namespace_routes_by_prefix(track_namespace_prefix)
+            .find_namespace_publishers_by_prefix(track_namespace_prefix)
             .await
         {
             Ok(routes) => routes,

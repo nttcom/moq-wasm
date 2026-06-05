@@ -56,7 +56,6 @@ impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
         let err = RequestError {
-            // TODO: assign correct request id.
             request_id: self.request_id,
             error_code,
             reason_phrase,

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 pub(crate) trait SubscribeNamespaceHandler: 'static + Send + Sync {
     fn track_namespace_prefix(&self) -> &str;
     async fn ok(&self) -> Result<(), moqt::TransportSendError>;
-    async fn _error(
+    async fn error(
         &self,
         code: u64,
         reason_phrase: String,
@@ -21,7 +21,7 @@ impl<T: moqt::TransportProtocol> SubscribeNamespaceHandler for moqt::SubscribeNa
         self.ok().await
     }
 
-    async fn _error(
+    async fn error(
         &self,
         code: u64,
         reason_phrase: String,

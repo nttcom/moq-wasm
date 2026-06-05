@@ -8,7 +8,7 @@ use crate::{
     RelayConfig,
     modules::{
         route_registry::{
-            NoopRelayRouteRegistry, RedisRelayRouteRegistry, RelayDescriptor, RelayRouteRegistry,
+            NoopRelayRouteRegistry, RedisRelayRouteRegistry, RelayInfo, RelayRouteRegistry,
             RouteStatus,
         },
         session_event::SessionEvent,
@@ -37,7 +37,7 @@ impl RelayServer {
         cert_path: &str,
         config: RelayConfig,
     ) -> anyhow::Result<Self> {
-        let relay = RelayDescriptor {
+        let relay = RelayInfo {
             relay_id: config.relay_id,
             host: config.advertise_host,
             port: config.inner_port,

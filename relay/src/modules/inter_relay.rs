@@ -3,7 +3,7 @@ use std::{net::SocketAddr, sync::Arc};
 use dashmap::DashMap;
 
 use crate::modules::{
-    route_registry::RelayDescriptor,
+    route_registry::RelayInfo,
     session_event::SessionEvent,
     session_repository::SessionRepository,
     types::{SessionId, generate_session_id},
@@ -35,7 +35,7 @@ impl InterRelayConnectionManager {
 
     pub(crate) async fn get_or_connect(
         &self,
-        relay: &RelayDescriptor,
+        relay: &RelayInfo,
     ) -> anyhow::Result<SessionId> {
         if let Some(session_id) = self.sessions.get(&relay.relay_id)
             && self.repo.lock().await.has_session(*session_id)
@@ -85,7 +85,7 @@ impl InterRelayConnectionManager {
         Ok(session_id)
     }
 
-    async fn resolve_remote_address(&self, relay: &RelayDescriptor) -> anyhow::Result<SocketAddr> {
+    async fn resolve_remote_address(&self, relay: &RelayInfo) -> anyhow::Result<SocketAddr> {
         let address = format!("{}:{}", relay.host, relay.port);
         tokio::net::lookup_host(address)
             .await?
