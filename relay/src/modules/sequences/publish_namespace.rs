@@ -183,7 +183,10 @@ impl PublishNamespace {
             Ok(()) => true,
             Err(RegisterNamespacePublisherError::Conflict) => {
                 tracing::warn!(track_namespace = %track_namespace, "namespace already has an active publisher");
-                match handler.error(0, "namespace already published".to_string()).await {
+                match handler
+                    .error(0, "namespace already published".to_string())
+                    .await
+                {
                     Ok(_) => tracing::info!("sent `PUBLISH_NAMESPACE_ERROR` ok"),
                     Err(_) => tracing::error!("failed to send `PUBLISH_NAMESPACE_ERROR`"),
                 }
@@ -243,10 +246,7 @@ impl PublishNamespace {
                 continue;
             }
 
-            let session_id = match inter_relay_connection_manager
-                .get_or_connect(&relay)
-                .await
-            {
+            let session_id = match inter_relay_connection_manager.get_or_connect(&relay).await {
                 Ok(session_id) => session_id,
                 Err(err) => {
                     tracing::warn!(

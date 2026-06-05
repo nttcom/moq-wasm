@@ -33,13 +33,12 @@ impl SubscribeNameSpace {
             "SequenceHandler::SubscribeNamespace"
         );
         let track_namespace_prefix = self.register(session_id, table, handler).await;
-        if self.is_origin_client(session_id, forwarder).await {
-            if !self
+        if self.is_origin_client(session_id, forwarder).await
+            && !self
                 .register_route(route_registry, &track_namespace_prefix, handler)
                 .await
-            {
-                return;
-            }
+        {
+            return;
         }
         self.broadcast_to_subscribers(session_id, &track_namespace_prefix, forwarder, table)
             .await;
@@ -101,7 +100,10 @@ impl SubscribeNameSpace {
             Ok(()) => true,
             Err(RegisterNamespaceSubscriberError::Conflict) => {
                 tracing::warn!(track_namespace_prefix = %track_namespace_prefix, "namespace already has an active subscriber");
-                match handler.error(0, "namespace already subscribed".to_string()).await {
+                match handler
+                    .error(0, "namespace already subscribed".to_string())
+                    .await
+                {
                     Ok(_) => tracing::info!("sent `SUBSCRIBE_NAMESPACE_ERROR` ok"),
                     Err(_) => tracing::error!("failed to send `SUBSCRIBE_NAMESPACE_ERROR`"),
                 }

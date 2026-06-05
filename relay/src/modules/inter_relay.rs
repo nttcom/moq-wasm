@@ -33,10 +33,7 @@ impl InterRelayConnectionManager {
         }
     }
 
-    pub(crate) async fn get_or_connect(
-        &self,
-        relay: &RelayInfo,
-    ) -> anyhow::Result<SessionId> {
+    pub(crate) async fn get_or_connect(&self, relay: &RelayInfo) -> anyhow::Result<SessionId> {
         if let Some(session_id) = self.sessions.get(&relay.relay_id)
             && self.repo.lock().await.has_session(*session_id)
         {
