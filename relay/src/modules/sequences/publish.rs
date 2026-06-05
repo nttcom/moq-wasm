@@ -192,10 +192,7 @@ impl Publish {
         };
 
         for relay in routes {
-            let session_id = match inter_relay_connection_manager
-                .get_or_connect(&relay)
-                .await
-            {
+            let session_id = match inter_relay_connection_manager.get_or_connect(&relay).await {
                 Ok(session_id) => session_id,
                 Err(err) => {
                     tracing::warn!(
