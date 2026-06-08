@@ -149,9 +149,10 @@ impl UnsubscribeNamespace {
             };
 
             if let Some(relay) = relay
-                && relay_ids.insert(relay.relay_id.clone()) {
-                    relays.push(relay);
-                }
+                && relay_ids.insert(relay.relay_id.clone())
+            {
+                relays.push(relay);
+            }
         }
 
         relays
