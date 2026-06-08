@@ -1168,8 +1168,7 @@ async fn control_stream_read_thread(
         while let Some((message_type, payload)) =
             take_control_message(&mut buf).map_err(|error| js_error(error.to_string()))?
         {
-            handle_control_message(callbacks.clone(), state.clone(), message_type, payload)
-                .await?;
+            handle_control_message(callbacks.clone(), state.clone(), message_type, payload).await?;
         }
     }
 
