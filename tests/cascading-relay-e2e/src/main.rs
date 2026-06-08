@@ -990,7 +990,7 @@ async fn redis_connection(redis_url: &str) -> anyhow::Result<redis::aio::Connect
 }
 
 fn namespace_subscription_key(prefix: &str) -> String {
-    format!("route:namespace_subscription:{prefix}")
+    format!("route:subscriber:namespace:{prefix}")
 }
 
 fn scenario_namespace(base: &str, run_id: &str, scenario: &str) -> String {
