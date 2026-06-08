@@ -1,7 +1,8 @@
 use crate::modules::{
+    control_message_forwarder::ControlMessageForwarder,
     core::handler::unsubscribe::UnsubscribeHandler,
     relay::{egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressCommand},
-    sequences::{notifier::SessionSignalingDispatcher, tables::table::SignalingStateTable},
+    sequences::tables::table::LocalPubSubDirectory,
     types::SessionId,
 };
 use tracing::Span;
@@ -21,8 +22,8 @@ impl Unsubscribe {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn SignalingStateTable,
-        notifier: &SessionSignalingDispatcher,
+        table: &dyn LocalPubSubDirectory,
+        forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn UnsubscribeHandler>,
@@ -65,7 +66,7 @@ impl Unsubscribe {
         );
 
         if removed.remaining_downstream_subscriber_count == 0 {
-            if let Err(err) = notifier
+            if let Err(err) = forwarder
                 .unsubscribe(
                     removed.upstream_key.publisher_session_id,
                     removed.upstream_subscribe_id,

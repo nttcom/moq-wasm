@@ -4,11 +4,14 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::modules::{
     event_handler::EventHandler,
+    inter_relay::InterRelayConnectionManager,
     relay::{
         egress::coordinator::EgressCoordinator, ingress::ingress_coordinator::IngressCoordinator,
     },
+    route_registry::RelayRouteRegistry,
     session_event::SessionEvent,
     session_repository::SessionRepository,
+    upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 use crate::relay_server::store::RelayStore;
 
@@ -22,8 +25,17 @@ impl RelayRuntime {
     pub(crate) fn new(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         store: &Arc<RelayStore>,
+        route_registry: Arc<dyn RelayRouteRegistry>,
     ) -> (UnboundedSender<SessionEvent>, Self) {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
+        let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
+            repo.clone(),
+            sender.clone(),
+        ));
+        let upstream_publisher_resolver = Arc::new(UpstreamPublisherResolver::new(
+            route_registry.clone(),
+            inter_relay_connection_manager.clone(),
+        ));
         let ingress = IngressCoordinator::new(
             repo.clone(),
             store.cache_store.clone(),
@@ -39,6 +51,9 @@ impl RelayRuntime {
             receiver,
             ingress.sender(),
             egress.sender(),
+            route_registry,
+            inter_relay_connection_manager,
+            upstream_publisher_resolver,
             store.cache_store.clone(),
         );
         (

@@ -3,7 +3,7 @@ use tracing::Span;
 use crate::modules::{
     core::handler::fetch::FetchHandler,
     relay::egress::coordinator::{EgressCommand, EgressFetchRequest},
-    sequences::tables::table::SignalingStateTable,
+    sequences::tables::table::LocalPubSubDirectory,
     types::SessionId,
 };
 
@@ -21,7 +21,7 @@ impl Fetch {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn SignalingStateTable,
+        table: &dyn LocalPubSubDirectory,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn FetchHandler>,
     ) {
