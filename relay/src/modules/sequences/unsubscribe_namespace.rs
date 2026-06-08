@@ -4,7 +4,7 @@ use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::unsubscribe_namespace::UnsubscribeNamespaceHandler,
     inter_relay::InterRelayConnectionManager,
-    route_registry::RelayRouteRegistry,
+    route_registry::{RelayInfo, RelayRouteRegistry},
     sequences::{CascadingRelayContext, tables::table::LocalPubSubDirectory},
     types::SessionId,
 };
@@ -71,7 +71,7 @@ impl UnsubscribeNamespace {
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
         if let Err(err) = route_registry
-            .unregister_namespace_subscription(track_namespace_prefix)
+            .unregister_namespace_subscriber(track_namespace_prefix)
             .await
         {
             tracing::warn!(
@@ -84,14 +84,14 @@ impl UnsubscribeNamespace {
         let routes = Self::find_publisher_relays(track_namespace_prefix, route_registry).await;
         for route in routes {
             let session_id = match inter_relay_connection_manager
-                .get_or_connect(&route.relay)
+                .get_or_connect(&route)
                 .await
             {
                 Ok(session_id) => session_id,
                 Err(err) => {
                     tracing::warn!(
                         ?err,
-                        relay_id = %route.relay.relay_id,
+                        relay_id = %route.relay_id,
                         track_namespace_prefix = %track_namespace_prefix,
                         "failed to connect upstream relay for UNSUBSCRIBE_NAMESPACE"
                     );
@@ -105,7 +105,7 @@ impl UnsubscribeNamespace {
             {
                 tracing::warn!(
                     ?err,
-                    relay_id = %route.relay.relay_id,
+                    relay_id = %route.relay_id,
                     session_id = session_id,
                     track_namespace_prefix = %track_namespace_prefix,
                     "failed to forward UNSUBSCRIBE_NAMESPACE to upstream relay"
@@ -117,9 +117,9 @@ impl UnsubscribeNamespace {
     async fn find_publisher_relays(
         track_namespace_prefix: &str,
         route_registry: &dyn RelayRouteRegistry,
-    ) -> Vec<crate::modules::route_registry::RelayRoute> {
+    ) -> Vec<RelayInfo> {
         let namespace_routes = match route_registry
-            .find_active_namespace_routes_by_prefix(track_namespace_prefix)
+            .find_namespace_publishers_by_prefix(track_namespace_prefix)
             .await
         {
             Ok(routes) => routes,
@@ -136,11 +136,11 @@ impl UnsubscribeNamespace {
         let mut relay_ids = HashSet::new();
         let mut relays = Vec::new();
         for namespace_route in namespace_routes {
-            let routes = match route_registry
-                .find_active_namespace_routes(&namespace_route.track_namespace)
+            let relay = match route_registry
+                .find_active_namespace_publisher(&namespace_route.track_namespace)
                 .await
             {
-                Ok(routes) => routes,
+                Ok(relay) => relay,
                 Err(err) => {
                     tracing::warn!(
                         ?err,
@@ -151,9 +151,9 @@ impl UnsubscribeNamespace {
                 }
             };
 
-            for route in routes {
-                if relay_ids.insert(route.relay.relay_id.clone()) {
-                    relays.push(route);
+            if let Some(relay) = relay {
+                if relay_ids.insert(relay.relay_id.clone()) {
+                    relays.push(relay);
                 }
             }
         }
