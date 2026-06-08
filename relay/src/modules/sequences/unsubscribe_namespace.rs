@@ -83,10 +83,7 @@ impl UnsubscribeNamespace {
 
         let routes = Self::find_publisher_relays(track_namespace_prefix, route_registry).await;
         for route in routes {
-            let session_id = match inter_relay_connection_manager
-                .get_or_connect(&route)
-                .await
-            {
+            let session_id = match inter_relay_connection_manager.get_or_connect(&route).await {
                 Ok(session_id) => session_id,
                 Err(err) => {
                     tracing::warn!(
