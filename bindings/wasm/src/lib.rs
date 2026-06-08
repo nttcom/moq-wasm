@@ -37,7 +37,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 #[cfg(feature = "web_sys_unstable_apis")]
 use web_sys::{
-    ReadableStream, ReadableStreamDefaultReader, WebTransport, WebTransportBidirectionalStream,
+    ReadableStream, ReadableStreamDefaultReader, WebTransport,
     WritableStreamDefaultWriter,
 };
 
@@ -1028,9 +1028,7 @@ impl MOQTClient {
             });
         }
 
-        let control_stream = WebTransportBidirectionalStream::from(
-            JsFuture::from(transport.create_bidirectional_stream()).await?,
-        );
+        let control_stream = JsFuture::from(transport.create_bidirectional_stream()).await? ;
         let control_reader = ReadableStreamDefaultReader::new(&control_stream.readable().into())?;
         let control_writer = control_stream.writable().get_writer()?;
         *self.control_stream_writer.borrow_mut() = Some(control_writer);
