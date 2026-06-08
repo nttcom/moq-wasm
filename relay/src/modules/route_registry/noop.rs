@@ -40,6 +40,13 @@ impl RelayRouteRegistry for NoopRelayRouteRegistry {
         Ok(Vec::new())
     }
 
+    async fn unregister_namespace_subscriber(
+        &self,
+        _track_namespace_prefix: &str,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     async fn find_namespace_subscribers(
         &self,
         _track_namespace: &str,

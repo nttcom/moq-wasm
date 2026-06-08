@@ -78,6 +78,10 @@ pub(crate) trait RelayRouteRegistry: Send + Sync {
         &self,
         track_namespace_prefix: &str,
     ) -> anyhow::Result<Vec<NamespaceRoute>>;
+    async fn unregister_namespace_subscriber(
+        &self,
+        track_namespace_prefix: &str,
+    ) -> anyhow::Result<()>;
     async fn find_namespace_subscribers(
         &self,
         track_namespace: &str,

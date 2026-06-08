@@ -1,12 +1,13 @@
 use crate::modules::core::handler::{
     fetch::FetchHandler, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
     subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
-    unsubscribe::UnsubscribeHandler,
+    unsubscribe::UnsubscribeHandler, unsubscribe_namespace::UnsubscribeNamespaceHandler,
 };
 
 pub(crate) enum MoqtSessionEvent {
     PublishNamespace(Box<dyn PublishNamespaceHandler>),
     SubscribeNamespace(Box<dyn SubscribeNamespaceHandler>),
+    UnsubscribeNamespace(Box<dyn UnsubscribeNamespaceHandler>),
     Publish(Box<dyn PublishHandler>),
     Subscribe(Box<dyn SubscribeHandler>),
     Unsubscribe(Box<dyn UnsubscribeHandler>),
@@ -20,6 +21,7 @@ impl std::fmt::Debug for MoqtSessionEvent {
         let name = match self {
             MoqtSessionEvent::PublishNamespace(_) => "PublishNamespace",
             MoqtSessionEvent::SubscribeNamespace(_) => "SubscribeNamespace",
+            MoqtSessionEvent::UnsubscribeNamespace(_) => "UnsubscribeNamespace",
             MoqtSessionEvent::Publish(_) => "Publish",
             MoqtSessionEvent::Subscribe(_) => "Subscribe",
             MoqtSessionEvent::Unsubscribe(_) => "Unsubscribe",

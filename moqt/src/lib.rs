@@ -20,6 +20,8 @@ pub use modules::moqt::control_plane::handler::subscribe_namespace_handler::Subs
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::handler::unsubscribe_handler::UnsubscribeHandler;
 #[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::control_plane::handler::unsubscribe_namespace_handler::UnsubscribeNamespaceHandler;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::options::FetchOption;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::options::PublishOption;

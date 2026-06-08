@@ -10,6 +10,7 @@ use crate::{
             subscribe_handler::SubscribeHandler,
             subscribe_namespace_handler::SubscribeNamespaceHandler,
             unsubscribe_handler::UnsubscribeHandler,
+            unsubscribe_namespace_handler::UnsubscribeNamespaceHandler,
         },
     },
 };
@@ -24,6 +25,7 @@ pub(crate) type ErrorPhrase = String;
 pub enum SessionEvent<T: TransportProtocol> {
     PublishNamespace(PublishNamespaceHandler<T>),
     SubscribeNameSpace(SubscribeNamespaceHandler<T>),
+    UnsubscribeNamespace(UnsubscribeNamespaceHandler),
     Publish(PublishHandler<T>),
     Subscribe(SubscribeHandler<T>),
     Unsubscribe(UnsubscribeHandler<T>),
