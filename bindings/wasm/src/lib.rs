@@ -719,6 +719,7 @@ impl MOQTClient {
         self.state.borrow_mut().reset_subgroup_state(track_alias);
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = sendSubscribeOk)]
     pub async fn send_subscribe_ok(
         &self,
@@ -993,7 +994,8 @@ impl MOQTClient {
         // Explicit close is driven by the JS wrapper, so suppress the async
         // `onConnectionClosed` callback path to avoid re-entrant cleanup.
         self.callbacks.borrow_mut().connection_closed_callback = None;
-        if let Some(transport) = self.transport.borrow().clone() {
+        let transport = self.transport.borrow().clone();
+        if let Some(transport) = transport {
             let closed = webtransport_closed_promise(&transport);
             transport.close();
             if let Some(closed) = closed {
@@ -1163,14 +1165,11 @@ async fn control_stream_read_thread(
             continue;
         }
         buf.extend_from_slice(&new_bytes);
-        loop {
-            match take_control_message(&mut buf).map_err(|error| js_error(error.to_string()))? {
-                Some((message_type, payload)) => {
-                    handle_control_message(callbacks.clone(), state.clone(), message_type, payload)
-                        .await?;
-                }
-                None => break,
-            }
+        while let Some((message_type, payload)) =
+            take_control_message(&mut buf).map_err(|error| js_error(error.to_string()))?
+        {
+            handle_control_message(callbacks.clone(), state.clone(), message_type, payload)
+                .await?;
         }
     }
 
