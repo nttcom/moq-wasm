@@ -1,11 +1,11 @@
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::publish::PublishHandler,
     enums::FilterType,
     inter_relay::InterRelayConnectionManager,
-    route_registry::{RelayRouteRegistry, RouteStatus},
+    route_registry::RelayRouteRegistry,
     sequences::{CascadingRelayContext, tables::table::LocalPubSubDirectory},
     types::SessionId,
 };
@@ -47,12 +47,6 @@ impl Publish {
             .await
             && self.is_origin_client(session_id, forwarder).await
         {
-            self.register_route(
-                cascading_relay_context.route_registry,
-                &track_namespace,
-                &track_name,
-            )
-            .await;
             self.notify_remote_subscribers(
                 &track_namespace,
                 &track_name,
@@ -169,31 +163,6 @@ impl Publish {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.sequence.publish.register_route",
-        skip_all,
-        fields(track_namespace = %track_namespace, track_name = %track_name)
-    )]
-    async fn register_route(
-        &self,
-        route_registry: &dyn RelayRouteRegistry,
-        track_namespace: &str,
-        track_name: &str,
-    ) {
-        if let Err(err) = route_registry
-            .register_track_route(track_namespace, track_name, RouteStatus::Active)
-            .await
-        {
-            tracing::warn!(
-                ?err,
-                track_namespace = %track_namespace,
-                track_name = %track_name,
-                "failed to register track route"
-            );
-        }
-    }
-
-    #[tracing::instrument(
-        level = "info",
         name = "relay.sequence.publish.notify_remote_subscribers",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
@@ -207,7 +176,7 @@ impl Publish {
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
         let routes = match route_registry
-            .find_active_namespace_subscribers(track_namespace)
+            .find_namespace_subscribers(track_namespace)
             .await
         {
             Ok(routes) => routes,
@@ -221,39 +190,14 @@ impl Publish {
                 return;
             }
         };
-        let publisher_relay_ids = match route_registry
-            .find_active_track_routes(track_namespace, track_name)
-            .await
-        {
-            Ok(routes) => routes
-                .into_iter()
-                .map(|route| route.relay.relay_id)
-                .collect::<HashSet<_>>(),
-            Err(err) => {
-                tracing::warn!(
-                    ?err,
-                    track_namespace = %track_namespace,
-                    track_name = %track_name,
-                    "failed to find track publisher routes"
-                );
-                HashSet::new()
-            }
-        };
 
-        for route in routes {
-            if publisher_relay_ids.contains(&route.relay.relay_id) {
-                continue;
-            }
-
-            let session_id = match inter_relay_connection_manager
-                .get_or_connect(&route.relay)
-                .await
-            {
+        for relay in routes {
+            let session_id = match inter_relay_connection_manager.get_or_connect(&relay).await {
                 Ok(session_id) => session_id,
                 Err(err) => {
                     tracing::warn!(
                         ?err,
-                        relay_id = %route.relay.relay_id,
+                        relay_id = %relay.relay_id,
                         track_namespace = %track_namespace,
                         track_name = %track_name,
                         "failed to connect remote publish subscriber"
@@ -272,7 +216,7 @@ impl Publish {
                 .is_some()
             {
                 tracing::info!(
-                    relay_id = %route.relay.relay_id,
+                    relay_id = %relay.relay_id,
                     session_id = session_id,
                     track_namespace = %track_namespace,
                     track_name = %track_name,
@@ -280,7 +224,7 @@ impl Publish {
                 );
             } else {
                 tracing::warn!(
-                    relay_id = %route.relay.relay_id,
+                    relay_id = %relay.relay_id,
                     session_id = session_id,
                     track_namespace = %track_namespace,
                     track_name = %track_name,
