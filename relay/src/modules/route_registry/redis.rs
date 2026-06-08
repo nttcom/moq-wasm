@@ -280,6 +280,18 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
         Ok(routes)
     }
 
+    async fn unregister_namespace_subscriber(
+        &self,
+        track_namespace_prefix: &str,
+    ) -> anyhow::Result<()> {
+        let mut connection = self.connection.clone();
+        let key = Self::subscriber_namespace_key(track_namespace_prefix);
+        let relay_routes_key = Self::relay_routes_key(&self.relay.relay_id);
+        let _: () = connection.hdel(&key, &self.relay.relay_id).await?;
+        let _: () = connection.srem(relay_routes_key, &key).await?;
+        Ok(())
+    }
+
     async fn find_namespace_subscribers(
         &self,
         track_namespace: &str,

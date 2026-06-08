@@ -21,6 +21,7 @@ use crate::modules::{
             table::{LocalPubSubDirectory, RemovedSessionSubscriptions},
         },
         unsubscribe::Unsubscribe,
+        unsubscribe_namespace::UnsubscribeNamespace,
     },
     session_event::SessionEvent,
     session_repository::SessionRepository,
@@ -83,6 +84,7 @@ impl EventHandler {
                         let session_id = match &event {
                             SessionEvent::PublishNameSpace(session_id, _)
                             | SessionEvent::SubscribeNameSpace(session_id, _)
+                            | SessionEvent::UnsubscribeNameSpace(session_id, _)
                             | SessionEvent::Publish(session_id, _)
                             | SessionEvent::Subscribe(session_id, _)
                             | SessionEvent::Unsubscribe(session_id, _)
@@ -129,6 +131,23 @@ impl EventHandler {
                                         local_pub_sub_directory.as_ref(),
                                         &control_message_forwarder,
                                         route_registry.as_ref(),
+                                        handler.as_ref(),
+                                    )
+                                    .await;
+                            }
+                            SessionEvent::UnsubscribeNameSpace(session_id, handler) => {
+                                let unsubscribe_ns = UnsubscribeNamespace {};
+                                unsubscribe_ns
+                                    .handle(
+                                        session_id,
+                                        &session_span,
+                                        local_pub_sub_directory.as_ref(),
+                                        &control_message_forwarder,
+                                        CascadingRelayContext {
+                                            route_registry: route_registry.as_ref(),
+                                            inter_relay_connection_manager:
+                                                inter_relay_connection_manager.as_ref(),
+                                        },
                                         handler.as_ref(),
                                     )
                                     .await;
@@ -208,6 +227,8 @@ impl EventHandler {
                                         &control_message_forwarder,
                                         &ingress_sender,
                                         &egress_sender,
+                                        route_registry.as_ref(),
+                                        inter_relay_connection_manager.as_ref(),
                                     )
                                     .await;
                                     control_message_forwarder
@@ -235,6 +256,8 @@ impl EventHandler {
                                         &control_message_forwarder,
                                         &ingress_sender,
                                         &egress_sender,
+                                        route_registry.as_ref(),
+                                        inter_relay_connection_manager.as_ref(),
                                     )
                                     .await;
                                     control_message_forwarder
@@ -270,6 +293,13 @@ impl EventHandler {
                 "relay.session.event",
                 session_id = %session_id,
                 event = "SubscribeNamespace",
+                track_namespace_prefix = %handler.track_namespace_prefix(),
+            ),
+            SessionEvent::UnsubscribeNameSpace(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "UnsubscribeNamespace",
                 track_namespace_prefix = %handler.track_namespace_prefix(),
             ),
             SessionEvent::Publish(session_id, handler) => tracing::info_span!(
@@ -325,6 +355,8 @@ impl EventHandler {
         control_message_forwarder: &ControlMessageForwarder,
         ingress_sender: &mpsc::Sender<IngressCommand>,
         egress_sender: &mpsc::Sender<EgressCommand>,
+        route_registry: &dyn RelayRouteRegistry,
+        inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
         for removed_downstream in removed.downstream_subscriptions {
             if egress_sender
@@ -365,6 +397,23 @@ impl EventHandler {
 
         for track_key in removed.upstream_track_keys {
             Self::stop_ingress_track(ingress_sender, track_key).await;
+        }
+
+        if control_message_forwarder
+            .repository
+            .lock()
+            .await
+            .is_client_session(removed_session_id)
+        {
+            for track_namespace_prefix in removed.subscribe_namespace_prefixes {
+                UnsubscribeNamespace::cleanup_empty_namespace_subscription(
+                    &track_namespace_prefix,
+                    control_message_forwarder,
+                    route_registry,
+                    inter_relay_connection_manager,
+                )
+                .await;
+            }
         }
     }
 

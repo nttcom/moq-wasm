@@ -195,6 +195,33 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
 
     #[tracing::instrument(
         level = "info",
+        name = "relay.local_pub_sub_directory.unregister_subscribe_namespace",
+        skip_all,
+        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
+    )]
+    fn unregister_subscribe_namespace(
+        &self,
+        session_id: SessionId,
+        track_namespace_prefix: &str,
+    ) -> bool {
+        let Some(subscriber_session_ids) = self.subscriber_namespaces.get(track_namespace_prefix)
+        else {
+            return true;
+        };
+
+        subscriber_session_ids.remove(&session_id);
+        let is_empty = subscriber_session_ids.is_empty();
+        drop(subscriber_session_ids);
+
+        if is_empty {
+            self.subscriber_namespaces.remove(track_namespace_prefix);
+        }
+
+        is_empty
+    }
+
+    #[tracing::instrument(
+        level = "info",
         name = "relay.local_pub_sub_directory.register_publish",
         skip_all,
         fields(session_id = %session_id)
@@ -555,6 +582,23 @@ mod tests {
             removed.subscribe_namespace_prefixes,
             vec!["solo/".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn unregister_subscribe_namespace_reports_when_prefix_becomes_empty() {
+        // Arrange: Register two subscribers for the same namespace prefix.
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(1, "room/".to_string());
+        table.register_subscribe_namespace(2, "room/".to_string());
+
+        // Act: Remove subscribers one by one.
+        let still_has_subscribers = table.unregister_subscribe_namespace(1, "room/");
+        let became_empty = table.unregister_subscribe_namespace(2, "room/");
+
+        // Assert: Only the final unsubscribe empties and removes the prefix entry.
+        assert!(!still_has_subscribers);
+        assert!(became_empty);
+        assert!(table.subscriber_namespaces.get("room/").is_none());
     }
 
     #[tokio::test]

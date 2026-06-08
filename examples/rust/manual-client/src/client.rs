@@ -122,6 +122,13 @@ impl<T: TransportProtocol> Client<T> {
                                 unsubscribe_handler.subscribe_id()
                             );
                         }
+                        moqt::SessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler) => {
+                            tracing::info!(
+                                "Received: {} Unsubscribe Namespace: {}",
+                                _label,
+                                unsubscribe_namespace_handler.track_namespace_prefix()
+                            );
+                        }
                         moqt::SessionEvent::Disconnected() => {
                             tracing::info!("Received: {} Disconnected", _label);
                             break;

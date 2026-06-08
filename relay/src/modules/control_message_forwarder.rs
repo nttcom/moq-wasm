@@ -134,4 +134,30 @@ impl ControlMessageForwarder {
             Err(anyhow::anyhow!("No subscriber"))
         }
     }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.control_message_forwarder.unsubscribe_namespace",
+        skip_all,
+        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
+    )]
+    pub(crate) async fn unsubscribe_namespace(
+        &self,
+        session_id: SessionId,
+        track_namespace_prefix: String,
+    ) -> anyhow::Result<()> {
+        if let Some(subscriber) = self.repository.lock().await.subscriber(session_id) {
+            tracing::info!(
+                "Forwarded UNSUBSCRIBE_NAMESPACE '{}' to session:{}",
+                track_namespace_prefix,
+                session_id
+            );
+            subscriber
+                .send_unsubscribe_namespace(track_namespace_prefix)
+                .await
+        } else {
+            tracing::error!("No subscriber");
+            Err(anyhow::anyhow!("No subscriber"))
+        }
+    }
 }

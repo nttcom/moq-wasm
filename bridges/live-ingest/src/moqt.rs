@@ -370,6 +370,12 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                     SessionEvent::Unsubscribe(handler) => {
                         println!("[moqt] unsubscribe received id={}", handler.subscribe_id());
                     }
+                    SessionEvent::UnsubscribeNamespace(handler) => {
+                        println!(
+                            "[moqt] unsubscribe_namespace received prefix={}",
+                            handler.track_namespace_prefix()
+                        );
+                    }
                     SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => {
                         let mut guard = state.lock().await;
                         guard.disconnected = true;
