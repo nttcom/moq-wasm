@@ -28,8 +28,6 @@ services:
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
       RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
       RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
-    volumes:
-      - ./relay/keys:/workspace/relay/keys:ro
     ports:
       - "4433:443/udp"
     depends_on:
@@ -50,8 +48,6 @@ services:
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
       RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
       RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
-    volumes:
-      - ./relay/keys:/workspace/relay/keys:ro
     ports:
       - "4434:443/udp"
     depends_on:
