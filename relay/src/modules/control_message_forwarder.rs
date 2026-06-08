@@ -7,14 +7,14 @@ use crate::modules::{
     types::SessionId,
 };
 
-pub(crate) struct SessionSignalingDispatcher {
+pub(crate) struct ControlMessageForwarder {
     pub(crate) repository: Arc<tokio::sync::Mutex<SessionRepository>>,
 }
 
-impl SessionSignalingDispatcher {
+impl ControlMessageForwarder {
     #[tracing::instrument(
         level = "info",
-        name = "relay.session_signaling_dispatcher.publish_namespace",
+        name = "relay.control_message_forwarder.publish_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace)
     )]
@@ -41,13 +41,9 @@ impl SessionSignalingDispatcher {
         }
     }
 
-    // pub(crate) fn subscribe_namespace(&self, session_id: String, namespace: String) {
-    //     todo!()
-    // }
-
     #[tracing::instrument(
         level = "info",
-        name = "relay.session_signaling_dispatcher.publish",
+        name = "relay.control_message_forwarder.publish",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
     )]
@@ -84,7 +80,7 @@ impl SessionSignalingDispatcher {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.session_signaling_dispatcher.subscribe",
+        name = "relay.control_message_forwarder.subscribe",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
     )]
@@ -117,7 +113,7 @@ impl SessionSignalingDispatcher {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.session_signaling_dispatcher.unsubscribe",
+        name = "relay.control_message_forwarder.unsubscribe",
         skip_all,
         fields(session_id = %session_id, subscribe_id = %subscribe_id)
     )]

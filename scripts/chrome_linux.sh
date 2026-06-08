@@ -53,7 +53,7 @@ trap cleanup EXIT
 "${chrome_bin}" \
   --test-type \
   --user-data-dir="${user_data_dir}" \
-  --origin-to-force-quic-on=127.0.0.1:4433 \
+  --origin-to-force-quic-on=127.0.0.1:4433,localhost:4433,127.0.0.1:4434,localhost:4434 \
   --ignore-certificate-errors-spki-list="${certbase64}" \
   --use-fake-device-for-media-stream \
   --use-fake-ui-for-media-stream \

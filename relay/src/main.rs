@@ -51,14 +51,20 @@ pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
 async fn main() -> anyhow::Result<()> {
     let _logging = relay::init_logging("relay")?;
     create_certs_for_test_if_needed()?;
+    let config = relay::RelayConfig::from_env()?;
 
     let key_path = get_key_path().to_str().unwrap().to_string();
     let cert_path = get_cert_path().to_str().unwrap().to_string();
 
-    let server = relay::RelayServer::new(&key_path, &cert_path);
-    let _handler = server.spawn_transport::<moqt::DUAL>(4433);
+    let server = relay::RelayServer::new_with_config(&key_path, &cert_path, config.clone()).await?;
+    let _client_handler = server.spawn_client_transport::<moqt::DUAL>(config.port);
+    let _inner_handler = server.spawn_inner_transport::<moqt::QUIC>(config.inner_port);
 
-    tracing::info!("Relay server started with QUIC + WebTransport (4433)");
+    tracing::info!(
+        port = config.port,
+        inner_port = config.inner_port,
+        "Relay server started with external QUIC + WebTransport and inner QUIC"
+    );
     tracing::info!("Ctrl+C to shutdown");
 
     tokio::signal::ctrl_c().await?;

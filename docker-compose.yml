@@ -1,0 +1,48 @@
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  relay-common:
+    image: moqt-relay:local
+    build:
+      context: .
+      dockerfile: relay/Dockerfile
+    profiles:
+      - build
+    command: ["true"]
+
+  relay-a:
+    image: moqt-relay:local
+    env_file:
+      - .env
+    environment:
+      RELAY_ID: relay-a
+      RELAY_ADVERTISE_HOST: relay-a
+      RELAY_PORT: "443"
+      RELAY_INNER_PORT: "444"
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - ./relay/keys:/workspace/relay/keys:ro
+    ports:
+      - "4433:443/udp"
+    depends_on:
+      - redis
+
+  relay-b:
+    image: moqt-relay:local
+    env_file:
+      - .env
+    environment:
+      RELAY_ID: relay-b
+      RELAY_ADVERTISE_HOST: relay-b
+      RELAY_PORT: "443"
+      RELAY_INNER_PORT: "444"
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - ./relay/keys:/workspace/relay/keys:ro
+    ports:
+      - "4434:443/udp"
+    depends_on:
+      - redis

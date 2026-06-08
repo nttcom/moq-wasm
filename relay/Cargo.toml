@@ -29,3 +29,5 @@ opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio", "logs"] }
 opentelemetry-otlp = { version = "0.31.0", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "trace", "logs"] }
 opentelemetry-appender-tracing = "0.31.1"
 tracing-opentelemetry = "0.32.1"
+redis = { version = "0.27.6", features = ["tokio-comp", "connection-manager"] }
+thiserror = "2"
