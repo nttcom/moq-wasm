@@ -25,6 +25,11 @@ impl TransportConnection for WtConnection {
         tracing::info!("WebTransport connection closed: {:?}", reason);
     }
 
+    fn close(&self, code: u32, reason: &str) {
+        self.session.close(code, reason.as_bytes());
+        tracing::info!(code, reason, "WebTransport connection close requested");
+    }
+
     async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
         let (send, recv) = self.session.open_bi().await?;
         let stable_id = self.session.stable_id();

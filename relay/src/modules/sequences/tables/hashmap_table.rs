@@ -7,7 +7,7 @@ use crate::modules::{
     core::handler::publish::PublishHandler,
     sequences::tables::table::{
         ActiveUpstreamSubscription, LocalPubSubDirectory, RemovedDownstreamSubscription,
-        RemovedSessionSubscriptions, UpstreamSubscriptionKey,
+        RemovedSessionSubscriptions, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
     },
     types::{SessionId, TrackNamespace, TrackNamespacePrefix},
 };
@@ -143,9 +143,10 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
                         downstream_session_id,
                         downstream_subscribe_id,
                         upstream_key: upstream_key.clone(),
-                        upstream_subscribe_id: active_subscription.upstream_subscribe_id,
+                        upstream_request_id: active_subscription.upstream_request_id,
                         track_key: active_subscription.track_key,
                         remaining_downstream_subscriber_count: 0,
+                        upstream_origin: active_subscription.origin,
                     });
             }
         }
@@ -456,11 +457,13 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             downstream_session_id,
             downstream_subscribe_id,
             upstream_key: upstream_key.clone(),
-            upstream_subscribe_id: entry.upstream_subscribe_id,
+            upstream_request_id: entry.upstream_request_id,
             track_key: entry.track_key,
             remaining_downstream_subscriber_count: entry.downstream_subscriber_count,
+            upstream_origin: entry.origin,
         };
-        let should_remove = entry.downstream_subscriber_count == 0;
+        let should_remove = entry.downstream_subscriber_count == 0
+            && entry.origin == UpstreamSubscriptionOrigin::Subscribe;
         drop(entry);
         if should_remove {
             self.active_upstream_subscriptions.remove(&upstream_key);
@@ -519,16 +522,37 @@ mod tests {
             None
         }
 
+        fn subscription(
+            &self,
+            subscriber_priority: u8,
+            filter_type: FilterType,
+        ) -> crate::modules::core::subscription::UpstreamSubscription {
+            crate::modules::core::subscription::UpstreamSubscription::from(
+                moqt::PublisherInitiatedSubscription {
+                    request_id: 0,
+                    track_namespace: self.track_namespace.clone(),
+                    track_name: self.track_name.clone(),
+                    track_alias: self.track_alias,
+                    group_order: moqt::GroupOrder::Ascending,
+                    content_exists: moqt::ContentExists::False,
+                    subscriber_priority,
+                    forward: true,
+                    filter_type: filter_type.as_moqt(),
+                    delivery_timeout: None,
+                },
+            )
+        }
+
         async fn ok(
             &self,
-            _subscriber_priority: u8,
-            _filter_type: FilterType,
-            _expires: u64,
+            _subscription: &crate::modules::core::subscription::UpstreamSubscription,
         ) -> Result<(), moqt::TransportSendError> {
             Ok(())
         }
 
-        async fn _error(
+        async fn accept_data_receiver(&self) {}
+
+        async fn error(
             &self,
             _code: u64,
             _reason_phrase: String,
@@ -655,11 +679,12 @@ mod tests {
         table.register_upstream_subscription(
             upstream_key.clone(),
             ActiveUpstreamSubscription {
-                upstream_subscribe_id: 10,
+                upstream_request_id: 10,
                 track_key: 20,
-                expires: 30,
+                expires: Some(30),
                 content_exists: ContentExists::False,
                 downstream_subscriber_count: 1,
+                origin: UpstreamSubscriptionOrigin::Subscribe,
             },
         );
 

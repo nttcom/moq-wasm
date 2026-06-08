@@ -7,8 +7,8 @@ use media_streaming_format::{
 };
 use moqt::{
     ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
-    ObjectDatagramPayload, PublishedResource, Session, SessionEvent, SubgroupId, SubgroupObject,
-    SubgroupObjectSender, SubscribeOption, WEBTRANSPORT,
+    ObjectDatagramPayload, Session, SessionEvent, SubgroupId, SubgroupObject, SubgroupObjectSender,
+    SubscribeOption, Subscription, WEBTRANSPORT,
 };
 use moqt_bridge_onvif::{
     app_config, cli, onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker, rtsp_decoder,
@@ -220,8 +220,8 @@ async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
 
     let expected_namespace = publish_namespace.join("/");
     let mut selected_profile_index: Option<usize> = None;
-    let mut video_publication: Option<PublishedResource> = None;
-    let mut audio_publication: Option<PublishedResource> = None;
+    let mut video_publication: Option<Subscription> = None;
+    let mut audio_publication: Option<Subscription> = None;
     let mut video_state = VideoStreamState::default();
     let mut audio_state = AudioStreamState::default();
     let mut dump_state = dump_keyframe.map(KeyframeDump::new);
@@ -386,8 +386,8 @@ async fn handle_session_event(
     publisher_priority: u8,
     catalog_state: &mut CatalogUpdateState,
     selected_profile_index: &mut Option<usize>,
-    video_publication: &mut Option<PublishedResource>,
-    audio_publication: &mut Option<PublishedResource>,
+    video_publication: &mut Option<Subscription>,
+    audio_publication: &mut Option<Subscription>,
     video_state: &mut VideoStreamState,
     audio_state: &mut AudioStreamState,
     command_subscriber: &mut Option<moqt::Subscriber<WEBTRANSPORT>>,
@@ -491,8 +491,8 @@ async fn handle_media_subscribe_event(
     publisher_priority: u8,
     catalog_state: &mut CatalogUpdateState,
     selected_profile_index: &mut Option<usize>,
-    video_publication: &mut Option<PublishedResource>,
-    audio_publication: &mut Option<PublishedResource>,
+    video_publication: &mut Option<Subscription>,
+    audio_publication: &mut Option<Subscription>,
     video_state: &mut VideoStreamState,
     audio_state: &mut AudioStreamState,
 ) -> Result<Option<ProfileTrack>> {
@@ -524,14 +524,14 @@ async fn handle_media_subscribe_event(
             track_name,
             alias
         );
-        let publication = handler.into_publication(alias);
+        let publication = handler.into_subscription(alias);
         catalog_state.track_publication = Some(publication.clone());
         log::info!(
             "Sending initial catalog object: namespace={} track={} group_id={} track_alias={}",
             handler.track_namespace,
             track_name,
             catalog_state.next_group_id,
-            publication.track_alias
+            publication.track_alias()
         );
         send_catalog(
             publisher,
@@ -572,7 +572,7 @@ async fn handle_media_subscribe_event(
 
     let should_start_rtsp = selected_profile_index.is_none();
     let alias = handler.ok(1_000_000, ContentExists::False).await?;
-    let publication = handler.into_publication(alias);
+    let publication = handler.into_subscription(alias);
     if let Some(selected_index) = selected_profile_index {
         debug_assert_eq!(*selected_index, profile_index);
     } else {
@@ -672,7 +672,7 @@ async fn handle_command_publish_event(
         )
         .await
         .context("accept command publish")?;
-    let track_alias = subscription.track_alias;
+    let track_alias = subscription.track_alias();
     spawn_command_receiver(command_subscriber, subscription, command_sender.clone())?;
     *command_subscription_active = true;
     log::info!(
@@ -718,7 +718,7 @@ async fn ensure_command_track_subscription(
                 command_namespace, command_track
             )
         })?;
-    let track_alias = subscription.track_alias;
+    let track_alias = subscription.track_alias();
     spawn_command_receiver(command_subscriber, subscription, command_sender.clone())?;
     *command_subscription_active = true;
     log::info!(
@@ -733,7 +733,7 @@ async fn ensure_command_track_subscription(
 async fn send_video_packet(
     publisher: &moqt::Publisher<WEBTRANSPORT>,
     state: &mut VideoStreamState,
-    publication: &PublishedResource,
+    publication: &Subscription,
     publisher_priority: u8,
     dump_state: &mut Option<KeyframeDump>,
     packet: EncodedPacket,
@@ -796,7 +796,7 @@ async fn send_video_packet(
 async fn send_audio_packet(
     publisher: &moqt::Publisher<WEBTRANSPORT>,
     state: &mut AudioStreamState,
-    publication: &PublishedResource,
+    publication: &Subscription,
     publisher_priority: u8,
     packet: EncodedAudioPacket,
 ) -> Result<()> {
@@ -928,7 +928,7 @@ fn serialize_audio_chunk_payload(packet: &EncodedAudioPacket) -> Result<Vec<u8>>
 #[allow(clippy::too_many_arguments)]
 async fn send_catalog(
     publisher: &moqt::Publisher<WEBTRANSPORT>,
-    publication: &PublishedResource,
+    publication: &Subscription,
     group_id: u64,
     publisher_priority: u8,
     namespace: &[String],
@@ -1203,12 +1203,12 @@ impl VideoStreamState {
     async fn start_group(
         &mut self,
         publisher: &moqt::Publisher<WEBTRANSPORT>,
-        publication: &PublishedResource,
+        publication: &Subscription,
         publisher_priority: u8,
     ) -> Result<Option<PendingGroupClose>> {
         let mut pending_close = None;
         if self.started {
-            pending_close = self.take_pending_group_close(publication.track_alias);
+            pending_close = self.take_pending_group_close(publication.track_alias());
             self.group_id += 1;
         }
         self.object_id = 0;
@@ -1261,12 +1261,12 @@ impl AudioStreamState {
     async fn start_group(
         &mut self,
         publisher: &moqt::Publisher<WEBTRANSPORT>,
-        publication: &PublishedResource,
+        publication: &Subscription,
         publisher_priority: u8,
     ) -> Result<Option<PendingGroupClose>> {
         let mut pending_close = None;
         if self.started {
-            pending_close = self.take_pending_group_close(publication.track_alias);
+            pending_close = self.take_pending_group_close(publication.track_alias());
             self.group_id += 1;
         }
         self.object_id = 0;
@@ -1426,7 +1426,7 @@ fn resolve_profile_track<'a>(
 }
 
 struct CatalogUpdateState {
-    track_publication: Option<PublishedResource>,
+    track_publication: Option<Subscription>,
     next_group_id: u64,
     last_video_codec: Option<String>,
     last_audio: Option<CatalogAudioSnapshot>,

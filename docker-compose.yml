@@ -16,15 +16,18 @@ services:
   relay-a:
     image: moqt-relay:local
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       RELAY_ID: relay-a
       RELAY_ADVERTISE_HOST: relay-a
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
-    volumes:
-      - ./relay/keys:/workspace/relay/keys:ro
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
+      RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
+      RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
     ports:
       - "4433:443/udp"
     depends_on:
@@ -33,15 +36,18 @@ services:
   relay-b:
     image: moqt-relay:local
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       RELAY_ID: relay-b
       RELAY_ADVERTISE_HOST: relay-b
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
-    volumes:
-      - ./relay/keys:/workspace/relay/keys:ro
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
+      RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
+      RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
     ports:
       - "4434:443/udp"
     depends_on:

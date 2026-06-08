@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::modules::core::{
     data_receiver::receiver::DataReceiver, handler::publish::SubscribeOption,
-    subscription::Subscription,
+    subscription::UpstreamSubscription,
 };
 
 #[async_trait]
@@ -13,12 +13,12 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         track_namespace: String,
         track_name: String,
         option: SubscribeOption,
-    ) -> anyhow::Result<Subscription>;
+    ) -> anyhow::Result<UpstreamSubscription>;
     async fn send_unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()>;
     async fn send_unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()>;
     async fn create_data_receiver(
         &mut self,
-        subscription: &Subscription,
+        subscription: &UpstreamSubscription,
     ) -> anyhow::Result<DataReceiver>;
 }
 
@@ -45,7 +45,7 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
         track_namespace: String,
         track_name: String,
         option: SubscribeOption,
-    ) -> anyhow::Result<Subscription> {
+    ) -> anyhow::Result<UpstreamSubscription> {
         let option = moqt::SubscribeOption {
             subscriber_priority: option.subscriber_priority,
             group_order: option.group_order.as_moqt(),
@@ -53,7 +53,7 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
             filter_type: option.filter_type.as_moqt(),
         };
         let moqt_sub = self.subscribe(track_namespace, track_name, option).await?;
-        Ok(Subscription::from(moqt_sub))
+        Ok(UpstreamSubscription::from(moqt_sub))
     }
 
     #[tracing::instrument(
@@ -84,7 +84,7 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
     )]
     async fn create_data_receiver(
         &mut self,
-        subscription: &Subscription,
+        subscription: &UpstreamSubscription,
     ) -> anyhow::Result<DataReceiver> {
         let result = self.accept_data_receiver(subscription.as_moqt()).await?;
         match result {

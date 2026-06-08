@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    FilterType, GroupOrder, Subscription, TransportProtocol,
+    FilterType, GroupOrder, PublisherInitiatedSubscription, Subscription, TransportProtocol,
     modules::moqt::{
         control_plane::control_messages::{
             control_message_type::ControlMessageType,
@@ -11,7 +11,6 @@ use crate::{
             },
         },
         domains::session_context::SessionContext,
-        runtime::dispatch::incoming_object::IncomingObject,
     },
     modules::transport::transport_send_stream::TransportSendError,
 };
@@ -19,7 +18,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct PublishHandler<T: TransportProtocol> {
     session_context: Arc<SessionContext<T>>,
-    request_id: u64,
+    pub request_id: u64,
     pub track_namespace: String,
     pub track_name: String,
     pub track_alias: u64,
@@ -67,25 +66,43 @@ impl<T: TransportProtocol> PublishHandler<T> {
             .send(ControlMessageType::PublishOk, publish_ok.encode())
             .await?;
 
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
-        self.session_context
-            .notification_map
-            .write()
+        let _ = expires;
+        Ok(Subscription::PublisherInitiated(
+            PublisherInitiatedSubscription {
+                request_id: self.request_id,
+                track_namespace: self.track_namespace.clone(),
+                track_name: self.track_name.clone(),
+                track_alias: self.track_alias,
+                group_order: self.group_order,
+                content_exists: self.content_exists,
+                subscriber_priority,
+                forward: self.forward,
+                filter_type,
+                delivery_timeout: self.delivery_timeout,
+            },
+        ))
+    }
+
+    pub async fn accept_data_receiver(&self) {
+        if let Err(code) = self
+            .session_context
+            .register_data_receiver(self.track_alias)
             .await
-            .insert(self.track_alias, sender);
-        self.session_context
-            .receiver_map
-            .lock()
-            .await
-            .insert(self.track_alias, receiver);
-        Ok(Subscription {
-            request_id: self.request_id,
-            track_alias: self.track_alias,
-            expires,
-            group_order: self.group_order,
-            content_exists: self.content_exists,
-            delivery_timeout: self.delivery_timeout,
-        })
+        {
+            // The track alias is already bound to another active subscription.
+            // draft-14 §9.8: close the session with DUPLICATE_TRACK_ALIAS.
+            tracing::error!(
+                track_alias = self.track_alias,
+                "PUBLISH reused an in-use track alias; closing session"
+            );
+            self.session_context
+                .close_with_error(code, "PUBLISH reused an in-use track alias");
+            return;
+        }
+        tracing::info!(
+            track_alias = self.track_alias,
+            "publish handler registered incoming object receiver"
+        );
     }
 
     pub async fn error(

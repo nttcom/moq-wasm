@@ -2,16 +2,42 @@ use std::sync::Arc;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    core::handler::publish::PublishHandler,
+    core::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
     enums::FilterType,
     inter_relay::InterRelayConnectionManager,
+    relay::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     route_registry::RelayRouteRegistry,
-    sequences::{CascadingRelayContext, tables::table::LocalPubSubDirectory},
-    types::SessionId,
+    sequences::{
+        CascadingRelayContext,
+        tables::table::{
+            ActiveUpstreamSubscription, LocalPubSubDirectory, UpstreamSubscriptionKey,
+            UpstreamSubscriptionOrigin,
+        },
+    },
+    types::{SessionId, compose_session_track_key},
 };
 use tracing::Span;
 
 pub(crate) struct Publish;
+
+#[derive(Debug)]
+enum RegisterUpstreamSubscriptionError {
+    IngressStartFailed,
+}
+
+impl RegisterUpstreamSubscriptionError {
+    fn code(&self) -> u64 {
+        match self {
+            Self::IngressStartFailed => 0,
+        }
+    }
+
+    fn reason_phrase(&self) -> String {
+        match self {
+            Self::IngressStartFailed => "Failed to start ingress for published track".to_string(),
+        }
+    }
+}
 
 impl Publish {
     #[tracing::instrument(
@@ -21,46 +47,74 @@ impl Publish {
         parent = session_span,
         fields(session_id = %session_id)
     )]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
         session_span: &Span,
         table: &dyn LocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
+        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: Box<dyn PublishHandler>,
     ) {
-        let track_namespace = handler.track_namespace().to_string();
-        let track_name = handler.track_name().to_string();
-        let track_alias = handler.track_alias();
+        let handler: Arc<dyn PublishHandler> = Arc::from(handler);
+        let upstream_subscription = handler.subscription(0, FilterType::LargestObject);
         tracing::info!(
             session_id = %session_id,
-            track_namespace = %track_namespace,
-            track_name = %track_name,
-            track_alias = %track_alias,
+            track_namespace = %upstream_subscription.track_namespace(),
+            track_name = %upstream_subscription.track_name(),
+            track_alias = %upstream_subscription.track_alias(),
             "SequenceHandler::publish"
         );
-        self.broadcast_to_subscribers(session_id, forwarder, table, handler.as_ref())
-            .await;
-        if self
-            .register_if_response_succeeded(session_id, table, handler)
-            .await
-            && self.is_origin_client(session_id, forwarder).await
-        {
-            self.notify_remote_subscribers(
-                &track_namespace,
-                &track_name,
-                forwarder,
-                cascading_relay_context.route_registry,
-                cascading_relay_context.inter_relay_connection_manager,
+        let is_origin_client = self.is_origin_client(session_id, forwarder).await;
+
+        if let Err(error) = self
+            .register_upstream_subscription(
+                session_id,
+                table,
+                ingress_sender,
+                handler.clone(),
+                &upstream_subscription,
             )
-            .await;
+            .await
+        {
+            tracing::error!(
+                ?error,
+                session_id = %session_id,
+                track_namespace = %upstream_subscription.track_namespace(),
+                track_name = %upstream_subscription.track_name(),
+                "failed to register upstream subscription"
+            );
+            if handler
+                .error(error.code(), error.reason_phrase())
+                .await
+                .is_err()
+            {
+                tracing::error!("failed to send PUBLISH_ERROR. close session.");
+            }
+            return;
+        }
+
+        self.notify_namespace_subscribers(
+            session_id,
+            forwarder,
+            table,
+            cascading_relay_context,
+            &upstream_subscription,
+            is_origin_client,
+        )
+        .await;
+
+        if handler.ok(&upstream_subscription).await.is_err() {
+            tracing::error!("failed to send PUBLISH_OK. close session.");
+            return;
         }
         tracing::info!(
             session_id = %session_id,
-            track_namespace = %track_namespace,
-            track_name = %track_name,
-            track_alias = %track_alias,
+            track_namespace = %upstream_subscription.track_namespace(),
+            track_name = %upstream_subscription.track_name(),
+            track_alias = %upstream_subscription.track_alias(),
             "SequenceHandler::publish DONE"
         );
     }
@@ -79,35 +133,57 @@ impl Publish {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.sequence.publish.broadcast_to_subscribers",
+        name = "relay.sequence.publish.notify_namespace_subscribers",
         skip_all,
-        fields(publisher_session_id = %publisher_session_id, track_namespace = %handler.track_namespace(), track_name = %handler.track_name())
+        fields(publisher_session_id = %publisher_session_id, track_namespace = %subscription.track_namespace(), track_name = %subscription.track_name())
     )]
-    async fn broadcast_to_subscribers(
+    async fn notify_namespace_subscribers(
         &self,
         publisher_session_id: SessionId,
         forwarder: &ControlMessageForwarder,
         table: &dyn LocalPubSubDirectory,
-        handler: &dyn PublishHandler,
+        cascading_relay_context: CascadingRelayContext<'_>,
+        subscription: &UpstreamSubscription,
+        is_origin_client: bool,
     ) {
-        let track_namespace = handler.track_namespace().to_string();
-        let track_name = handler.track_name().to_string();
-        let track_alias = handler.track_alias();
+        self.notify_local_namespace_subscribers(
+            publisher_session_id,
+            forwarder,
+            table,
+            subscription,
+        )
+        .await;
 
-        let full_track_namespace = format!("{}:{}", track_namespace, track_name);
+        if is_origin_client {
+            self.notify_remote_subscribers(
+                subscription.track_namespace(),
+                subscription.track_name(),
+                forwarder,
+                cascading_relay_context.route_registry,
+                cascading_relay_context.inter_relay_connection_manager,
+            )
+            .await;
+        }
+    }
 
-        tracing::info!(
-            "New track '{}' (alias '{}') is published.",
-            full_track_namespace,
-            track_alias
-        );
-        // The draft defines that the relay requires to send `PUBLISH_NAMESPACE` message to
-        // any subscriber that has interests in the namespace
-        // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.sequence.publish.notify_local_namespace_subscribers",
+        skip_all,
+        fields(publisher_session_id = %publisher_session_id, track_namespace = %subscription.track_namespace(), track_name = %subscription.track_name())
+    )]
+    async fn notify_local_namespace_subscribers(
+        &self,
+        publisher_session_id: SessionId,
+        forwarder: &ControlMessageForwarder,
+        table: &dyn LocalPubSubDirectory,
+        subscription: &UpstreamSubscription,
+    ) {
+        let track_namespace = subscription.track_namespace().to_string();
+        let track_name = subscription.track_name().to_string();
+        let track_alias = subscription.track_alias();
 
-        // Convert DashMap<Namespace, DashSet<SessionId>> to DashMap<SessionId, DashSet<Namespace>>
         let combined = table.get_namespace_subscribers(&track_namespace);
-        tracing::debug!("The namespace are subscribed by: {:?}", combined);
         for subscriber_session_id in combined {
             if let Some(subscriber_track_alias) = forwarder
                 .publish(
@@ -136,29 +212,61 @@ impl Publish {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.sequence.publish.register_if_response_succeeded",
+        name = "relay.sequence.publish.register_upstream_subscription",
         skip_all,
         fields(session_id = %session_id)
     )]
-    async fn register_if_response_succeeded(
+    async fn register_upstream_subscription(
         &self,
         session_id: SessionId,
         table: &dyn LocalPubSubDirectory,
-        handler: Box<dyn PublishHandler>,
-    ) -> bool {
-        // TODO:
-        // Send ok or error failed then close session.
-        // forward: true case. prepare to accept stream/datagram before it returns the result.
-        match handler.ok(128, FilterType::LargestObject, 0).await {
-            Ok(()) => {
-                table.register_publish(session_id, Arc::from(handler)).await;
-                true
-            }
-            Err(_) => {
-                tracing::error!("failed to accept publish. close session.");
-                false
-            }
+        ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
+        handler: Arc<dyn PublishHandler>,
+        subscription: &UpstreamSubscription,
+    ) -> Result<(), RegisterUpstreamSubscriptionError> {
+        let track_namespace = subscription.track_namespace().to_string();
+        let track_name = subscription.track_name().to_string();
+        let track_key = compose_session_track_key(session_id, subscription.track_alias());
+        let upstream_key = UpstreamSubscriptionKey {
+            publisher_session_id: session_id,
+            track_namespace: track_namespace.clone(),
+            track_name: track_name.clone(),
+        };
+        let active_upstream = ActiveUpstreamSubscription {
+            upstream_request_id: subscription.request_id(),
+            track_key,
+            expires: None,
+            content_exists: subscription.content_exists(),
+            downstream_subscriber_count: 0,
+            origin: UpstreamSubscriptionOrigin::Publish,
+        };
+
+        handler.accept_data_receiver().await;
+
+        if ingress_sender
+            .send(IngressCommand::Start(Box::new(IngressStartRequest {
+                subscriber_session_id: session_id,
+                publisher_session_id: session_id,
+                track_namespace: track_namespace.clone(),
+                track_name: track_name.clone(),
+                subscription: subscription.clone(),
+                parent_span: Span::current(),
+            })))
+            .await
+            .is_err()
+        {
+            tracing::error!(
+                session_id = %session_id,
+                track_namespace = %track_namespace,
+                track_name = %track_name,
+                "failed to send ingress start request for published track"
+            );
+            return Err(RegisterUpstreamSubscriptionError::IngressStartFailed);
         }
+
+        table.register_upstream_subscription(upstream_key, active_upstream);
+        table.register_publish(session_id, handler).await;
+        Ok(())
     }
 
     #[tracing::instrument(

@@ -42,11 +42,23 @@ impl<T: moqt::TransportProtocol> StreamSender<T> {
             _ => Err(anyhow::anyhow!("Invalid object type for StreamSender")),
         }
     }
+
+    pub(crate) async fn close(&mut self) -> anyhow::Result<()> {
+        match self.inner.as_mut() {
+            Some(SenderInner::Uninitialized(sender)) => sender.close().await,
+            Some(SenderInner::HeaderSent(sender)) => sender.close().await,
+            None => Ok(()),
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl<T: moqt::TransportProtocol> DataSender for StreamSender<T> {
     async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
         self.send(object).await
+    }
+
+    async fn close(&mut self) -> anyhow::Result<()> {
+        StreamSender::close(self).await
     }
 }

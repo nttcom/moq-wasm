@@ -22,7 +22,10 @@ use crate::{
                     stream_data_sender_factory::StreamDataSenderFactory,
                 },
             },
-            domains::{published_resource::PublishedResource, session_context::SessionContext},
+            domains::{
+                session_context::SessionContext,
+                subscription::{PublisherInitiatedSubscription, Subscription},
+            },
             protocol::TransportProtocol,
         },
         transport::transport_connection::TransportConnection,
@@ -44,11 +47,7 @@ impl<T: TransportProtocol> Publisher<T> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
-        self.session
-            .sender_map
-            .lock()
-            .await
-            .insert(request_id, sender);
+        let _registered_sender = self.session.register_response_sender(request_id, sender);
         let publish_namespace = PublishNamespace::new(request_id, vec_namespace, vec![]);
         self.session
             .send_stream
@@ -82,24 +81,21 @@ impl<T: TransportProtocol> Publisher<T> {
         track_namespace: String,
         track_name: String,
         option: PublishOption,
-    ) -> anyhow::Result<PublishedResource> {
+    ) -> anyhow::Result<Subscription> {
         let track_alias = Self::next_track_alias();
         tracing::debug!("track alias: {}", track_alias);
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
-        self.session
-            .sender_map
-            .lock()
-            .await
-            .insert(request_id, sender);
+        let _registered_sender = self.session.register_response_sender(request_id, sender);
+        let content_exists = option.content_exists;
         let publish = Publish {
             request_id,
             track_namespace_tuple: vec_namespace,
             track_name: track_name.clone(),
             track_alias,
             group_order: option.group_order,
-            content_exists: option.content_exists,
+            content_exists,
             forward: option.forward,
             authorization_tokens: vec![],
             delivery_timeout: None,
@@ -121,11 +117,14 @@ impl<T: TransportProtocol> Publisher<T> {
                     bail!("Protocol violation")
                 } else {
                     tracing::info!("Publish ok");
-                    Ok(PublishedResource::new(
-                        track_namespace,
-                        track_name,
-                        track_alias,
-                        message,
+                    Ok(Subscription::PublisherInitiated(
+                        PublisherInitiatedSubscription::new(
+                            track_namespace,
+                            track_name,
+                            track_alias,
+                            message,
+                        )
+                        .with_content_exists(content_exists),
                     ))
                 }
             }
@@ -137,15 +136,12 @@ impl<T: TransportProtocol> Publisher<T> {
         }
     }
 
-    pub fn create_stream(
-        &self,
-        published_resource: &PublishedResource,
-    ) -> StreamDataSenderFactory<T> {
-        StreamDataSenderFactory::new(published_resource.track_alias, self.session.clone())
+    pub fn create_stream(&self, subscription: &Subscription) -> StreamDataSenderFactory<T> {
+        StreamDataSenderFactory::new(subscription.track_alias(), self.session.clone())
     }
 
-    pub fn create_datagram(&self, published_resource: &PublishedResource) -> DatagramSender<T> {
-        DatagramSender::new(published_resource.track_alias, self.session.clone())
+    pub fn create_datagram(&self, subscription: &Subscription) -> DatagramSender<T> {
+        DatagramSender::new(subscription.track_alias(), self.session.clone())
     }
 
     pub async fn create_fetch_stream(&self, request_id: u64) -> anyhow::Result<FetchDataSender<T>> {

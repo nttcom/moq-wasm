@@ -6,7 +6,7 @@ use tracing::{Instrument, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::modules::{
-    core::{data_receiver::receiver::DataReceiver, subscription::Subscription},
+    core::{data_receiver::receiver::DataReceiver, subscription::UpstreamSubscription},
     relay::{
         cache::store::TrackCacheStore,
         ingress::{
@@ -24,12 +24,12 @@ pub(crate) struct IngressStartRequest {
     pub(crate) publisher_session_id: SessionId,
     pub(crate) track_namespace: String,
     pub(crate) track_name: String,
-    pub(crate) subscription: Subscription,
+    pub(crate) subscription: UpstreamSubscription,
     pub(crate) parent_span: Span,
 }
 
 pub(crate) enum IngressCommand {
-    Start(IngressStartRequest),
+    Start(Box<IngressStartRequest>),
     StopTrack { track_key: TrackKey },
 }
 
@@ -71,10 +71,19 @@ impl IngressCoordinator {
                             command.publisher_session_id,
                             command.subscription.track_alias(),
                         );
+                        tracing::info!(
+                            track_key,
+                            subscriber_session_id = %command.subscriber_session_id,
+                            publisher_session_id = %command.publisher_session_id,
+                            track_alias = command.subscription.track_alias(),
+                            track_namespace = %command.track_namespace,
+                            track_name = %command.track_name,
+                            "ingress start command received"
+                        );
                         let (subscriber, publisher_session_span) = {
                             let session_repo = session_repo_for_runner.lock().await;
                             let Some(subscriber) = session_repo.subscriber(command.publisher_session_id) else {
-                                tracing::debug!(track_key, "publisher session not found for subscription");
+                                tracing::info!(track_key, "publisher session not found for subscription");
                                 continue;
                             };
                             let publisher_session_span = session_repo
@@ -82,6 +91,7 @@ impl IngressCoordinator {
                                 .unwrap_or_else(|| command.parent_span.clone());
                             (subscriber, publisher_session_span)
                         };
+                        tracing::info!(track_key, "upstream subscriber found; spawning data receiver task");
                         let stream_tx = stream_tx.clone();
                         let datagram_tx = datagram_tx.clone();
                         if let Some(stop_sender) = create_stop_senders.remove(&track_key) {
@@ -109,6 +119,7 @@ impl IngressCoordinator {
                         join_set.spawn(async move {
                             let subscription = command.subscription;
                             let mut subscriber = subscriber;
+                            tracing::info!(track_key, "creating upstream data receiver");
                             let receiver_result = tokio::select! {
                                 _ = create_stop_receiver.changed() => {
                                     tracing::info!(track_key, "upstream ingress stopped");
@@ -117,9 +128,10 @@ impl IngressCoordinator {
                                 receiver = subscriber.create_data_receiver(&subscription) => receiver,
                             };
                             let Ok(receiver) = receiver_result else {
-                                tracing::debug!(track_key, "failed to start upstream ingress");
+                                tracing::info!(track_key, "failed to start upstream ingress");
                                 return track_key;
                             };
+                            tracing::info!(track_key, "upstream data receiver created");
                             match receiver {
                                 DataReceiver::Stream(factory) => {
                                     let dataplane_track_span = tracing::info_span!(
@@ -140,21 +152,33 @@ impl IngressCoordinator {
                                             .span_context()
                                             .clone(),
                                     );
-                                    let _ = stream_tx
+                                    if stream_tx
                                         .send(StreamIngressCommand::Start(StreamReceiveStart {
                                             track_key,
                                             factory,
                                             track_span: dataplane_track_span,
                                         }))
-                                        .await;
+                                        .await
+                                        .is_ok()
+                                    {
+                                        tracing::info!(track_key, "stream ingress start command sent");
+                                    } else {
+                                        tracing::info!(track_key, "failed to send stream ingress start command");
+                                    }
                                 }
                                 DataReceiver::Datagram(datagram_receiver) => {
-                                    let _ = datagram_tx
+                                    if datagram_tx
                                         .send(DatagramReceiveCommand::Start(DatagramReceiveStart {
                                             track_key,
                                             receiver: datagram_receiver,
                                         }))
-                                        .await;
+                                        .await
+                                        .is_ok()
+                                    {
+                                        tracing::info!(track_key, "datagram ingress start command sent");
+                                    } else {
+                                        tracing::info!(track_key, "failed to send datagram ingress start command");
+                                    }
                                 }
                             }
                             track_key

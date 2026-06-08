@@ -27,6 +27,12 @@ impl TransportConnection for QUICConnection {
         tracing::info!("QUIC connection closed: {:?}", reason);
     }
 
+    fn close(&self, code: u32, reason: &str) {
+        self.connection
+            .close(quinn::VarInt::from_u32(code), reason.as_bytes());
+        tracing::info!(code, reason, "QUIC connection close requested");
+    }
+
     async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
         let (sender, receiver) = self.connection.open_bi().await?;
         let send_stream = QUICSendStream {

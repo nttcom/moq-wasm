@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     TransportProtocol,
     modules::moqt::{
-        domains::session_context::SessionContext,
+        domains::session_context::{IncomingObjectNotification, SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
     },
 };
@@ -11,6 +11,8 @@ use crate::{
 pub(crate) struct SubscriptionNotifier;
 
 impl SubscriptionNotifier {
+    const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
+
     #[tracing::instrument(
         level = "info",
         name = "moqt.subscription_notifier.notify",
@@ -22,26 +24,37 @@ impl SubscriptionNotifier {
         track_alias: u64,
         incoming_object: IncomingObject<T>,
     ) {
-        let mut count = 0;
-        loop {
-            if let Some(sender) = context.notification_map.read().await.get(&track_alias) {
-                if let Err(error) = sender.send(incoming_object) {
-                    tracing::warn!("Failed to notify incoming object: {}", error);
+        match context
+            .notify_incoming_object(
+                track_alias,
+                incoming_object,
+                Self::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS,
+            )
+            .await
+        {
+            IncomingObjectNotification::Notified => {
+                tracing::info!(track_alias, "notifying registered incoming object receiver");
+            }
+            IncomingObjectNotification::Buffered {
+                pending_objects,
+                dropped_oldest,
+            } => {
+                if dropped_oldest {
+                    tracing::warn!(
+                        track_alias,
+                        max_pending_objects = Self::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS,
+                        "pending incoming object buffer is full; dropping oldest object"
+                    );
                 }
-                break;
-            }
-
-            if count > 10 {
-                tracing::error!(
-                    "No sender found for track alias: {} after multiple attempts",
-                    track_alias
+                tracing::info!(
+                    track_alias,
+                    pending_objects,
+                    "buffered incoming object until track alias is registered"
                 );
-                break;
             }
-
-            tracing::warn!("No sender found for track alias: {}", track_alias);
-            count += 1;
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            IncomingObjectNotification::ReceiverClosed => {
+                tracing::warn!("Failed to notify incoming object: receiver closed");
+            }
         }
     }
 }
