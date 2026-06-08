@@ -37,6 +37,7 @@ pub(crate) struct EventHandler {
 }
 
 impl EventHandler {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         relay_event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
@@ -62,6 +63,7 @@ impl EventHandler {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_relay_session_event_handler(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,

@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
@@ -6,7 +6,7 @@ use crate::modules::{
     enums::FilterType,
     inter_relay::InterRelayConnectionManager,
     relay::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
-    route_registry::{RelayRouteRegistry, RouteStatus},
+    route_registry::RelayRouteRegistry,
     sequences::{
         CascadingRelayContext,
         tables::table::{
@@ -74,10 +74,8 @@ impl Publish {
                 session_id,
                 table,
                 ingress_sender,
-                cascading_relay_context.route_registry,
                 handler.clone(),
                 &upstream_subscription,
-                is_origin_client,
             )
             .await
         {
@@ -157,7 +155,7 @@ impl Publish {
         .await;
 
         if is_origin_client {
-            self.notify_remote_namespace_subscribers(
+            self.notify_remote_subscribers(
                 subscription.track_namespace(),
                 subscription.track_name(),
                 forwarder,
@@ -218,16 +216,13 @@ impl Publish {
         skip_all,
         fields(session_id = %session_id)
     )]
-    #[allow(clippy::too_many_arguments)]
     async fn register_upstream_subscription(
         &self,
         session_id: SessionId,
         table: &dyn LocalPubSubDirectory,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
-        route_registry: &dyn RelayRouteRegistry,
         handler: Arc<dyn PublishHandler>,
         subscription: &UpstreamSubscription,
-        is_origin_client: bool,
     ) -> Result<(), RegisterUpstreamSubscriptionError> {
         let track_namespace = subscription.track_namespace().to_string();
         let track_name = subscription.track_name().to_string();
@@ -271,45 +266,16 @@ impl Publish {
 
         table.register_upstream_subscription(upstream_key, active_upstream);
         table.register_publish(session_id, handler).await;
-        if is_origin_client {
-            self.register_route(route_registry, &track_namespace, &track_name)
-                .await;
-        }
         Ok(())
     }
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.sequence.publish.register_route",
+        name = "relay.sequence.publish.notify_remote_subscribers",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
-    async fn register_route(
-        &self,
-        route_registry: &dyn RelayRouteRegistry,
-        track_namespace: &str,
-        track_name: &str,
-    ) {
-        if let Err(err) = route_registry
-            .register_track_route(track_namespace, track_name, RouteStatus::Active)
-            .await
-        {
-            tracing::warn!(
-                ?err,
-                track_namespace = %track_namespace,
-                track_name = %track_name,
-                "failed to register track route"
-            );
-        }
-    }
-
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.publish.notify_remote_namespace_subscribers",
-        skip_all,
-        fields(track_namespace = %track_namespace, track_name = %track_name)
-    )]
-    async fn notify_remote_namespace_subscribers(
+    async fn notify_remote_subscribers(
         &self,
         track_namespace: &str,
         track_name: &str,
@@ -318,7 +284,7 @@ impl Publish {
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
         let routes = match route_registry
-            .find_active_namespace_subscribers(track_namespace)
+            .find_namespace_subscribers(track_namespace)
             .await
         {
             Ok(routes) => routes,
@@ -332,39 +298,14 @@ impl Publish {
                 return;
             }
         };
-        let publisher_relay_ids = match route_registry
-            .find_active_track_routes(track_namespace, track_name)
-            .await
-        {
-            Ok(routes) => routes
-                .into_iter()
-                .map(|route| route.relay.relay_id)
-                .collect::<HashSet<_>>(),
-            Err(err) => {
-                tracing::warn!(
-                    ?err,
-                    track_namespace = %track_namespace,
-                    track_name = %track_name,
-                    "failed to find track publisher routes"
-                );
-                HashSet::new()
-            }
-        };
 
-        for route in routes {
-            if publisher_relay_ids.contains(&route.relay.relay_id) {
-                continue;
-            }
-
-            let session_id = match inter_relay_connection_manager
-                .get_or_connect(&route.relay)
-                .await
-            {
+        for relay in routes {
+            let session_id = match inter_relay_connection_manager.get_or_connect(&relay).await {
                 Ok(session_id) => session_id,
                 Err(err) => {
                     tracing::warn!(
                         ?err,
-                        relay_id = %route.relay.relay_id,
+                        relay_id = %relay.relay_id,
                         track_namespace = %track_namespace,
                         track_name = %track_name,
                         "failed to connect remote publish subscriber"
@@ -383,7 +324,7 @@ impl Publish {
                 .is_some()
             {
                 tracing::info!(
-                    relay_id = %route.relay.relay_id,
+                    relay_id = %relay.relay_id,
                     session_id = session_id,
                     track_namespace = %track_namespace,
                     track_name = %track_name,
@@ -391,7 +332,7 @@ impl Publish {
                 );
             } else {
                 tracing::warn!(
-                    relay_id = %route.relay.relay_id,
+                    relay_id = %relay.relay_id,
                     session_id = session_id,
                     track_namespace = %track_namespace,
                     track_name = %track_name,

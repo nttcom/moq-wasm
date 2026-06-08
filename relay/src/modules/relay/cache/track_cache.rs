@@ -256,10 +256,11 @@ impl TrackCache {
                 if group_id == start.group_id && current_object_id < start.object_id {
                     continue;
                 }
-                // end.object_id == 0 means entire group is requested
+                // End Location is exclusive; `>=` excludes the object at end.object_id.
+                // end.object_id == 0 is a special case meaning "the entire group".
                 if group_id == end.group_id
                     && end.object_id != 0
-                    && current_object_id > end.object_id
+                    && current_object_id >= end.object_id
                 {
                     break;
                 }
@@ -427,5 +428,95 @@ mod tests {
         // Assert: the latest group's location is returned
         assert_eq!(loc.group_id, 1);
         assert_eq!(loc.object_id, 0);
+    }
+
+    async fn fill_group(cache: &TrackCache, group_id: u64, count: u64) {
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .append_stream_object(group_id, &subgroup, make_header(group_id))
+            .await;
+        // count objects with delta=0 -> object_ids 0, 1, ..., count-1
+        for _ in 0..count {
+            cache
+                .append_stream_object(group_id, &subgroup, make_object(0))
+                .await;
+        }
+    }
+
+    fn object_ids(objects: &[moqt::FetchObjectField]) -> Vec<(u64, u64)> {
+        objects.iter().map(|o| (o.group_id, o.object_id)).collect()
+    }
+
+    #[tokio::test]
+    async fn get_fetch_objects_excludes_end_object() {
+        // Arrange: group 0 with object_ids 0..=4
+        let cache = TrackCache::new();
+        fill_group(&cache, 0, 5).await;
+        // Act: fetch [{0,0}, {0,3}) -> end object 3 is excluded
+        let objects = cache
+            .get_fetch_objects(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 3,
+                },
+            )
+            .await;
+        // Assert: 0,1,2 included; 3 (the End) excluded
+        assert_eq!(object_ids(&objects), vec![(0, 0), (0, 1), (0, 2)]);
+    }
+
+    #[tokio::test]
+    async fn get_fetch_objects_end_object_zero_returns_entire_group() {
+        // Arrange: group 0 with object_ids 0..=4
+        let cache = TrackCache::new();
+        fill_group(&cache, 0, 5).await;
+        // Act: end.object_id == 0 means the entire end group
+        let objects = cache
+            .get_fetch_objects(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+            )
+            .await;
+        // Assert: all objects are included
+        assert_eq!(
+            object_ids(&objects),
+            vec![(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_fetch_objects_spans_groups_with_exclusive_end() {
+        // Arrange: group 0 and group 1, each with object_ids 0..=4
+        let cache = TrackCache::new();
+        fill_group(&cache, 0, 5).await;
+        fill_group(&cache, 1, 5).await;
+        // Act: fetch [{0,2}, {1,3}) -> start object 2 (inclusive), end object 3 (exclusive)
+        let objects = cache
+            .get_fetch_objects(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 2,
+                },
+                moqt::Location {
+                    group_id: 1,
+                    object_id: 3,
+                },
+            )
+            .await;
+        // Assert: g0 from object 2; g1 up to (not including) object 3
+        assert_eq!(
+            object_ids(&objects),
+            vec![(0, 2), (0, 3), (0, 4), (1, 0), (1, 1), (1, 2)]
+        );
     }
 }

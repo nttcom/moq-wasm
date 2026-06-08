@@ -184,7 +184,7 @@ async fn bob(cert_path: String) -> anyhow::Result<()> {
 
     tracing::info!("[bob] detect done, issuing fetches");
 
-    // fetch A: g0/o0 .. g1/o2 (8 objects)
+    // fetch A: [g0/o0, g1/o3) = g0/o0..g0/o4 + g1/o0..g1/o2 (8 objects)
     run_fetch(
         &mut subscriber,
         Location {
@@ -193,11 +193,11 @@ async fn bob(cert_path: String) -> anyhow::Result<()> {
         },
         Location {
             group_id: 1,
-            object_id: 2,
+            object_id: 3,
         },
     )
     .await?;
-    // fetch B: g1/o2 .. g2/o3 (7 objects)
+    // fetch B: [g1/o2, g2/o4) = g1/o2..g1/o4 + g2/o0..g2/o3 (7 objects)
     run_fetch(
         &mut subscriber,
         Location {
@@ -206,11 +206,11 @@ async fn bob(cert_path: String) -> anyhow::Result<()> {
         },
         Location {
             group_id: 2,
-            object_id: 3,
+            object_id: 4,
         },
     )
     .await?;
-    // fetch C: g1/o0 .. g1/o0 = entire group 1 (5 objects)
+    // fetch C: [g1/o0, g1/o0) = entire group 1 (object_id==0 = whole group, 5 objects)
     run_fetch(
         &mut subscriber,
         Location {

@@ -63,49 +63,43 @@ impl UpstreamPublisherResolver {
         track_namespace: &str,
         track_name: &str,
     ) -> anyhow::Result<Option<UpstreamSubscriptionKey>> {
-        let mut routes = self
+        let Some(relay) = self
             .route_registry
-            .find_active_track_routes(track_namespace, track_name)
-            .await?;
-        if routes.is_empty() {
-            routes = self
-                .route_registry
-                .find_active_namespace_routes(track_namespace)
-                .await?;
-        }
+            .find_active_namespace_publisher(track_namespace)
+            .await?
+        else {
+            return Ok(None);
+        };
 
-        for route in routes {
-            match self
-                .inter_relay_connection_manager
-                .get_or_connect(&route.relay)
-                .await
-            {
-                Ok(publisher_session_id) => {
-                    tracing::info!(
-                        relay_id = %route.relay.relay_id,
-                        publisher_session_id = publisher_session_id,
-                        track_namespace = %track_namespace,
-                        track_name = %track_name,
-                        "resolved remote upstream publisher"
-                    );
-                    return Ok(Some(UpstreamSubscriptionKey {
-                        publisher_session_id,
-                        track_namespace: track_namespace.to_string(),
-                        track_name: track_name.to_string(),
-                    }));
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        ?err,
-                        relay_id = %route.relay.relay_id,
-                        track_namespace = %track_namespace,
-                        track_name = %track_name,
-                        "failed to connect remote upstream publisher"
-                    );
-                }
+        match self
+            .inter_relay_connection_manager
+            .get_or_connect(&relay)
+            .await
+        {
+            Ok(publisher_session_id) => {
+                tracing::info!(
+                    relay_id = %relay.relay_id,
+                    publisher_session_id = publisher_session_id,
+                    track_namespace = %track_namespace,
+                    track_name = %track_name,
+                    "resolved remote upstream publisher"
+                );
+                Ok(Some(UpstreamSubscriptionKey {
+                    publisher_session_id,
+                    track_namespace: track_namespace.to_string(),
+                    track_name: track_name.to_string(),
+                }))
+            }
+            Err(err) => {
+                tracing::warn!(
+                    ?err,
+                    relay_id = %relay.relay_id,
+                    track_namespace = %track_namespace,
+                    track_name = %track_name,
+                    "failed to connect remote upstream publisher"
+                );
+                Ok(None)
             }
         }
-
-        Ok(None)
     }
 }

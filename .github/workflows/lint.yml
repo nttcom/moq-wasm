@@ -14,28 +14,14 @@ jobs:
       image: rust:latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
       - name: Install Clippy and Rustfmt
         run: |
           rustup component add clippy
           rustup component add rustfmt
       - name: Install FFmpeg build dependencies
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ffmpeg \
-            pkg-config \
-            libavutil-dev \
-            libavfilter-dev \
-            libavcodec-dev \
-            libavformat-dev \
-            libavdevice-dev \
-            libswscale-dev \
-            libswresample-dev \
-            clang \
-            libclang-dev \
-            llvm-dev
-          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
-          echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
+        uses: ./.github/actions/install-ffmpeg-deps
       - name: Run Clippy
         run: cargo clippy -- -D warnings
       - name: Check code formatting
@@ -48,6 +34,8 @@ jobs:
       image: rust:latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
       - name: Install cargo-audit
         run: cargo install --locked cargo-audit
       - name: Run cargo audit
@@ -61,24 +49,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
       - name: Install FFmpeg build dependencies
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ffmpeg \
-            pkg-config \
-            libavutil-dev \
-            libavfilter-dev \
-            libavcodec-dev \
-            libavformat-dev \
-            libavdevice-dev \
-            libswscale-dev \
-            libswresample-dev \
-            clang \
-            libclang-dev \
-            llvm-dev
-          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
-          echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
+        uses: ./.github/actions/install-ffmpeg-deps
       - name: Generate code coverage
         run: |
           RUSTFLAGS="--cfg=web_sys_unstable_apis --cfg=tokio_unstable" cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
@@ -93,6 +67,8 @@ jobs:
       image: cimg/node:21.6.2
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
       - name: Install dependencies
         run: npm ci
         working-directory: examples/browser
