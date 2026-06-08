@@ -88,4 +88,11 @@ impl TransportConnection for DualConnection {
             DualConnection::WebTransport(c) => c.closed().await,
         }
     }
+
+    fn close(&self, code: u32, reason: &str) {
+        match self {
+            DualConnection::Quic(c) => c.close(code, reason),
+            DualConnection::WebTransport(c) => c.close(code, reason),
+        }
+    }
 }

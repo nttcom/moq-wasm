@@ -6,6 +6,7 @@ use crate::{
     SessionEvent, TransportProtocol,
     modules::moqt::{
         control_plane::{
+            constants::TerminationErrorCode,
             enums::ResponseMessage,
             handler::{
                 fetch_handler::FetchHandler, publish_handler::PublishHandler,
@@ -64,14 +65,25 @@ impl ControlMessageReceiveTask {
                                     }
                                 }
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
-                                    if let Some(sender) =
-                                        session.sender_map.lock().await.remove(&request_id)
-                                    {
+                                    let sender = session
+                                        .sender_map
+                                        .lock()
+                                        .expect("sender_map poisoned")
+                                        .remove(&request_id);
+                                    if let Some(sender) = sender {
                                         if let Err(error) = sender.send(message) {
                                             tracing::error!("failed to send message: {:?}", error);
                                         }
                                     } else {
-                                        tracing::error!("Protocol violation");
+                                        tracing::error!(
+                                            request_id,
+                                            "Protocol violation: response for unknown or already-completed Request ID; closing session"
+                                        );
+                                        session.close_with_error(
+                                            TerminationErrorCode::ProtocolViolation,
+                                            "received response for unknown or already-completed Request ID",
+                                        );
+                                        break;
                                     }
                                 }
                             }

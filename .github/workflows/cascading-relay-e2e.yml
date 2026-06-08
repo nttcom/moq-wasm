@@ -1,0 +1,76 @@
+name: Cascading Relay E2E
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cascading-relay-e2e.yml"
+      - "scripts/cascading-relay-e2e.sh"
+      - "docker-compose.yml"
+      - "relay/**"
+      - "moqt/**"
+      - "tests/cascading-relay-e2e/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain"
+  push:
+    branches:
+      - master
+      - draft-*
+    paths:
+      - ".github/workflows/cascading-relay-e2e.yml"
+      - "scripts/cascading-relay-e2e.sh"
+      - "docker-compose.yml"
+      - "relay/**"
+      - "moqt/**"
+      - "tests/cascading-relay-e2e/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cascading-relay-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        # actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 = v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.92.0
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Install FFmpeg build dependencies
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ffmpeg \
+            pkg-config \
+            libavutil-dev \
+            libavfilter-dev \
+            libavcodec-dev \
+            libavformat-dev \
+            libavdevice-dev \
+            libswscale-dev \
+            libswresample-dev \
+            clang \
+            libclang-dev \
+            llvm-dev
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
+
+      - name: Run cascading relay E2E
+        env:
+          CI: "true"
+        run: ./scripts/cascading-relay-e2e.sh

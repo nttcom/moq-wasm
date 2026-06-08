@@ -2,7 +2,7 @@ use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::unsubscribe::UnsubscribeHandler,
     relay::{egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressCommand},
-    sequences::tables::table::LocalPubSubDirectory,
+    sequences::tables::table::{LocalPubSubDirectory, UpstreamSubscriptionOrigin},
     types::SessionId,
 };
 use tracing::Span;
@@ -65,24 +65,26 @@ impl Unsubscribe {
             "downstream unsubscribe processed"
         );
 
-        if removed.remaining_downstream_subscriber_count == 0 {
+        if removed.remaining_downstream_subscriber_count == 0
+            && removed.upstream_origin == UpstreamSubscriptionOrigin::Subscribe
+        {
             if let Err(err) = forwarder
                 .unsubscribe(
                     removed.upstream_key.publisher_session_id,
-                    removed.upstream_subscribe_id,
+                    removed.upstream_request_id,
                 )
                 .await
             {
                 tracing::warn!(
                     ?err,
                     upstream_session_id = %removed.upstream_key.publisher_session_id,
-                    subscribe_id = %removed.upstream_subscribe_id,
+                    request_id = %removed.upstream_request_id,
                     "failed to forward upstream unsubscribe"
                 );
             } else {
                 tracing::info!(
                     upstream_session_id = %removed.upstream_key.publisher_session_id,
-                    subscribe_id = %removed.upstream_subscribe_id,
+                    request_id = %removed.upstream_request_id,
                     "forwarded upstream unsubscribe"
                 );
             }

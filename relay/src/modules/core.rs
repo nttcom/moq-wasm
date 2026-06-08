@@ -2,7 +2,6 @@ pub(crate) mod data_object;
 pub(crate) mod data_receiver;
 pub(crate) mod data_sender;
 pub(crate) mod handler;
-pub(crate) mod published_resource;
 pub(crate) mod publisher;
 pub(crate) mod session;
 pub(crate) mod session_event;

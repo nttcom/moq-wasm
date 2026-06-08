@@ -1,6 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::modules::{
     enums::{FilterType, GroupOrder},
@@ -60,6 +60,7 @@ pub(crate) struct EgressScheduler {
     filter_type: FilterType,
     group_order: GroupOrder,
     sender: mpsc::Sender<GroupSendTask>,
+    ready_sender: Option<oneshot::Sender<anyhow::Result<()>>>,
 }
 
 impl EgressScheduler {
@@ -69,6 +70,7 @@ impl EgressScheduler {
         filter_type: FilterType,
         group_order: GroupOrder,
         sender: mpsc::Sender<GroupSendTask>,
+        ready_sender: oneshot::Sender<anyhow::Result<()>>,
     ) -> Self {
         Self {
             cache,
@@ -76,10 +78,11 @@ impl EgressScheduler {
             filter_type,
             group_order,
             sender,
+            ready_sender: Some(ready_sender),
         }
     }
 
-    pub(crate) async fn run(self) {
+    pub(crate) async fn run(mut self) {
         let mut receiver = self.latest_info_sender.subscribe();
         let mut scheduled = HashSet::<GroupSendTaskKey>::new();
         let next_group_start_floor = if matches!(self.filter_type, FilterType::NextGroupStart) {
@@ -100,6 +103,7 @@ impl EgressScheduler {
         {
             self.schedule_after_location(location, &mut scheduled).await;
         }
+        self.notify_ready(Ok(()));
 
         loop {
             match receiver.recv().await {
@@ -181,6 +185,12 @@ impl EgressScheduler {
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
+        }
+    }
+
+    fn notify_ready(&mut self, result: anyhow::Result<()>) {
+        if let Some(sender) = self.ready_sender.take() {
+            let _ = sender.send(result);
         }
     }
 
@@ -354,12 +364,14 @@ mod tests {
 
         let (info_tx, _info_rx) = broadcast::channel(16);
         let (task_tx, mut task_rx) = mpsc::channel(16);
+        let (ready_tx, _ready_rx) = tokio::sync::oneshot::channel();
         let scheduler = EgressScheduler::new(
             cache,
             info_tx,
             FilterType::LargestObject,
             GroupOrder::Ascending,
             task_tx,
+            ready_tx,
         );
         let handle = tokio::spawn(scheduler.run());
 

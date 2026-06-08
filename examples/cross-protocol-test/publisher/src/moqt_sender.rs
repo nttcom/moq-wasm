@@ -61,7 +61,7 @@ pub async fn connect_and_wait_for_subscriber(
                         tracing::error!("failed to send subscribe ok");
                         continue;
                     };
-                    let publication = handler.into_publication(0);
+                    let publication = handler.into_subscription(0);
                     let factory = pub_clone.create_stream(&publication);
                     if let Some(tx) = tx.take() {
                         let _ = tx.send(factory);

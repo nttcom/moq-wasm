@@ -37,8 +37,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 #[cfg(feature = "web_sys_unstable_apis")]
 use web_sys::{
-    ReadableStream, ReadableStreamDefaultReader, WebTransport, WebTransportBidirectionalStream,
-    WritableStreamDefaultWriter,
+    ReadableStream, ReadableStreamDefaultReader, WebTransport, WritableStreamDefaultWriter,
 };
 
 #[wasm_bindgen]
@@ -720,6 +719,7 @@ impl MOQTClient {
         self.state.borrow_mut().reset_subgroup_state(track_alias);
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = sendSubscribeOk)]
     pub async fn send_subscribe_ok(
         &self,
@@ -994,7 +994,8 @@ impl MOQTClient {
         // Explicit close is driven by the JS wrapper, so suppress the async
         // `onConnectionClosed` callback path to avoid re-entrant cleanup.
         self.callbacks.borrow_mut().connection_closed_callback = None;
-        if let Some(transport) = self.transport.borrow().clone() {
+        let transport = self.transport.borrow().clone();
+        if let Some(transport) = transport {
             let closed = webtransport_closed_promise(&transport);
             transport.close();
             if let Some(closed) = closed {
@@ -1028,9 +1029,7 @@ impl MOQTClient {
             });
         }
 
-        let control_stream = WebTransportBidirectionalStream::from(
-            JsFuture::from(transport.create_bidirectional_stream()).await?,
-        );
+        let control_stream = JsFuture::from(transport.create_bidirectional_stream()).await?;
         let control_reader = ReadableStreamDefaultReader::new(&control_stream.readable().into())?;
         let control_writer = control_stream.writable().get_writer()?;
         *self.control_stream_writer.borrow_mut() = Some(control_writer);
@@ -1166,14 +1165,10 @@ async fn control_stream_read_thread(
             continue;
         }
         buf.extend_from_slice(&new_bytes);
-        loop {
-            match take_control_message(&mut buf).map_err(|error| js_error(error.to_string()))? {
-                Some((message_type, payload)) => {
-                    handle_control_message(callbacks.clone(), state.clone(), message_type, payload)
-                        .await?;
-                }
-                None => break,
-            }
+        while let Some((message_type, payload)) =
+            take_control_message(&mut buf).map_err(|error| js_error(error.to_string()))?
+        {
+            handle_control_message(callbacks.clone(), state.clone(), message_type, payload).await?;
         }
     }
 

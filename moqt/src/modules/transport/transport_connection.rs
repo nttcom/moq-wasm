@@ -10,6 +10,7 @@ pub(crate) trait TransportConnection: Send + Sync + Debug {
     type SendStream: TransportSendStream;
     type ReceiveStream: TransportReceiveStream;
     async fn closed(&self);
+    fn close(&self, code: u32, reason: &str);
     async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)>;
     async fn accept_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)>;
     async fn open_uni(&self) -> anyhow::Result<Self::SendStream>;

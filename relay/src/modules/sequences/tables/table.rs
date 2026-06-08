@@ -17,11 +17,18 @@ pub(crate) struct UpstreamSubscriptionKey {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ActiveUpstreamSubscription {
-    pub(crate) upstream_subscribe_id: u64,
+    pub(crate) upstream_request_id: u64,
     pub(crate) track_key: TrackKey,
-    pub(crate) expires: u64,
+    pub(crate) expires: Option<u64>,
     pub(crate) content_exists: ContentExists,
     pub(crate) downstream_subscriber_count: usize,
+    pub(crate) origin: UpstreamSubscriptionOrigin,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpstreamSubscriptionOrigin {
+    Publish,
+    Subscribe,
 }
 
 #[derive(Clone, Debug)]
@@ -29,9 +36,10 @@ pub(crate) struct RemovedDownstreamSubscription {
     pub(crate) downstream_session_id: SessionId,
     pub(crate) downstream_subscribe_id: u64,
     pub(crate) upstream_key: UpstreamSubscriptionKey,
-    pub(crate) upstream_subscribe_id: u64,
+    pub(crate) upstream_request_id: u64,
     pub(crate) track_key: TrackKey,
     pub(crate) remaining_downstream_subscriber_count: usize,
+    pub(crate) upstream_origin: UpstreamSubscriptionOrigin,
 }
 
 #[derive(Clone, Debug, Default)]

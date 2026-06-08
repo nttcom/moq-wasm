@@ -11,6 +11,7 @@ use crate::modules::{
     },
     sequences::tables::table::{
         ActiveUpstreamSubscription, LocalPubSubDirectory, UpstreamSubscriptionKey,
+        UpstreamSubscriptionOrigin,
     },
     types::{SessionId, compose_session_track_key},
     upstream_publisher_resolver::UpstreamPublisherResolver,
@@ -245,28 +246,29 @@ impl Subscribe {
             track_namespace = %upstream_key.track_namespace,
             track_name = %upstream_key.track_name,
             track_alias = subscription.track_alias(),
-            expires = subscription.expires(),
+            expires = subscription.expires().unwrap_or(0),
             "upstream subscribe ok received"
         );
 
         let track_key = compose_session_track_key(pub_session_id, subscription.track_alias());
         let active_upstream = ActiveUpstreamSubscription {
-            upstream_subscribe_id: subscription.request_id(),
+            upstream_request_id: subscription.request_id(),
             track_key,
             expires: subscription.expires(),
             content_exists: subscription.content_exists(),
             downstream_subscriber_count: 0,
+            origin: UpstreamSubscriptionOrigin::Subscribe,
         };
 
         if ingress_sender
-            .send(IngressCommand::Start(IngressStartRequest {
+            .send(IngressCommand::Start(Box::new(IngressStartRequest {
                 subscriber_session_id: session_id,
                 publisher_session_id: pub_session_id,
                 track_namespace: upstream_key.track_namespace.clone(),
                 track_name: upstream_key.track_name.clone(),
                 subscription,
                 parent_span: Span::current(),
-            }))
+            })))
             .await
             .is_err()
         {
@@ -311,6 +313,10 @@ impl Subscribe {
         cache_store: &Arc<TrackCacheStore>,
         handler: &dyn SubscribeHandler,
     ) {
+        let subscriber_track_alias = handler.allocate_track_alias();
+
+        // Derive content_exists from the largest cached object when available,
+        // falling back to the upstream-advertised value.
         let content_exists = match cache_store.get(active_upstream.track_key) {
             Some(cache) => match cache.largest_location().await {
                 Some(loc) => ContentExists::True {
@@ -323,20 +329,6 @@ impl Subscribe {
             },
             None => active_upstream.content_exists.clone(),
         };
-        let Ok(subscriber_track_alias) = handler.ok(active_upstream.expires, content_exists).await
-        else {
-            tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
-            // TODO: send_unsubscribe
-            // TODO: close session
-            return;
-        };
-        tracing::info!(
-            session_id = %session_id,
-            track_namespace = %upstream_key.track_namespace,
-            track_name = %upstream_key.track_name,
-            subscriber_track_alias = subscriber_track_alias,
-            "downstream subscribe ok sent"
-        );
 
         if !table.register_downstream_subscription(
             session_id,
@@ -347,21 +339,57 @@ impl Subscribe {
             return;
         }
 
+        let (ready_sender, ready_receiver) = tokio::sync::oneshot::channel();
         if egress_sender
             .send(EgressCommand::StartReader(Box::new(EgressStartRequest {
                 subscriber_session_id: session_id,
                 downstream_subscribe_id: handler.subscribe_id(),
                 track_key: active_upstream.track_key,
-                track_namespace: upstream_key.track_namespace,
-                track_name: upstream_key.track_name,
-                published_resources: handler.convert_into_publication(subscriber_track_alias),
+                track_namespace: upstream_key.track_namespace.clone(),
+                track_name: upstream_key.track_name.clone(),
+                downstream_subscription: handler.to_downstream_subscription(subscriber_track_alias),
                 parent_span: Span::current(),
+                ready_sender,
             })))
             .await
             .is_err()
         {
             tracing::error!("Failed to send EgressStartRequest. Session close.");
+            return;
         }
+        match ready_receiver.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::error!(?error, "Failed to start egress runner. Session close.");
+                return;
+            }
+            Err(error) => {
+                tracing::error!(?error, "Egress runner readiness dropped. Session close.");
+                return;
+            }
+        }
+
+        if handler
+            .ok_with_track_alias(
+                subscriber_track_alias,
+                active_upstream.expires.unwrap_or(0),
+                content_exists,
+            )
+            .await
+            .is_err()
+        {
+            tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
+            // TODO: send_unsubscribe
+            // TODO: close session
+            return;
+        }
+        tracing::info!(
+            session_id = %session_id,
+            track_namespace = %upstream_key.track_namespace,
+            track_name = %upstream_key.track_name,
+            subscriber_track_alias = subscriber_track_alias,
+            "downstream subscribe ok sent"
+        );
     }
 
     #[tracing::instrument(

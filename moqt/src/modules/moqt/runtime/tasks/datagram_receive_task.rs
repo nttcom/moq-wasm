@@ -32,6 +32,7 @@ impl DatagramReceiveTask {
                     loop {
                         match context.transport_connection.receive_datagram().await {
                             Ok(mut data) => {
+                                tracing::info!("accepted incoming datagram");
                                 Self::on_datagram_received(&context, &mut data).await;
                             }
                             Err(_) => {

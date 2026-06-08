@@ -122,7 +122,7 @@ async fn alice(cert_path: String) -> anyhow::Result<()> {
                     handler.track_name
                 );
                 let track_alias = handler.ok(0, ContentExists::False).await?;
-                let publication = handler.into_publication(track_alias);
+                let publication = handler.into_subscription(track_alias);
                 let factory = session.publisher().create_stream(&publication);
                 for group_id in 0..GROUPS {
                     send_group(&factory, group_id).await?;
@@ -156,7 +156,7 @@ async fn bob(cert_path: String) -> anyhow::Result<()> {
         .await?;
     tracing::info!(
         "[bob] subscribe ok, track_alias={}",
-        subscription.track_alias
+        subscription.track_alias()
     );
 
     let data_receiver = subscriber.accept_data_receiver(&subscription).await?;
