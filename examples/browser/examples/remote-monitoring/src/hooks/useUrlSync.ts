@@ -8,6 +8,6 @@ export function useUrlSync(params: Record<string, string | null>) {
       else sp.delete(key)
     }
     window.history.replaceState(null, '', `?${sp.toString()}`)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, Object.values(params))
 }

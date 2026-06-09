@@ -14,16 +14,26 @@ interface Props {
   onClick: () => void
 }
 
-export function StageCamera({ cameraId, mode, connState, currentGroupId, latestGroupId, onCanvasReady, onSubscribe, isSubscribed, isSubscribing, onClick }: Props) {
+export function StageCamera({
+  cameraId,
+  mode,
+  connState,
+  currentGroupId,
+  latestGroupId,
+  onCanvasReady,
+  onSubscribe,
+  isSubscribed,
+  isSubscribing,
+  onClick
+}: Props) {
   const isReview = mode === 'review'
   const isUnhealthy = connState !== 'connected'
 
-  const delaySeconds = currentGroupId != null && latestGroupId != null
-    ? Number(latestGroupId - currentGroupId)
-    : null
-  const timestamp = isReview && delaySeconds != null
-    ? `−${String(Math.floor(delaySeconds / 60)).padStart(2, '0')}:${String(delaySeconds % 60).padStart(2, '0')}`
-    : 'NOW'
+  const delaySeconds = currentGroupId != null && latestGroupId != null ? Number(latestGroupId - currentGroupId) : null
+  const timestamp =
+    isReview && delaySeconds != null
+      ? `−${String(Math.floor(delaySeconds / 60)).padStart(2, '0')}:${String(delaySeconds % 60).padStart(2, '0')}`
+      : 'NOW'
 
   return (
     <div
@@ -35,15 +45,13 @@ export function StageCamera({ cameraId, mode, connState, currentGroupId, latestG
       onClick={onClick}
     >
       {/* video feed */}
-      <div className="absolute inset-0 bg-zinc-900"
+      <div
+        className="absolute inset-0 bg-zinc-900"
         style={{
-          backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.03) 0 9px, transparent 9px 18px)',
+          backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.03) 0 9px, transparent 9px 18px)'
         }}
       >
-        <canvas
-          ref={onCanvasReady}
-          className="absolute inset-0 w-full h-full object-cover"
-        />
+        <canvas ref={onCanvasReady} className="absolute inset-0 w-full h-full object-cover" />
         {!isSubscribed && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <span className="font-mono text-sm text-zinc-500">
@@ -88,7 +96,10 @@ export function StageCamera({ cameraId, mode, connState, currentGroupId, latestG
         <div className="flex items-center gap-2">
           {onSubscribe && !isSubscribed ? (
             <button
-              onClick={(e) => { e.stopPropagation(); onSubscribe() }}
+              onClick={(e) => {
+                e.stopPropagation()
+                onSubscribe()
+              }}
               disabled={isSubscribing}
               className="rounded border border-green-500 bg-green-500/20 px-2.5 py-1 font-mono text-xs font-bold text-green-400 hover:bg-green-500/30 disabled:opacity-50"
             >

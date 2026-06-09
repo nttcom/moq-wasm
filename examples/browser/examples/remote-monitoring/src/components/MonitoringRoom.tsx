@@ -104,16 +104,23 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
         subscribersRef.current.delete(camId)
       }
     } finally {
-      setSubscribingCameras((prev) => { const s = new Set(prev); s.delete(camId); return s })
+      setSubscribingCameras((prev) => {
+        const s = new Set(prev)
+        s.delete(camId)
+        return s
+      })
     }
   }
 
-  const handleCanvasReady = useCallback((camId: CameraId) => (canvas: HTMLCanvasElement | null) => {
-    subscribersRef.current.get(camId)?.setCanvas(canvas)
-    if (canvas) {
-      canvasRefs.current.set(camId, canvas)
-    }
-  }, [])
+  const handleCanvasReady = useCallback(
+    (camId: CameraId) => (canvas: HTMLCanvasElement | null) => {
+      subscribersRef.current.get(camId)?.setCanvas(canvas)
+      if (canvas) {
+        canvasRefs.current.set(camId, canvas)
+      }
+    },
+    []
+  )
 
   const cleanupReview = useCallback((targetStageId: CameraId) => {
     fetchGenRef.current++
@@ -128,35 +135,34 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
     setEntryGroupId(null)
   }, [])
 
-  const startFetch = useCallback(async (seekGroup: bigint, camId: CameraId, targetObjectId?: bigint) => {
-    const session = sessionRef.current
-    const subscriber = subscribersRef.current.get(camId)
-    if (!session || !subscriber) return
+  const startFetch = useCallback(
+    async (seekGroup: bigint, camId: CameraId, targetObjectId?: bigint) => {
+      const session = sessionRef.current
+      const subscriber = subscribersRef.current.get(camId)
+      if (!session || !subscriber) return
 
-    const myGen = ++fetchGenRef.current
+      const myGen = ++fetchGenRef.current
 
-    const first = subscriber.firstReceivedGroupId ?? seekGroup
-    const windowStart = seekGroup - first > 6n ? seekGroup - 6n : first
-    const windowEnd = seekGroup + 5n
+      const first = subscriber.firstReceivedGroupId ?? seekGroup
+      const windowStart = seekGroup - first > 6n ? seekGroup - 6n : first
+      const windowEnd = seekGroup + 5n
 
-    if (activeFetchIdRef.current !== null) {
-      session.clearFetch(activeFetchIdRef.current)
-      activeFetchIdRef.current = null
-    }
-    reviewBufferRef.current = new Map()
+      if (activeFetchIdRef.current !== null) {
+        session.clearFetch(activeFetchIdRef.current)
+        activeFetchIdRef.current = null
+      }
+      reviewBufferRef.current = new Map()
 
-    setCurrentGroupId(seekGroup)
-    setFetchWindow({ startGroup: windowStart, endGroup: windowEnd })
+      setCurrentGroupId(seekGroup)
+      setFetchWindow({ startGroup: windowStart, endGroup: windowEnd })
 
-    const targetGroup = seekGroup
-    const needSequential = targetObjectId !== undefined && targetObjectId > 0n
-    const seqBuffer = new Map<bigint, Uint8Array>()
-    let seqDecoded = false
+      const targetGroup = seekGroup
+      const needSequential = targetObjectId !== undefined && targetObjectId > 0n
+      const seqBuffer = new Map<bigint, Uint8Array>()
+      let seqDecoded = false
 
-    try {
-      const fetchId = await session.fetchVideo(
-        location, camId, windowStart, windowEnd,
-        (msg) => {
+      try {
+        const fetchId = await session.fetchVideo(location, camId, windowStart, windowEnd, (msg) => {
           if (fetchGenRef.current !== myGen) return
           const payload = new Uint8Array(msg.objectPayload)
 
@@ -179,19 +185,20 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
               subscriber.decodeFrame(msg.groupId, payload)
             }
           }
+        })
+        if (fetchGenRef.current !== myGen) {
+          session.clearFetch(fetchId)
+          return
         }
-      )
-      if (fetchGenRef.current !== myGen) {
-        session.clearFetch(fetchId)
-        return
+        activeFetchIdRef.current = fetchId
+      } catch (e) {
+        if (fetchGenRef.current === myGen) {
+          console.error('[review] FETCH failed', e)
+        }
       }
-      activeFetchIdRef.current = fetchId
-    } catch (e) {
-      if (fetchGenRef.current === myGen) {
-        console.error('[review] FETCH failed', e)
-      }
-    }
-  }, [location])
+    },
+    [location]
+  )
 
   const handleStageClick = async () => {
     if (!subscribedCameras.has(stageId)) return
@@ -297,7 +304,11 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
               接続
             </Button>
           )}
-          {connStatus === 'connecting' && <Button disabled variant="outline">接続中…</Button>}
+          {connStatus === 'connecting' && (
+            <Button disabled variant="outline">
+              接続中…
+            </Button>
+          )}
           {connStatus === 'connected' && (
             <span className="flex items-center gap-1.5 font-mono text-sm text-green-400">
               <span className="h-2 w-2 rounded-full bg-green-500" />
@@ -328,7 +339,9 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
 
       {/* hint */}
       {subscribedCameras.size > 0 && (
-        <p className="text-xs text-zinc-500">主役をクリックすると REVIEW（コマ送りモード）。右サムネをクリックで主役と入替。</p>
+        <p className="text-xs text-zinc-500">
+          主役をクリックすると REVIEW（コマ送りモード）。右サムネをクリックで主役と入替。
+        </p>
       )}
 
       {/* main grid */}

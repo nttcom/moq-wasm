@@ -93,11 +93,19 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
         </div>
         <div className="flex items-center gap-2">
           {isIdle && (
-            <Button onClick={handleConnect} disabled={!canConnect} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40">
+            <Button
+              onClick={handleConnect}
+              disabled={!canConnect}
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40"
+            >
               接続
             </Button>
           )}
-          {status === 'connecting' && <Button disabled variant="outline">接続中…</Button>}
+          {status === 'connecting' && (
+            <Button disabled variant="outline">
+              接続中…
+            </Button>
+          )}
           {status === 'connected' && (
             <>
               <span className="font-mono text-xs text-green-400">● 接続済み</span>
@@ -106,7 +114,11 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
               </Button>
             </>
           )}
-          {status === 'starting' && <Button disabled variant="outline">カメラ起動中…</Button>}
+          {status === 'starting' && (
+            <Button disabled variant="outline">
+              カメラ起動中…
+            </Button>
+          )}
           {status === 'live' && (
             <span className="flex items-center gap-1.5 font-mono text-sm font-bold text-red-400">
               <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
@@ -127,9 +139,13 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
                 onChange={(e) => setCamId(e.target.value as CameraId)}
                 className="w-full rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
-                <option value="" disabled>選択してください</option>
+                <option value="" disabled>
+                  選択してください
+                </option>
                 {ALL_CAMERA_IDS.map((id) => (
-                  <option key={id} value={id}>{id.toUpperCase()}</option>
+                  <option key={id} value={id}>
+                    {id.toUpperCase()}
+                  </option>
                 ))}
               </select>
             </div>
@@ -150,14 +166,8 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
 
       {/* preview */}
       <div className="relative flex-1 rounded-xl overflow-hidden bg-zinc-900 aspect-video flex items-center justify-center">
-        <video
-          ref={videoRef}
-          autoPlay muted playsInline
-          className="absolute inset-0 w-full h-full object-cover"
-        />
-        {status === 'idle' && (
-          <p className="font-mono text-zinc-500 text-sm">接続 → 配信開始 で配信を開始します</p>
-        )}
+        <video ref={videoRef} autoPlay muted playsInline className="absolute inset-0 w-full h-full object-cover" />
+        {status === 'idle' && <p className="font-mono text-zinc-500 text-sm">接続 → 配信開始 で配信を開始します</p>}
         {camId && (
           <div className="absolute bottom-3 left-3 font-mono text-xs text-white bg-black/50 rounded px-2 py-1">
             {camId.toUpperCase()}
@@ -169,10 +179,14 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
       {!isIdle && (
         <div className="rounded-xl bg-zinc-900 px-4 py-3 font-mono text-sm space-y-1">
           <div className="flex gap-3 text-xs text-zinc-400">
-            <span>Relay:</span><span className="text-zinc-300">{relayUrl}</span>
+            <span>Relay:</span>
+            <span className="text-zinc-300">{relayUrl}</span>
           </div>
           <div className="flex gap-3 text-xs text-zinc-400">
-            <span>Namespace:</span><span className="text-zinc-300">[{location}, {camId}] / video</span>
+            <span>Namespace:</span>
+            <span className="text-zinc-300">
+              [{location}, {camId}] / video
+            </span>
           </div>
           <div className="flex gap-3 text-xs text-zinc-400">
             <span>Subscribers:</span>

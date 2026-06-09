@@ -9,23 +9,20 @@ interface Props {
   disabled?: boolean
 }
 
-export function TransportControls({ onStepBack, onStepForward, onReturnToLive, canStepBack, canStepForward, disabled }: Props) {
+export function TransportControls({
+  onStepBack,
+  onStepForward,
+  onReturnToLive,
+  canStepBack,
+  canStepForward,
+  disabled
+}: Props) {
   return (
     <div className="flex items-center gap-2">
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={onStepBack}
-        disabled={disabled || !canStepBack}
-      >
+      <Button size="sm" variant="outline" onClick={onStepBack} disabled={disabled || !canStepBack}>
         ◀▌ 1s 戻し
       </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={onStepForward}
-        disabled={disabled || !canStepForward}
-      >
+      <Button size="sm" variant="outline" onClick={onStepForward} disabled={disabled || !canStepForward}>
         1s 送り ▐▶
       </Button>
       <Button

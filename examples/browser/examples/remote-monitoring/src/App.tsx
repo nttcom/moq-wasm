@@ -14,7 +14,7 @@ function readParams() {
     mode: p.get('mode') ?? 'monitor',
     location: p.get('location') ?? DEFAULT_LOCATION,
     relay: p.get('relay') ?? DEFAULT_RELAY,
-    camId: (cam && ALL_CAMERA_IDS.includes(cam as CameraId) ? cam : null) as CameraId | null,
+    camId: (cam && ALL_CAMERA_IDS.includes(cam as CameraId) ? cam : null) as CameraId | null
   }
 }
 

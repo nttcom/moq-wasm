@@ -5,21 +5,21 @@ import { type CameraId } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][camera]', ...args)
 
-const KEYFRAME_INTERVAL_FRAMES = 30  // 30fps × 1s = 1 GoP per second
+const KEYFRAME_INTERVAL_FRAMES = 30 // 30fps × 1s = 1 GoP per second
 const VIDEO_CONFIG = {
-  codec: 'avc1.640028',  // H.264 High Profile Level 4.0
+  codec: 'avc1.640028', // H.264 High Profile Level 4.0
   width: 1280,
   height: 720,
   bitrate: 1_000_000,
   framerate: 30,
-  hardwareAcceleration: 'prefer-hardware' as const,
+  hardwareAcceleration: 'prefer-hardware' as const
 }
 
 const CAM_COLORS: Record<CameraId, string> = {
   cam01: '#7a1a1a',
   cam02: '#1a3a7a',
   cam03: '#1a6a35',
-  cam04: '#7a4a10',
+  cam04: '#7a4a10'
 }
 
 export class CameraPublisher {
@@ -31,7 +31,7 @@ export class CameraPublisher {
 
   constructor(
     private readonly session: PublisherSession,
-    private readonly camId: CameraId,
+    private readonly camId: CameraId
   ) {}
 
   async start(): Promise<MediaStream> {
@@ -45,10 +45,9 @@ export class CameraPublisher {
     const track = this.stream.getVideoTracks()[0]
 
     log('starting encoder worker', { keyframeInterval: KEYFRAME_INTERVAL_FRAMES, config: encoderConfig })
-    this.worker = new Worker(
-      new URL('../../../../utils/media/encoders/videoEncoder.ts', import.meta.url),
-      { type: 'module' }
-    )
+    this.worker = new Worker(new URL('../../../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
+      type: 'module'
+    })
     this.worker.postMessage({ type: 'keyframeInterval', keyframeInterval: KEYFRAME_INTERVAL_FRAMES })
     this.worker.postMessage({ type: 'encoderConfig', config: encoderConfig })
     this.worker.onmessage = (e) => {
@@ -95,8 +94,18 @@ export class CameraPublisher {
       // grid pattern
       ctx.strokeStyle = 'rgba(255,255,255,0.08)'
       ctx.lineWidth = 1
-      for (let x = 0; x < canvas.width; x += 80) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke() }
-      for (let y = 0; y < canvas.height; y += 80) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke() }
+      for (let x = 0; x < canvas.width; x += 80) {
+        ctx.beginPath()
+        ctx.moveTo(x, 0)
+        ctx.lineTo(x, canvas.height)
+        ctx.stroke()
+      }
+      for (let y = 0; y < canvas.height; y += 80) {
+        ctx.beginPath()
+        ctx.moveTo(0, y)
+        ctx.lineTo(canvas.width, y)
+        ctx.stroke()
+      }
       // camera ID
       ctx.fillStyle = 'white'
       ctx.font = 'bold 120px monospace'
@@ -128,7 +137,7 @@ export class CameraPublisher {
     log('getUserMedia starting...')
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { width: VIDEO_CONFIG.width, height: VIDEO_CONFIG.height, frameRate: VIDEO_CONFIG.framerate },
-      audio: false,
+      audio: false
     })
     const settings = stream.getVideoTracks()[0].getSettings()
     log('getUserMedia success', { width: settings.width, height: settings.height })
@@ -144,8 +153,8 @@ export class CameraPublisher {
 
     if (chunk.type === 'key') {
       log('keyframe', {
-        aliases: aliases.map(a => a.toString()),
-        groupId: (this.transportState.getVideoGroupId() + 1n).toString(),
+        aliases: aliases.map((a) => a.toString()),
+        groupId: (this.transportState.getVideoGroupId() + 1n).toString()
       })
     }
 
@@ -162,7 +171,7 @@ export class CameraPublisher {
       transportState: this.transportState,
       sender: async (alias, groupId, subgroupId, objectId, payload, client, locHeader) => {
         await client.sendSubgroupObject(alias, groupId, subgroupId, objectId, undefined, payload, locHeader)
-      },
+      }
     })
   }
 

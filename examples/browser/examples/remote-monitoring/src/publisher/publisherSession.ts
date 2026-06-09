@@ -25,14 +25,14 @@ export class PublisherSession {
     this.client.setOnIncomingSubscribeHandler(async ({ subscribe, respondOk, respondError }) => {
       log('incoming SUBSCRIBE', {
         trackName: subscribe.trackName,
-        requestId: subscribe.requestId?.toString(),
+        requestId: subscribe.requestId?.toString()
       })
       if (subscribe.trackName === 'video') {
         const trackAlias = await respondOk()
         log('responded OK', { trackAlias: trackAlias.toString() })
         // verify getTrackSubscribers sees this subscriber
         const aliases = this.getVideoTrackAliases()
-        log('getVideoTrackAliases after respondOk', { aliases: aliases.map(a => a.toString()) })
+        log('getVideoTrackAliases after respondOk', { aliases: aliases.map((a) => a.toString()) })
       } else {
         log('rejected unknown track', { trackName: subscribe.trackName })
         await respondError(0n, 'unknown track')

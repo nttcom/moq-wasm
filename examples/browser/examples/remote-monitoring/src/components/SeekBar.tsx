@@ -2,8 +2,8 @@ import React from 'react'
 
 interface Props {
   firstGroupId: bigint
-  entryGroupId: bigint   // fixed right edge (snapshot at REVIEW entry)
-  latestGroupId: bigint  // live edge, used only for delay display
+  entryGroupId: bigint // fixed right edge (snapshot at REVIEW entry)
+  latestGroupId: bigint // live edge, used only for delay display
   currentGroupId: bigint
   fetchWindow: { startGroup: bigint; endGroup: bigint } | null
   onJump?: (groupId: bigint) => void
@@ -47,7 +47,11 @@ export function SeekBar({ firstGroupId, entryGroupId, latestGroupId, currentGrou
         <div className="flex justify-between items-baseline mb-1.5">
           <span className="text-zinc-500">
             遡れる範囲：{fmt(totalRange)} 〜 LIVE
-            {onJump && <span className="text-zinc-600 ml-2" style={{ fontSize: '10px' }}>クリック＝ジャンプ</span>}
+            {onJump && (
+              <span className="text-zinc-600 ml-2" style={{ fontSize: '10px' }}>
+                クリック＝ジャンプ
+              </span>
+            )}
           </span>
           <span className="text-amber-400 font-bold">遅れ {fmt(delaySec)}</span>
         </div>
@@ -58,7 +62,9 @@ export function SeekBar({ firstGroupId, entryGroupId, latestGroupId, currentGrou
           {/* striped available background */}
           <div
             className="absolute inset-0"
-            style={{ background: 'repeating-linear-gradient(90deg, rgba(47,108,168,.12) 0 7px, rgba(47,108,168,.04) 7px 14px)' }}
+            style={{
+              background: 'repeating-linear-gradient(90deg, rgba(47,108,168,.12) 0 7px, rgba(47,108,168,.04) 7px 14px)'
+            }}
           />
           {/* fetch window */}
           {windowStartPct !== null && windowWidthPct !== null && (
@@ -74,10 +80,7 @@ export function SeekBar({ firstGroupId, entryGroupId, latestGroupId, currentGrou
           />
           {/* LIVE edge */}
           <div className="absolute top-0 bottom-0 right-0 w-0.5 bg-green-500 z-20" />
-          <span
-            className="absolute top-1.5 right-1.5 text-green-400 font-bold z-20"
-            style={{ fontSize: '9px' }}
-          >
+          <span className="absolute top-1.5 right-1.5 text-green-400 font-bold z-20" style={{ fontSize: '9px' }}>
             LIVE
           </span>
         </div>

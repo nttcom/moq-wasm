@@ -31,10 +31,9 @@ export class CameraSubscriber {
 
   constructor(camId: CameraId) {
     this.camId = camId
-    this.worker = new Worker(
-      new URL('../../../../utils/media/decoders/videoDecoder.ts', import.meta.url),
-      { type: 'module' }
-    )
+    this.worker = new Worker(new URL('../../../../utils/media/decoders/videoDecoder.ts', import.meta.url), {
+      type: 'module'
+    })
     // bypass jitter buffer for low-latency monitoring
     this.worker.postMessage({ type: 'config', config: { bypassJitterBuffer: true, telemetryEnabled: false } })
     this.worker.postMessage({ type: 'catalog', codec: 'avc1.640028', framerate: 30 })
@@ -88,8 +87,8 @@ export class CameraSubscriber {
           objectPayloadLength: msg.objectPayloadLength,
           objectPayload: payload,
           objectStatus: msg.objectStatus,
-          locHeader: msg.locHeader,
-        },
+          locHeader: msg.locHeader
+        }
       },
       [payload.buffer]
     )
@@ -130,12 +129,17 @@ export class CameraSubscriber {
     const config: VideoDecoderConfig = {
       codec: metadata.codec ?? 'avc1.640028',
       ...(metadata.descriptionBase64 ? { description: base64ToUint8Array(metadata.descriptionBase64) } : {}),
-      ...(metadata.codec?.startsWith('avc') ? { avc: { format: (metadata.avcFormat ?? 'avc') as AvcBitstreamFormat } } : {}),
+      ...(metadata.codec?.startsWith('avc')
+        ? { avc: { format: (metadata.avcFormat ?? 'avc') as AvcBitstreamFormat } }
+        : {})
     }
 
     this.reviewDecoder = new VideoDecoder({
       output: (frame) => {
-        if (this.reviewGeneration !== gen) { frame.close(); return }
+        if (this.reviewGeneration !== gen) {
+          frame.close()
+          return
+        }
         const canvas = this.canvas
         if (canvas) {
           if (canvas.width !== frame.displayWidth) canvas.width = frame.displayWidth
@@ -144,16 +148,18 @@ export class CameraSubscriber {
         }
         frame.close()
       },
-      error: (e) => console.error('[mon][review] decoder error', { camId: this.camId, groupId, e }),
+      error: (e) => console.error('[mon][review] decoder error', { camId: this.camId, groupId, e })
     })
 
     this.reviewDecoder.configure(config)
-    this.reviewDecoder.decode(new EncodedVideoChunk({
-      type: metadata.type as EncodedVideoChunkType,
-      timestamp: metadata.timestamp,
-      duration: metadata.duration ?? undefined,
-      data,
-    }))
+    this.reviewDecoder.decode(
+      new EncodedVideoChunk({
+        type: metadata.type as EncodedVideoChunkType,
+        timestamp: metadata.timestamp,
+        duration: metadata.duration ?? undefined,
+        data
+      })
+    )
   }
 
   // Decode I-frame through target P-frame sequentially, displaying only the target frame.
@@ -183,14 +189,24 @@ export class CameraSubscriber {
 
     const config: VideoDecoderConfig = {
       codec: iFrameParsed.metadata.codec ?? 'avc1.640028',
-      ...(iFrameParsed.metadata.descriptionBase64 ? { description: base64ToUint8Array(iFrameParsed.metadata.descriptionBase64) } : {}),
-      ...(iFrameParsed.metadata.codec?.startsWith('avc') ? { avc: { format: (iFrameParsed.metadata.avcFormat ?? 'avc') as AvcBitstreamFormat } } : {}),
+      ...(iFrameParsed.metadata.descriptionBase64
+        ? { description: base64ToUint8Array(iFrameParsed.metadata.descriptionBase64) }
+        : {}),
+      ...(iFrameParsed.metadata.codec?.startsWith('avc')
+        ? { avc: { format: (iFrameParsed.metadata.avcFormat ?? 'avc') as AvcBitstreamFormat } }
+        : {})
     }
 
     this.reviewDecoder = new VideoDecoder({
       output: (frame) => {
-        if (this.reviewGeneration !== gen) { frame.close(); return }
-        if (targetTimestamp !== null && frame.timestamp !== targetTimestamp) { frame.close(); return }
+        if (this.reviewGeneration !== gen) {
+          frame.close()
+          return
+        }
+        if (targetTimestamp !== null && frame.timestamp !== targetTimestamp) {
+          frame.close()
+          return
+        }
         const canvas = this.canvas
         if (canvas) {
           if (canvas.width !== frame.displayWidth) canvas.width = frame.displayWidth
@@ -199,7 +215,7 @@ export class CameraSubscriber {
         }
         frame.close()
       },
-      error: (e) => console.error('[mon][review] sequential decoder error', { camId: this.camId, targetObjectId, e }),
+      error: (e) => console.error('[mon][review] sequential decoder error', { camId: this.camId, targetObjectId, e })
     })
 
     this.reviewDecoder.configure(config)
@@ -213,12 +229,14 @@ export class CameraSubscriber {
       const parsed = tryDeserializeChunk(payload)
       if (!parsed) break
       try {
-        this.reviewDecoder.decode(new EncodedVideoChunk({
-          type: parsed.metadata.type as EncodedVideoChunkType,
-          timestamp: parsed.metadata.timestamp,
-          duration: parsed.metadata.duration ?? undefined,
-          data: parsed.data,
-        }))
+        this.reviewDecoder.decode(
+          new EncodedVideoChunk({
+            type: parsed.metadata.type as EncodedVideoChunkType,
+            timestamp: parsed.metadata.timestamp,
+            duration: parsed.metadata.duration ?? undefined,
+            data: parsed.data
+          })
+        )
       } catch (e) {
         console.error('[mon][review] sequential decode error', { camId: this.camId, objId, e })
         break

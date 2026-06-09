@@ -44,7 +44,12 @@ export class MonitorSession {
   ): Promise<bigint> {
     const fetchId = this.nextFetchId++
     const namespace = [location, camId]
-    log('fetching...', { namespace, fetchId: fetchId.toString(), startGroupId: startGroupId.toString(), endGroupId: endGroupId.toString() })
+    log('fetching...', {
+      namespace,
+      fetchId: fetchId.toString(),
+      startGroupId: startGroupId.toString(),
+      endGroupId: endGroupId.toString()
+    })
     this.client.setOnFetchObjectHandler(fetchId, onObject)
     try {
       await this.client.fetch(fetchId, namespace, 'video', startGroupId, 0n, endGroupId, 0n)

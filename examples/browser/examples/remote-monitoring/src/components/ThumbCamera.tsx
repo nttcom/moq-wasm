@@ -16,15 +16,13 @@ export function ThumbCamera({ cameraId, onCanvasReady, onSubscribe, isSubscribed
       onClick={onClick}
     >
       {/* video feed */}
-      <div className="absolute inset-0 bg-zinc-800"
+      <div
+        className="absolute inset-0 bg-zinc-800"
         style={{
-          backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.03) 0 6px, transparent 6px 12px)',
+          backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.03) 0 6px, transparent 6px 12px)'
         }}
       >
-        <canvas
-          ref={onCanvasReady}
-          className="absolute inset-0 w-full h-full object-cover"
-        />
+        <canvas ref={onCanvasReady} className="absolute inset-0 w-full h-full object-cover" />
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <span className="font-mono text-xs text-zinc-600">{cameraId.toUpperCase()}</span>
         </div>
@@ -35,7 +33,10 @@ export function ThumbCamera({ cameraId, onCanvasReady, onSubscribe, isSubscribed
         <span className="text-xs text-zinc-300">{cameraId.toUpperCase()}</span>
         {onSubscribe && !isSubscribed ? (
           <button
-            onClick={(e) => { e.stopPropagation(); onSubscribe() }}
+            onClick={(e) => {
+              e.stopPropagation()
+              onSubscribe()
+            }}
             disabled={isSubscribing}
             className="rounded border border-green-500 bg-green-500/20 px-2 py-0.5 font-mono text-xs font-bold text-green-400 hover:bg-green-500/30 disabled:opacity-50"
           >

@@ -11,17 +11,17 @@ interface Props {
 
 const connLabel: Record<ConnState, string> = {
   connected: 'CONNECTED',
-  closed: 'CLOSED',
+  closed: 'CLOSED'
 }
 
 const connDotClass: Record<ConnState, string> = {
   connected: 'bg-green-500',
-  closed: 'bg-red-500',
+  closed: 'bg-red-500'
 }
 
 const connTextClass: Record<ConnState, string> = {
   connected: 'text-green-400',
-  closed: 'text-red-400',
+  closed: 'text-red-400'
 }
 
 export function DebugBar({ connState, relayUrl, subscribedCameras, fetchingCamera, fetchWindow }: Props) {
@@ -65,9 +65,7 @@ export function DebugBar({ connState, relayUrl, subscribedCameras, fetchingCamer
           <span
             className={cn(
               'rounded-full border px-2 py-0.5 text-xs',
-              isUnhealthy
-                ? 'border-zinc-700 text-zinc-600 line-through opacity-50'
-                : 'border-amber-800 text-amber-400'
+              isUnhealthy ? 'border-zinc-700 text-zinc-600 line-through opacity-50' : 'border-amber-800 text-amber-400'
             )}
           >
             {fetchingCamera} [ group {fetchWindow.startGroup.toString()} → {fetchWindow.endGroup.toString()} ]
@@ -76,7 +74,6 @@ export function DebugBar({ connState, relayUrl, subscribedCameras, fetchingCamer
           <span className="text-zinc-600">—</span>
         )}
       </div>
-
     </div>
   )
 }
