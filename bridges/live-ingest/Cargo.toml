@@ -4,16 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.93"
-clap = { version = "4.5.21", features = ["derive"] }
-ffmpeg-next = { version = "8.0.0", features = ["format", "codec"] }
-tokio = { version = "1.41.0", features = ["full"] }
-rml_rtmp = "0.7.0"
-srt-tokio = "0.4.1"
-futures = "0.3.30"
+anyhow = "1.0.102"
+clap = { version = "4.6.1", features = ["derive"] }
+ffmpeg-next = { version = "8.1.0", features = ["format", "codec"] }
+tokio = { version = "1.52.3", features = ["full"] }
+rml_rtmp = "0.8.0"
+srt-tokio = "0.4.4"
+futures = "0.3.32"
 moqt = { path = "../../moqt" }
 media-streaming-format = { path = "../../shared/media-streaming-format" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 base64 = "0.22"
-url = "2.5.7"
+url = "2.5.8"

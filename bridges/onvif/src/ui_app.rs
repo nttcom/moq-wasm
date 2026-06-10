@@ -13,7 +13,7 @@ pub fn run(target: Target) -> Result<()> {
     eframe::run_native(
         "moqt-bridge-onvif PTZ",
         options,
-        Box::new(|_| Box::new(PtzApp::new(controller, video))),
+        Box::new(|_| Ok(Box::new(PtzApp::new(controller, video)) as Box<dyn eframe::App>)),
     )
     .map_err(|err| anyhow!("failed to start GUI: {err}"))?;
     Ok(())
@@ -38,17 +38,18 @@ impl PtzApp {
 }
 
 impl eframe::App for PtzApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         if let Some(err) = self.controller.try_recv_error() {
             self.ptz_error = Some(err);
         }
         if let Some(state) = self.controller.try_recv_state() {
             self.controls.set_state(state);
         }
-        self.video.update(ctx);
-        egui::TopBottomPanel::bottom("ptz_controls")
+        self.video.update(&ctx);
+        egui::Panel::bottom("ptz_controls")
             .resizable(false)
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 if let Some(command) = self.controls.ui(ui) {
                     self.controller.send(command);
                 }
@@ -57,7 +58,7 @@ impl eframe::App for PtzApp {
                     ui.label(format!("PTZ error: {err}"));
                 }
             });
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             self.video.show(ui);
         });
     }
