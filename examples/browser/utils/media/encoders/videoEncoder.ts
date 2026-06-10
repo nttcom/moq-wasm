@@ -95,7 +95,6 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
   // 新しいストリーム開始時にtimestampのoffsetをリセット
   timestampOffset = null
   captureTimestampByChunkTimestamp.clear()
-  console.log('initializeVideoEncoder')
   videoEncoder = await initializeVideoEncoder()
   if (!videoEncoder) {
     return

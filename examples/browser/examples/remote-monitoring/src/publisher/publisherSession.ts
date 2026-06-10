@@ -14,25 +14,17 @@ export class PublisherSession {
   }
 
   async connect(relayUrl: string): Promise<void> {
-    log('connecting...', { relayUrl })
     await this.client.connect(relayUrl)
-    log('connected')
+    log('connected', { relayUrl })
 
-    log('publishNamespace...', { namespace: this.namespace })
     await this.client.publishNamespace(this.namespace, 'secret')
-    log('publishNamespace done')
+    log('publishNamespace done', { namespace: this.namespace })
 
     this.client.setOnIncomingSubscribeHandler(async ({ subscribe, respondOk, respondError }) => {
-      log('incoming SUBSCRIBE', {
-        trackName: subscribe.trackName,
-        requestId: subscribe.requestId?.toString()
-      })
       if (subscribe.trackName === 'video') {
         const trackAlias = await respondOk()
-        log('responded OK', { trackAlias: trackAlias.toString() })
-        // verify getTrackSubscribers sees this subscriber
-        const aliases = this.getVideoTrackAliases()
-        log('getVideoTrackAliases after respondOk', { aliases: aliases.map((a) => a.toString()) })
+        const subscriberCount = this.getVideoTrackAliases().length
+        log('subscriber joined', { trackAlias: trackAlias.toString(), subscriberCount })
       } else {
         log('rejected unknown track', { trackName: subscribe.trackName })
         await respondError(0n, 'unknown track')

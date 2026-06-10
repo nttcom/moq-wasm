@@ -10,9 +10,8 @@ export class MonitorSession {
   private nextFetchId = 1n
 
   async connect(relayUrl: string): Promise<void> {
-    log('connecting...', { relayUrl })
     await this.client.connect(relayUrl)
-    log('connected')
+    log('connected', { relayUrl })
     this.client.setOnConnectionClosedHandler(() => log('connection closed'))
   }
 
@@ -23,7 +22,6 @@ export class MonitorSession {
   ): Promise<boolean> {
     const subscribeId = this.nextSubscribeId++
     const namespace = [location, camId]
-    log('subscribing...', { namespace, trackName: 'video', subscribeId: subscribeId.toString() })
     try {
       const ok = await this.client.subscribe(subscribeId, namespace, 'video', 'secret')
       log('subscribe OK', { camId, trackAlias: ok.trackAlias.toString() })
@@ -44,8 +42,9 @@ export class MonitorSession {
   ): Promise<bigint> {
     const fetchId = this.nextFetchId++
     const namespace = [location, camId]
-    log('fetching...', {
-      namespace,
+    const startedAt = Date.now()
+    log('fetch start', {
+      camId,
       fetchId: fetchId.toString(),
       startGroupId: startGroupId.toString(),
       endGroupId: endGroupId.toString()
@@ -53,7 +52,7 @@ export class MonitorSession {
     this.client.setOnFetchObjectHandler(fetchId, onObject)
     try {
       await this.client.fetch(fetchId, namespace, 'video', startGroupId, 0n, endGroupId, 0n)
-      log('fetch OK', { fetchId: fetchId.toString() })
+      log('fetch OK', { camId, fetchId: fetchId.toString(), elapsedMs: Date.now() - startedAt })
       return fetchId
     } catch (e) {
       this.client.clearFetchObjectHandler(fetchId)
@@ -63,7 +62,6 @@ export class MonitorSession {
 
   clearFetch(fetchId: bigint): void {
     this.client.clearFetchObjectHandler(fetchId)
-    log('fetch cleared', { fetchId: fetchId.toString() })
   }
 
   async disconnect(): Promise<void> {

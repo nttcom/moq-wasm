@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CameraId } from '../types/monitoring'
+import type { CameraId, VideoSource, VideoSourceType } from '../types/monitoring'
 import { ALL_CAMERA_IDS } from '../types/monitoring'
 import { PublisherSession } from './publisherSession'
 import { CameraPublisher } from './cameraPublisher'
@@ -10,6 +10,12 @@ import { Label } from '../components/ui/label'
 import { useUrlSync } from '../hooks/useUrlSync'
 
 type Status = 'idle' | 'connecting' | 'connected' | 'starting' | 'live' | 'error'
+
+const SOURCE_LABELS: Record<VideoSourceType, string> = {
+  synthetic: '合成',
+  camera: 'カメラ',
+  file: 'ファイル'
+}
 
 interface Props {
   location: string
@@ -24,6 +30,9 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
   const [subscriberCount, setSubscriberCount] = useState(0)
+  const [sourceType, setSourceType] = useState<VideoSourceType>('synthetic')
+  const defaultFileUrl = (id: CameraId | '') => id ? `/moq-wasm/videos/${id}.mp4` : ''
+  const [fileUrl, setFileUrl] = useState(() => defaultFileUrl(defaultCamId))
   const videoRef = useRef<HTMLVideoElement>(null)
   const sessionRef = useRef<PublisherSession | null>(null)
   const publisherRef = useRef<CameraPublisher | null>(null)
@@ -33,6 +42,10 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
   const canConnect = isIdle && !!camId && !!location
 
   useUrlSync({ mode: 'publisher', location, relay: relayUrl, cam: camId || null })
+
+  useEffect(() => {
+    setFileUrl(defaultFileUrl(camId))
+  }, [camId])
 
   useEffect(() => {
     return () => {
@@ -62,7 +75,10 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
     setStatus('starting')
     setError(null)
     try {
-      const publisher = new CameraPublisher(session, camId as CameraId)
+      const source: VideoSource = sourceType === 'file'
+        ? { type: 'file', fileUrl }
+        : { type: sourceType }
+      const publisher = new CameraPublisher(session, camId as CameraId, source)
       const stream = await publisher.start()
       publisherRef.current = publisher
       if (videoRef.current) videoRef.current.srcObject = stream
@@ -116,7 +132,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
           )}
           {status === 'starting' && (
             <Button disabled variant="outline">
-              カメラ起動中…
+              起動中…
             </Button>
           )}
           {status === 'live' && (
@@ -160,6 +176,43 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
             </div>
             <RelayUrlField value={relayUrl} onChange={setRelayUrl} />
           </div>
+
+          {/* video source selector */}
+          <div className="space-y-2">
+            <Label className="text-xs text-zinc-400 font-mono">映像ソース</Label>
+            <div className="flex gap-2">
+              {(['synthetic', 'camera', 'file'] as VideoSourceType[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setSourceType(t)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-mono border transition-colors ${
+                    sourceType === t
+                      ? 'bg-blue-600 border-blue-500 text-white'
+                      : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {SOURCE_LABELS[t]}
+                </button>
+              ))}
+            </div>
+            {sourceType === 'file' && (
+              <div className="flex items-center gap-2">
+                <Input
+                  value={fileUrl}
+                  onChange={(e) => setFileUrl(e.target.value)}
+                  className="bg-zinc-800 border-zinc-700 font-mono text-xs"
+                  placeholder="/moq-wasm/videos/cam01.mp4"
+                />
+                <span className="text-xs text-zinc-500 whitespace-nowrap font-mono">
+                  public/videos/ 以下に置く
+                </span>
+              </div>
+            )}
+            {sourceType === 'camera' && (
+              <p className="text-xs text-zinc-500 font-mono">ブラウザがカメラ許可を求めます</p>
+            )}
+          </div>
+
           {error && <p className="text-red-400 text-xs font-mono">⚠ {error}</p>}
         </div>
       )}
@@ -187,6 +240,10 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
             <span className="text-zinc-300">
               [{location}, {camId}] / video
             </span>
+          </div>
+          <div className="flex gap-3 text-xs text-zinc-400">
+            <span>Source:</span>
+            <span className="text-zinc-300">{SOURCE_LABELS[sourceType]}{sourceType === 'file' ? ` — ${fileUrl}` : ''}</span>
           </div>
           <div className="flex gap-3 text-xs text-zinc-400">
             <span>Subscribers:</span>

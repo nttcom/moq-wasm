@@ -1,11 +1,12 @@
 import { MediaTransportState } from '../../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt } from '../../../../utils/media/videoTransport'
 import type { PublisherSession } from './publisherSession'
-import { type CameraId } from '../types/monitoring'
+import { type CameraId, type VideoSource } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][camera]', ...args)
 
 const KEYFRAME_INTERVAL_FRAMES = 30 // 30fps × 1s = 1 GoP per second
+const BITRATE_LOG_INTERVAL_CHUNKS = 900 // ~30 seconds at 30fps
 const VIDEO_CONFIG = {
   codec: 'avc1.640028', // H.264 High Profile Level 4.0
   width: 1280,
@@ -25,26 +26,32 @@ const CAM_COLORS: Record<CameraId, string> = {
 export class CameraPublisher {
   private worker: Worker | null = null
   private stream: MediaStream | null = null
+  private videoEl: HTMLVideoElement | null = null
   private readonly transportState = new MediaTransportState()
   private chunkCount = 0
   private rafId: number | null = null
 
   constructor(
     private readonly session: PublisherSession,
-    private readonly camId: CameraId
+    private readonly camId: CameraId,
+    private readonly source: VideoSource
   ) {}
 
   async start(): Promise<MediaStream> {
-    // --- Video source (switch by commenting one line) ---
-    const synthetic = true
-    // const synthetic = false
-    this.stream = synthetic ? await this.startSyntheticCamera() : await this.startRealCamera()
-    const encoderConfig = synthetic ? this.SYNTHETIC_CONFIG : VIDEO_CONFIG
-    // ---------------------------------------------------
+    let encoderConfig: typeof VIDEO_CONFIG | typeof this.SYNTHETIC_CONFIG = VIDEO_CONFIG
+
+    if (this.source.type === 'synthetic') {
+      this.stream = this.startSyntheticCamera()
+      encoderConfig = this.SYNTHETIC_CONFIG
+    } else if (this.source.type === 'camera') {
+      this.stream = await this.startRealCamera()
+    } else {
+      const url = this.source.fileUrl ?? ''
+      this.stream = await this.startVideoFileCamera(url)
+    }
 
     const track = this.stream.getVideoTracks()[0]
 
-    log('starting encoder worker', { keyframeInterval: KEYFRAME_INTERVAL_FRAMES, config: encoderConfig })
     this.worker = new Worker(new URL('../../../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
       type: 'module'
     })
@@ -54,33 +61,35 @@ export class CameraPublisher {
       if (e.data.type === 'chunk') {
         const { chunk, metadata, captureTimestampMicros } = e.data
         if (this.chunkCount === 0) {
-          log('first encoded chunk', { type: chunk.type, timestamp: chunk.timestamp })
+          log('encoder ready, first chunk produced', { camId: this.camId, source: this.source.type, type: chunk.type })
+        }
+        if (this.chunkCount % BITRATE_LOG_INTERVAL_CHUNKS === 0 && this.chunkCount > 0) {
+          log('bitrate', { camId: this.camId, kbps: e.data.kbps })
         }
         this.chunkCount++
         this.sendChunk(chunk, metadata, captureTimestampMicros).catch((err) =>
-          console.error('[pub][camera] sendChunk error', err)
+          console.error('[pub][camera] sendChunk error', { camId: this.camId, err })
         )
       } else if (e.data.type === 'bitrate') {
-        if (this.chunkCount % 150 === 0) log('bitrate', { kbps: e.data.kbps })
+        if (this.chunkCount % BITRATE_LOG_INTERVAL_CHUNKS === 0 && this.chunkCount > 0) {
+          log('bitrate', { camId: this.camId, kbps: e.data.kbps })
+        }
       } else if (e.data.type === 'configError') {
-        console.error('[pub][camera] encoder config error', e.data)
+        console.error('[pub][camera] encoder config error', { camId: this.camId, ...e.data })
       }
     }
 
     const processor = new (window as any).MediaStreamTrackProcessor({ track })
     const videoStream: ReadableStream<VideoFrame> = processor.readable
-    log('sending video stream to encoder worker')
     this.worker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
 
     return this.stream
   }
 
-  // --- Synthetic canvas source (for debug / routing verification) ---
   // Canvas outputs BGRA frames. Switch to prefer-software to avoid HW encoder issues with BGRA.
   private readonly SYNTHETIC_CONFIG = { ...VIDEO_CONFIG, hardwareAcceleration: 'prefer-software' as const }
 
   private startSyntheticCamera(): MediaStream {
-    log('synthetic source starting', { camId: this.camId })
     const canvas = document.createElement('canvas')
     canvas.width = VIDEO_CONFIG.width
     canvas.height = VIDEO_CONFIG.height
@@ -91,7 +100,6 @@ export class CameraPublisher {
       const now = new Date().toISOString().replace('T', ' ').substring(0, 23)
       ctx.fillStyle = bg
       ctx.fillRect(0, 0, canvas.width, canvas.height)
-      // grid pattern
       ctx.strokeStyle = 'rgba(255,255,255,0.08)'
       ctx.lineWidth = 1
       for (let x = 0; x < canvas.width; x += 80) {
@@ -106,42 +114,60 @@ export class CameraPublisher {
         ctx.lineTo(canvas.width, y)
         ctx.stroke()
       }
-      // camera ID
       ctx.fillStyle = 'white'
       ctx.font = 'bold 120px monospace'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       ctx.fillText(this.camId.toUpperCase(), canvas.width / 2, canvas.height / 2 - 60)
-      // camera name
       ctx.font = '60px sans-serif'
       ctx.fillText(this.camId.toUpperCase(), canvas.width / 2, canvas.height / 2 + 40)
-      // timestamp
       ctx.font = '36px monospace'
       ctx.fillStyle = 'rgba(255,255,255,0.7)'
       ctx.fillText(now, canvas.width / 2, canvas.height / 2 + 130)
-      // live dot
       ctx.fillStyle = '#ff4444'
       ctx.beginPath()
       ctx.arc(60, 60, 18, 0, Math.PI * 2)
       ctx.fill()
     }
-    // setInterval instead of requestAnimationFrame — keeps running in background tabs
     draw()
     this.rafId = setInterval(draw, 1000 / VIDEO_CONFIG.framerate) as unknown as number
 
     return canvas.captureStream(VIDEO_CONFIG.framerate)
   }
 
-  // --- Real camera source (getUserMedia) ---
   private async startRealCamera(): Promise<MediaStream> {
-    log('getUserMedia starting...')
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { width: VIDEO_CONFIG.width, height: VIDEO_CONFIG.height, frameRate: VIDEO_CONFIG.framerate },
       audio: false
     })
     const settings = stream.getVideoTracks()[0].getSettings()
-    log('getUserMedia success', { width: settings.width, height: settings.height })
+    log('camera ready', { camId: this.camId, width: settings.width, height: settings.height })
     return stream
+  }
+
+  private startVideoFileCamera(url: string): Promise<MediaStream> {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement('video')
+      video.src = url
+      video.loop = true
+      video.muted = true
+      video.playsInline = true
+      this.videoEl = video
+
+      video.addEventListener('canplay', () => {
+        video.play().then(() => {
+          const stream = (video as any).captureStream()
+          log('file source ready', { camId: this.camId, url, duration: video.duration.toFixed(1) + 's' })
+          resolve(stream)
+        }).catch(reject)
+      }, { once: true })
+
+      video.addEventListener('error', () => {
+        reject(new Error(`動画ファイルを読み込めません: ${url}`))
+      }, { once: true })
+
+      video.load()
+    })
   }
 
   private async sendChunk(
@@ -150,14 +176,6 @@ export class CameraPublisher {
     captureTimestampMicros?: number
   ): Promise<void> {
     const aliases = this.session.getVideoTrackAliases()
-
-    if (chunk.type === 'key') {
-      log('keyframe', {
-        aliases: aliases.map((a) => a.toString()),
-        groupId: (this.transportState.getVideoGroupId() + 1n).toString()
-      })
-    }
-
     if (aliases.length === 0) return
 
     const rawClient = this.session.getRawClient()
@@ -176,11 +194,16 @@ export class CameraPublisher {
   }
 
   stop(): void {
-    log('stopping')
+    log('stopping', { camId: this.camId })
     if (this.rafId !== null) clearInterval(this.rafId)
     this.worker?.terminate()
     this.worker = null
     this.stream?.getTracks().forEach((t) => t.stop())
     this.stream = null
+    if (this.videoEl) {
+      this.videoEl.pause()
+      this.videoEl.src = ''
+      this.videoEl = null
+    }
   }
 }

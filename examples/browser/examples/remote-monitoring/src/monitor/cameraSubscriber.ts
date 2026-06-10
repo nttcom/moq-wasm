@@ -23,8 +23,19 @@ export class CameraSubscriber {
   paused = false
 
   private liveResuming = false
+  private liveResumingSkipUntil: bigint | null = null
   lastSentGroupId: bigint | null = null
   lastSentObjectId: bigint = 0n
+
+  private gopBuffer: Array<{
+    subgroupId: bigint
+    objectIdDelta: bigint
+    objectPayloadLength: number
+    objectStatus: number
+    locHeader: unknown
+    payload: Uint8Array
+  }> = []
+  private gopBufferGroupId: bigint | null = null
 
   private reviewDecoder: VideoDecoder | null = null
   private reviewGeneration = 0
@@ -55,6 +66,7 @@ export class CameraSubscriber {
 
   handleObject(groupId: bigint, msg: SubgroupObjectMessage): void {
     if (this.firstReceivedGroupId === null) {
+      log('first object received', { camId: this.camId, groupId: groupId.toString() })
       this.firstReceivedGroupId = groupId
     }
     if (this.latestReceivedGroupId === null || groupId > this.latestReceivedGroupId) {
@@ -62,11 +74,35 @@ export class CameraSubscriber {
       this.onGroupIdUpdate?.(this.firstReceivedGroupId!, this.latestReceivedGroupId)
     }
 
+    // GoP バッファ更新（review 中も継続して最新 GoP を保持）
+    if (this.gopBufferGroupId === null || groupId > this.gopBufferGroupId) {
+      this.gopBuffer = []
+      this.gopBufferGroupId = groupId
+    }
+    if (groupId === this.gopBufferGroupId && msg.objectPayloadLength > 0) {
+      this.gopBuffer.push({
+        subgroupId: msg.subgroupId,
+        objectIdDelta: msg.objectIdDelta,
+        objectPayloadLength: msg.objectPayloadLength,
+        objectStatus: msg.objectStatus as number,
+        locHeader: msg.locHeader,
+        payload: new Uint8Array(msg.objectPayload)
+      })
+    }
+
     if (this.paused) return
 
     if (this.liveResuming) {
       if (this.lastSentGroupId !== null && groupId <= this.lastSentGroupId) return
+      if (this.liveResumingSkipUntil === null) {
+        // 最初に見つけた新しいgroupId: mid-GoPの可能性があるためスキップ対象に指定
+        this.liveResumingSkipUntil = groupId
+        return
+      }
+      if (groupId <= this.liveResumingSkipUntil) return
+      // スキップ対象を超えた次のGoP先頭 → ここからデコーダーに流す
       this.liveResuming = false
+      this.liveResumingSkipUntil = null
     }
 
     // Track objectId: reset on new group, increment within group (skip empty end-of-group markers)
@@ -108,7 +144,41 @@ export class CameraSubscriber {
   }
 
   resumeLive(): void {
-    this.liveResuming = true
+    if (this.reviewDecoder && this.reviewDecoder.state !== 'closed') {
+      this.reviewDecoder.close()
+      this.reviewDecoder = null
+    }
+    if (this.canvas) {
+      this.canvas.getContext('2d')?.clearRect(0, 0, this.canvas.width, this.canvas.height)
+    }
+    if (this.gopBufferGroupId !== null && this.gopBuffer.length > 0) {
+      log('replaying GoP buffer', { camId: this.camId, groupId: this.gopBufferGroupId.toString(), frames: this.gopBuffer.length })
+      for (const obj of this.gopBuffer) {
+        const payload = new Uint8Array(obj.payload)
+        this.worker.postMessage(
+          {
+            groupId: this.gopBufferGroupId,
+            subgroupStreamObject: {
+              subgroupId: obj.subgroupId,
+              objectIdDelta: obj.objectIdDelta,
+              objectPayloadLength: obj.objectPayloadLength,
+              objectPayload: payload,
+              objectStatus: obj.objectStatus,
+              locHeader: obj.locHeader
+            }
+          },
+          [payload.buffer]
+        )
+      }
+      this.lastSentGroupId = this.gopBufferGroupId
+      this.lastSentObjectId = BigInt(this.gopBuffer.length - 1)
+      this.liveResuming = false
+      this.liveResumingSkipUntil = null
+    } else {
+      this.liveResuming = true
+      this.liveResumingSkipUntil = null
+    }
+
     this.paused = false
   }
 
