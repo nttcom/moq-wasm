@@ -13,7 +13,7 @@ use quinn::rustls::{
 
 use super::dual_connection::DualConnection;
 use crate::modules::transport::{
-    quic::quic_connection::QUICConnection,
+    crypto_provider::install_default_crypto_provider, quic::quic_connection::QUICConnection,
     transport_connection_creator::TransportConnectionCreator,
     webtransport::wt_connection::WtConnection,
 };
@@ -40,6 +40,8 @@ impl TransportConnectionCreator for DualProtocolCreator {
         port_num: u16,
         keep_alive_sec: u64,
     ) -> anyhow::Result<Self> {
+        install_default_crypto_provider();
+
         // 証明書を同期的に読み込む
         let cert = rustls_pemfile::certs(&mut BufReader::new(
             File::open(cert_path)
