@@ -76,7 +76,6 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
   const [catalogLoadingMemberIds, setCatalogLoadingMemberIds] = useState<Set<string>>(new Set())
   const [catalogSubscribedMemberIds, setCatalogSubscribedMemberIds] = useState<Set<string>>(new Set())
   const [catalogUnsubscribingTrackKeys, setCatalogUnsubscribingTrackKeys] = useState<Set<string>>(new Set())
-  const nextSubscribeIdRef = useRef<bigint>(0n)
   const {
     cameraEnabled,
     screenShareEnabled,
@@ -184,15 +183,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     setCatalogUnsubscribingTrackKeys(new Set())
     setIsSidebarOpen(true)
     setStatsHistory(new Map())
-    nextSubscribeIdRef.current = 0n
   }, [session])
-
-  useEffect(() => {
-    const maxSubscribeId = getMaxSubscribeId(room.remoteMembers)
-    if (maxSubscribeId !== null && nextSubscribeIdRef.current <= maxSubscribeId) {
-      nextSubscribeIdRef.current = maxSubscribeId + 1n
-    }
-  }, [room.remoteMembers])
 
   useEffect(() => {
     const memberIds = new Set(room.remoteMembers.keys())
@@ -362,7 +353,6 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     if (catalogLoadingMemberIds.has(memberId) || catalogSubscribedMemberIds.has(memberId)) {
       return
     }
-    const catalogSubscribeId = issueSubscribeId(nextSubscribeIdRef)
 
     setCatalogLoadingMemberIds((prev) => {
       const next = new Set(prev)
@@ -371,12 +361,8 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     })
 
     try {
-      const tracks = await session.subscribeCatalog(
-        catalogSubscribeId,
-        trackNamespace,
-        undefined,
-        5000,
-        (updatedTracks) => applyRemoteCatalogTracks(memberId, updatedTracks)
+      const tracks = await session.subscribeCatalog(trackNamespace, undefined, 5000, (updatedTracks) =>
+        applyRemoteCatalogTracks(memberId, updatedTracks)
       )
       applyRemoteCatalogTracks(memberId, tracks)
       setCatalogSubscribedMemberIds((prev) => {
@@ -453,30 +439,34 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     if (trackState.isSubscribed || trackState.isSubscribing || catalogUnsubscribingTrackKeys.has(trackKey)) {
       return
     }
-    const subscribeId = issueSubscribeId(nextSubscribeIdRef)
+    // Optimistically mark as subscribing; the request id is unknown until
+    // subscribe() returns it (issued internally by moqtClient).
     setRoom((currentRoom) =>
       updateMemberSubscriptionStateByRole(currentRoom, memberId, role, () => ({
         ...trackState,
         isSubscribing: true,
         isSubscribed: false,
-        subscribeId
+        subscribeId: undefined
       }))
     )
 
     try {
-      await session.subscribe(subscribeId, trackNamespace, trackName, undefined, role, trackCodec)
+      const requestId = await session.subscribe(trackNamespace, trackName, undefined, role, trackCodec)
+      setRoom((currentRoom) =>
+        updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
+          ...track,
+          subscribeId: requestId,
+          isSubscribing: false,
+          isSubscribed: true
+        }))
+      )
     } catch (error) {
       console.error(`Failed to subscribe ${role} track for ${memberId}:`, error)
       setRoom((currentRoom) =>
-        updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => {
-          if (track.subscribeId !== subscribeId) {
-            return track
-          }
-          return {
-            ...track,
-            isSubscribing: false
-          }
-        })
+        updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
+          ...track,
+          isSubscribing: false
+        }))
       )
     }
   }
@@ -545,12 +535,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     for (const member of room.remoteMembers.values()) {
       const chatState = member.subscribedTracks.chat
       const chatTrackKey = buildTrackActionKey(member.id, 'chat')
-      if (
-        chatState.isSubscribed ||
-        chatState.isSubscribing ||
-        catalogUnsubscribingTrackKeys.has(chatTrackKey) ||
-        typeof chatState.subscribeId !== 'bigint'
-      ) {
+      if (chatState.isSubscribed || chatState.isSubscribing || catalogUnsubscribingTrackKeys.has(chatTrackKey)) {
         continue
       }
       const trackNamespace = getTrackNamespace(member)
@@ -728,33 +713,6 @@ function getTracksForRole(tracks: CallCatalogTrack[], role: CatalogSubscribeRole
       ? track.role === 'video' && track.name.trim().toLowerCase().startsWith('screenshare')
       : track.role === 'video' && !track.name.trim().toLowerCase().startsWith('screenshare')
   )
-}
-
-function issueSubscribeId(nextSubscribeIdRef: { current: bigint }): bigint {
-  const subscribeId = nextSubscribeIdRef.current
-  nextSubscribeIdRef.current = subscribeId + 1n
-  return subscribeId
-}
-
-function getMaxSubscribeId(remoteMembers: Map<string, RemoteMember>): bigint | null {
-  let maxSubscribeId: bigint | null = null
-  for (const member of remoteMembers.values()) {
-    const states = [
-      member.subscribedTracks.chat,
-      member.subscribedTracks.audio,
-      member.subscribedTracks.video,
-      member.subscribedTracks.screenshare
-    ]
-    for (const state of states) {
-      if (typeof state.subscribeId !== 'bigint') {
-        continue
-      }
-      if (maxSubscribeId === null || state.subscribeId > maxSubscribeId) {
-        maxSubscribeId = state.subscribeId
-      }
-    }
-  }
-  return maxSubscribeId
 }
 
 function updateMemberSubscriptionStateByRole(

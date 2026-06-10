@@ -299,8 +299,8 @@ function sendCatalogSubscribeButtonClickHandler(): void {
       return
     }
     const catalogTrackAlias = (
-      await moqtClient.subscribe(catalogSubscribeId, trackNamespace, catalogTrackName, AUTH_INFO)
-    ).trackAlias
+      await moqtClient.subscribe(trackNamespace, catalogTrackName, AUTH_INFO, { requestId: catalogSubscribeId })
+    ).subscribeOk.trackAlias
     form['catalog-track-alias'].value = catalogTrackAlias.toString()
     setupCatalogCallbacks(catalogTrackAlias)
     setCatalogTrackStatus(`Catalog subscribe requested: ${catalogTrackName}`)
@@ -323,14 +323,14 @@ function sendSubscribeButtonClickHandler(): void {
     }
 
     const videoTrackAlias = (
-      await moqtClient.subscribe(videoSubscribeId, trackNamespace, selectedVideoTrack, AUTH_INFO)
-    ).trackAlias
+      await moqtClient.subscribe(trackNamespace, selectedVideoTrack, AUTH_INFO, { requestId: videoSubscribeId })
+    ).subscribeOk.trackAlias
     form['video-track-alias'].value = videoTrackAlias.toString()
     setupClientObjectCallbacks('video', videoTrackAlias)
 
     const audioTrackAlias = (
-      await moqtClient.subscribe(audioSubscribeId, trackNamespace, selectedAudioTrack, AUTH_INFO)
-    ).trackAlias
+      await moqtClient.subscribe(trackNamespace, selectedAudioTrack, AUTH_INFO, { requestId: audioSubscribeId })
+    ).subscribeOk.trackAlias
     form['audio-track-alias'].value = audioTrackAlias.toString()
     setupClientObjectCallbacks('audio', audioTrackAlias)
     setTrackSubscribeStatus(`Track subscribe requested: video=${selectedVideoTrack}, audio=${selectedAudioTrack}`)
