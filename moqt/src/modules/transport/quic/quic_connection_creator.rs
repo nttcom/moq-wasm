@@ -14,6 +14,7 @@ use quinn::rustls::{
 use quinn::{self, TransportConfig, VarInt};
 
 use crate::modules::transport::{
+    crypto_provider::install_default_crypto_provider,
     quic::{quic_connection::QUICConnection, skip_certd_validation::SkipVerification},
     transport_connection_creator::TransportConnectionCreator,
 };
@@ -28,6 +29,8 @@ impl QUICConnectionCreator {
         key_path: &str,
         keep_alive_sec: u64,
     ) -> anyhow::Result<quinn::ServerConfig> {
+        install_default_crypto_provider();
+
         let cert = rustls_pemfile::certs(&mut BufReader::new(
             File::open(cert_path)
                 .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?,
@@ -91,6 +94,8 @@ impl TransportConnectionCreator for QUICConnectionCreator {
     type Connection = QUICConnection;
 
     fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
+        install_default_crypto_provider();
+
         let mut roots = rustls::RootCertStore::empty();
         for cert in rustls_native_certs::load_native_certs().unwrap() {
             roots.add(cert).unwrap();
@@ -109,6 +114,8 @@ impl TransportConnectionCreator for QUICConnectionCreator {
     }
 
     fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
+        install_default_crypto_provider();
+
         let cert = CertificateDer::from_pem_file(custom_cert_path)
             .inspect_err(|e| tracing::error!("Creating certificate failed: {:?}", e.to_string()))?;
 

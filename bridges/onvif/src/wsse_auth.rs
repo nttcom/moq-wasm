@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
-use rand::{rngs::OsRng, RngCore};
+use rand::{rngs::SysRng, TryRng};
 use sha1::{Digest, Sha1};
 use time::{macros::format_description, OffsetDateTime};
 
@@ -9,7 +9,7 @@ const NONCE_ENCODING: &str = "http://docs.oasis-open.org/wss/2004/01/oasis-20040
 
 pub fn build_wsse_header(username: &str, password: &str) -> Result<String> {
     let created = created_timestamp()?;
-    let nonce = generate_nonce(20);
+    let nonce = generate_nonce(20)?;
     let nonce_b64 = general_purpose::STANDARD.encode(&nonce);
     let digest_b64 = password_digest(&nonce, &created, password);
     let username = xml_escape(username);
@@ -37,10 +37,12 @@ fn created_timestamp() -> Result<String> {
         .context("failed to format wsse created timestamp")
 }
 
-fn generate_nonce(len: usize) -> Vec<u8> {
+fn generate_nonce(len: usize) -> Result<Vec<u8>> {
     let mut bytes = vec![0u8; len];
-    OsRng.fill_bytes(&mut bytes);
-    bytes
+    SysRng
+        .try_fill_bytes(&mut bytes)
+        .context("failed to generate wsse nonce")?;
+    Ok(bytes)
 }
 
 fn password_digest(nonce: &[u8], created: &str, password: &str) -> String {
