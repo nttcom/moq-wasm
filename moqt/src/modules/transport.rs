@@ -1,3 +1,4 @@
+pub(crate) mod crypto_provider;
 pub(crate) mod dual;
 pub(crate) mod quic;
 pub(crate) mod read_error;
