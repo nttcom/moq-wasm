@@ -1,17 +1,14 @@
-FROM rust:1.88-bookworm AS builder
+FROM rust:1.96.0-slim-bookworm AS builder
 
 WORKDIR /workspace
 COPY . .
-RUN cargo build -p relay
+RUN cargo build -p relay --release
 
-FROM debian:bookworm-slim
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+FROM gcr.io/distroless/cc-debian12:nonroot
 
 WORKDIR /app
-COPY --from=builder /workspace/target/debug/relay /usr/local/bin/relay
+COPY --from=builder /workspace/target/release/relay /usr/local/bin/relay
 
 EXPOSE 443/udp 444/udp
-CMD ["relay"]
+USER nonroot:nonroot
+CMD ["/usr/local/bin/relay"]
