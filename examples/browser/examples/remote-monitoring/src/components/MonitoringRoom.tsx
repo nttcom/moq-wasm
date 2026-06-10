@@ -145,7 +145,8 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
 
       const first = subscriber.firstReceivedGroupId ?? seekGroup
       const windowStart = seekGroup - first > 6n ? seekGroup - 6n : first
-      const windowEnd = seekGroup + 5n
+      const rawWindowEnd = seekGroup + 5n
+      const windowEnd = latestGroupId !== null && rawWindowEnd > latestGroupId ? latestGroupId : rawWindowEnd
 
       if (activeFetchIdRef.current !== null) {
         session.clearFetch(activeFetchIdRef.current)

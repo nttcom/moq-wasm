@@ -31,7 +31,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
   const [error, setError] = useState<string | null>(null)
   const [subscriberCount, setSubscriberCount] = useState(0)
   const [sourceType, setSourceType] = useState<VideoSourceType>('synthetic')
-  const defaultFileUrl = (id: CameraId | '') => id ? `/moq-wasm/videos/${id}.mp4` : ''
+  const defaultFileUrl = (id: CameraId | '') => (id ? `/moq-wasm/videos/${id}.mp4` : '')
   const [fileUrl, setFileUrl] = useState(() => defaultFileUrl(defaultCamId))
   const videoRef = useRef<HTMLVideoElement>(null)
   const sessionRef = useRef<PublisherSession | null>(null)
@@ -75,9 +75,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
     setStatus('starting')
     setError(null)
     try {
-      const source: VideoSource = sourceType === 'file'
-        ? { type: 'file', fileUrl }
-        : { type: sourceType }
+      const source: VideoSource = sourceType === 'file' ? { type: 'file', fileUrl } : { type: sourceType }
       const publisher = new CameraPublisher(session, camId as CameraId, source)
       const stream = await publisher.start()
       publisherRef.current = publisher
@@ -203,9 +201,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
                   className="bg-zinc-800 border-zinc-700 font-mono text-xs"
                   placeholder="/moq-wasm/videos/cam01.mp4"
                 />
-                <span className="text-xs text-zinc-500 whitespace-nowrap font-mono">
-                  public/videos/ 以下に置く
-                </span>
+                <span className="text-xs text-zinc-500 whitespace-nowrap font-mono">public/videos/ 以下に置く</span>
               </div>
             )}
             {sourceType === 'camera' && (
@@ -243,7 +239,10 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
           </div>
           <div className="flex gap-3 text-xs text-zinc-400">
             <span>Source:</span>
-            <span className="text-zinc-300">{SOURCE_LABELS[sourceType]}{sourceType === 'file' ? ` — ${fileUrl}` : ''}</span>
+            <span className="text-zinc-300">
+              {SOURCE_LABELS[sourceType]}
+              {sourceType === 'file' ? ` — ${fileUrl}` : ''}
+            </span>
           </div>
           <div className="flex gap-3 text-xs text-zinc-400">
             <span>Subscribers:</span>

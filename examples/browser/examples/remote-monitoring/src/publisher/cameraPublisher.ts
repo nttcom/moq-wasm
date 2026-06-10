@@ -148,24 +148,34 @@ export class CameraPublisher {
   private startVideoFileCamera(url: string): Promise<MediaStream> {
     return new Promise((resolve, reject) => {
       const video = document.createElement('video')
-      video.src = url
+      // リスナーを src 代入より先に登録（キャッシュ済みファイルで canplay が即時発火する場合に備える）
+      video.addEventListener(
+        'canplay',
+        () => {
+          video
+            .play()
+            .then(() => {
+              const stream = (video as any).captureStream()
+              log('file source ready', { camId: this.camId, url, duration: video.duration.toFixed(1) + 's' })
+              resolve(stream)
+            })
+            .catch(reject)
+        },
+        { once: true }
+      )
+      video.addEventListener(
+        'error',
+        () => {
+          reject(new Error(`動画ファイルを読み込めません: ${url}`))
+        },
+        { once: true }
+      )
+
       video.loop = true
       video.muted = true
       video.playsInline = true
+      video.src = url
       this.videoEl = video
-
-      video.addEventListener('canplay', () => {
-        video.play().then(() => {
-          const stream = (video as any).captureStream()
-          log('file source ready', { camId: this.camId, url, duration: video.duration.toFixed(1) + 's' })
-          resolve(stream)
-        }).catch(reject)
-      }, { once: true })
-
-      video.addEventListener('error', () => {
-        reject(new Error(`動画ファイルを読み込めません: ${url}`))
-      }, { once: true })
-
       video.load()
     })
   }

@@ -95,14 +95,19 @@ export class CameraSubscriber {
     if (this.liveResuming) {
       if (this.lastSentGroupId !== null && groupId <= this.lastSentGroupId) return
       if (this.liveResumingSkipUntil === null) {
-        // 最初に見つけた新しいgroupId: mid-GoPの可能性があるためスキップ対象に指定
-        this.liveResumingSkipUntil = groupId
-        return
+        // gopBuffer にこの groupId のオブジェクトがある = review 中に受信済み = mid-GoP の可能性
+        // ない = 今まさに始まった新しい GoP = objectId=0 (I フレーム) が保証される
+        if (this.gopBufferGroupId !== null && groupId <= this.gopBufferGroupId) {
+          this.liveResumingSkipUntil = groupId
+          return
+        }
+        // 新しい GoP の先頭 → スキップ不要
+        this.liveResuming = false
+      } else {
+        if (groupId <= this.liveResumingSkipUntil) return
+        this.liveResuming = false
+        this.liveResumingSkipUntil = null
       }
-      if (groupId <= this.liveResumingSkipUntil) return
-      // スキップ対象を超えた次のGoP先頭 → ここからデコーダーに流す
-      this.liveResuming = false
-      this.liveResumingSkipUntil = null
     }
 
     // Track objectId: reset on new group, increment within group (skip empty end-of-group markers)
@@ -152,8 +157,16 @@ export class CameraSubscriber {
       this.canvas.getContext('2d')?.clearRect(0, 0, this.canvas.width, this.canvas.height)
     }
     if (this.gopBufferGroupId !== null && this.gopBuffer.length > 0) {
-      log('replaying GoP buffer', { camId: this.camId, groupId: this.gopBufferGroupId.toString(), frames: this.gopBuffer.length })
-      for (const obj of this.gopBuffer) {
+      log('replaying GoP buffer', {
+        camId: this.camId,
+        groupId: this.gopBufferGroupId.toString(),
+        frames: this.gopBuffer.length
+      })
+      let replayedObjectId = 0n
+      for (let i = 0; i < this.gopBuffer.length; i++) {
+        const obj = this.gopBuffer[i]
+        // MoQT: 先頭オブジェクトの objectId = objectIdDelta、以降は前の objectId + objectIdDelta
+        replayedObjectId = i === 0 ? obj.objectIdDelta : replayedObjectId + obj.objectIdDelta
         const payload = new Uint8Array(obj.payload)
         this.worker.postMessage(
           {
@@ -171,7 +184,7 @@ export class CameraSubscriber {
         )
       }
       this.lastSentGroupId = this.gopBufferGroupId
-      this.lastSentObjectId = BigInt(this.gopBuffer.length - 1)
+      this.lastSentObjectId = replayedObjectId
       this.liveResuming = false
       this.liveResumingSkipUntil = null
     } else {
