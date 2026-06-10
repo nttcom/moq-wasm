@@ -34,7 +34,8 @@ export default defineConfig({
         'media-cmaf-subscriber': resolve(__dirname, 'examples/media-cmaf/subscriber/index.html'),
         onvif: resolve(__dirname, 'examples/onvif/index.html'),
         call: resolve(__dirname, 'examples/call/index.html'),
-        webcodecs: resolve(__dirname, 'examples/webcodecs/index.html')
+        webcodecs: resolve(__dirname, 'examples/webcodecs/index.html'),
+        'remote-monitoring': resolve(__dirname, 'examples/remote-monitoring/index.html')
       }
     }
   }
