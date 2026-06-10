@@ -440,7 +440,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
         upstream_key: UpstreamSubscriptionKey,
-        largest_at_subscribe: Option<moqt::Location>,
+        start_location: Option<moqt::Location>,
     ) -> bool {
         let Some(mut entry) = self.active_upstream_subscriptions.get_mut(&upstream_key) else {
             return false;
@@ -452,7 +452,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             (downstream_session_id, downstream_subscribe_id),
             DownstreamSubscription {
                 upstream_key,
-                largest_at_subscribe,
+                start_location,
             },
         );
         true
@@ -685,7 +685,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn register_downstream_subscription_stores_largest_at_subscribe() {
+    async fn register_downstream_subscription_stores_start_location() {
         let table = InMemoryLocalPubSubDirectory::new();
         let upstream_key = UpstreamSubscriptionKey {
             publisher_session_id: 1,
@@ -718,7 +718,7 @@ mod tests {
         let sub = table.get_downstream_subscription(2, 100).unwrap();
         assert_eq!(sub.upstream_key, upstream_key);
         assert_eq!(
-            sub.largest_at_subscribe,
+            sub.start_location,
             Some(moqt::Location {
                 group_id: 5,
                 object_id: 3
@@ -727,7 +727,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn register_downstream_subscription_none_largest_at_subscribe() {
+    async fn register_downstream_subscription_none_start_location() {
         let table = InMemoryLocalPubSubDirectory::new();
         let upstream_key = UpstreamSubscriptionKey {
             publisher_session_id: 1,
@@ -750,7 +750,7 @@ mod tests {
 
         let sub = table.get_downstream_subscription(2, 100).unwrap();
         assert_eq!(sub.upstream_key, upstream_key);
-        assert!(sub.largest_at_subscribe.is_none());
+        assert!(sub.start_location.is_none());
     }
 
     #[tokio::test]

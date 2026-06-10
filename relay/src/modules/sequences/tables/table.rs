@@ -34,7 +34,8 @@ pub(crate) enum UpstreamSubscriptionOrigin {
 #[derive(Clone, Debug)]
 pub(crate) struct DownstreamSubscription {
     pub(crate) upstream_key: UpstreamSubscriptionKey,
-    pub(crate) largest_at_subscribe: Option<moqt::Location>,
+    /// The subscription's start location: the Largest Object Location at subscribe time.
+    pub(crate) start_location: Option<moqt::Location>,
 }
 
 #[derive(Clone, Debug)]
@@ -121,7 +122,7 @@ pub(crate) trait LocalPubSubDirectory: Send + Sync + 'static + Debug {
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
         upstream_key: UpstreamSubscriptionKey,
-        largest_at_subscribe: Option<moqt::Location>,
+        start_location: Option<moqt::Location>,
     ) -> bool;
     fn remove_downstream_subscription(
         &self,

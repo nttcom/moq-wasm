@@ -259,7 +259,7 @@ impl Fetch {
             return Err(FetchError::TrackNotFound);
         };
 
-        let Some(largest) = downstream_sub.largest_at_subscribe else {
+        let Some(largest) = downstream_sub.start_location else {
             tracing::warn!("Joining fetch: no objects published at subscribe time");
             return Err(FetchError::NoObjectsPublished);
         };
