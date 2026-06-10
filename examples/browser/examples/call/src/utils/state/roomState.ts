@@ -1,47 +1,14 @@
 import { RemoteMember, SubscriptionState } from '../../types/member'
 import { Room } from '../../types/room'
 
-export interface RemoteMemberUpdateResult {
-  room: Room
-  chatSubscribeId: bigint
-  catalogSubscribeId: bigint
-  audioSubscribeId: bigint
-  videoSubscribeId: bigint
-  screenshareSubscribeId: bigint
-  targetMember: RemoteMember
-}
-
-export function addOrUpdateRemoteMember(
-  room: Room,
-  announcedUser: string,
-  trackNamespace: string[]
-): RemoteMemberUpdateResult {
+export function addOrUpdateRemoteMember(room: Room, announcedUser: string, trackNamespace: string[]): Room {
   const existingMember = room.remoteMembers.get(announcedUser)
-  const { chatSubscribeId, catalogSubscribeId, audioSubscribeId, videoSubscribeId, screenshareSubscribeId } =
-    computeSubscribeIds(room, announcedUser, existingMember)
-
-  const updatedMember = buildRemoteMember({
-    existingMember,
-    announcedUser,
-    trackNamespace,
-    chatSubscribeId,
-    audioSubscribeId,
-    videoSubscribeId,
-    screenshareSubscribeId
-  })
+  const updatedMember = buildRemoteMember({ existingMember, announcedUser, trackNamespace })
 
   const updatedMembers = new Map(room.remoteMembers)
   updatedMembers.set(announcedUser, updatedMember)
 
-  return {
-    room: { ...room, remoteMembers: updatedMembers },
-    chatSubscribeId,
-    catalogSubscribeId,
-    audioSubscribeId,
-    videoSubscribeId,
-    screenshareSubscribeId,
-    targetMember: updatedMember
-  }
+  return { ...room, remoteMembers: updatedMembers }
 }
 
 export function resetSubscriptionsOnError(room: Room, userId: string): Room {
@@ -111,38 +78,16 @@ export function alreadySubscribing(existingMember?: RemoteMember): boolean {
   )
 }
 
-export function computeSubscribeIds(room: Room, announcedUser: string, existingMember?: RemoteMember) {
-  const memberIndex = existingMember
-    ? Array.from(room.remoteMembers.keys()).indexOf(announcedUser)
-    : room.remoteMembers.size
-  const baseSubscribeId = memberIndex * 5
-  return {
-    chatSubscribeId: BigInt(baseSubscribeId),
-    catalogSubscribeId: BigInt(baseSubscribeId + 1),
-    audioSubscribeId: BigInt(baseSubscribeId + 2),
-    videoSubscribeId: BigInt(baseSubscribeId + 3),
-    screenshareSubscribeId: BigInt(baseSubscribeId + 4)
-  }
-}
-
 interface BuildRemoteMemberOptions {
   existingMember?: RemoteMember
   announcedUser: string
   trackNamespace: string[]
-  chatSubscribeId: bigint
-  audioSubscribeId: bigint
-  videoSubscribeId: bigint
-  screenshareSubscribeId: bigint
 }
 
 export function buildRemoteMember({
   existingMember,
   announcedUser,
-  trackNamespace,
-  chatSubscribeId,
-  audioSubscribeId,
-  videoSubscribeId,
-  screenshareSubscribeId
+  trackNamespace
 }: BuildRemoteMemberOptions): RemoteMember {
   if (existingMember) {
     return {
@@ -187,11 +132,13 @@ export function buildRemoteMember({
       screenshare: { isAnnounced: true, trackNamespace },
       audio: { isAnnounced: true, trackNamespace }
     },
+    // subscribeId is left undefined until the track is actually subscribed; the
+    // id is then taken from subscribe()'s return value (issued by moqtClient).
     subscribedTracks: {
-      chat: { isSubscribing: false, isSubscribed: false, subscribeId: chatSubscribeId },
-      audio: { isSubscribing: false, isSubscribed: false, subscribeId: audioSubscribeId },
-      video: { isSubscribing: false, isSubscribed: false, subscribeId: videoSubscribeId },
-      screenshare: { isSubscribing: false, isSubscribed: false, subscribeId: screenshareSubscribeId }
+      chat: { isSubscribing: false, isSubscribed: false },
+      audio: { isSubscribing: false, isSubscribed: false },
+      video: { isSubscribing: false, isSubscribed: false },
+      screenshare: { isSubscribing: false, isSubscribed: false }
     }
   }
 }

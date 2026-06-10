@@ -165,7 +165,6 @@ export class LocalSession {
   }
 
   async subscribe(
-    subscribeId: bigint,
     trackNamespace: string[],
     trackName: string,
     authInfo: string = this.defaultAuthInfo,
@@ -175,9 +174,9 @@ export class LocalSession {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot subscribe when session state is "${this.state}"`)
     }
-    const subscribeOk = await this.client.subscribe(subscribeId, trackNamespace, trackName, authInfo)
+    const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, authInfo)
     const trackAlias = subscribeOk.trackAlias
-    this.subscribeTrackAliases.set(subscribeId, trackAlias)
+    this.subscribeTrackAliases.set(requestId, trackAlias)
     const remoteUser = trackNamespace[1] ?? `alias-${trackAlias.toString()}`
 
     const resolvedRole = role ?? this.resolveTrackRole(trackName)
@@ -214,11 +213,10 @@ export class LocalSession {
       this.mediaController.registerRemoteTrack(remoteUser, trackName, trackAlias, resolvedRole, codec)
     }
 
-    return trackAlias
+    return requestId
   }
 
   async subscribeCatalog(
-    subscribeId: bigint,
     trackNamespace: string[],
     authInfo: string = this.defaultAuthInfo,
     timeoutMs: number = 5000,
@@ -257,34 +255,28 @@ export class LocalSession {
       }
 
       this.client
-        // Largest Object (0x2) filter: receive catalog updates after the current
-        // largest object (fetched separately below). Prepares for a future move
-        // to Joining Fetch.
-        .subscribe(subscribeId, trackNamespace, 'catalog', authInfo, { filterType: 2 })
-        .then(async (subscribeOk) => {
+        // Largest Object (0x2) filter: receive catalog updates after largest_at_subscribe.
+        // The current catalog is backfilled via Joining Fetch below.
+        .subscribe(trackNamespace, 'catalog', authInfo, { filterType: 2 })
+        .then(async ({ requestId: catalogRequestId, subscribeOk }) => {
           const trackAlias = subscribeOk.trackAlias
-          this.subscribeTrackAliases.set(subscribeId, trackAlias)
+          this.subscribeTrackAliases.set(catalogRequestId, trackAlias)
 
-          // If content exists, fetch the catalog directly instead of waiting for stream.
+          // If content exists, fetch the latest catalog via Joining Fetch.
+          // joining_start=0 means "the group at largest_at_subscribe" (0 groups back).
+          // The fetch id is issued internally by moqtClient; joiningRequestId is the
+          // catalog subscribe's request id we just received.
           const contentExists = (subscribeOk as any).contentExists ?? (subscribeOk as any).content_exists
-          const largestGroupId: bigint | undefined = subscribeOk.largestGroupId
-          const largestObjectId: bigint | undefined = subscribeOk.largestObjectId
-          if (contentExists && largestGroupId !== undefined && largestObjectId !== undefined) {
-            console.info('[call][catalog] content exists; fetching via Standalone Fetch', {
-              trackNamespace,
-              largestGroupId: largestGroupId.toString(),
-              largestObjectId: largestObjectId.toString()
-            })
-            const fetchId = subscribeId + 1000000n
-            this.client.setOnFetchObjectHandler(fetchId, (msg) => {
-              if (msg.objectPayload.length > 0) {
-                console.info('[call][catalog] payload received via Standalone Fetch')
-                handleCatalogPayload(new TextDecoder().decode(new Uint8Array(msg.objectPayload)))
+          if (contentExists) {
+            console.info('[call][catalog] content exists; fetching via Joining Fetch', { trackNamespace })
+            await this.client.relativeJoiningFetch(catalogRequestId, 0n, {
+              onObject: (msg) => {
+                if (msg.objectPayload.length > 0) {
+                  console.info('[call][catalog] payload received via Joining Fetch')
+                  handleCatalogPayload(new TextDecoder().decode(new Uint8Array(msg.objectPayload)))
+                }
               }
             })
-            // Catalog = one object per group (object_id always 0). End is exclusive, but
-            // object_id==0 means "whole group", so this fetches exactly the latest catalog.
-            await this.client.fetch(fetchId, trackNamespace, 'catalog', largestGroupId, 0n, largestGroupId, 0n)
           } else {
             console.info('[call][catalog] no content yet; waiting for subscribe stream', { trackNamespace })
           }

@@ -315,17 +315,18 @@ impl Subscribe {
     ) {
         let subscriber_track_alias = handler.allocate_track_alias();
 
-        // Derive content_exists from the largest cached object when available,
-        // falling back to the upstream-advertised value.
-        let content_exists = match cache_store.get(active_upstream.track_key) {
-            Some(cache) => match cache.largest_location().await {
-                Some(loc) => ContentExists::True {
-                    location: Location {
-                        group_id: loc.group_id,
-                        object_id: loc.object_id,
-                    },
+        // The subscription's start location: the Largest Object Location at subscribe time.
+        // Also used to derive content_exists, falling back to the upstream-advertised value.
+        let start_location = match cache_store.get(active_upstream.track_key) {
+            Some(cache) => cache.largest_location().await,
+            None => None,
+        };
+        let content_exists = match &start_location {
+            Some(loc) => ContentExists::True {
+                location: Location {
+                    group_id: loc.group_id,
+                    object_id: loc.object_id,
                 },
-                None => active_upstream.content_exists.clone(),
             },
             None => active_upstream.content_exists.clone(),
         };
@@ -334,6 +335,7 @@ impl Subscribe {
             session_id,
             handler.subscribe_id(),
             upstream_key.clone(),
+            start_location,
         ) {
             tracing::error!("Failed to register downstream subscription.");
             return;

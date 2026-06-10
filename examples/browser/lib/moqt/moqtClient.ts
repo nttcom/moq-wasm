@@ -48,6 +48,13 @@ export interface SubscribeNamespaceOptions {
 }
 
 export interface SubscribeOptions {
+  /**
+   * Override the request id. When omitted, a session-unique id is issued
+   * internally via issueRequestId(). Production code should let it be issued
+   * automatically; only manual/test tools that need to control the exact id on
+   * the wire should pass this.
+   */
+  requestId?: bigint
   subscriberPriority?: number
   groupOrder?: number
   filterType?: number
@@ -56,6 +63,25 @@ export interface SubscribeOptions {
   endGroup?: bigint
   forward?: boolean
   deliveryTimeout?: bigint
+}
+
+export interface FetchOptions {
+  /** Override the request id; issued internally when omitted. */
+  requestId?: bigint
+  /** Handler for FETCH objects, registered before the request is sent. */
+  onObject?: FetchObjectHandler
+}
+
+/** Result of subscribe(): the id we issued plus the SUBSCRIBE_OK response. */
+export interface SubscribeResult {
+  requestId: bigint
+  subscribeOk: SubscribeOkMessage
+}
+
+/** Result of fetch()/relativeJoiningFetch(): the id we issued plus FETCH_OK. */
+export interface FetchResult {
+  requestId: bigint
+  fetchOk: FetchOkMessage
 }
 
 export interface IncomingPublishNamespaceContext {
@@ -269,17 +295,17 @@ export class MoqtClientWrapper {
   }
 
   async subscribe(
-    requestId: bigint,
     trackNamespace: string[],
     trackName: string,
     authInfo: string,
     options: SubscribeOptions = {}
-  ): Promise<SubscribeOkMessage> {
+  ): Promise<SubscribeResult> {
     const client = this.requireConnectedClient()
+    const requestId = options.requestId ?? this.issueRequestId()
     const existingTrackAlias = this.subscriptionTrackAliases.get(requestId)
     if (existingTrackAlias !== undefined) {
-      // Reconstruct a minimal SubscribeOkMessage-like object is not possible here;
-      // callers that hit this branch only need trackAlias, so we throw to surface the issue.
+      // Only reachable when a caller passes an explicit options.requestId that
+      // collides with an in-flight subscription; internally issued ids never do.
       throw new Error(`subscribe: requestId ${requestId} already has trackAlias ${existingTrackAlias}`)
     }
 
@@ -302,21 +328,63 @@ export class MoqtClientWrapper {
       options.deliveryTimeout
     )
 
-    return response
+    const subscribeOk = await response
+    return { requestId, subscribeOk }
   }
 
   async fetch(
-    requestId: bigint,
     trackNamespace: string[],
     trackName: string,
     startGroupId: bigint,
     startObjectId: bigint,
     endGroupId: bigint,
-    endObjectId: bigint
-  ): Promise<FetchOkMessage> {
+    endObjectId: bigint,
+    options: FetchOptions = {}
+  ): Promise<FetchResult> {
     const client = this.requireConnectedClient()
-    const response = new Promise<FetchOkMessage>((resolve, reject) => {
-      const handler: FetchResponseHandler = (msg) => {
+    const requestId = options.requestId ?? this.issueRequestId()
+    if (options.onObject) {
+      this.setOnFetchObjectHandler(requestId, options.onObject)
+    }
+    const response = this.awaitFetchOk()
+    try {
+      await client.sendFetch(requestId, trackNamespace, trackName, startGroupId, startObjectId, endGroupId, endObjectId)
+      const fetchOk = await response
+      return { requestId, fetchOk }
+    } catch (error) {
+      if (options.onObject) {
+        this.clearFetchObjectHandler(requestId)
+      }
+      throw error
+    }
+  }
+
+  async relativeJoiningFetch(
+    joiningRequestId: bigint,
+    joiningStart: bigint,
+    options: FetchOptions = {}
+  ): Promise<FetchResult> {
+    const client = this.requireConnectedClient()
+    const requestId = options.requestId ?? this.issueRequestId()
+    if (options.onObject) {
+      this.setOnFetchObjectHandler(requestId, options.onObject)
+    }
+    const response = this.awaitFetchOk()
+    try {
+      await client.sendRelativeJoiningFetch(requestId, joiningRequestId, joiningStart)
+      const fetchOk = await response
+      return { requestId, fetchOk }
+    } catch (error) {
+      if (options.onObject) {
+        this.clearFetchObjectHandler(requestId)
+      }
+      throw error
+    }
+  }
+
+  private awaitFetchOk(): Promise<FetchOkMessage> {
+    return new Promise<FetchOkMessage>((resolve, reject) => {
+      this.onFetchResponseHandler = (msg) => {
         this.onFetchResponseHandler = null
         if (msg instanceof FetchOkMessage) {
           resolve(msg)
@@ -324,10 +392,7 @@ export class MoqtClientWrapper {
           reject(new Error(`FETCH_ERROR: ${(msg as RequestErrorMessage).reasonPhrase}`))
         }
       }
-      this.onFetchResponseHandler = handler
     })
-    await client.sendFetch(requestId, trackNamespace, trackName, startGroupId, startObjectId, endGroupId, endObjectId)
-    return response
   }
 
   setOnFetchObjectHandler(requestId: bigint, handler: FetchObjectHandler): void {
@@ -519,9 +584,13 @@ export class MoqtClientWrapper {
     client.incrementSubgroupObject(trackAlias)
   }
 
+  // MOQ-T draft-14 §9.1: client-initiated Request IDs start at 0 and increase by
+  // 2 (clients use even ids, servers odd). One counter covers every request type
+  // (PUBLISH_NAMESPACE / SUBSCRIBE_NAMESPACE / SUBSCRIBE / FETCH) so ids stay
+  // unique within the session.
   private issueRequestId(): bigint {
     const requestId = this.nextRequestId
-    this.nextRequestId += 1n
+    this.nextRequestId += 2n
     return requestId
   }
 

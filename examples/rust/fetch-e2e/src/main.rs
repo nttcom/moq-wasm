@@ -105,6 +105,84 @@ async fn run_fetch(
     Ok(())
 }
 
+async fn run_joining_fetch(
+    subscriber: &mut moqt::Subscriber<QUIC>,
+    joining_request_id: u64,
+    joining_start: u64,
+) -> anyhow::Result<()> {
+    tracing::info!(
+        "[carol] joining fetch request_id={} joining_start={}",
+        joining_request_id,
+        joining_start
+    );
+    let handle = subscriber
+        .fetch_relative_joining(joining_request_id, joining_start, FetchOption::default())
+        .await?;
+    let mut receiver: FetchDataReceiver<QUIC> = subscriber.accept_fetch_receiver(&handle).await?;
+    loop {
+        match receiver.receive().await {
+            Ok(Fetch::Header(_)) => {}
+            Ok(Fetch::Object(obj)) => {
+                let payload = match &obj.fetch_object {
+                    FetchObject::Payload(b) => String::from_utf8_lossy(b).to_string(),
+                    FetchObject::Status(s) => format!("{:?}", s),
+                };
+                tracing::info!(
+                    "[carol] joining g{}:o{} = {}",
+                    obj.group_id,
+                    obj.object_id,
+                    payload
+                );
+            }
+            Ok(Fetch::End) => {
+                tracing::info!("[carol] joining fetch done");
+                break;
+            }
+            Err(e) => {
+                tracing::info!("[carol] joining fetch done (error): {}", e);
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn carol(
+    cert_path: String,
+    ready_rx: tokio::sync::oneshot::Receiver<()>,
+    done_tx: tokio::sync::oneshot::Sender<()>,
+) -> anyhow::Result<()> {
+    // Wait until Bob has finished his standalone fetches (cache is fully populated).
+    let _ = ready_rx.await;
+
+    let session = new_session(&cert_path).await?;
+    let mut subscriber = session.subscriber();
+    let subscription = subscriber
+        .subscribe(
+            NAMESPACE.to_string(),
+            TRACK_NAME.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        )
+        .await?;
+    tracing::info!(
+        "[carol] subscribe ok, request_id={}, content_exists={:?}",
+        subscription.request_id(),
+        subscription.content_exists()
+    );
+
+    // Joining Fetch: 1 group back from largest_at_subscribe.
+    run_joining_fetch(&mut subscriber, subscription.request_id(), 1).await?;
+
+    tracing::info!("[carol] all done");
+    let _ = done_tx.send(());
+    Ok(())
+}
+
 async fn alice(cert_path: String) -> anyhow::Result<()> {
     let session = new_session(&cert_path).await?;
     session
@@ -136,7 +214,11 @@ async fn alice(cert_path: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn bob(cert_path: String) -> anyhow::Result<()> {
+async fn bob(
+    cert_path: String,
+    carol_ready_tx: tokio::sync::oneshot::Sender<()>,
+    carol_done_rx: tokio::sync::oneshot::Receiver<()>,
+) -> anyhow::Result<()> {
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     let session = new_session(&cert_path).await?;
@@ -224,6 +306,11 @@ async fn bob(cert_path: String) -> anyhow::Result<()> {
     )
     .await?;
 
+    // Signal Carol that standalone fetches are done and the cache is fully populated.
+    let _ = carol_ready_tx.send(());
+    // Keep this session alive until Carol completes her Joining Fetch.
+    let _ = carol_done_rx.await;
+
     tracing::info!("[bob] all done");
     Ok(())
 }
@@ -241,12 +328,16 @@ async fn main() -> anyhow::Result<()> {
         std::env::current_dir()?.to_str().unwrap()
     );
 
+    let (carol_ready_tx, carol_ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let (carol_done_tx, carol_done_rx) = tokio::sync::oneshot::channel::<()>();
+
     let alice_handle = tokio::spawn(alice(cert_path.clone()));
-    let bob_handle = tokio::spawn(bob(cert_path));
+    let bob_handle = tokio::spawn(bob(cert_path.clone(), carol_ready_tx, carol_done_rx));
+    tokio::spawn(carol(cert_path, carol_ready_rx, carol_done_tx));
 
     tokio::select! {
-        r = alice_handle => { r??; }
         r = bob_handle => { r??; }
+        r = alice_handle => { r??; }
         _ = tokio::signal::ctrl_c() => {}
     }
 

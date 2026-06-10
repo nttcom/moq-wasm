@@ -3,7 +3,7 @@ import { PublishNamespaceMessage, RequestErrorMessage, SubscribeOkMessage } from
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
-import { addOrUpdateRemoteMember, updateSubscriptionState } from '../utils/state/roomState'
+import { addOrUpdateRemoteMember } from '../utils/state/roomState'
 
 interface EventHandlerParams {
   session: LocalSession
@@ -39,7 +39,7 @@ export function useSessionEventHandlers({ session, roomName, userName, setRoom, 
   }, [roomName, session, setRoom, userName])
 
   useEffect(() => {
-    const handleSubscribeResponse = createSubscribeResponseHandler(session, setRoom)
+    const handleSubscribeResponse = createSubscribeResponseHandler(session)
     session.setOnSubscribeResponseHandler(handleSubscribeResponse)
     return () => {
       session.setOnSubscribeResponseHandler(() => {})
@@ -77,37 +77,21 @@ function createPublishNamespaceHandler({ session, roomName, userName, setRoom }:
       return
     }
 
-    setRoom((currentRoom) => {
-      const update = addOrUpdateRemoteMember(currentRoom, announcedUser, trackNamespace)
-      return update.room
-    })
+    setRoom((currentRoom) => addOrUpdateRemoteMember(currentRoom, announcedUser, trackNamespace))
   }
 }
 
-function createSubscribeResponseHandler(session: LocalSession, setRoom: Dispatch<SetStateAction<Room>>) {
+// Subscription state (isSubscribing/isSubscribed/subscribeId) is now driven by
+// the awaited result of session.subscribe() in CallRoom, so this handler only
+// surfaces errors for diagnostics.
+function createSubscribeResponseHandler(session: LocalSession) {
   return (response: SubscribeOkMessage | RequestErrorMessage) => {
     if (session.status !== LocalSessionState.Ready) {
       return
     }
     if ('errorCode' in response) {
       console.error('SUBSCRIBE_ERROR:', response.requestId, response.errorCode, response.reasonPhrase)
-      setRoom((currentRoom) =>
-        updateSubscriptionState(currentRoom, response.requestId, (track) => ({
-          ...track,
-          isSubscribing: false,
-          isSubscribed: false
-        }))
-      )
-      return
     }
-
-    setRoom((currentRoom) =>
-      updateSubscriptionState(currentRoom, response.requestId, (track) => ({
-        ...track,
-        isSubscribed: true,
-        isSubscribing: false
-      }))
-    )
   }
 }
 
