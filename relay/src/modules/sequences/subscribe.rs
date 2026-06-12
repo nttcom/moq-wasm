@@ -464,5 +464,4 @@ impl Subscribe {
         );
         handler.error(code, reason_phrase).await
     }
-
 }
