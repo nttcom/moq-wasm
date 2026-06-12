@@ -419,6 +419,19 @@ impl EventHandler {
                 )
                 .await;
             }
+
+            for track_namespace in removed.publish_namespace_track_namespaces {
+                if let Err(err) = route_registry
+                    .unregister_namespace_publisher(&track_namespace)
+                    .await
+                {
+                    tracing::warn!(
+                        ?err,
+                        track_namespace = %track_namespace,
+                        "failed to unregister namespace publisher route"
+                    );
+                }
+            }
         }
     }
 

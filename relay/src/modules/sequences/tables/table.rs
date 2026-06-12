@@ -31,6 +31,15 @@ pub(crate) enum UpstreamSubscriptionOrigin {
     Subscribe,
 }
 
+/// Whether a session belongs to an end client or another relay.
+/// Client subscriptions own the Redis route for their prefix, so the
+/// directory tracks the kind to detect when the last client leaves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PeerKind {
+    Client,
+    Relay,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct DownstreamSubscription {
     pub(crate) upstream_key: UpstreamSubscriptionKey,
@@ -54,6 +63,7 @@ pub(crate) struct RemovedSessionSubscriptions {
     pub(crate) downstream_subscriptions: Vec<RemovedDownstreamSubscription>,
     pub(crate) upstream_track_keys: Vec<TrackKey>,
     pub(crate) subscribe_namespace_prefixes: Vec<String>,
+    pub(crate) publish_namespace_track_namespaces: Vec<String>,
 }
 
 #[async_trait::async_trait]
@@ -62,8 +72,22 @@ pub(crate) trait LocalPubSubDirectory: Send + Sync + 'static + Debug {
     where
         Self: Sized;
     async fn remove_session(&self, session_id: SessionId) -> RemovedSessionSubscriptions;
-    fn register_publish_namespace(&self, session_id: SessionId, track_namespace: String) -> bool;
-    fn register_subscribe_namespace(&self, session_id: SessionId, track_namespace_prefix: String);
+    fn register_publish_namespace(
+        &self,
+        session_id: SessionId,
+        track_namespace: String,
+        peer_kind: PeerKind,
+    ) -> bool;
+    /// Returns true when this registration adds the first client subscriber
+    /// for the prefix, i.e. the caller should register the Redis route.
+    fn register_subscribe_namespace(
+        &self,
+        session_id: SessionId,
+        track_namespace_prefix: String,
+        peer_kind: PeerKind,
+    ) -> bool;
+    /// Returns true when no client subscriber remains for the prefix,
+    /// i.e. the caller may clean up the Redis route.
     fn unregister_subscribe_namespace(
         &self,
         session_id: SessionId,

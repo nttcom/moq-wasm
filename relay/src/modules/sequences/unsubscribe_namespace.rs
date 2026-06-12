@@ -36,8 +36,12 @@ impl UnsubscribeNamespace {
             "SequenceHandler::UnsubscribeNamespace"
         );
 
-        let is_empty = table.unregister_subscribe_namespace(session_id, track_namespace_prefix);
-        if !is_empty || !Self::is_origin_client(session_id, forwarder).await {
+        let no_clients_remain =
+            table.unregister_subscribe_namespace(session_id, track_namespace_prefix);
+        if !Self::is_origin_client(session_id, forwarder).await {
+            return;
+        }
+        if !no_clients_remain {
             return;
         }
 
