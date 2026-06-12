@@ -1,12 +1,14 @@
 use crate::modules::core::handler::{
     fetch::FetchHandler, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
-    subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
-    unsubscribe::UnsubscribeHandler, unsubscribe_namespace::UnsubscribeNamespaceHandler,
+    publish_namespace_done::PublishNamespaceDoneHandler, subscribe::SubscribeHandler,
+    subscribe_namespace::SubscribeNamespaceHandler, unsubscribe::UnsubscribeHandler,
+    unsubscribe_namespace::UnsubscribeNamespaceHandler,
 };
 use crate::modules::types::SessionId;
 
 pub(crate) enum SessionEvent {
     PublishNameSpace(SessionId, Box<dyn PublishNamespaceHandler>),
+    PublishNamespaceDone(SessionId, Box<dyn PublishNamespaceDoneHandler>),
     SubscribeNameSpace(SessionId, Box<dyn SubscribeNamespaceHandler>),
     UnsubscribeNameSpace(SessionId, Box<dyn UnsubscribeNamespaceHandler>),
     Publish(SessionId, Box<dyn PublishHandler>),

@@ -78,6 +78,9 @@ pub(crate) trait LocalPubSubDirectory: Send + Sync + 'static + Debug {
         track_namespace: String,
         peer_kind: PeerKind,
     ) -> bool;
+    /// Returns true when no client publisher remains for the namespace,
+    /// i.e. the caller may clean up the Redis route.
+    fn unregister_publish_namespace(&self, session_id: SessionId, track_namespace: &str) -> bool;
     /// Returns true when this registration adds the first client subscriber
     /// for the prefix, i.e. the caller should register the Redis route.
     fn register_subscribe_namespace(

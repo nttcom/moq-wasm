@@ -198,6 +198,31 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
 
     #[tracing::instrument(
         level = "info",
+        name = "relay.local_pub_sub_directory.unregister_publish_namespace",
+        skip_all,
+        fields(session_id = %session_id, track_namespace = %track_namespace)
+    )]
+    fn unregister_publish_namespace(&self, session_id: SessionId, track_namespace: &str) -> bool {
+        let Some(sessions) = self.publisher_namespaces.get(track_namespace) else {
+            return true;
+        };
+
+        sessions.remove(&session_id);
+        let no_clients_remain = !sessions
+            .iter()
+            .any(|session| *session.value() == PeerKind::Client);
+        let is_empty = sessions.is_empty();
+        drop(sessions);
+
+        if is_empty {
+            self.publisher_namespaces.remove(track_namespace);
+        }
+
+        no_clients_remain
+    }
+
+    #[tracing::instrument(
+        level = "info",
         name = "relay.local_pub_sub_directory.register_subscribe_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix, peer_kind = ?peer_kind)
@@ -785,6 +810,43 @@ mod tests {
 
         // Assert: No Redis cleanup is requested because no client ever owned the route.
         assert!(removed.publish_namespace_track_namespaces.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unregister_publish_namespace_reports_when_last_client_leaves() {
+        // Arrange: Register two client publishers for the same namespace.
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
+        table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Client);
+
+        // Act: Remove publishers one by one.
+        let still_has_clients = table.unregister_publish_namespace(1, "room/member");
+        let clients_became_empty = table.unregister_publish_namespace(2, "room/member");
+
+        // Assert: Only the final withdrawal reports that no client remains.
+        assert!(!still_has_clients);
+        assert!(clients_became_empty);
+        assert!(table.publisher_namespaces.get("room/member").is_none());
+    }
+
+    #[tokio::test]
+    async fn unregister_publish_namespace_ignores_remaining_relay_publishers() {
+        // Arrange: Register a client publisher alongside a relay publisher.
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
+        table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Relay);
+
+        // Act: Withdraw the final client publisher while the relay publisher remains.
+        let clients_became_empty = table.unregister_publish_namespace(1, "room/member");
+
+        // Assert: Route cleanup is allowed while the relay publisher stays registered.
+        assert!(clients_became_empty);
+        let publishers = table.find_upstream_publishers("room/member", "video").await;
+        let publisher_session_ids: Vec<_> = publishers
+            .into_iter()
+            .map(|subscription| subscription.publisher_session_id)
+            .collect();
+        assert_eq!(publisher_session_ids, vec![2]);
     }
 
     #[tokio::test]

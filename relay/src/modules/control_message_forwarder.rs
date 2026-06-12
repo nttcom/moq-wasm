@@ -43,6 +43,35 @@ impl ControlMessageForwarder {
 
     #[tracing::instrument(
         level = "info",
+        name = "relay.control_message_forwarder.publish_namespace_done",
+        skip_all,
+        fields(session_id = %session_id, track_namespace = %track_namespace)
+    )]
+    pub(crate) async fn publish_namespace_done(
+        &self,
+        session_id: SessionId,
+        track_namespace: String,
+    ) -> bool {
+        let publisher = self.repository.lock().await.publisher(session_id);
+        if let Some(publisher) = publisher {
+            match publisher
+                .send_publish_namespace_done(track_namespace.to_string())
+                .await
+            {
+                Ok(_) => true,
+                Err(_) => {
+                    tracing::error!("Failed to send publish namespace done");
+                    false
+                }
+            }
+        } else {
+            tracing::error!("No publisher");
+            false
+        }
+    }
+
+    #[tracing::instrument(
+        level = "info",
         name = "relay.control_message_forwarder.publish",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)

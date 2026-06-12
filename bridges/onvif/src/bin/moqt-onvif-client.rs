@@ -417,6 +417,13 @@ async fn handle_session_event(
             )
             .await
         }
+        SessionEvent::PublishNamespaceDone(handler) => {
+            eprintln!(
+                "[moqt] publish_namespace_done ns={}",
+                handler.track_namespace
+            );
+            Ok(None)
+        }
         SessionEvent::PublishNamespace(handler) => {
             handle_command_namespace_announce(
                 handler,

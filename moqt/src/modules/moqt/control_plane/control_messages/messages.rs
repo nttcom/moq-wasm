@@ -6,6 +6,7 @@ pub mod namespace_ok;
 pub mod parameters;
 pub mod publish;
 pub mod publish_namespace;
+pub mod publish_namespace_done;
 pub mod publish_ok;
 pub mod request_error;
 pub mod server_setup;

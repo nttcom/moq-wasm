@@ -8,7 +8,8 @@ use crate::modules::moqt::{
         control_message_type::ControlMessageType,
         messages::{
             client_setup::ClientSetup, fetch::Fetch, fetch_ok::FetchOk, namespace_ok::NamespaceOk,
-            publish::Publish, publish_namespace::PublishNamespace, publish_ok::PublishOk,
+            publish::Publish, publish_namespace::PublishNamespace,
+            publish_namespace_done::PublishNamespaceDone, publish_ok::PublishOk,
             request_error::RequestError, server_setup::ServerSetup, subscribe::Subscribe,
             subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
             unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
@@ -208,7 +209,16 @@ impl ControlMessageDecoder {
                     }
                 }
             }
-            ControlMessageType::PublishNamespaceDone => todo!(),
+            ControlMessageType::PublishNamespaceDone => {
+                tracing::debug!("Event: Publish namespace done");
+                match PublishNamespaceDone::decode(&mut cursor_buf) {
+                    Some(v) => ReceivedMessage::PublishNamespaceDone(v),
+                    None => {
+                        tracing::error!("Protocol violation is detected.");
+                        ReceivedMessage::FatalError()
+                    }
+                }
+            }
             ControlMessageType::PublishNamespaceCancel => todo!(),
             ControlMessageType::SubscribeNamespace => {
                 tracing::debug!("Event: Subscribe namespace");

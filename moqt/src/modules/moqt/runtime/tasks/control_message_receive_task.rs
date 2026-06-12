@@ -10,6 +10,7 @@ use crate::{
             enums::ResponseMessage,
             handler::{
                 fetch_handler::FetchHandler, publish_handler::PublishHandler,
+                publish_namespace_done_handler::PublishNamespaceDoneHandler,
                 publish_namespace_handler::PublishNamespaceHandler,
                 subscribe_handler::SubscribeHandler,
                 subscribe_namespace_handler::SubscribeNamespaceHandler,
@@ -154,6 +155,14 @@ impl ControlMessageReceiveTask {
                     PublishNamespaceHandler::new(session.clone(), publish_namespace);
                 DepacketizeResult::SessionEvent(SessionEvent::<T>::PublishNamespace(
                     publish_namespace_handler,
+                ))
+            }
+            ReceivedMessage::PublishNamespaceDone(publish_namespace_done) => {
+                tracing::debug!("Event: Publish namespace done");
+                let publish_namespace_done_handler =
+                    PublishNamespaceDoneHandler::new(publish_namespace_done);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::PublishNamespaceDone(
+                    publish_namespace_done_handler,
                 ))
             }
             ReceivedMessage::PublishNamespaceOk(publish_namespace_ok) => {

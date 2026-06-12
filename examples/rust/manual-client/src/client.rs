@@ -79,6 +79,15 @@ impl<T: TransportProtocol> Client<T> {
                             );
                             let _ = publish_namespace_handler.ok().await;
                         }
+                        moqt::SessionEvent::PublishNamespaceDone(
+                            publish_namespace_done_handler,
+                        ) => {
+                            tracing::info!(
+                                "Received: {} Publish Namespace Done: {}",
+                                _label,
+                                publish_namespace_done_handler.track_namespace
+                            );
+                        }
                         moqt::SessionEvent::SubscribeNameSpace(subscribe_namespace_handler) => {
                             tracing::info!(
                                 "Received: {} Subscribe Namespace: {}",

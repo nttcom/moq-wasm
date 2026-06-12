@@ -305,6 +305,12 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                             );
                         }
                     }
+                    SessionEvent::PublishNamespaceDone(handler) => {
+                        eprintln!(
+                            "[moqt] publish_namespace_done ns={}",
+                            handler.track_namespace
+                        );
+                    }
                     SessionEvent::SubscribeNameSpace(handler) => {
                         if let Err(err) = handler.ok().await {
                             eprintln!(

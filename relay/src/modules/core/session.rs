@@ -27,6 +27,9 @@ impl<T: moqt::TransportProtocol> Session for moqt::Session<T> {
             moqt::SessionEvent::PublishNamespace(publish_namespace_handler) => {
                 MoqtSessionEvent::PublishNamespace(Box::new(publish_namespace_handler))
             }
+            moqt::SessionEvent::PublishNamespaceDone(publish_namespace_done_handler) => {
+                MoqtSessionEvent::PublishNamespaceDone(Box::new(publish_namespace_done_handler))
+            }
             moqt::SessionEvent::SubscribeNameSpace(subscribe_namespace_handler) => {
                 MoqtSessionEvent::SubscribeNamespace(Box::new(subscribe_namespace_handler))
             }
