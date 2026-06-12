@@ -958,7 +958,13 @@ export class MediaPublisher {
     if (previousState && previousState.groupId !== groupId) {
       const endObjectId = previousState.lastObjectId + 1n
       const eogStartedAtMs = performance.now()
-      await this.sendEndOfGroup(client, trackAlias, previousState.groupId, endObjectId)
+      try {
+        await this.sendEndOfGroup(client, trackAlias, previousState.groupId, endObjectId)
+      } catch (error) {
+        // A failed EndOfGroup must not block the new group's frames; the
+        // stream is eventually freed when the writer is dropped.
+        console.warn(`${context.trackName} EndOfGroup send failed:`, error)
+      }
       if (timingAcc) {
         timingAcc.endOfGroupMs += Math.max(0, performance.now() - eogStartedAtMs)
       }

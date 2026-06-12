@@ -60,22 +60,10 @@ export async function sendVideoChunkViaMoqt({
     videoConfig: includeConfig ? configBytes : undefined
   })
 
-  if (chunk.type === 'key') {
-    if (transportState.getVideoGroupId() >= 0n) {
-      // Send EndOfGroup so the relay's outgoing stream to the subscriber terminates with FIN,
-      // freeing the QUIC stream slot. Without this, one stream accumulates per GoP and
-      // the browser's incoming stream limit is eventually reached.
-      // No await: avoid blocking the keyframe write.
-      const oldGroupId = transportState.getVideoGroupId()
-      const endObjectId = transportState.getVideoObjectNumber()
-      for (const alias of trackAliases) {
-        client
-          .sendSubgroupObject(alias, oldGroupId, 0n, endObjectId, 3, new Uint8Array(), undefined)
-          .catch((err) => console.warn('[moqt] EndOfGroup send error', err))
-      }
-    }
-    transportState.advanceVideoGroup()
-  } else if (transportState.getVideoGroupId() < 0n) {
+  // EndOfGroup for the previous group is sent per alias by
+  // mediaPublisher.sendVideoObjectForTrackContext when it detects the group
+  // change; sending it here as well would race on the same object number.
+  if (chunk.type === 'key' || transportState.getVideoGroupId() < 0n) {
     transportState.advanceVideoGroup()
   }
 
