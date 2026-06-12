@@ -33,7 +33,7 @@ impl SubscriptionNotifier {
             .await
         {
             IncomingObjectNotification::Notified => {
-                tracing::info!(track_alias, "notifying registered incoming object receiver");
+                tracing::debug!(track_alias, "notifying registered incoming object receiver");
             }
             IncomingObjectNotification::Buffered {
                 pending_objects,
@@ -46,7 +46,7 @@ impl SubscriptionNotifier {
                         "pending incoming object buffer is full; dropping oldest object"
                     );
                 }
-                tracing::info!(
+                tracing::debug!(
                     track_alias,
                     pending_objects,
                     "buffered incoming object until track alias is registered"

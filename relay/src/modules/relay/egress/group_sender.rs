@@ -71,7 +71,16 @@ impl GroupSender {
                                 object_count = tracing::field::Empty,
                                 end_reason = tracing::field::Empty,
                             );
-                            match async { factory.next().await }.instrument(span.clone()).await {
+                            // Opening the stream awaits peer stream credit; if the
+                            // subscriber stops granting streams this blocks the
+                            // whole GroupSender, so leave a trace before it.
+                            match async {
+                                tracing::debug!("opening egress uni stream");
+                                factory.next().await
+                            }
+                            .instrument(span.clone())
+                            .await
+                            {
                                 Ok(sender) => {
                                     joinset.spawn(Self::send_stream_task(
                                         track_alias,
@@ -141,7 +150,7 @@ impl GroupSender {
             );
             return;
         };
-        tracing::info!(
+        tracing::debug!(
             track_key,
             track_alias,
             group_id,
@@ -230,7 +239,7 @@ impl GroupSender {
                 }
                 _ => None,
             };
-            tracing::info!(
+            tracing::debug!(
                 track_alias,
                 group_id,
                 object_id = datagram_object_id,

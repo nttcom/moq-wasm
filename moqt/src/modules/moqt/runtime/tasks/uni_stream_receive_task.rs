@@ -35,7 +35,7 @@ impl UniStreamReceiveTask {
                     loop {
                         match context.transport_connection.accept_uni().await {
                             Ok(stream) => {
-                                tracing::info!("accepted incoming uni stream");
+                                tracing::debug!("accepted incoming uni stream");
                                 let stream =
                                     UniStreamReceiver::new(stream, UniStreamDecoder::new());
                                 Self::on_stream_received(&context, stream).await;
@@ -71,7 +71,7 @@ impl UniStreamReceiveTask {
 
         match stream_data {
             UniStreamData::Subgroup(Subgroup::Header(header)) => {
-                tracing::info!(
+                tracing::debug!(
                     track_alias = header.track_alias,
                     group_id = header.group_id,
                     "received subgroup header"
