@@ -6,8 +6,6 @@ const log = (...args: unknown[]) => console.log('[mon][session]', ...args)
 
 export class MonitorSession {
   private readonly client = new MoqtClientWrapper()
-  private nextSubscribeId = 1n
-  private nextFetchId = 1n
 
   async connect(relayUrl: string): Promise<void> {
     await this.client.connect(relayUrl)
@@ -20,12 +18,11 @@ export class MonitorSession {
     camId: CameraId,
     onObject: (groupId: bigint, msg: SubgroupObjectMessage) => void
   ): Promise<boolean> {
-    const subscribeId = this.nextSubscribeId++
     const namespace = [location, camId]
     try {
-      const ok = await this.client.subscribe(subscribeId, namespace, 'video', 'secret')
-      log('subscribe OK', { camId, trackAlias: ok.trackAlias.toString() })
-      this.client.setOnSubgroupObjectHandler(ok.trackAlias, (groupId, msg) => onObject(groupId, msg))
+      const { subscribeOk } = await this.client.subscribe(namespace, 'video', 'secret')
+      log('subscribe OK', { camId, trackAlias: subscribeOk.trackAlias.toString() })
+      this.client.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, msg) => onObject(groupId, msg))
       return true
     } catch (e) {
       log('subscribe failed', { camId, error: String(e) })
@@ -40,24 +37,16 @@ export class MonitorSession {
     endGroupId: bigint,
     onObject: (msg: FetchObjectMessage) => void
   ): Promise<bigint> {
-    const fetchId = this.nextFetchId++
     const namespace = [location, camId]
     const startedAt = Date.now()
     log('fetch start', {
       camId,
-      fetchId: fetchId.toString(),
       startGroupId: startGroupId.toString(),
       endGroupId: endGroupId.toString()
     })
-    this.client.setOnFetchObjectHandler(fetchId, onObject)
-    try {
-      await this.client.fetch(fetchId, namespace, 'video', startGroupId, 0n, endGroupId, 0n)
-      log('fetch OK', { camId, fetchId: fetchId.toString(), elapsedMs: Date.now() - startedAt })
-      return fetchId
-    } catch (e) {
-      this.client.clearFetchObjectHandler(fetchId)
-      throw e
-    }
+    const { requestId } = await this.client.fetch(namespace, 'video', startGroupId, 0n, endGroupId, 0n, { onObject })
+    log('fetch OK', { camId, fetchId: requestId.toString(), elapsedMs: Date.now() - startedAt })
+    return requestId
   }
 
   clearFetch(fetchId: bigint): void {
