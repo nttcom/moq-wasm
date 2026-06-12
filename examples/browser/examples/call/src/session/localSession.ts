@@ -1,4 +1,4 @@
-import { PublishNamespaceMessage, RequestErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_wasm'
+import { PublishNamespaceDoneMessage, PublishNamespaceMessage, RequestErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_wasm'
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
@@ -88,6 +88,17 @@ export class LocalSession {
       console.info('[call][moqt] received PUBLISH_NAMESPACE', publishNamespace)
       handler(publishNamespace)
       await respondOk()
+    })
+  }
+
+  setOnPublishNamespaceDoneHandler(handler: ((message: PublishNamespaceDoneMessage) => void) | null): void {
+    if (!handler) {
+      this.client.setOnPublishNamespaceDoneHandler(null)
+      return
+    }
+    this.client.setOnPublishNamespaceDoneHandler((message) => {
+      console.info('[call][moqt] received PUBLISH_NAMESPACE_DONE', message.trackNamespace)
+      handler(message)
     })
   }
 

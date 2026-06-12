@@ -19,9 +19,9 @@ use moqt::wire::{
     AuthorizationToken, BufGetExt, BufPutExt, ClientSetup, ContentExists, ControlMessageType,
     DatagramField, ExtensionHeaders, Fetch, FetchHeader, FetchObjectField, FetchOk, FetchType,
     FilterType, GroupOrder, Location, NamespaceOk, ObjectDatagram, ObjectStatus, Publish,
-    PublishNamespace, PublishOk, RequestError, ServerSetup, SetupParameter, SubgroupHeader,
-    SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace, SubscribeOk,
-    encode_control_message, take_control_message,
+    PublishNamespace, PublishNamespaceDone, PublishOk, RequestError, ServerSetup, SetupParameter,
+    SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace,
+    SubscribeOk, encode_control_message, take_control_message,
 };
 #[cfg(feature = "web_sys_unstable_apis")]
 use std::{
@@ -338,6 +338,11 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = onPublishNamespace)]
     pub fn set_publish_namespace_callback(&mut self, callback: js_sys::Function) {
         self.callbacks.borrow_mut().publish_namespace_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onPublishNamespaceDone)]
+    pub fn set_publish_namespace_done_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().publish_namespace_done_callback = Some(callback);
     }
 
     #[wasm_bindgen(js_name = onPublishNamespaceResponse)]
@@ -1336,6 +1341,14 @@ async fn handle_control_message(
                 let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
             }
         }
+        ControlMessageType::PublishNamespaceDone => {
+            let message = PublishNamespaceDone::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE_DONE"))?;
+            if let Some(callback) = callbacks.borrow().publish_namespace_done_callback.clone() {
+                let wrapper = PublishNamespaceDoneMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
         ControlMessageType::PublishNamespaceOk => {
             let message = NamespaceOk::decode(&mut cursor)
                 .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE_OK"))?;
@@ -1878,6 +1891,7 @@ fn js_error(message: impl Into<String>) -> JsValue {
 struct MOQTCallbacks {
     server_setup_callback: Option<js_sys::Function>,
     publish_namespace_callback: Option<js_sys::Function>,
+    publish_namespace_done_callback: Option<js_sys::Function>,
     publish_namespace_response_callback: Option<js_sys::Function>,
     subscribe_namespace_response_callback: Option<js_sys::Function>,
     publish_callback: Option<js_sys::Function>,

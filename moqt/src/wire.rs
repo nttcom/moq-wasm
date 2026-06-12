@@ -22,6 +22,7 @@ pub use crate::modules::moqt::data_plane::object::fetch::FetchObject;
 pub use crate::modules::moqt::data_plane::object::fetch::FetchObjectField;
 pub use crate::modules::moqt::control_plane::control_messages::messages::publish::Publish;
 pub use crate::modules::moqt::control_plane::control_messages::messages::publish_namespace::PublishNamespace;
+pub use crate::modules::moqt::control_plane::control_messages::messages::publish_namespace_done::PublishNamespaceDone;
 pub use crate::modules::moqt::control_plane::control_messages::messages::publish_ok::PublishOk;
 pub use crate::modules::moqt::control_plane::control_messages::messages::request_error::RequestError;
 pub use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;

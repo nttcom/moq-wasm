@@ -11,6 +11,15 @@ export function addOrUpdateRemoteMember(room: Room, announcedUser: string, track
   return { ...room, remoteMembers: updatedMembers }
 }
 
+export function removeRemoteMember(room: Room, userId: string): Room {
+  if (!room.remoteMembers.has(userId)) {
+    return room
+  }
+  const updatedMembers = new Map(room.remoteMembers)
+  updatedMembers.delete(userId)
+  return { ...room, remoteMembers: updatedMembers }
+}
+
 export function resetSubscriptionsOnError(room: Room, userId: string): Room {
   const member = room.remoteMembers.get(userId)
   if (!member) {

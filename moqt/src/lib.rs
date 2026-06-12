@@ -13,6 +13,7 @@ pub use modules::moqt::control_plane::handler::fetch_handler::FetchHandler;
 pub use modules::moqt::control_plane::handler::publish_handler::PublishHandler;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::handler::publish_namespace_done_handler::PublishNamespaceDoneHandler;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::handler::publish_namespace_handler::PublishNamespaceHandler;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::control_plane::handler::subscribe_handler::SubscribeHandler;
