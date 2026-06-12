@@ -443,6 +443,7 @@ impl EventHandler {
             for track_namespace_prefix in removed.subscribe_namespace_prefixes {
                 UnsubscribeNamespace::cleanup_empty_namespace_subscription(
                     &track_namespace_prefix,
+                    table,
                     control_message_forwarder,
                     route_registry,
                     inter_relay_connection_manager,

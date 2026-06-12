@@ -223,6 +223,53 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
 
     #[tracing::instrument(
         level = "info",
+        name = "relay.local_pub_sub_directory.purge_relay_publish_namespaces",
+        skip_all,
+        fields(track_namespace_prefix = %track_namespace_prefix)
+    )]
+    fn purge_relay_publish_namespaces(&self, track_namespace_prefix: &str) {
+        let mut empty_namespaces = Vec::new();
+        for entry in self.publisher_namespaces.iter() {
+            if !entry.key().starts_with(track_namespace_prefix) {
+                continue;
+            }
+            // Keep namespaces that another client-subscribed prefix still covers.
+            let covered = self.subscriber_namespaces.iter().any(|prefix_entry| {
+                entry.key().starts_with(prefix_entry.key())
+                    && prefix_entry
+                        .value()
+                        .iter()
+                        .any(|session| *session.value() == PeerKind::Client)
+            });
+            if covered {
+                continue;
+            }
+
+            let relay_session_ids: Vec<SessionId> = entry
+                .value()
+                .iter()
+                .filter(|session| *session.value() == PeerKind::Relay)
+                .map(|session| *session.key())
+                .collect();
+            for relay_session_id in relay_session_ids {
+                tracing::info!(
+                    session_id = %relay_session_id,
+                    track_namespace = %entry.key(),
+                    "purged relay-origin publish namespace"
+                );
+                entry.value().remove(&relay_session_id);
+            }
+            if entry.value().is_empty() {
+                empty_namespaces.push(entry.key().clone());
+            }
+        }
+        for track_namespace in empty_namespaces {
+            self.publisher_namespaces.remove(&track_namespace);
+        }
+    }
+
+    #[tracing::instrument(
+        level = "info",
         name = "relay.local_pub_sub_directory.register_subscribe_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix, peer_kind = ?peer_kind)
@@ -810,6 +857,36 @@ mod tests {
 
         // Assert: No Redis cleanup is requested because no client ever owned the route.
         assert!(removed.publish_namespace_track_namespaces.is_empty());
+    }
+
+    #[tokio::test]
+    async fn purge_relay_publish_namespaces_drops_uncovered_relay_entries() {
+        // Arrange: A relay-origin namespace learned over an inter-relay session,
+        // alongside a local client publisher in another namespace.
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(10, "research/ghost".to_string(), PeerKind::Relay);
+        table.register_publish_namespace(1, "research/local".to_string(), PeerKind::Client);
+
+        // Act: The last client subscriber for the prefix is gone.
+        table.purge_relay_publish_namespaces("research");
+
+        // Assert: The relay-origin ghost is dropped, the client publisher stays.
+        assert!(table.publisher_namespaces.get("research/ghost").is_none());
+        assert!(table.publisher_namespaces.get("research/local").is_some());
+    }
+
+    #[tokio::test]
+    async fn purge_relay_publish_namespaces_keeps_entries_covered_by_client_prefix() {
+        // Arrange: A relay-origin namespace still watched via another client prefix.
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(10, "research/ghost".to_string(), PeerKind::Relay);
+        table.register_subscribe_namespace(2, "research".to_string(), PeerKind::Client);
+
+        // Act: Purge for the same prefix while the client subscriber remains.
+        table.purge_relay_publish_namespaces("research");
+
+        // Assert: The covered namespace must not be purged.
+        assert!(table.publisher_namespaces.get("research/ghost").is_some());
     }
 
     #[tokio::test]
