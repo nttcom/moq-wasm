@@ -15,6 +15,10 @@ use crate::modules::{
 
 use super::scheduler::GroupSendTask;
 
+fn stream_object_id_to_cache_index(object_id: u64) -> u64 {
+    object_id + 1
+}
+
 /// Receives `GroupSendTask` entries and spawns per-group send tasks.
 pub(crate) struct GroupSender {
     track_key: TrackKey,
@@ -53,7 +57,7 @@ impl GroupSender {
                         GroupSendTask::Stream {
                             group_id,
                             subgroup_id,
-                            start_offset,
+                            object_id,
                         } => {
                             let factory = stream_factory
                                 .get_or_insert_with(|| self.publisher.new_stream_factory(&self.downstream_subscription));
@@ -63,7 +67,7 @@ impl GroupSender {
                                 track_alias = track_alias,
                                 group_id = group_id,
                                 subgroup_id = tracing::field::debug(&subgroup_id),
-                                start_offset = start_offset,
+                                object_id = object_id,
                                 object_count = tracing::field::Empty,
                                 end_reason = tracing::field::Empty,
                             );
@@ -73,7 +77,7 @@ impl GroupSender {
                                         track_alias,
                                         group_id,
                                         subgroup_id,
-                                        start_offset,
+                                        object_id,
                                         self.track_key,
                                         self.cache.clone(),
                                         sender,
@@ -88,13 +92,13 @@ impl GroupSender {
                         }
                         GroupSendTask::Datagram {
                             group_id,
-                            start_offset,
+                            object_id,
                         } => {
                             let sender = self.publisher.new_datagram(&self.downstream_subscription);
                             joinset.spawn(Self::send_datagram_task(
                                 track_alias,
                                 group_id,
-                                start_offset,
+                                object_id,
                                 self.cache.clone(),
                                 sender,
                             ));
@@ -115,7 +119,7 @@ impl GroupSender {
         track_alias: u64,
         group_id: u64,
         subgroup_id: StreamSubgroupId,
-        start_offset: u64,
+        object_id: u64,
         track_key: TrackKey,
         cache: Arc<TrackCache>,
         mut sender: Box<dyn DataSender>,
@@ -158,7 +162,7 @@ impl GroupSender {
             return;
         }
 
-        let mut next_index = start_offset.max(1);
+        let mut next_index = stream_object_id_to_cache_index(object_id);
         while let Some(object) = cache
             .get_stream_object_or_wait(group_id, &subgroup_id, next_index)
             .await
@@ -211,11 +215,11 @@ impl GroupSender {
     async fn send_datagram_task(
         track_alias: u64,
         group_id: u64,
-        start_offset: u64,
+        object_id: u64,
         cache: Arc<TrackCache>,
         mut sender: Box<dyn DataSender>,
     ) {
-        let mut next_index = start_offset;
+        let mut next_index = object_id;
         while let Some(object) = cache
             .get_datagram_object_or_wait(group_id, next_index)
             .await

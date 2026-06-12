@@ -5,11 +5,51 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use crate::modules::{
     enums::{FilterType, GroupOrder},
     relay::{
-        cache::track_cache::TrackCache,
-        notifications::track_event::TrackEvent,
-        types::{CacheLocation, StreamSubgroupId},
+        cache::track_cache::TrackCache, notifications::track_event::TrackEvent,
+        types::StreamSubgroupId,
     },
 };
+
+fn resolve_start_location(
+    filter_type: &FilterType,
+    largest: &Option<moqt::Location>,
+) -> moqt::Location {
+    match (filter_type, largest) {
+        (
+            FilterType::AbsoluteStart { location } | FilterType::AbsoluteRange { location, .. },
+            largest,
+        ) => {
+            let requested = location.as_moqt();
+            match largest {
+                Some(largest)
+                    if (requested.group_id, requested.object_id)
+                        <= (largest.group_id, largest.object_id) =>
+                {
+                    moqt::Location {
+                        group_id: largest.group_id,
+                        object_id: largest.object_id + 1,
+                    }
+                }
+                _ => requested,
+            }
+        }
+        // Largest Object (0x2): Start = {Largest.Group, Largest.Object + 1}.
+        (FilterType::LargestObject, Some(largest)) => moqt::Location {
+            group_id: largest.group_id,
+            object_id: largest.object_id + 1,
+        },
+        // Next Group Start (0x1): Start = {Largest.Group + 1, 0}.
+        (FilterType::NextGroupStart, Some(largest)) => moqt::Location {
+            group_id: largest.group_id + 1,
+            object_id: 0,
+        },
+        // No content delivered yet: Start = {0, 0}.
+        (FilterType::LargestObject | FilterType::NextGroupStart, None) => moqt::Location {
+            group_id: 0,
+            object_id: 0,
+        },
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum GroupSendTaskKey {
@@ -22,16 +62,18 @@ pub(crate) enum GroupSendTaskKey {
     },
 }
 
-/// Instruction sent to `GroupSender` to transmit a stream subgroup or datagram group.
+/// Instruction for `GroupSender` to transmit a stream subgroup or datagram
+/// group from `object_id` on. Translating object ids to cache indices
+/// is `GroupSender`'s concern.
 pub(crate) enum GroupSendTask {
     Stream {
         group_id: u64,
         subgroup_id: StreamSubgroupId,
-        start_offset: u64,
+        object_id: u64,
     },
     Datagram {
         group_id: u64,
-        start_offset: u64,
+        object_id: u64,
     },
 }
 
@@ -53,6 +95,24 @@ impl GroupSendTask {
     }
 }
 
+struct StartLocationProgress {
+    start_group_id: u64,
+    start_object_id: Option<u64>,
+}
+
+impl StartLocationProgress {
+    fn accept(&mut self, group_id: u64) -> Option<u64> {
+        if group_id < self.start_group_id {
+            return None;
+        }
+        if group_id == self.start_group_id {
+            Some(self.start_object_id.take().unwrap_or(0))
+        } else {
+            Some(0)
+        }
+    }
+}
+
 /// Watches track events and decides which egress units to schedule and when.
 pub(crate) struct EgressScheduler {
     cache: Arc<TrackCache>,
@@ -61,6 +121,9 @@ pub(crate) struct EgressScheduler {
     group_order: GroupOrder,
     sender: mpsc::Sender<GroupSendTask>,
     ready_sender: Option<oneshot::Sender<anyhow::Result<()>>>,
+    /// Largest Object at SUBSCRIBE processing time; `None` when no content
+    /// has been delivered yet.
+    largest_location: Option<moqt::Location>,
 }
 
 impl EgressScheduler {
@@ -71,6 +134,7 @@ impl EgressScheduler {
         group_order: GroupOrder,
         sender: mpsc::Sender<GroupSendTask>,
         ready_sender: oneshot::Sender<anyhow::Result<()>>,
+        largest_location: Option<moqt::Location>,
     ) -> Self {
         Self {
             cache,
@@ -79,30 +143,20 @@ impl EgressScheduler {
             group_order,
             sender,
             ready_sender: Some(ready_sender),
+            largest_location,
         }
     }
 
     pub(crate) async fn run(mut self) {
         let mut receiver = self.latest_info_sender.subscribe();
         let mut scheduled = HashSet::<GroupSendTaskKey>::new();
-        let next_group_start_floor = if matches!(self.filter_type, FilterType::NextGroupStart) {
-            self.cache.latest_group_id().await
-        } else {
-            None
-        };
-        let absolute_start = Self::resolve_absolute_start(&self.filter_type);
-        let mut next_absolute_group = absolute_start.map(|(group_id, _)| group_id);
-        let absolute_group_id = absolute_start.map(|(group_id, _)| group_id);
-        let mut start_offset_remaining = absolute_start.map(|(_, start_offset)| start_offset);
 
-        // Largest Object (0x2) filter: per draft-ietf-moq-transport §9.7 the
-        // Start Location is {Largest.Group, Largest.Object + 1}, so delivery
-        // starts just after the Largest Object rather than including it.
-        if matches!(self.filter_type, FilterType::LargestObject)
-            && let Some(location) = self.cache.latest_cache_location().await
-        {
-            self.schedule_after_location(location, &mut scheduled).await;
-        }
+        let start = resolve_start_location(&self.filter_type, &self.largest_location);
+        self.schedule_cached_objects(&start, &mut scheduled).await;
+        let mut progress = StartLocationProgress {
+            start_group_id: start.group_id,
+            start_object_id: Some(start.object_id),
+        };
         self.notify_ready(Ok(()));
 
         loop {
@@ -111,73 +165,29 @@ impl EgressScheduler {
                     group_id,
                     subgroup_id,
                 }) => {
-                    if let Some(start_group_id) = absolute_group_id {
-                        let target_group = next_absolute_group.unwrap_or(start_group_id);
-                        let should_send = match self.group_order {
-                            GroupOrder::Descending => group_id >= target_group,
-                            _ => group_id == target_group,
-                        };
-                        if !should_send {
-                            continue;
-                        }
-                        let offset = if group_id == start_group_id {
-                            start_offset_remaining.take().unwrap_or(0)
-                        } else {
-                            0
-                        };
-                        next_absolute_group = self
-                            .schedule_stream_groups_from(
+                    if let Some(object_id) = progress.accept(group_id) {
+                        let sent = self
+                            .schedule_subgroup_objects(
                                 group_id,
                                 subgroup_id,
-                                offset,
+                                object_id,
                                 &mut scheduled,
                             )
-                            .await
-                            .or(Some(group_id + 1));
-                        continue;
+                            .await;
+                        if sent.is_some() {
+                            self.recover_lagged_groups(group_id, &mut scheduled).await;
+                        }
                     }
-
-                    if matches!(self.filter_type, FilterType::NextGroupStart)
-                        && next_group_start_floor.is_some_and(|floor| group_id <= floor)
-                    {
-                        continue;
-                    }
-
-                    let _ = self
-                        .schedule_stream_task(group_id, subgroup_id, 0, &mut scheduled)
-                        .await;
                 }
                 Ok(TrackEvent::DatagramOpened { group_id }) => {
-                    if let Some(start_group_id) = absolute_group_id {
-                        let target_group = next_absolute_group.unwrap_or(start_group_id);
-                        let should_send = match self.group_order {
-                            GroupOrder::Descending => group_id >= target_group,
-                            _ => group_id == target_group,
-                        };
-                        if !should_send {
-                            continue;
+                    if let Some(object_id) = progress.accept(group_id) {
+                        let sent = self
+                            .schedule_datagrams(group_id, object_id, &mut scheduled)
+                            .await;
+                        if sent.is_some() {
+                            self.recover_lagged_groups(group_id, &mut scheduled).await;
                         }
-                        let offset = if group_id == start_group_id {
-                            start_offset_remaining.take().unwrap_or(0)
-                        } else {
-                            0
-                        };
-                        next_absolute_group = self
-                            .schedule_datagram_groups_from(group_id, offset, &mut scheduled)
-                            .await
-                            .or(Some(group_id + 1));
-                        continue;
                     }
-
-                    if matches!(self.filter_type, FilterType::NextGroupStart)
-                        && next_group_start_floor.is_some_and(|floor| group_id <= floor)
-                    {
-                        continue;
-                    }
-
-                    let _ = self
-                        .schedule_datagram_task(group_id, 0, &mut scheduled)
-                        .await;
                 }
                 Ok(TrackEvent::EndOfGroup) => {}
                 Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -194,44 +204,75 @@ impl EgressScheduler {
         }
     }
 
-    /// Schedules delivery starting just after the given location.
-    ///
-    /// `index` is the cache position of that location, so delivery begins one
-    /// position later (the object at `index` itself is not sent).
-    async fn schedule_after_location(
+    /// Re-schedules consecutive cached groups after `group_id`, recovering
+    /// groups whose open events were lost to receiver lag. Duplicates are
+    /// filtered by the `scheduled` set.
+    async fn recover_lagged_groups(
         &self,
-        location: CacheLocation,
+        group_id: u64,
         scheduled: &mut HashSet<GroupSendTaskKey>,
     ) {
-        match location {
-            CacheLocation::Stream {
-                group_id,
-                subgroup_id,
-                index,
-            } => {
+        if matches!(self.group_order, GroupOrder::Descending) {
+            return;
+        }
+        self.schedule_cached_objects(
+            &moqt::Location {
+                group_id: group_id + 1,
+                object_id: 0,
+            },
+            scheduled,
+        )
+        .await;
+    }
+
+    /// Schedules consecutive cached groups starting at the filter Start
+    /// Location.
+    ///
+    /// With starts clamped to the subscribe-time Largest Object this never
+    /// replays the past; what it covers is delivery that events cannot:
+    /// the rest of the group already open at the Start Location (its open
+    /// event predates this scheduler), groups arriving between the
+    /// subscribe-time snapshot and event subscription, and lag recovery.
+    async fn schedule_cached_objects(
+        &self,
+        start: &moqt::Location,
+        scheduled: &mut HashSet<GroupSendTaskKey>,
+    ) {
+        let mut next = start.group_id;
+        while self.cache.has_stream_group(next).await || self.cache.has_datagram_group(next).await {
+            let object_id = if next == start.group_id {
+                start.object_id
+            } else {
+                0
+            };
+            for subgroup_id in self.cache.stream_subgroups(next).await {
                 let _ = self
-                    .schedule_stream_task(group_id, subgroup_id, index + 1, scheduled)
+                    .schedule_subgroup_objects(next, subgroup_id, object_id, scheduled)
                     .await;
             }
-            CacheLocation::Datagram { group_id, index } => {
-                let _ = self
-                    .schedule_datagram_task(group_id, index + 1, scheduled)
-                    .await;
+            if self.cache.has_datagram_group(next).await {
+                let _ = self.schedule_datagrams(next, object_id, scheduled).await;
             }
+            if matches!(self.group_order, GroupOrder::Descending) {
+                return;
+            }
+            next += 1;
         }
     }
 
-    async fn schedule_stream_task(
+    /// Schedules delivery of one stream subgroup starting at `object_id`.
+    /// Returns `None` when the task channel is closed.
+    async fn schedule_subgroup_objects(
         &self,
         group_id: u64,
         subgroup_id: StreamSubgroupId,
-        start_offset: u64,
+        object_id: u64,
         scheduled: &mut HashSet<GroupSendTaskKey>,
     ) -> Option<()> {
         let task = GroupSendTask::Stream {
             group_id,
             subgroup_id,
-            start_offset,
+            object_id,
         };
         if !scheduled.insert(task.key()) {
             return Some(());
@@ -240,78 +281,23 @@ impl EgressScheduler {
         Some(())
     }
 
-    async fn schedule_datagram_task(
+    /// Schedules delivery of one datagram group starting at `object_id`.
+    /// Returns `None` when the task channel is closed.
+    async fn schedule_datagrams(
         &self,
         group_id: u64,
-        start_offset: u64,
+        object_id: u64,
         scheduled: &mut HashSet<GroupSendTaskKey>,
     ) -> Option<()> {
         let task = GroupSendTask::Datagram {
             group_id,
-            start_offset,
+            object_id,
         };
         if !scheduled.insert(task.key()) {
             return Some(());
         }
         self.sender.send(task).await.ok()?;
         Some(())
-    }
-
-    async fn schedule_stream_groups_from(
-        &self,
-        from_group_id: u64,
-        first_subgroup_id: StreamSubgroupId,
-        first_offset: u64,
-        scheduled: &mut HashSet<GroupSendTaskKey>,
-    ) -> Option<u64> {
-        self.schedule_stream_task(from_group_id, first_subgroup_id, first_offset, scheduled)
-            .await?;
-
-        if matches!(self.group_order, GroupOrder::Descending) {
-            return Some(from_group_id + 1);
-        }
-
-        let mut next = from_group_id + 1;
-        while self.cache.has_stream_group(next).await {
-            for subgroup_id in self.cache.stream_subgroups(next).await {
-                let _ = self
-                    .schedule_stream_task(next, subgroup_id, 0, scheduled)
-                    .await;
-            }
-            next += 1;
-        }
-        Some(next)
-    }
-
-    async fn schedule_datagram_groups_from(
-        &self,
-        from_group_id: u64,
-        first_offset: u64,
-        scheduled: &mut HashSet<GroupSendTaskKey>,
-    ) -> Option<u64> {
-        self.schedule_datagram_task(from_group_id, first_offset, scheduled)
-            .await?;
-
-        if matches!(self.group_order, GroupOrder::Descending) {
-            return Some(from_group_id + 1);
-        }
-
-        let mut next = from_group_id + 1;
-        while self.cache.has_datagram_group(next).await {
-            let _ = self.schedule_datagram_task(next, 0, scheduled).await;
-            next += 1;
-        }
-        Some(next)
-    }
-
-    fn resolve_absolute_start(filter_type: &FilterType) -> Option<(u64, u64)> {
-        match filter_type {
-            FilterType::AbsoluteStart { location } => Some((location.group_id, location.object_id)),
-            FilterType::AbsoluteRange { location, .. } => {
-                Some((location.group_id, location.object_id))
-            }
-            _ => None,
-        }
     }
 }
 
@@ -372,6 +358,12 @@ mod tests {
             GroupOrder::Ascending,
             task_tx,
             ready_tx,
+            // What subscribe-time resolution against this cache would yield:
+            // the Largest Object is {0, 0}.
+            Some(moqt::Location {
+                group_id: 0,
+                object_id: 0,
+            }),
         );
         let handle = tokio::spawn(scheduler.run());
 
@@ -379,12 +371,203 @@ mod tests {
         match task {
             GroupSendTask::Stream {
                 group_id,
-                start_offset,
+                object_id,
                 ..
             } => {
                 assert_eq!(group_id, 0);
                 // Largest Object is at cache index 1, so delivery starts at index 2.
-                assert_eq!(start_offset, 2);
+                assert_eq!(object_id, 1);
+            }
+            _ => panic!("expected a Stream task"),
+        }
+        handle.abort();
+    }
+
+    // Subscriptions only deliver newly published or received objects;
+    // objects from the past are retrieved with FETCH (§9.7). An
+    // AbsoluteStart in the past is therefore raised to just after the
+    // subscribe-time Largest Object instead of replaying the cache.
+    #[tokio::test]
+    async fn absolute_start_in_the_past_does_not_replay_cache() {
+        let cache = Arc::new(TrackCache::new());
+        let subgroup = StreamSubgroupId::Value(0);
+        for group_id in 0..3 {
+            cache
+                .append_stream_object(group_id, &subgroup, make_header())
+                .await;
+            cache
+                .append_stream_object(group_id, &subgroup, make_object(0))
+                .await;
+        }
+
+        let (info_tx, _info_rx) = broadcast::channel(16);
+        let (task_tx, mut task_rx) = mpsc::channel(16);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let scheduler = EgressScheduler::new(
+            cache,
+            info_tx,
+            FilterType::AbsoluteStart {
+                location: crate::modules::enums::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+            },
+            GroupOrder::Ascending,
+            task_tx,
+            ready_tx,
+            // Largest Object at subscribe time: group 2, object 0.
+            Some(moqt::Location {
+                group_id: 2,
+                object_id: 0,
+            }),
+        );
+        let handle = tokio::spawn(scheduler.run());
+        ready_rx
+            .await
+            .expect("scheduler should signal readiness")
+            .expect("scheduler should start");
+
+        // Only the tail of the largest group is scheduled; groups 0 and 1
+        // stay in the cache for FETCH.
+        let task = task_rx.recv().await.expect("a task should be scheduled");
+        match task {
+            GroupSendTask::Stream {
+                group_id,
+                object_id,
+                ..
+            } => {
+                assert_eq!(group_id, 2);
+                assert_eq!(object_id, 1);
+            }
+            _ => panic!("expected a Stream task"),
+        }
+        assert!(
+            task_rx.try_recv().is_err(),
+            "past groups must not be scheduled"
+        );
+        handle.abort();
+    }
+
+    // The Start Location is a lower bound (§9.7): with no content yet the
+    // start is {0, 0}, and delivery must begin from whatever group arrives
+    // first — group ids may start anywhere (§2.3.1), so waiting for group 0
+    // exactly would stall forever.
+    #[tokio::test]
+    async fn start_location_is_lower_bound_for_first_arriving_group() {
+        let cache = Arc::new(TrackCache::new());
+        let (info_tx, _info_rx) = broadcast::channel(16);
+        let (task_tx, mut task_rx) = mpsc::channel(16);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let scheduler = EgressScheduler::new(
+            cache,
+            info_tx.clone(),
+            FilterType::LargestObject,
+            GroupOrder::Ascending,
+            task_tx,
+            ready_tx,
+            None,
+        );
+        let handle = tokio::spawn(scheduler.run());
+        ready_rx
+            .await
+            .expect("scheduler should signal readiness")
+            .expect("scheduler should start");
+
+        info_tx
+            .send(TrackEvent::StreamOpened {
+                group_id: 5,
+                subgroup_id: StreamSubgroupId::Value(0),
+            })
+            .expect("event should reach the scheduler");
+
+        let task = task_rx.recv().await.expect("a task should be scheduled");
+        match task {
+            GroupSendTask::Stream { group_id, .. } => assert_eq!(group_id, 5),
+            _ => panic!("expected a Stream task"),
+        }
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn new_upstream_largest_object_without_content_starts_from_first_object() {
+        let cache = Arc::new(TrackCache::new());
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .append_stream_object(0, &subgroup, make_header())
+            .await;
+        cache
+            .append_stream_object(0, &subgroup, make_object(0))
+            .await;
+
+        let (info_tx, _info_rx) = broadcast::channel(16);
+        let (task_tx, mut task_rx) = mpsc::channel(16);
+        let (ready_tx, _ready_rx) = tokio::sync::oneshot::channel();
+        let scheduler = EgressScheduler::new(
+            cache,
+            info_tx,
+            FilterType::LargestObject,
+            GroupOrder::Ascending,
+            task_tx,
+            ready_tx,
+            None,
+        );
+        let handle = tokio::spawn(scheduler.run());
+
+        let task = task_rx.recv().await.expect("a task should be scheduled");
+        match task {
+            GroupSendTask::Stream {
+                group_id,
+                object_id,
+                ..
+            } => {
+                assert_eq!(group_id, 0);
+                assert_eq!(object_id, 0);
+            }
+            _ => panic!("expected a Stream task"),
+        }
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn new_upstream_largest_object_with_content_starts_after_subscribe_ok_location() {
+        let cache = Arc::new(TrackCache::new());
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .append_stream_object(0, &subgroup, make_header())
+            .await;
+        cache
+            .append_stream_object(0, &subgroup, make_object(0))
+            .await;
+        cache
+            .append_stream_object(0, &subgroup, make_object(1))
+            .await;
+
+        let (info_tx, _info_rx) = broadcast::channel(16);
+        let (task_tx, mut task_rx) = mpsc::channel(16);
+        let (ready_tx, _ready_rx) = tokio::sync::oneshot::channel();
+        let scheduler = EgressScheduler::new(
+            cache,
+            info_tx,
+            FilterType::LargestObject,
+            GroupOrder::Ascending,
+            task_tx,
+            ready_tx,
+            Some(moqt::Location {
+                group_id: 0,
+                object_id: 0,
+            }),
+        );
+        let handle = tokio::spawn(scheduler.run());
+
+        let task = task_rx.recv().await.expect("a task should be scheduled");
+        match task {
+            GroupSendTask::Stream {
+                group_id,
+                object_id,
+                ..
+            } => {
+                assert_eq!(group_id, 0);
+                assert_eq!(object_id, 1);
             }
             _ => panic!("expected a Stream task"),
         }

@@ -135,4 +135,11 @@ impl ContentExists {
             },
         }
     }
+
+    pub(crate) fn location(&self) -> Option<moqt::Location> {
+        match self {
+            ContentExists::False => None,
+            ContentExists::True { location } => Some(location.as_moqt()),
+        }
+    }
 }

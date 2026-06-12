@@ -20,6 +20,13 @@ use tracing::Span;
 
 pub(crate) struct Subscribe;
 
+/// Where the subscribe-time Largest Object comes from: the upstream
+/// SUBSCRIBE_OK, or the local cache when joining an active upstream.
+enum LargestObjectSource {
+    LocalCache,
+    SubscribeOk(Option<moqt::Location>),
+}
+
 enum UpstreamSubscriptionError {
     PublisherNotFound,
     SubscribeFailed,
@@ -71,7 +78,7 @@ impl Subscribe {
             "SequenceHandler::subscribe"
         );
 
-        let (upstream_key, active_upstream) = match self
+        let (upstream_key, active_upstream, largest_source) = match self
             .get_or_create_upstream_subscription(
                 session_id,
                 track_namespace,
@@ -89,7 +96,7 @@ impl Subscribe {
                     session_id = %session_id,
                     track_namespace = %track_namespace,
                     track_name = %track_name,
-                    "failed to prepare upstream subscription"
+                    "failed to get or create upstream subscription"
                 );
                 if let Err(send_error) = self
                     .response_error(handler.as_ref(), err.code(), err.reason_phrase())
@@ -111,6 +118,7 @@ impl Subscribe {
             session_id,
             upstream_key,
             active_upstream,
+            largest_source,
             table,
             egress_sender,
             cache_store,
@@ -139,24 +147,39 @@ impl Subscribe {
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
-    ) -> Result<(UpstreamSubscriptionKey, ActiveUpstreamSubscription), UpstreamSubscriptionError>
-    {
-        if let Some(upstream_subscription) =
+    ) -> Result<
+        (
+            UpstreamSubscriptionKey,
+            ActiveUpstreamSubscription,
+            LargestObjectSource,
+        ),
+        UpstreamSubscriptionError,
+    > {
+        if let Some((upstream_key, active_upstream)) =
             self.find_active_upstream_subscription(table, track_namespace, track_name)
         {
-            return Ok(upstream_subscription);
+            return Ok((
+                upstream_key,
+                active_upstream,
+                LargestObjectSource::LocalCache,
+            ));
         }
 
-        self.create_upstream_subscription(
-            session_id,
-            track_namespace,
-            track_name,
-            table,
-            forwarder,
-            ingress_sender,
-            upstream_publisher_resolver,
-        )
-        .await
+        let (upstream_key, active_upstream) = self
+            .create_upstream_subscription(
+                session_id,
+                track_namespace,
+                track_name,
+                table,
+                forwarder,
+                ingress_sender,
+                upstream_publisher_resolver,
+            )
+            .await?;
+        let largest_source =
+            LargestObjectSource::SubscribeOk(active_upstream.content_exists.location());
+
+        Ok((upstream_key, active_upstream, largest_source))
     }
 
     #[tracing::instrument(
@@ -297,10 +320,7 @@ impl Subscribe {
         name = "relay.sequence.subscribe.accept_downstream_subscription",
         skip_all,
         fields(
-            session_id = %session_id,
-            pub_session_id = %upstream_key.publisher_session_id,
-            track_namespace = %upstream_key.track_namespace,
-            track_name = %upstream_key.track_name
+            session_id = %session_id
         )
     )]
     async fn accept_downstream_subscription(
@@ -308,6 +328,7 @@ impl Subscribe {
         session_id: SessionId,
         upstream_key: UpstreamSubscriptionKey,
         active_upstream: ActiveUpstreamSubscription,
+        largest_source: LargestObjectSource,
         table: &dyn LocalPubSubDirectory,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         cache_store: &Arc<TrackCacheStore>,
@@ -315,13 +336,16 @@ impl Subscribe {
     ) {
         let subscriber_track_alias = handler.allocate_track_alias();
 
-        // The subscription's start location: the Largest Object Location at subscribe time.
-        // Also used to derive content_exists, falling back to the upstream-advertised value.
-        let start_location = match cache_store.get(active_upstream.track_key) {
-            Some(cache) => cache.largest_location().await,
-            None => None,
+        // Determined here so the Largest Location advertised in SUBSCRIBE_OK
+        // and the egress delivery start agree.
+        let largest_location = match &largest_source {
+            LargestObjectSource::SubscribeOk(location) => *location,
+            LargestObjectSource::LocalCache => match cache_store.get(active_upstream.track_key) {
+                Some(cache) => cache.largest_location().await,
+                None => None,
+            },
         };
-        let content_exists = match &start_location {
+        let content_exists = match &largest_location {
             Some(loc) => ContentExists::True {
                 location: Location {
                     group_id: loc.group_id,
@@ -335,9 +359,14 @@ impl Subscribe {
             session_id,
             handler.subscribe_id(),
             upstream_key.clone(),
-            start_location,
+            largest_location,
         ) {
-            tracing::error!("Failed to register downstream subscription.");
+            tracing::error!(
+                subscribe_id = handler.subscribe_id(),
+                track_namespace = %upstream_key.track_namespace,
+                track_name = %upstream_key.track_name,
+                "failed to register downstream subscription"
+            );
             return;
         }
 
@@ -352,21 +381,35 @@ impl Subscribe {
                 downstream_subscription: handler.to_downstream_subscription(subscriber_track_alias),
                 parent_span: Span::current(),
                 ready_sender,
+                largest_location,
             })))
             .await
             .is_err()
         {
-            tracing::error!("Failed to send EgressStartRequest. Session close.");
+            tracing::error!(
+                subscribe_id = handler.subscribe_id(),
+                track_namespace = %upstream_key.track_namespace,
+                track_name = %upstream_key.track_name,
+                "failed to send EgressStartRequest"
+            );
             return;
         }
         match ready_receiver.await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
-                tracing::error!(?error, "Failed to start egress runner. Session close.");
+                tracing::error!(
+                    ?error,
+                    subscribe_id = handler.subscribe_id(),
+                    "failed to start egress runner"
+                );
                 return;
             }
             Err(error) => {
-                tracing::error!(?error, "Egress runner readiness dropped. Session close.");
+                tracing::error!(
+                    ?error,
+                    subscribe_id = handler.subscribe_id(),
+                    "egress runner readiness dropped"
+                );
                 return;
             }
         }
@@ -380,7 +423,11 @@ impl Subscribe {
             .await
             .is_err()
         {
-            tracing::error!("Failed to send `SUBSCRIBE_OK`. Session close.");
+            tracing::error!(
+                subscribe_id = handler.subscribe_id(),
+                subscriber_track_alias = subscriber_track_alias,
+                "failed to send SUBSCRIBE_OK"
+            );
             // TODO: send_unsubscribe
             // TODO: close session
             return;
@@ -417,4 +464,5 @@ impl Subscribe {
         );
         handler.error(code, reason_phrase).await
     }
+
 }

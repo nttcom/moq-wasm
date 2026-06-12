@@ -101,16 +101,6 @@ impl TrackCache {
         group.mark_end_of_group().await;
     }
 
-    /// Returns the cache position of the most recently appended object across all groups and subgroups.
-    ///
-    /// FIXME: When multiple subgroups are written concurrently, the ordering of writes to
-    /// `self.latest` is not guaranteed. The returned position may not correspond to the
-    /// MoQT-largest object if subgroups interleave. This is a known limitation to be
-    /// addressed in a cache redesign task.
-    pub(crate) async fn latest_cache_location(&self) -> Option<CacheLocation> {
-        self.latest.read().await.clone()
-    }
-
     /// Returns the Largest Location as defined in the MoQT spec.
     ///
     /// NOTE: This scans the latest subgroup to resolve object_id from the delta chain,
@@ -142,18 +132,6 @@ impl TrackCache {
             group_id,
             object_id: last_object_id?,
         })
-    }
-
-    pub(crate) async fn latest_group_id(&self) -> Option<u64> {
-        let stream_group = self.stream_groups.read().await.keys().next_back().copied();
-        let datagram_group = self
-            .datagram_groups
-            .read()
-            .await
-            .keys()
-            .next_back()
-            .copied();
-        stream_group.max(datagram_group)
     }
 
     pub(crate) async fn get_stream_object_or_wait(

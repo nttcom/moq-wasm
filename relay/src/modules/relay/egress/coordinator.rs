@@ -25,6 +25,9 @@ pub(crate) struct EgressStartRequest {
     pub(crate) downstream_subscription: DownstreamSubscription,
     pub(crate) parent_span: Span,
     pub(crate) ready_sender: oneshot::Sender<anyhow::Result<()>>,
+    /// From LargestLocation of SUBSCRIBE_OK
+    /// None means that no content has been delivered yet.
+    pub(crate) largest_location: Option<moqt::Location>,
 }
 
 pub(crate) struct EgressFetchRequest {
@@ -202,6 +205,7 @@ impl EgressCoordinator {
             publisher,
             request.downstream_subscription.clone(),
             request.ready_sender,
+            request.largest_location,
         );
 
         Some(tokio::spawn(

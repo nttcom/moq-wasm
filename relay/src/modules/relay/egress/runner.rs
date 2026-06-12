@@ -17,6 +17,7 @@ pub(crate) struct EgressRunner {
     publisher: Box<dyn Publisher>,
     downstream_subscription: DownstreamSubscription,
     ready_sender: oneshot::Sender<anyhow::Result<()>>,
+    largest_location: Option<moqt::Location>,
 }
 
 impl EgressRunner {
@@ -27,6 +28,7 @@ impl EgressRunner {
         publisher: Box<dyn Publisher>,
         downstream_subscription: DownstreamSubscription,
         ready_sender: oneshot::Sender<anyhow::Result<()>>,
+        largest_location: Option<moqt::Location>,
     ) -> Self {
         Self {
             track_key,
@@ -35,6 +37,7 @@ impl EgressRunner {
             publisher,
             downstream_subscription,
             ready_sender,
+            largest_location,
         }
     }
 
@@ -50,6 +53,7 @@ impl EgressRunner {
             group_order,
             sender,
             self.ready_sender,
+            self.largest_location,
         );
         let group_sender = GroupSender::new(
             self.track_key,
