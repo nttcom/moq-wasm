@@ -3,7 +3,10 @@ use crate::modules::{
     core::handler::publish_namespace::PublishNamespaceHandler,
     inter_relay::InterRelayConnectionManager,
     route_registry::{RegisterNamespacePublisherError, RelayRouteRegistry, RouteStatus},
-    sequences::{CascadingRelayContext, tables::table::LocalPubSubDirectory},
+    sequences::{
+        CascadingRelayContext,
+        tables::table::{LocalPubSubDirectory, PeerKind},
+    },
     types::SessionId,
 };
 use tracing::Span;
@@ -48,7 +51,13 @@ impl PublishNamespace {
             return;
         }
 
-        let Some(track_namespace) = self.register(session_id, table, handler).await else {
+        let peer_kind = if is_origin {
+            PeerKind::Client
+        } else {
+            PeerKind::Relay
+        };
+        let Some(track_namespace) = self.register(session_id, table, peer_kind, handler).await
+        else {
             return;
         };
 
@@ -97,11 +106,12 @@ impl PublishNamespace {
         &self,
         session_id: SessionId,
         table: &dyn LocalPubSubDirectory,
+        peer_kind: PeerKind,
         handler: &dyn PublishNamespaceHandler,
     ) -> Option<String> {
         let track_namespace = handler.track_namespace();
 
-        if !table.register_publish_namespace(session_id, track_namespace.to_string()) {
+        if !table.register_publish_namespace(session_id, track_namespace.to_string(), peer_kind) {
             // TODO: Session close.
             tracing::error!("Failed to register publish namespace");
             match handler

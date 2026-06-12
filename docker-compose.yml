@@ -4,6 +4,13 @@ services:
     ports:
       - "6379:6379"
 
+  redisinsight:
+    image: redis/redisinsight:latest
+    ports:
+      - "5540:5540"
+    depends_on:
+      - redis
+
   relay-common:
     image: moqt-relay:local
     build:

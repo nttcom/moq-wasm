@@ -16,7 +16,7 @@ pub(crate) struct RedisRelayRouteRegistry {
 
 impl RedisRelayRouteRegistry {
     const RELAY_TTL_SECONDS: u64 = 15;
-    const ROUTE_TTL_SECONDS: u64 = 60;
+    const ROUTE_TTL_SECONDS: u64 = 15;
 
     // --- lifecycle ---
 
@@ -278,6 +278,15 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
         }
 
         Ok(routes)
+    }
+
+    async fn unregister_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()> {
+        let mut connection = self.connection.clone();
+        let key = Self::publisher_namespace_key(track_namespace);
+        let relay_routes_key = Self::relay_routes_key(&self.relay.relay_id);
+        let _: () = connection.hdel(&key, &self.relay.relay_id).await?;
+        let _: () = connection.srem(relay_routes_key, &key).await?;
+        Ok(())
     }
 
     async fn unregister_namespace_subscriber(

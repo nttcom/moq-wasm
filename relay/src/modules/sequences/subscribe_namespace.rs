@@ -2,7 +2,7 @@ use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::subscribe_namespace::SubscribeNamespaceHandler,
     route_registry::{RegisterNamespaceSubscriberError, RelayRouteRegistry, RouteStatus},
-    sequences::tables::table::LocalPubSubDirectory,
+    sequences::tables::table::{LocalPubSubDirectory, PeerKind},
     types::SessionId,
 };
 use tracing::Span;
@@ -32,12 +32,19 @@ impl SubscribeNameSpace {
             track_namespace_prefix = %track_namespace_prefix,
             "SequenceHandler::SubscribeNamespace"
         );
-        let track_namespace_prefix = self.register(session_id, table, handler).await;
-        if self.is_origin_client(session_id, forwarder).await
+        let peer_kind = if self.is_origin_client(session_id, forwarder).await {
+            PeerKind::Client
+        } else {
+            PeerKind::Relay
+        };
+        let (track_namespace_prefix, is_first_client) =
+            self.register(session_id, table, peer_kind, handler).await;
+        if is_first_client
             && !self
                 .register_route(route_registry, &track_namespace_prefix, handler)
                 .await
         {
+            table.unregister_subscribe_namespace(session_id, &track_namespace_prefix);
             return;
         }
         self.broadcast_to_subscribers(session_id, &track_namespace_prefix, forwarder, table)
@@ -74,11 +81,16 @@ impl SubscribeNameSpace {
         &self,
         session_id: SessionId,
         table: &dyn LocalPubSubDirectory,
+        peer_kind: PeerKind,
         handler: &dyn SubscribeNamespaceHandler,
-    ) -> String {
+    ) -> (String, bool) {
         let track_namespace_prefix = handler.track_namespace_prefix();
-        table.register_subscribe_namespace(session_id, track_namespace_prefix.to_string());
-        track_namespace_prefix.to_string()
+        let is_first_client = table.register_subscribe_namespace(
+            session_id,
+            track_namespace_prefix.to_string(),
+            peer_kind,
+        );
+        (track_namespace_prefix.to_string(), is_first_client)
     }
 
     #[tracing::instrument(
