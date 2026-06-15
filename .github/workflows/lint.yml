@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: rust:latest
+    env:
+      RUSTFLAGS: "--cfg=tokio_unstable --cfg=web_sys_unstable_apis"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
