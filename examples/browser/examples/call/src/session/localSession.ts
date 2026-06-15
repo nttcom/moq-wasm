@@ -1,4 +1,9 @@
-import { PublishNamespaceDoneMessage, PublishNamespaceMessage, RequestErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_wasm'
+import {
+  PublishNamespaceDoneMessage,
+  PublishNamespaceMessage,
+  RequestErrorMessage,
+  SubscribeOkMessage
+} from '../../../../pkg/moqt_client_wasm'
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
