@@ -2,8 +2,8 @@ mod subgroup_state;
 
 use moqt::wire::{
     ContentExists, FetchObject, FetchObjectField, FetchOk, FilterType, NamespaceOk, ObjectStatus,
-    Publish, PublishNamespace, PublishOk, RequestError, ServerSetup, Subscribe, SubscribeNamespace,
-    SubscribeOk,
+    Publish, PublishNamespace, PublishNamespaceDone, PublishOk, RequestError, ServerSetup,
+    Subscribe, SubscribeNamespace, SubscribeOk,
 };
 use packages::loc::LocHeader;
 pub use subgroup_state::SubgroupState;
@@ -90,6 +90,28 @@ impl From<&PublishNamespace> for PublishNamespaceMessage {
     fn from(message: &PublishNamespace) -> Self {
         Self {
             request_id: message.request_id,
+            track_namespace: message.track_namespace.clone(),
+        }
+    }
+}
+
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct PublishNamespaceDoneMessage {
+    track_namespace: Vec<String>,
+}
+
+#[wasm_bindgen]
+impl PublishNamespaceDoneMessage {
+    #[wasm_bindgen(getter, js_name = trackNamespace)]
+    pub fn track_namespace(&self) -> Vec<String> {
+        self.track_namespace.clone()
+    }
+}
+
+impl From<&PublishNamespaceDone> for PublishNamespaceDoneMessage {
+    fn from(message: &PublishNamespaceDone) -> Self {
+        Self {
             track_namespace: message.track_namespace.clone(),
         }
     }

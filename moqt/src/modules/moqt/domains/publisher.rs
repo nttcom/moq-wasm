@@ -10,7 +10,10 @@ use crate::{
             control_plane::{
                 control_messages::{
                     control_message_type::ControlMessageType,
-                    messages::{publish::Publish, publish_namespace::PublishNamespace},
+                    messages::{
+                        publish::Publish, publish_namespace::PublishNamespace,
+                        publish_namespace_done::PublishNamespaceDone,
+                    },
                 },
                 enums::ResponseMessage,
                 options::PublishOption,
@@ -74,6 +77,21 @@ impl<T: TransportProtocol> Publisher<T> {
             }
             _ => bail!("Protocol violation"),
         }
+    }
+
+    /// Withdraws a previous PUBLISH_NAMESPACE. Fire-and-forget: the spec
+    /// defines no response message for PUBLISH_NAMESPACE_DONE.
+    pub async fn publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
+        let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
+        let publish_namespace_done = PublishNamespaceDone::new(vec_namespace);
+        self.session
+            .send_stream
+            .send(
+                ControlMessageType::PublishNamespaceDone,
+                publish_namespace_done.encode(),
+            )
+            .await?;
+        Ok(())
     }
 
     pub async fn publish(

@@ -10,6 +10,9 @@ impl RelaySessionEventResolver {
             MoqtSessionEvent::PublishNamespace(handler) => {
                 SessionEvent::PublishNameSpace(session_id, handler)
             }
+            MoqtSessionEvent::PublishNamespaceDone(handler) => {
+                SessionEvent::PublishNamespaceDone(session_id, handler)
+            }
             MoqtSessionEvent::SubscribeNamespace(handler) => {
                 SessionEvent::SubscribeNameSpace(session_id, handler)
             }

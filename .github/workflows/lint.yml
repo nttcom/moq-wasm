@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: rust:latest
+    env:
+      RUSTFLAGS: "--cfg=tokio_unstable --cfg=web_sys_unstable_apis"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -23,9 +25,9 @@ jobs:
       - name: Install FFmpeg build dependencies
         uses: ./.github/actions/install-ffmpeg-deps
       - name: Run Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Check code formatting
-        run: cargo fmt -- --check
+        run: cargo fmt --all -- --check
       - name: Run Unit Tests
         run: cargo test
   cargo-audit:

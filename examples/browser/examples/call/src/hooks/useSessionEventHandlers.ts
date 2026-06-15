@@ -1,9 +1,15 @@
 import { Dispatch, SetStateAction, useEffect, useRef } from 'react'
-import { PublishNamespaceMessage, RequestErrorMessage, SubscribeOkMessage } from '../../../../pkg/moqt_client_wasm'
+import {
+  PublishNamespaceDoneMessage,
+  PublishNamespaceMessage,
+  RequestErrorMessage,
+  SubscribeOkMessage
+} from '../../../../pkg/moqt_client_wasm'
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
-import { addOrUpdateRemoteMember } from '../utils/state/roomState'
+import { RemoteMember } from '../types/member'
+import { addOrUpdateRemoteMember, removeRemoteMember } from '../utils/state/roomState'
 
 interface EventHandlerParams {
   session: LocalSession
@@ -20,6 +26,9 @@ export function useSessionEventHandlers({ session, roomName, userName, setRoom, 
     const handlePublishNamespace = createPublishNamespaceHandler({ session, roomName, userName, setRoom })
     session.setOnPublishNamespaceHandler(handlePublishNamespace)
 
+    const handlePublishNamespaceDone = createPublishNamespaceDoneHandler({ session, roomName, userName, setRoom })
+    session.setOnPublishNamespaceDoneHandler(handlePublishNamespaceDone)
+
     const ensureSubscribeNamespace = async () => {
       if (subscribedNamespacesRef.current === session) {
         return
@@ -35,6 +44,7 @@ export function useSessionEventHandlers({ session, roomName, userName, setRoom, 
     void ensureSubscribeNamespace()
     return () => {
       session.setOnPublishNamespaceHandler(null)
+      session.setOnPublishNamespaceDoneHandler(null)
     }
   }, [roomName, session, setRoom, userName])
 
@@ -78,6 +88,51 @@ function createPublishNamespaceHandler({ session, roomName, userName, setRoom }:
     }
 
     setRoom((currentRoom) => addOrUpdateRemoteMember(currentRoom, announcedUser, trackNamespace))
+  }
+}
+
+function createPublishNamespaceDoneHandler({ session, roomName, userName, setRoom }: PublishNamespaceHandlerOptions) {
+  return (message: PublishNamespaceDoneMessage) => {
+    if (session.status !== LocalSessionState.Ready) {
+      return
+    }
+    const trackNamespace = message.trackNamespace
+    if (!trackNamespace || trackNamespace.length < 2) {
+      return
+    }
+
+    const [announcedRoom, announcedUser] = trackNamespace
+    if (announcedRoom !== roomName || announcedUser === userName) {
+      return
+    }
+
+    setRoom((currentRoom) => {
+      const member = currentRoom.remoteMembers.get(announcedUser)
+      if (!member) {
+        return currentRoom
+      }
+      // Release the dangling subscriptions outside the state updater.
+      queueMicrotask(() => unsubscribeMemberTracks(session, member))
+      return removeRemoteMember(currentRoom, announcedUser)
+    })
+  }
+}
+
+function unsubscribeMemberTracks(session: LocalSession, member: RemoteMember) {
+  const tracks = member.subscribedTracks
+  const entries = [
+    ['chat', tracks.chat],
+    ['video', tracks.video],
+    ['screenshare', tracks.screenshare],
+    ['audio', tracks.audio]
+  ] as const
+  for (const [role, track] of entries) {
+    if (track.subscribeId === undefined) {
+      continue
+    }
+    void session.unsubscribe(track.subscribeId, role).catch((error) => {
+      console.warn(`[call] failed to unsubscribe departed member ${member.id} (${role})`, error)
+    })
   }
 }
 

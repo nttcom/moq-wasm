@@ -70,6 +70,13 @@ fn log_session_event(event: &MoqtSessionEvent) {
                 "Received session event"
             );
         }
+        MoqtSessionEvent::PublishNamespaceDone(handler) => {
+            tracing::info!(
+                event = "PublishNamespaceDone",
+                track_namespace = %handler.track_namespace(),
+                "Received session event"
+            );
+        }
         MoqtSessionEvent::SubscribeNamespace(handler) => {
             tracing::info!(
                 event = "SubscribeNamespace",

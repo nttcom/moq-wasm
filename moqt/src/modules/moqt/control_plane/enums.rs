@@ -6,6 +6,7 @@ use crate::{
         },
         handler::{
             fetch_handler::FetchHandler, publish_handler::PublishHandler,
+            publish_namespace_done_handler::PublishNamespaceDoneHandler,
             publish_namespace_handler::PublishNamespaceHandler,
             subscribe_handler::SubscribeHandler,
             subscribe_namespace_handler::SubscribeNamespaceHandler,
@@ -24,6 +25,7 @@ pub(crate) type ErrorPhrase = String;
 #[derive(Clone, Debug)]
 pub enum SessionEvent<T: TransportProtocol> {
     PublishNamespace(PublishNamespaceHandler<T>),
+    PublishNamespaceDone(PublishNamespaceDoneHandler),
     SubscribeNameSpace(SubscribeNamespaceHandler<T>),
     UnsubscribeNamespace(UnsubscribeNamespaceHandler),
     Publish(PublishHandler<T>),

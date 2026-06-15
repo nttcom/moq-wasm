@@ -1,5 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { FetchObjectMessage, SubgroupObjectMessage } from '../../../../../pkg/moqt_client_wasm'
+import type { FetchObjectMessage, SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { CameraId } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[mon][session]', ...args)

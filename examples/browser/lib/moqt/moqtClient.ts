@@ -5,6 +5,7 @@ import init, {
   NamespaceOkMessage,
   ObjectDatagramMessage,
   ObjectDatagramStatusMessage,
+  PublishNamespaceDoneMessage,
   PublishNamespaceMessage,
   RequestErrorMessage,
   ServerSetupMessage,
@@ -106,12 +107,14 @@ export interface IncomingSubscribeContext {
 }
 
 type IncomingPublishNamespaceHandler = (ctx: IncomingPublishNamespaceContext) => Promise<void> | void
+type IncomingPublishNamespaceDoneHandler = (message: PublishNamespaceDoneMessage) => void
 type IncomingSubscribeHandler = (ctx: IncomingSubscribeContext) => Promise<void> | void
 
 export class MoqtClientWrapper {
   client: MOQTClient | null = null
   private serverSetupResolve: SetupResolver = null
   private onPublishNamespaceHandler: IncomingPublishNamespaceHandler | null = null
+  private onPublishNamespaceDoneHandler: IncomingPublishNamespaceDoneHandler | null = null
   private onPublishNamespaceResponseHandler: NamespaceResponseHandler = null
   private onSubscribeNamespaceResponseHandler: NamespaceResponseHandler = null
   private onSubscribeResponseHandler: SubscribeResponseHandler = null
@@ -220,6 +223,10 @@ export class MoqtClientWrapper {
 
   setOnPublishNamespaceHandler(handler: IncomingPublishNamespaceHandler | null): void {
     this.onPublishNamespaceHandler = handler
+  }
+
+  setOnPublishNamespaceDoneHandler(handler: IncomingPublishNamespaceDoneHandler | null): void {
+    this.onPublishNamespaceDoneHandler = handler
   }
 
   setOnPublishNamespaceResponseHandler(handler: NamespaceResponseHandler): void {
@@ -447,6 +454,10 @@ export class MoqtClientWrapper {
       })
     })
 
+    this.client.onPublishNamespaceDone((message: PublishNamespaceDoneMessage) => {
+      this.onPublishNamespaceDoneHandler?.(message)
+    })
+
     this.client.onPublishNamespaceResponse((response: NamespaceOkMessage | RequestErrorMessage) => {
       this.onPublishNamespaceResponseHandler?.(response)
       const pending = this.pendingPublishNamespace.get(response.requestId)
@@ -608,6 +619,7 @@ export class MoqtClientWrapper {
     this.subscriptionTrackAliases.clear()
     this.nextRequestId = 0n
     this.onPublishNamespaceHandler = null
+    this.onPublishNamespaceDoneHandler = null
     this.onPublishNamespaceResponseHandler = null
     this.onSubscribeNamespaceResponseHandler = null
     this.onSubscribeResponseHandler = null

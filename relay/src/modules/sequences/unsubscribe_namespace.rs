@@ -47,6 +47,7 @@ impl UnsubscribeNamespace {
 
         Self::cleanup_empty_namespace_subscription(
             track_namespace_prefix,
+            table,
             forwarder,
             cascading_relay_context.route_registry,
             cascading_relay_context.inter_relay_connection_manager,
@@ -70,10 +71,13 @@ impl UnsubscribeNamespace {
     )]
     pub(crate) async fn cleanup_empty_namespace_subscription(
         track_namespace_prefix: &str,
+        table: &dyn LocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         route_registry: &dyn RelayRouteRegistry,
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
+        table.purge_relay_publish_namespaces(track_namespace_prefix);
+
         if let Err(err) = route_registry
             .unregister_namespace_subscriber(track_namespace_prefix)
             .await

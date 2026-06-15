@@ -14,6 +14,7 @@ use crate::modules::{
         fetch::Fetch,
         publish::Publish,
         publish_namespace::PublishNamespace,
+        publish_namespace_done::PublishNamespaceDone,
         subscribe::Subscribe,
         subscribe_namespace::SubscribeNameSpace,
         tables::{
@@ -85,6 +86,7 @@ impl EventHandler {
                     if let Some(event) = receiver.recv().await {
                         let session_id = match &event {
                             SessionEvent::PublishNameSpace(session_id, _)
+                            | SessionEvent::PublishNamespaceDone(session_id, _)
                             | SessionEvent::SubscribeNameSpace(session_id, _)
                             | SessionEvent::UnsubscribeNameSpace(session_id, _)
                             | SessionEvent::Publish(session_id, _)
@@ -110,6 +112,23 @@ impl EventHandler {
                             SessionEvent::PublishNameSpace(session_id, handler) => {
                                 let publish_ns = PublishNamespace {};
                                 publish_ns
+                                    .handle(
+                                        session_id,
+                                        &session_span,
+                                        local_pub_sub_directory.as_ref(),
+                                        &control_message_forwarder,
+                                        CascadingRelayContext {
+                                            route_registry: route_registry.as_ref(),
+                                            inter_relay_connection_manager:
+                                                inter_relay_connection_manager.as_ref(),
+                                        },
+                                        handler.as_ref(),
+                                    )
+                                    .await;
+                            }
+                            SessionEvent::PublishNamespaceDone(session_id, handler) => {
+                                let publish_ns_done = PublishNamespaceDone {};
+                                publish_ns_done
                                     .handle(
                                         session_id,
                                         &session_span,
@@ -227,6 +246,7 @@ impl EventHandler {
                                     Self::cleanup_removed_session(
                                         session_id,
                                         removed,
+                                        local_pub_sub_directory.as_ref(),
                                         &control_message_forwarder,
                                         &ingress_sender,
                                         &egress_sender,
@@ -256,6 +276,7 @@ impl EventHandler {
                                     Self::cleanup_removed_session(
                                         session_id,
                                         removed,
+                                        local_pub_sub_directory.as_ref(),
                                         &control_message_forwarder,
                                         &ingress_sender,
                                         &egress_sender,
@@ -289,6 +310,13 @@ impl EventHandler {
                 "relay.session.event",
                 session_id = %session_id,
                 event = "PublishNamespace",
+                track_namespace = %handler.track_namespace(),
+            ),
+            SessionEvent::PublishNamespaceDone(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "PublishNamespaceDone",
                 track_namespace = %handler.track_namespace(),
             ),
             SessionEvent::SubscribeNameSpace(session_id, handler) => tracing::info_span!(
@@ -352,9 +380,11 @@ impl EventHandler {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn cleanup_removed_session(
         removed_session_id: SessionId,
         removed: RemovedSessionSubscriptions,
+        table: &dyn LocalPubSubDirectory,
         control_message_forwarder: &ControlMessageForwarder,
         ingress_sender: &mpsc::Sender<IngressCommand>,
         egress_sender: &mpsc::Sender<EgressCommand>,
@@ -413,6 +443,7 @@ impl EventHandler {
             for track_namespace_prefix in removed.subscribe_namespace_prefixes {
                 UnsubscribeNamespace::cleanup_empty_namespace_subscription(
                     &track_namespace_prefix,
+                    table,
                     control_message_forwarder,
                     route_registry,
                     inter_relay_connection_manager,
@@ -421,16 +452,20 @@ impl EventHandler {
             }
 
             for track_namespace in removed.publish_namespace_track_namespaces {
-                if let Err(err) = route_registry
-                    .unregister_namespace_publisher(&track_namespace)
-                    .await
-                {
-                    tracing::warn!(
-                        ?err,
-                        track_namespace = %track_namespace,
-                        "failed to unregister namespace publisher route"
-                    );
-                }
+                PublishNamespaceDone::notify_local_subscribers(
+                    removed_session_id,
+                    &track_namespace,
+                    table,
+                    control_message_forwarder,
+                )
+                .await;
+                PublishNamespaceDone::withdraw_namespace_publication(
+                    &track_namespace,
+                    control_message_forwarder,
+                    route_registry,
+                    inter_relay_connection_manager,
+                )
+                .await;
             }
         }
     }
