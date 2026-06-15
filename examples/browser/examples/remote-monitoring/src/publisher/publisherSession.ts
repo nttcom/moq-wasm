@@ -1,5 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { MOQTClient } from '../../../../../pkg/moqt_client_wasm'
+import type { MOQTClient } from '../../../../pkg/moqt_client_wasm'
 import type { CameraId } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][session]', ...args)
@@ -42,7 +42,7 @@ export class PublisherSession {
   }
 
   getRawClient(): MOQTClient {
-    return this.client.getRawClient()
+    return this.client.getRawClient()!
   }
 
   async disconnect(): Promise<void> {

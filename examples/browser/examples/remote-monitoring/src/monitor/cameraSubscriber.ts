@@ -1,4 +1,4 @@
-import type { SubgroupObjectMessage } from '../../../../../pkg/moqt_client_wasm'
+import type { SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { CameraId } from '../types/monitoring'
 import { tryDeserializeChunk } from '../../../../utils/media/chunk'
 
@@ -28,10 +28,10 @@ export class CameraSubscriber {
   lastSentObjectId: bigint = 0n
 
   private gopBuffer: Array<{
-    subgroupId: bigint
+    subgroupId: bigint | undefined
     objectIdDelta: bigint
     objectPayloadLength: number
-    objectStatus: number
+    objectStatus: number | undefined
     locHeader: unknown
     payload: Uint8Array
   }> = []
