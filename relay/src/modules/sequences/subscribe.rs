@@ -9,9 +9,12 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressStartRequest},
         ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     },
-    sequences::tables::table::{
-        ActiveUpstreamSubscription, LocalPubSubDirectory, UpstreamSubscriptionKey,
-        UpstreamSubscriptionOrigin,
+    sequences::{
+        tables::table::{
+            ActiveUpstreamSubscription, LocalPubSubDirectory, UpstreamSubscriptionKey,
+            UpstreamSubscriptionOrigin,
+        },
+        upstream_serializer::UpstreamCreationSerializer,
     },
     types::{SessionId, compose_session_track_key},
     upstream_publisher_resolver::UpstreamPublisherResolver,
@@ -67,6 +70,7 @@ impl Subscribe {
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
         cache_store: &Arc<TrackCacheStore>,
+        upstream_serializer: &UpstreamCreationSerializer,
         handler: Box<dyn SubscribeHandler>,
     ) {
         let track_namespace = handler.track_namespace();
@@ -87,6 +91,7 @@ impl Subscribe {
                 forwarder,
                 ingress_sender,
                 upstream_publisher_resolver,
+                upstream_serializer,
             )
             .await
         {
@@ -147,6 +152,7 @@ impl Subscribe {
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
+        upstream_serializer: &UpstreamCreationSerializer,
     ) -> Result<
         (
             UpstreamSubscriptionKey,
@@ -155,6 +161,7 @@ impl Subscribe {
         ),
         UpstreamSubscriptionError,
     > {
+        // Fast path: cache hit without acquiring the per-track lock.
         if let Some((upstream_key, active_upstream)) =
             self.find_active_upstream_subscription(table, track_namespace, track_name)
         {
@@ -165,6 +172,32 @@ impl Subscribe {
             ));
         }
 
+        // Cache miss: acquire the per-track lock so that concurrent tasks for
+        // the same track serialise here and only one of them calls
+        // create_upstream_subscription.
+        let _guard = upstream_serializer.lock(track_namespace, track_name).await;
+
+        // Re-check after acquiring the lock: a sibling task may have created
+        // and registered the upstream subscription while we were waiting.
+        if let Some((upstream_key, active_upstream)) =
+            self.find_active_upstream_subscription(table, track_namespace, track_name)
+        {
+            tracing::debug!(
+                track_namespace = %track_namespace,
+                track_name = %track_name,
+                "upstream subscription found after serializer lock (joined existing)"
+            );
+            return Ok((
+                upstream_key,
+                active_upstream,
+                LargestObjectSource::LocalCache,
+            ));
+        }
+
+        // Still a miss: we are the first task for this track. Create the
+        // upstream subscription while holding the guard. The guard is dropped
+        // at the end of this scope, after register_upstream_subscription
+        // has been called inside create_upstream_subscription.
         let (upstream_key, active_upstream) = self
             .create_upstream_subscription(
                 session_id,

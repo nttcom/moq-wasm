@@ -25,6 +25,7 @@ use crate::modules::{
         },
         unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace,
+        upstream_serializer::UpstreamCreationSerializer,
     },
     session_event::SessionEvent,
     session_repository::SessionRepository,
@@ -83,6 +84,10 @@ impl EventHandler {
                 };
                 let local_pub_sub_directory: Arc<dyn LocalPubSubDirectory> =
                     Arc::new(InMemoryLocalPubSubDirectory::new());
+                // One serializer instance per relay event-handler loop.
+                // Cloned (cheaply, Arc-backed) into each Subscribe spawn so
+                // the event loop itself never holds a per-track lock.
+                let upstream_serializer = UpstreamCreationSerializer::new();
                 let mut request_response_tasks: tokio::task::JoinSet<()> =
                     tokio::task::JoinSet::new();
                 loop {
@@ -243,13 +248,15 @@ impl EventHandler {
                         SessionEvent::Subscribe(session_id, handler) => {
                             // Awaits SUBSCRIBE_OK/ERROR from an upstream peer —
                             // must be spawned to avoid blocking the event loop.
-                            // TODO(deadlock-core): serialize upstream creation per track to avoid duplicate upstream subscribe
                             let control_message_forwarder = control_message_forwarder.clone();
                             let local_pub_sub_directory = local_pub_sub_directory.clone();
                             let ingress_sender = ingress_sender.clone();
                             let egress_sender = egress_sender.clone();
                             let upstream_publisher_resolver = upstream_publisher_resolver.clone();
                             let cache_store = cache_store.clone();
+                            // Clone is cheap (Arc-backed); the event loop itself
+                            // never awaits this serializer's lock.
+                            let upstream_serializer = upstream_serializer.clone();
                             request_response_tasks.spawn(async move {
                                 Subscribe {}
                                     .handle(
@@ -261,6 +268,7 @@ impl EventHandler {
                                         &egress_sender,
                                         upstream_publisher_resolver.as_ref(),
                                         &cache_store,
+                                        &upstream_serializer,
                                         handler,
                                     )
                                     .await;
