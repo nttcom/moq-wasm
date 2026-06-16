@@ -120,25 +120,25 @@ impl ControlMessageForwarder {
         track_namespace: String,
         track_name: String,
     ) -> anyhow::Result<UpstreamSubscription> {
-        if let Some(mut subscriber) = self.repository.lock().await.subscriber(session_id) {
-            let option = SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-            };
-            tracing::info!(
-                "Forwarded SUBSCRIBE '{}' to session:{}",
-                track_namespace,
-                session_id
-            );
-            subscriber
-                .send_subscribe(track_namespace, track_name, option)
-                .await
-        } else {
+        let subscriber = self.repository.lock().await.subscriber(session_id);
+        let Some(mut subscriber) = subscriber else {
             tracing::error!("No subscriber");
-            Err(anyhow::anyhow!("No subscriber"))
-        }
+            return Err(anyhow::anyhow!("No subscriber"));
+        };
+        let option = SubscribeOption {
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            forward: true,
+            filter_type: FilterType::LargestObject,
+        };
+        tracing::info!(
+            "Forwarded SUBSCRIBE '{}' to session:{}",
+            track_namespace,
+            session_id
+        );
+        subscriber
+            .send_subscribe(track_namespace, track_name, option)
+            .await
     }
 
     #[tracing::instrument(
@@ -152,17 +152,17 @@ impl ControlMessageForwarder {
         session_id: SessionId,
         subscribe_id: u64,
     ) -> anyhow::Result<()> {
-        if let Some(subscriber) = self.repository.lock().await.subscriber(session_id) {
-            tracing::info!(
-                "Forwarded UNSUBSCRIBE subscribe_id={} to session:{}",
-                subscribe_id,
-                session_id
-            );
-            subscriber.send_unsubscribe(subscribe_id).await
-        } else {
+        let subscriber = self.repository.lock().await.subscriber(session_id);
+        let Some(subscriber) = subscriber else {
             tracing::error!("No subscriber");
-            Err(anyhow::anyhow!("No subscriber"))
-        }
+            return Err(anyhow::anyhow!("No subscriber"));
+        };
+        tracing::info!(
+            "Forwarded UNSUBSCRIBE subscribe_id={} to session:{}",
+            subscribe_id,
+            session_id
+        );
+        subscriber.send_unsubscribe(subscribe_id).await
     }
 
     #[tracing::instrument(
@@ -176,18 +176,18 @@ impl ControlMessageForwarder {
         session_id: SessionId,
         track_namespace_prefix: String,
     ) -> anyhow::Result<()> {
-        if let Some(subscriber) = self.repository.lock().await.subscriber(session_id) {
-            tracing::info!(
-                "Forwarded UNSUBSCRIBE_NAMESPACE '{}' to session:{}",
-                track_namespace_prefix,
-                session_id
-            );
-            subscriber
-                .send_unsubscribe_namespace(track_namespace_prefix)
-                .await
-        } else {
+        let subscriber = self.repository.lock().await.subscriber(session_id);
+        let Some(subscriber) = subscriber else {
             tracing::error!("No subscriber");
-            Err(anyhow::anyhow!("No subscriber"))
-        }
+            return Err(anyhow::anyhow!("No subscriber"));
+        };
+        tracing::info!(
+            "Forwarded UNSUBSCRIBE_NAMESPACE '{}' to session:{}",
+            track_namespace_prefix,
+            session_id
+        );
+        subscriber
+            .send_unsubscribe_namespace(track_namespace_prefix)
+            .await
     }
 }
