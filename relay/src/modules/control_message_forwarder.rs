@@ -7,6 +7,7 @@ use crate::modules::{
     types::SessionId,
 };
 
+#[derive(Clone)]
 pub(crate) struct ControlMessageForwarder {
     pub(crate) repository: Arc<tokio::sync::Mutex<SessionRepository>>,
 }

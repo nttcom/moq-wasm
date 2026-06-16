@@ -59,11 +59,7 @@ impl<T: TransportProtocol> Publisher<T> {
                 publish_namespace.encode(),
             )
             .await?;
-        let result = receiver.await;
-        if let Err(e) = result {
-            bail!("Failed to receive message: {}", e)
-        }
-        let response = result.unwrap();
+        let response = self.session.await_response(receiver).await?;
         match response {
             ResponseMessage::PublishNamespaceOk(response_request_id) => {
                 if request_id != response_request_id {
@@ -124,11 +120,7 @@ impl<T: TransportProtocol> Publisher<T> {
             .send_stream
             .send(ControlMessageType::Publish, bytes)
             .await?;
-        let result = receiver.await;
-        if let Err(e) = result {
-            bail!("Failed to receive message: {}", e)
-        }
-        let response = result.unwrap();
+        let response = self.session.await_response(receiver).await?;
         match response {
             ResponseMessage::PublishOk(message) => {
                 if request_id != message.request_id {

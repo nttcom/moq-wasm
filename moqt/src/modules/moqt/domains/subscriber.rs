@@ -58,11 +58,7 @@ impl<T: TransportProtocol> Subscriber<T> {
             )
             .await?;
         tracing::info!("Subscribe namespace");
-        let result = receiver.await;
-        if let Err(e) = result {
-            bail!("Failed to receive message: {}", e)
-        }
-        let response = result.unwrap();
+        let response = self.session.await_response(receiver).await?;
         match response {
             ResponseMessage::SubscribeNameSpaceOk(response_request_id) => {
                 if request_id != response_request_id {
@@ -112,11 +108,7 @@ impl<T: TransportProtocol> Subscriber<T> {
             .send_stream
             .send(ControlMessageType::Subscribe, subscribe.encode())
             .await?;
-        let result = receiver.await;
-        if let Err(e) = result {
-            bail!("Failed to receive message: {}", e)
-        }
-        let response = result.unwrap();
+        let response = self.session.await_response(receiver).await?;
         match response {
             ResponseMessage::SubscribeOk(message) => {
                 if request_id != message.request_id {
@@ -211,11 +203,7 @@ impl<T: TransportProtocol> Subscriber<T> {
             .send_stream
             .send(ControlMessageType::Fetch, fetch.encode())
             .await?;
-        let result = fetch_message_rx.await;
-        if let Err(e) = result {
-            bail!("Failed to receive message: {}", e)
-        }
-        let response = result.unwrap();
+        let response = self.session.await_response(fetch_message_rx).await?;
         match response {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
             ResponseMessage::FetchError(_, _, _) => {
@@ -283,11 +271,7 @@ impl<T: TransportProtocol> Subscriber<T> {
             .send_stream
             .send(ControlMessageType::Fetch, fetch.encode())
             .await?;
-        let result = fetch_message_rx.await;
-        if let Err(e) = result {
-            bail!("Failed to receive message: {}", e)
-        }
-        let response = result.unwrap();
+        let response = self.session.await_response(fetch_message_rx).await?;
         match response {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
             ResponseMessage::FetchError(_, _, _) => {

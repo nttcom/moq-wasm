@@ -81,37 +81,68 @@ impl EventHandler {
                 let control_message_forwarder = ControlMessageForwarder {
                     repository: repo.clone(),
                 };
-                let local_pub_sub_directory = Box::new(InMemoryLocalPubSubDirectory::new());
+                let local_pub_sub_directory: Arc<dyn LocalPubSubDirectory> =
+                    Arc::new(InMemoryLocalPubSubDirectory::new());
+                let mut request_response_tasks: tokio::task::JoinSet<()> =
+                    tokio::task::JoinSet::new();
                 loop {
-                    if let Some(event) = receiver.recv().await {
-                        let session_id = match &event {
-                            SessionEvent::PublishNameSpace(session_id, _)
-                            | SessionEvent::PublishNamespaceDone(session_id, _)
-                            | SessionEvent::SubscribeNameSpace(session_id, _)
-                            | SessionEvent::UnsubscribeNameSpace(session_id, _)
-                            | SessionEvent::Publish(session_id, _)
-                            | SessionEvent::Subscribe(session_id, _)
-                            | SessionEvent::Unsubscribe(session_id, _)
-                            | SessionEvent::Fetch(session_id, _)
-                            | SessionEvent::Disconnected(session_id)
-                            | SessionEvent::ProtocolViolation(session_id) => *session_id,
-                        };
-
-                        let session_span = {
-                            let repo: tokio::sync::MutexGuard<'_, SessionRepository> =
-                                repo.lock().await;
-                            repo.session_span(session_id)
-                        };
-                        let Some(session_span) = session_span else {
-                            tracing::warn!("Session span not found: {}", session_id);
+                    let event = tokio::select! {
+                        event = receiver.recv() => {
+                            let Some(event) = event else {
+                                tracing::error!("Failed to receive session event");
+                                break;
+                            };
+                            event
+                        }
+                        result = request_response_tasks.join_next(), if !request_response_tasks.is_empty() => {
+                            match result {
+                                Some(Ok(())) => {
+                                    tracing::debug!("request/response task completed");
+                                }
+                                Some(Err(error)) => {
+                                    tracing::error!(?error, "request/response task failed");
+                                }
+                                None => {}
+                            }
                             continue;
-                        };
-                        let event_span = Self::session_event_span(&session_span, &event);
+                        }
+                    };
 
-                        match event {
-                            SessionEvent::PublishNameSpace(session_id, handler) => {
-                                let publish_ns = PublishNamespace {};
-                                publish_ns
+                    let session_id = match &event {
+                        SessionEvent::PublishNameSpace(session_id, _)
+                        | SessionEvent::PublishNamespaceDone(session_id, _)
+                        | SessionEvent::SubscribeNameSpace(session_id, _)
+                        | SessionEvent::UnsubscribeNameSpace(session_id, _)
+                        | SessionEvent::Publish(session_id, _)
+                        | SessionEvent::Subscribe(session_id, _)
+                        | SessionEvent::Unsubscribe(session_id, _)
+                        | SessionEvent::Fetch(session_id, _)
+                        | SessionEvent::Disconnected(session_id)
+                        | SessionEvent::ProtocolViolation(session_id) => *session_id,
+                    };
+
+                    let session_span = {
+                        let repo: tokio::sync::MutexGuard<'_, SessionRepository> =
+                            repo.lock().await;
+                        repo.session_span(session_id)
+                    };
+                    let Some(session_span) = session_span else {
+                        tracing::warn!("Session span not found: {}", session_id);
+                        continue;
+                    };
+                    let event_span = Self::session_event_span(&session_span, &event);
+
+                    match event {
+                        SessionEvent::PublishNameSpace(session_id, handler) => {
+                            // Awaits PUBLISH_NAMESPACE_OK/ERROR from an upstream peer —
+                            // must be spawned to avoid blocking the event loop.
+                            let control_message_forwarder = control_message_forwarder.clone();
+                            let local_pub_sub_directory = local_pub_sub_directory.clone();
+                            let route_registry = route_registry.clone();
+                            let inter_relay_connection_manager =
+                                inter_relay_connection_manager.clone();
+                            request_response_tasks.spawn(async move {
+                                PublishNamespace {}
                                     .handle(
                                         session_id,
                                         &session_span,
@@ -125,27 +156,34 @@ impl EventHandler {
                                         handler.as_ref(),
                                     )
                                     .await;
-                            }
-                            SessionEvent::PublishNamespaceDone(session_id, handler) => {
-                                let publish_ns_done = PublishNamespaceDone {};
-                                publish_ns_done
-                                    .handle(
-                                        session_id,
-                                        &session_span,
-                                        local_pub_sub_directory.as_ref(),
-                                        &control_message_forwarder,
-                                        CascadingRelayContext {
-                                            route_registry: route_registry.as_ref(),
-                                            inter_relay_connection_manager:
-                                                inter_relay_connection_manager.as_ref(),
-                                        },
-                                        handler.as_ref(),
-                                    )
-                                    .await;
-                            }
-                            SessionEvent::SubscribeNameSpace(session_id, handler) => {
-                                let subscribe_ns = SubscribeNameSpace {};
-                                subscribe_ns
+                            });
+                        }
+                        SessionEvent::PublishNamespaceDone(session_id, handler) => {
+                            // Fire-and-forget: no peer response to wait for — stays inline.
+                            let publish_ns_done = PublishNamespaceDone {};
+                            publish_ns_done
+                                .handle(
+                                    session_id,
+                                    &session_span,
+                                    local_pub_sub_directory.as_ref(),
+                                    &control_message_forwarder,
+                                    CascadingRelayContext {
+                                        route_registry: route_registry.as_ref(),
+                                        inter_relay_connection_manager:
+                                            inter_relay_connection_manager.as_ref(),
+                                    },
+                                    handler.as_ref(),
+                                )
+                                .await;
+                        }
+                        SessionEvent::SubscribeNameSpace(session_id, handler) => {
+                            // Awaits SUBSCRIBE_NAMESPACE_OK/ERROR from an upstream peer —
+                            // must be spawned to avoid blocking the event loop.
+                            let control_message_forwarder = control_message_forwarder.clone();
+                            let local_pub_sub_directory = local_pub_sub_directory.clone();
+                            let route_registry = route_registry.clone();
+                            request_response_tasks.spawn(async move {
+                                SubscribeNameSpace {}
                                     .handle(
                                         session_id,
                                         &session_span,
@@ -155,27 +193,37 @@ impl EventHandler {
                                         handler.as_ref(),
                                     )
                                     .await;
-                            }
-                            SessionEvent::UnsubscribeNameSpace(session_id, handler) => {
-                                let unsubscribe_ns = UnsubscribeNamespace {};
-                                unsubscribe_ns
-                                    .handle(
-                                        session_id,
-                                        &session_span,
-                                        local_pub_sub_directory.as_ref(),
-                                        &control_message_forwarder,
-                                        CascadingRelayContext {
-                                            route_registry: route_registry.as_ref(),
-                                            inter_relay_connection_manager:
-                                                inter_relay_connection_manager.as_ref(),
-                                        },
-                                        handler.as_ref(),
-                                    )
-                                    .await;
-                            }
-                            SessionEvent::Publish(session_id, handler) => {
-                                let publish = Publish {};
-                                publish
+                            });
+                        }
+                        SessionEvent::UnsubscribeNameSpace(session_id, handler) => {
+                            // No peer response expected — stays inline.
+                            let unsubscribe_ns = UnsubscribeNamespace {};
+                            unsubscribe_ns
+                                .handle(
+                                    session_id,
+                                    &session_span,
+                                    local_pub_sub_directory.as_ref(),
+                                    &control_message_forwarder,
+                                    CascadingRelayContext {
+                                        route_registry: route_registry.as_ref(),
+                                        inter_relay_connection_manager:
+                                            inter_relay_connection_manager.as_ref(),
+                                    },
+                                    handler.as_ref(),
+                                )
+                                .await;
+                        }
+                        SessionEvent::Publish(session_id, handler) => {
+                            // Awaits PUBLISH_OK/ERROR from a downstream peer —
+                            // must be spawned to avoid blocking the event loop.
+                            let control_message_forwarder = control_message_forwarder.clone();
+                            let local_pub_sub_directory = local_pub_sub_directory.clone();
+                            let ingress_sender = ingress_sender.clone();
+                            let route_registry = route_registry.clone();
+                            let inter_relay_connection_manager =
+                                inter_relay_connection_manager.clone();
+                            request_response_tasks.spawn(async move {
+                                Publish {}
                                     .handle(
                                         session_id,
                                         &session_span,
@@ -190,10 +238,20 @@ impl EventHandler {
                                         handler,
                                     )
                                     .await;
-                            }
-                            SessionEvent::Subscribe(session_id, handler) => {
-                                let subscribe = Subscribe {};
-                                subscribe
+                            });
+                        }
+                        SessionEvent::Subscribe(session_id, handler) => {
+                            // Awaits SUBSCRIBE_OK/ERROR from an upstream peer —
+                            // must be spawned to avoid blocking the event loop.
+                            // TODO(deadlock-core): serialize upstream creation per track to avoid duplicate upstream subscribe
+                            let control_message_forwarder = control_message_forwarder.clone();
+                            let local_pub_sub_directory = local_pub_sub_directory.clone();
+                            let ingress_sender = ingress_sender.clone();
+                            let egress_sender = egress_sender.clone();
+                            let upstream_publisher_resolver = upstream_publisher_resolver.clone();
+                            let cache_store = cache_store.clone();
+                            request_response_tasks.spawn(async move {
+                                Subscribe {}
                                     .handle(
                                         session_id,
                                         &session_span,
@@ -206,97 +264,96 @@ impl EventHandler {
                                         handler,
                                     )
                                     .await;
-                            }
-                            SessionEvent::Unsubscribe(session_id, handler) => {
-                                let unsubscribe = Unsubscribe {};
-                                unsubscribe
-                                    .handle(
-                                        session_id,
-                                        &session_span,
-                                        local_pub_sub_directory.as_ref(),
-                                        &control_message_forwarder,
-                                        &ingress_sender,
-                                        &egress_sender,
-                                        handler,
-                                    )
-                                    .await;
-                            }
-                            SessionEvent::Fetch(session_id, handler) => {
-                                let fetch = Fetch {};
-                                fetch
-                                    .handle(
-                                        session_id,
-                                        &session_span,
-                                        local_pub_sub_directory.as_ref(),
-                                        &egress_sender,
-                                        handler,
-                                    )
-                                    .await;
-                            }
-                            SessionEvent::Disconnected(session_id) => {
-                                let disconnected_span = tracing::info_span!(
-                                    parent: &event_span,
-                                    "relay.session.disconnected",
-                                    session_id = session_id
-                                );
-                                async {
-                                    tracing::info!("Session disconnected: {}", session_id);
-                                    let removed =
-                                        local_pub_sub_directory.remove_session(session_id).await;
-                                    Self::cleanup_removed_session(
-                                        session_id,
-                                        removed,
-                                        local_pub_sub_directory.as_ref(),
-                                        &control_message_forwarder,
-                                        &ingress_sender,
-                                        &egress_sender,
-                                        route_registry.as_ref(),
-                                        inter_relay_connection_manager.as_ref(),
-                                    )
-                                    .await;
-                                    control_message_forwarder
-                                        .repository
-                                        .lock()
-                                        .await
-                                        .remove(session_id);
-                                }
-                                .instrument(disconnected_span)
-                                .await;
-                            }
-                            SessionEvent::ProtocolViolation(session_id) => {
-                                let protocol_violation_span = tracing::info_span!(
-                                    parent: &event_span,
-                                    "relay.session.protocol_violation",
-                                    session_id = session_id
-                                );
-                                async {
-                                    tracing::error!("Session protocol violation: {}", session_id);
-                                    let removed =
-                                        local_pub_sub_directory.remove_session(session_id).await;
-                                    Self::cleanup_removed_session(
-                                        session_id,
-                                        removed,
-                                        local_pub_sub_directory.as_ref(),
-                                        &control_message_forwarder,
-                                        &ingress_sender,
-                                        &egress_sender,
-                                        route_registry.as_ref(),
-                                        inter_relay_connection_manager.as_ref(),
-                                    )
-                                    .await;
-                                    control_message_forwarder
-                                        .repository
-                                        .lock()
-                                        .await
-                                        .remove(session_id);
-                                }
-                                .instrument(protocol_violation_span)
-                                .await;
-                            }
+                            });
                         }
-                    } else {
-                        tracing::error!("Failed to receive session event");
-                        break;
+                        SessionEvent::Unsubscribe(session_id, handler) => {
+                            // No upstream peer response — stays inline.
+                            let unsubscribe = Unsubscribe {};
+                            unsubscribe
+                                .handle(
+                                    session_id,
+                                    &session_span,
+                                    local_pub_sub_directory.as_ref(),
+                                    &control_message_forwarder,
+                                    &ingress_sender,
+                                    &egress_sender,
+                                    handler,
+                                )
+                                .await;
+                        }
+                        SessionEvent::Fetch(session_id, handler) => {
+                            // No upstream peer response (only local table + egress) — stays inline.
+                            let fetch = Fetch {};
+                            fetch
+                                .handle(
+                                    session_id,
+                                    &session_span,
+                                    local_pub_sub_directory.as_ref(),
+                                    &egress_sender,
+                                    handler,
+                                )
+                                .await;
+                        }
+                        SessionEvent::Disconnected(session_id) => {
+                            let disconnected_span = tracing::info_span!(
+                                parent: &event_span,
+                                "relay.session.disconnected",
+                                session_id = session_id
+                            );
+                            async {
+                                tracing::info!("Session disconnected: {}", session_id);
+                                let removed =
+                                    local_pub_sub_directory.remove_session(session_id).await;
+                                Self::cleanup_removed_session(
+                                    session_id,
+                                    removed,
+                                    local_pub_sub_directory.as_ref(),
+                                    &control_message_forwarder,
+                                    &ingress_sender,
+                                    &egress_sender,
+                                    route_registry.as_ref(),
+                                    inter_relay_connection_manager.as_ref(),
+                                )
+                                .await;
+                                control_message_forwarder
+                                    .repository
+                                    .lock()
+                                    .await
+                                    .remove(session_id);
+                            }
+                            .instrument(disconnected_span)
+                            .await;
+                        }
+                        SessionEvent::ProtocolViolation(session_id) => {
+                            let protocol_violation_span = tracing::info_span!(
+                                parent: &event_span,
+                                "relay.session.protocol_violation",
+                                session_id = session_id
+                            );
+                            async {
+                                tracing::error!("Session protocol violation: {}", session_id);
+                                let removed =
+                                    local_pub_sub_directory.remove_session(session_id).await;
+                                Self::cleanup_removed_session(
+                                    session_id,
+                                    removed,
+                                    local_pub_sub_directory.as_ref(),
+                                    &control_message_forwarder,
+                                    &ingress_sender,
+                                    &egress_sender,
+                                    route_registry.as_ref(),
+                                    inter_relay_connection_manager.as_ref(),
+                                )
+                                .await;
+                                control_message_forwarder
+                                    .repository
+                                    .lock()
+                                    .await
+                                    .remove(session_id);
+                            }
+                            .instrument(protocol_violation_span)
+                            .await;
+                        }
                     }
                 }
             })
