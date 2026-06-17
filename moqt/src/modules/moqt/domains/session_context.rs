@@ -5,6 +5,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use crate::{
@@ -21,6 +22,8 @@ use crate::{
         transport::transport_connection::TransportConnection,
     },
 };
+
+const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) transport_connection: T::Connection,
@@ -194,6 +197,30 @@ impl<T: TransportProtocol> SessionContext<T> {
         self.receiver_map.lock().await.insert(track_alias, receiver);
 
         Ok(())
+    }
+
+    /// Awaits a response to a control message with a bounded timeout.
+    ///
+    /// draft-14 §12.2 recommends implementation-defined timeouts to prevent
+    /// resource exhaustion when a peer does not send the expected response.
+    /// On timeout, the session is closed with `ControlMessageTimeout` and an
+    /// error is returned so the caller can propagate the failure cleanly.
+    pub(crate) async fn await_response(
+        &self,
+        receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
+    ) -> anyhow::Result<ResponseMessage> {
+        match tokio::time::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, receiver).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(error)) => anyhow::bail!("control response channel closed: {}", error),
+            Err(_) => {
+                tracing::warn!("control message response timed out; closing session");
+                self.close_with_error(
+                    TerminationErrorCode::ControlMessageTimeout,
+                    "peer did not respond to a control message in time",
+                );
+                anyhow::bail!("control message response timed out")
+            }
+        }
     }
 
     pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
