@@ -765,13 +765,10 @@ mod tests {
         // The sender stays alive, so the worker MUST break itself — it cannot
         // rely on the channel closing.
 
-        let processed = tokio::time::timeout(
-            Duration::from_millis(500),
-            worker,
-        )
-        .await
-        .expect("worker timed out — terminal event did not break the loop")
-        .unwrap();
+        let processed = tokio::time::timeout(Duration::from_millis(500), worker)
+            .await
+            .expect("worker timed out — terminal event did not break the loop")
+            .unwrap();
 
         // Normal event was skipped (no span), terminal event triggered cleanup+break.
         assert_eq!(processed, vec![Ev::Terminal]);
