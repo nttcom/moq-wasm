@@ -48,6 +48,7 @@ function ChatPanel({
           messages.map((message, index) => (
             <div
               key={`${message.timestamp}-${index}`}
+              data-testid="chat-message"
               className={`rounded-xl border border-white/10 px-4 py-3 ${
                 message.isLocal ? 'self-end bg-blue-600/50' : 'bg-gray-900/70'
               }`}
@@ -66,6 +67,7 @@ function ChatPanel({
           Send Chat Message
           <input
             type="text"
+            data-testid="chat-message-input"
             value={chatMessage}
             onChange={(event) => onMessageChange(event.target.value)}
             className="mt-2 w-full rounded-lg border border-blue-300/40 bg-white/5 px-4 py-3 text-base text-white placeholder-blue-200 focus:border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-300/50"
@@ -74,6 +76,7 @@ function ChatPanel({
         </label>
         <button
           type="submit"
+          data-testid="chat-send-button"
           className="w-full rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-600/50"
           disabled={!chatMessage.trim()}
         >

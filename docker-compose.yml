@@ -3,13 +3,20 @@ services:
     image: redis:7
     ports:
       - "6379:6379"
+    # Relays connect to redis once at startup with no retry, so gate them on health.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
 
   redisinsight:
     image: redis/redisinsight:latest
     ports:
       - "5540:5540"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
 
   relay-common:
     image: moqt-relay:local
@@ -38,7 +45,8 @@ services:
     ports:
       - "4433:443/udp"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
 
   relay-b:
     image: moqt-relay:local
@@ -58,4 +66,5 @@ services:
     ports:
       - "4434:443/udp"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy

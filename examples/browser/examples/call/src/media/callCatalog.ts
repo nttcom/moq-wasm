@@ -8,6 +8,19 @@ import {
   type EditableCallCatalogTrack
 } from '../types/catalog'
 
+// E2E hook: `?keyframeInterval=N` shortens the camera GOP so new subscribers get a
+// renderable keyframe quickly. Without the param the normal default is used.
+function resolveCameraKeyframeInterval(): number {
+  if (typeof window === 'undefined') {
+    return DEFAULT_VIDEO_KEYFRAME_INTERVAL
+  }
+  const raw = new URLSearchParams(window.location.search).get('keyframeInterval')
+  const parsed = raw ? Number(raw) : NaN
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_VIDEO_KEYFRAME_INTERVAL
+}
+
+const CAMERA_KEYFRAME_INTERVAL = resolveCameraKeyframeInterval()
+
 const CAMERA_PROFILES = [
   { id: 'base', label: 'Base', codec: 'avc1.42001F', maxEncodePixels: 1280 * 720 },
   { id: 'main', label: 'Main', codec: 'avc1.4D4028', maxEncodePixels: Number.POSITIVE_INFINITY },
@@ -32,7 +45,7 @@ const CAMERA_CATALOG_TRACKS: CallCatalogTrack[] = CAMERA_PROFILES.flatMap((profi
       bitrate: resolution.bitrate,
       framerate: 30,
       hardwareAcceleration: 'prefer-software',
-      keyframeInterval: DEFAULT_VIDEO_KEYFRAME_INTERVAL,
+      keyframeInterval: CAMERA_KEYFRAME_INTERVAL,
       isLive: true
     })
   )
