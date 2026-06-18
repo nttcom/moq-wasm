@@ -12,7 +12,8 @@
     "lint": "tsc --noEmit",
     "e2e": "playwright test",
     "e2e:install": "playwright install chromium",
-    "e2e:media": "playwright test tests/media-e2e.spec.ts"
+    "e2e:media": "playwright test tests/media-e2e.spec.ts",
+    "e2e:call": "playwright test tests/call-e2e.spec.ts"
   },
   "keywords": [],
   "author": "",

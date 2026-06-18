@@ -7,6 +7,7 @@ interface MediaStreamVideoProps {
   placeholder?: string
   overlay?: ReactNode
   footer?: ReactNode
+  testId?: string
 }
 
 export function MediaStreamVideo({
@@ -15,7 +16,8 @@ export function MediaStreamVideo({
   className,
   placeholder = 'Video unavailable',
   overlay,
-  footer
+  footer,
+  testId
 }: MediaStreamVideoProps) {
   const ref = useRef<HTMLVideoElement | null>(null)
   const [hasFirstFrame, setHasFirstFrame] = useState(false)
@@ -32,6 +34,7 @@ export function MediaStreamVideo({
       <div className={`relative w-full aspect-video overflow-hidden rounded-lg bg-black ${className}`}>
         <video
           ref={ref}
+          data-testid={testId}
           className="w-full h-full object-contain"
           autoPlay
           playsInline
@@ -53,9 +56,10 @@ export function MediaStreamVideo({
 interface MediaStreamAudioProps {
   stream?: MediaStream | null
   className?: string
+  testId?: string
 }
 
-export function MediaStreamAudio({ stream, className }: MediaStreamAudioProps) {
+export function MediaStreamAudio({ stream, className, testId }: MediaStreamAudioProps) {
   const ref = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => {
@@ -75,5 +79,5 @@ export function MediaStreamAudio({ stream, className }: MediaStreamAudioProps) {
     }
   }, [stream])
 
-  return <audio ref={ref} className={className} autoPlay controls={false} />
+  return <audio ref={ref} data-testid={testId} className={className} autoPlay controls={false} />
 }

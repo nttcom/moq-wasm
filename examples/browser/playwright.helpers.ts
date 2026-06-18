@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 
 export const MEDIA_PUBLISHER_PATH = '/moq-wasm/examples/media/publisher/index.html'
 export const MEDIA_SUBSCRIBER_PATH = '/moq-wasm/examples/media/subscriber/index.html'
+export const CALL_INDEX_PATH = '/moq-wasm/examples/call/index.html'
 
 export function ensureLinuxEnvironment(): void {
   if (process.platform !== 'linux' && process.platform !== 'darwin') {

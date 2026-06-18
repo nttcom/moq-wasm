@@ -2,7 +2,7 @@ export RUSTFLAGS := --cfg tokio_unstable --cfg web_sys_unstable_apis --remap-pat
 
 -include .env
 
-.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp test lint format browser-e2e-media
+.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp test lint format browser-e2e-media browser-e2e-call browser-e2e-call-headed
 
 # Applications
 relay:
@@ -75,3 +75,13 @@ format:
 browser-e2e-media:
 	node scripts/setup-media-e2e.mjs
 	node scripts/run-media-e2e.mjs
+
+# Two-relay call E2E: brings up relay-a/relay-b via docker compose, then Playwright.
+browser-e2e-call:
+	node scripts/setup-media-e2e.mjs
+	node scripts/run-call-e2e.mjs
+
+# Same as browser-e2e-call but with a visible browser to watch behavior.
+# Assumes setup already ran once (via browser-e2e-call or setup-media-e2e.mjs).
+browser-e2e-call-headed:
+	PLAYWRIGHT_HEADLESS=false node scripts/run-call-e2e.mjs

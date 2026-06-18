@@ -188,6 +188,7 @@ export function MemberGrid({
     <section className="mt-8 grid gap-6 md:grid-cols-2 xl:grid-cols-2">
       <MemberCard
         key="local-member"
+        testId="member-card-local"
         title={localMember.name}
         headerActions={
           <div className="flex items-center gap-2">
@@ -199,6 +200,7 @@ export function MemberGrid({
               inactiveLabel="Turn camera on"
               IconOn={Video}
               IconOff={VideoOff}
+              testId="toggle-camera-button"
             />
             <ControlButton
               active={screenShareEnabled}
@@ -217,6 +219,7 @@ export function MemberGrid({
               inactiveLabel="Turn microphone on"
               IconOn={Mic}
               IconOff={MicOff}
+              testId="toggle-microphone-button"
             />
             <IconButton ariaLabel="Select devices" onClick={() => setIsDeviceModalOpen(true)} title="Device settings">
               <Settings2 className="h-4 w-4" />
@@ -333,6 +336,9 @@ export function MemberGrid({
         return (
           <MemberCard
             key={member.id}
+            testId={`member-card-${member.name}`}
+            videoTestId={`member-video-${member.name}`}
+            audioTestId={`member-audio-${member.name}`}
             title={member.name}
             headerActions={
               <div className="flex items-center gap-2">
@@ -440,6 +446,7 @@ export function MemberGrid({
             secondaryPlaceholder="Awaiting screen share"
             details={
               <RemoteCatalogSubscribePanel
+                memberName={member.name}
                 tracks={remoteCatalogTracks.get(member.id) ?? []}
                 selected={remoteCatalogSelections.get(member.id)}
                 isLoading={catalogLoadingMemberIds.has(member.id)}
@@ -506,6 +513,9 @@ export function MemberGrid({
 
 interface MemberCardProps {
   title: string
+  testId?: string
+  videoTestId?: string
+  audioTestId?: string
   headerActions?: ReactNode
   videoStream?: MediaStream | null
   videoFooter?: ReactNode
@@ -520,6 +530,9 @@ interface MemberCardProps {
 
 function MemberCard({
   title,
+  testId,
+  videoTestId,
+  audioTestId,
   headerActions,
   videoStream,
   videoFooter,
@@ -532,12 +545,18 @@ function MemberCard({
   details
 }: MemberCardProps) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/10 p-6 shadow-xl backdrop-blur">
+    <div data-testid={testId} className="rounded-2xl border border-white/10 bg-white/10 p-6 shadow-xl backdrop-blur">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-xl font-semibold text-white">{title}</h3>
         {headerActions}
       </div>
-      <MediaStreamVideo stream={videoStream} muted={muted} placeholder={placeholder} footer={videoFooter} />
+      <MediaStreamVideo
+        stream={videoStream}
+        muted={muted}
+        placeholder={placeholder}
+        footer={videoFooter}
+        testId={videoTestId}
+      />
       {secondaryVideoStream && (
         <div className="mt-2 space-y-1">
           {secondaryVideoTitle ? (
@@ -546,7 +565,7 @@ function MemberCard({
           <MediaStreamVideo stream={secondaryVideoStream} muted={muted} placeholder={secondaryPlaceholder} />
         </div>
       )}
-      {audioStream && <MediaStreamAudio stream={audioStream} className="hidden" />}
+      {audioStream && <MediaStreamAudio stream={audioStream} className="hidden" testId={audioTestId} />}
       <div className="mt-4 space-y-3 text-sm text-blue-100">{details}</div>
     </div>
   )
@@ -560,9 +579,19 @@ interface ControlButtonProps {
   inactiveLabel: string
   IconOn: typeof Mic
   IconOff: typeof MicOff
+  testId?: string
 }
 
-function ControlButton({ active, disabled, onClick, activeLabel, inactiveLabel, IconOn, IconOff }: ControlButtonProps) {
+function ControlButton({
+  active,
+  disabled,
+  onClick,
+  activeLabel,
+  inactiveLabel,
+  IconOn,
+  IconOff,
+  testId
+}: ControlButtonProps) {
   const Icon = active ? IconOn : IconOff
   const label = active ? activeLabel : inactiveLabel
   return (
@@ -570,6 +599,7 @@ function ControlButton({ active, disabled, onClick, activeLabel, inactiveLabel, 
       type="button"
       aria-label={label}
       title={label}
+      data-testid={testId}
       onClick={onClick}
       disabled={disabled}
       className={`inline-flex h-9 w-9 items-center justify-center rounded-lg p-2 transition ${
@@ -1391,6 +1421,7 @@ function toPositiveInteger(value: unknown, fallback: number): number {
 }
 
 function RemoteCatalogSubscribePanel({
+  memberName,
   tracks,
   selected,
   isLoading,
@@ -1417,6 +1448,7 @@ function RemoteCatalogSubscribePanel({
   onUnsubscribeAudio,
   onUnsubscribeChat
 }: {
+  memberName: string
   tracks: CallCatalogTrack[]
   selected?: { video?: string; screenshare?: string; audio?: string; chat?: string }
   isLoading: boolean
@@ -1515,7 +1547,7 @@ function RemoteCatalogSubscribePanel({
     <div className="space-y-2 rounded-md border border-white/10 bg-white/5 p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-semibold text-blue-100">Catalogs</span>
-        <span className="text-[11px] text-blue-300">
+        <span data-testid={`catalog-status-${memberName}`} className="text-[11px] text-blue-300">
           {isLoading ? 'Loading...' : hasCatalog ? 'Subscribed' : 'Waiting...'}
         </span>
       </div>
@@ -1531,8 +1563,11 @@ function RemoteCatalogSubscribePanel({
             selected={row.selectedTrack}
             disabled={!hasCatalog || row.subscribed || busy}
             statusText={formatSubscribeStatus(row.subscribed, row.subscribing, row.unsubscribing)}
+            statusTestId={`track-status-${row.role}-${memberName}`}
             subscribeLabel={row.subscribing ? 'Subscribing...' : 'Subscribe'}
             unsubscribeLabel={row.unsubscribing ? 'Unsubscribing...' : 'Unsubscribe'}
+            subscribeTestId={`subscribe-${row.role}-button-${memberName}`}
+            unsubscribeTestId={`unsubscribe-${row.role}-button-${memberName}`}
             canSubscribe={canSubscribe}
             canUnsubscribe={canUnsubscribe}
             busy={busy}
@@ -1552,8 +1587,11 @@ function TrackSubscribeRow({
   selected,
   disabled,
   statusText,
+  statusTestId,
   subscribeLabel,
   unsubscribeLabel,
+  subscribeTestId,
+  unsubscribeTestId,
   canSubscribe,
   canUnsubscribe,
   busy,
@@ -1566,8 +1604,11 @@ function TrackSubscribeRow({
   selected: string
   disabled: boolean
   statusText: string
+  statusTestId?: string
   subscribeLabel: string
   unsubscribeLabel: string
+  subscribeTestId?: string
+  unsubscribeTestId?: string
   canSubscribe: boolean
   canUnsubscribe: boolean
   busy: boolean
@@ -1579,7 +1620,9 @@ function TrackSubscribeRow({
     <div className="space-y-1 rounded-md border border-white/10 bg-white/[0.03] p-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-blue-100">{title}</span>
-        <span className="text-[11px] text-blue-300">{statusText}</span>
+        <span data-testid={statusTestId} className="text-[11px] text-blue-300">
+          {statusText}
+        </span>
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
         <select
@@ -1606,6 +1649,7 @@ function TrackSubscribeRow({
           onClick={onSubscribe}
           aria-label={subscribeLabel}
           title={subscribeLabel}
+          data-testid={subscribeTestId}
           className={`inline-flex h-8 w-8 items-center justify-center rounded text-white transition ${
             canSubscribe ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-500/70'
           } ${busy ? 'cursor-wait opacity-70' : ''} ${!canSubscribe ? 'cursor-not-allowed opacity-70' : ''}`}
@@ -1619,6 +1663,7 @@ function TrackSubscribeRow({
           onClick={onUnsubscribe}
           aria-label={unsubscribeLabel}
           title={unsubscribeLabel}
+          data-testid={unsubscribeTestId}
           className={`inline-flex h-8 w-8 items-center justify-center rounded text-white transition ${
             canUnsubscribe ? 'bg-amber-600 hover:bg-amber-700' : 'bg-slate-500/70'
           } ${busy ? 'cursor-wait opacity-70' : ''} ${!canUnsubscribe ? 'cursor-not-allowed opacity-70' : ''}`}

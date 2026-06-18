@@ -52,6 +52,7 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
             <Input
               type="text"
               id="roomName"
+              data-testid="join-room-name-input"
               value={roomName}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setRoomName(e.target.value)}
               placeholder="Enter room name"
@@ -66,6 +67,7 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
             <Input
               type="text"
               id="userName"
+              data-testid="join-user-name-input"
               value={userName}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setUserName(e.target.value)}
               placeholder="Enter your name"
@@ -88,6 +90,13 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
                     checked={relayUrl === option.value}
                     onChange={() => setRelayUrl(option.value)}
                     className="h-5 w-5 accent-blue-600"
+                    data-testid={
+                      option.value === 'https://127.0.0.1:4433'
+                        ? 'join-relay-a-radio'
+                        : option.value === 'https://127.0.0.1:4434'
+                          ? 'join-relay-b-radio'
+                          : undefined
+                    }
                   />
                   <div>
                     <div className="font-semibold">{option.label}</div>
@@ -100,6 +109,7 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
           <Button
             type="submit"
             size="lg"
+            data-testid="join-submit-button"
             className="w-full h-16 text-2xl font-semibold bg-blue-600 hover:bg-blue-700 text-white"
             disabled={!roomName.trim() || !userName.trim()}
           >
