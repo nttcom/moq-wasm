@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/cascading-relay-e2e.yml"
+      - ".github/workflows/relay-image.yml"
       - "scripts/cascading-relay-e2e.sh"
       - "docker-compose.yml"
       - "relay/**"
@@ -18,6 +19,7 @@ on:
       - draft-*
     paths:
       - ".github/workflows/cascading-relay-e2e.yml"
+      - ".github/workflows/relay-image.yml"
       - "scripts/cascading-relay-e2e.sh"
       - "docker-compose.yml"
       - "relay/**"
@@ -32,9 +34,20 @@ permissions:
   contents: read
 
 jobs:
+  # Build (or reuse) the shared relay image once; the e2e job pulls it.
+  relay-image:
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/relay-image.yml
+
   cascading-relay-e2e:
+    needs: relay-image
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
 
     steps:
       - name: Checkout repository
@@ -69,6 +82,20 @@ jobs:
             llvm-dev
           echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
           echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        # docker/login-action@v3 — SHA-pin to match this repo's action-pinning convention.
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull prebuilt relay image
+        # Tag it as moqt-relay:local so the e2e script reuses it without rebuilding.
+        run: |
+          docker pull "${{ needs.relay-image.outputs.image }}"
+          docker tag "${{ needs.relay-image.outputs.image }}" moqt-relay:local
 
       - name: Run cascading relay E2E
         env:

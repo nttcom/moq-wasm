@@ -71,14 +71,18 @@ async function main() {
         "[setup] Relay ports 4433/4434 already occupied — reusing existing relay containers.",
       );
     } else {
-      // Build the relay docker image from the local source. Subsequent runs
-      // are fast because Docker reuses the cached layer when nothing changed.
-      console.error("[setup] Building relay docker image...");
-      await runCommand(
-        resolveCommandName("docker"),
-        ["compose", "build", "relay-common"],
-        { cwd: repoRoot },
-      );
+      // Reuse a prebuilt relay image when one is already present (e.g. pulled from
+      // the registry in CI, or built by a previous local run); otherwise build it.
+      if (relayImageExists()) {
+        console.error("[setup] Reusing existing moqt-relay:local image (skipping build).");
+      } else {
+        console.error("[setup] Building relay docker image...");
+        await runCommand(
+          resolveCommandName("docker"),
+          ["compose", "build", "relay-common"],
+          { cwd: repoRoot },
+        );
+      }
 
       console.error(
         "[setup] Starting redis, relay-a, relay-b via docker compose...",
@@ -130,6 +134,19 @@ async function main() {
     });
   } finally {
     await cleanup();
+  }
+}
+
+// Return true if the relay image used by docker compose is already available
+// locally (pulled from the registry in CI, or built by an earlier run).
+function relayImageExists() {
+  try {
+    execFileSync("docker", ["image", "inspect", "moqt-relay:local"], {
+      stdio: "ignore",
+    });
+    return true;
+  } catch (_error) {
+    return false;
   }
 }
 
