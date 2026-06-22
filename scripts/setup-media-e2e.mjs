@@ -14,7 +14,7 @@ async function main() {
   ensureLinuxEnvironment();
   await assertRequiredTools();
   await ensureRelayCertificates();
-  await runCommand(resolveCommandName("npm"), ["install"], { cwd: jsDir });
+  await runCommand(resolveCommandName("npm"), ["ci"], { cwd: jsDir });
   await runCommand(resolveCommandName("npm"), ["run", "wasm"], { cwd: jsDir });
   if (process.env.CI === "true") {
     console.log(
