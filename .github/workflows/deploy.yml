@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -30,6 +34,10 @@ jobs:
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
 
+      - name: Configure GitHub Pages
+        # actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b = v5.0.0
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b
+
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -44,30 +52,23 @@ jobs:
         working-directory: examples/browser
 
       - name: Upload GitHub Pages artifact
-        # actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 = v4.6.2
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        # actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa = v3.0.1
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
         with:
-          name: github-pages-dist
           path: examples/browser/dist
-          if-no-files-found: error
-          retention-days: 1
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Download GitHub Pages artifact
-        # actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 = v4.3.0
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: github-pages-dist
-          path: github-pages-dist
-
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@e9c66a37f080288a11235e32cbe2dc5fb3a679cc
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: github-pages-dist
+        id: deployment
+        # actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e = v4.0.5
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
