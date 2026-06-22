@@ -8,30 +8,94 @@ import {
   type EditableCallCatalogTrack
 } from '../types/catalog'
 
+type E2ECameraSettings = {
+  width: number
+  height: number
+  framerate: number
+  bitrate: number
+  codec: string | null
+}
+
+function readPositiveIntegerParam(params: URLSearchParams, name: string): number | null {
+  const raw = params.get(name)
+  const parsed = raw ? Number(raw) : NaN
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+function readNonEmptyStringParam(params: URLSearchParams, name: string): string | null {
+  const value = params.get(name)?.trim()
+  return value ? value : null
+}
+
+function readWindowSearchParams(): URLSearchParams | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  return new URLSearchParams(window.location.search)
+}
+
 // E2E hook: `?keyframeInterval=N` shortens the camera GOP so new subscribers get a
 // renderable keyframe quickly. Without the param the normal default is used.
 function resolveCameraKeyframeInterval(): number {
-  if (typeof window === 'undefined') {
+  const params = readWindowSearchParams()
+  if (!params) {
     return DEFAULT_VIDEO_KEYFRAME_INTERVAL
   }
-  const raw = new URLSearchParams(window.location.search).get('keyframeInterval')
-  const parsed = raw ? Number(raw) : NaN
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_VIDEO_KEYFRAME_INTERVAL
+  return readPositiveIntegerParam(params, 'keyframeInterval') ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
+}
+
+function resolveE2ECameraSettings(): E2ECameraSettings | null {
+  const params = readWindowSearchParams()
+  if (!params) {
+    return null
+  }
+  const width = readPositiveIntegerParam(params, 'e2eVideoWidth')
+  const height = readPositiveIntegerParam(params, 'e2eVideoHeight')
+  const framerate = readPositiveIntegerParam(params, 'e2eVideoFramerate')
+  const bitrate = readPositiveIntegerParam(params, 'e2eVideoBitrate')
+  const codec = readNonEmptyStringParam(params, 'e2eVideoCodec')
+  if (!width || !height || !framerate || !bitrate) {
+    return null
+  }
+  return { width, height, framerate, bitrate, codec }
 }
 
 const CAMERA_KEYFRAME_INTERVAL = resolveCameraKeyframeInterval()
+const E2E_CAMERA_SETTINGS = resolveE2ECameraSettings()
 
-const CAMERA_PROFILES = [
+const DEFAULT_CAMERA_PROFILES = [
   { id: 'base', label: 'Base', codec: 'avc1.42001F', maxEncodePixels: 1280 * 720 },
   { id: 'main', label: 'Main', codec: 'avc1.4D4028', maxEncodePixels: Number.POSITIVE_INFINITY },
   { id: 'high', label: 'High', codec: 'avc1.640028', maxEncodePixels: Number.POSITIVE_INFINITY }
 ] as const
+const CAMERA_PROFILES = E2E_CAMERA_SETTINGS?.codec
+  ? [
+      {
+        id: 'e2e',
+        label: 'E2E',
+        codec: E2E_CAMERA_SETTINGS.codec,
+        maxEncodePixels: Number.POSITIVE_INFINITY
+      }
+    ]
+  : DEFAULT_CAMERA_PROFILES
 
-const CAMERA_RESOLUTIONS = [
+const DEFAULT_CAMERA_RESOLUTIONS = [
   { id: '1080p', label: '1080p', width: 1920, height: 1080, bitrate: 1_000_000 },
   { id: '720p', label: '720p', width: 1280, height: 720, bitrate: 500_000 },
   { id: '480p', label: '480p', width: 854, height: 480, bitrate: 200_000 }
 ] as const
+const CAMERA_RESOLUTIONS = E2E_CAMERA_SETTINGS
+  ? [
+      {
+        id: 'e2e',
+        label: 'E2E',
+        width: E2E_CAMERA_SETTINGS.width,
+        height: E2E_CAMERA_SETTINGS.height,
+        bitrate: E2E_CAMERA_SETTINGS.bitrate
+      }
+    ]
+  : DEFAULT_CAMERA_RESOLUTIONS
+const CAMERA_FRAMERATE = E2E_CAMERA_SETTINGS?.framerate ?? 30
 
 const CAMERA_CATALOG_TRACKS: CallCatalogTrack[] = CAMERA_PROFILES.flatMap((profile) =>
   CAMERA_RESOLUTIONS.filter((resolution) => resolution.width * resolution.height <= profile.maxEncodePixels).map(
@@ -43,7 +107,7 @@ const CAMERA_CATALOG_TRACKS: CallCatalogTrack[] = CAMERA_PROFILES.flatMap((profi
       width: resolution.width,
       height: resolution.height,
       bitrate: resolution.bitrate,
-      framerate: 30,
+      framerate: CAMERA_FRAMERATE,
       hardwareAcceleration: 'prefer-software',
       keyframeInterval: CAMERA_KEYFRAME_INTERVAL,
       isLive: true

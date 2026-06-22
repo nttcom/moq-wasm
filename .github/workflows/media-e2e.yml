@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/media-e2e.yml"
+      - ".github/actions/setup-wasm-pack/**"
       - "README.md"
       - "scripts/setup-media-e2e.mjs"
       - "scripts/run-media-e2e.mjs"
@@ -22,6 +23,7 @@ on:
       - example-e2e-ci
     paths:
       - ".github/workflows/media-e2e.yml"
+      - ".github/actions/setup-wasm-pack/**"
       - "README.md"
       - "scripts/setup-media-e2e.mjs"
       - "scripts/run-media-e2e.mjs"
@@ -70,7 +72,7 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+        uses: ./.github/actions/setup-wasm-pack
 
       - name: Prepare media E2E environment
         run: node scripts/setup-media-e2e.mjs

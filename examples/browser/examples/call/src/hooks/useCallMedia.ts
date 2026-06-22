@@ -118,6 +118,53 @@ const DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS: VideoEncodingSettings = {
   hardwareAcceleration: 'prefer-software'
 }
 
+type E2ECameraSettings = {
+  width: number
+  height: number
+  framerate: number
+  bitrate: number
+  codec: string | null
+}
+
+function readPositiveIntegerParam(params: URLSearchParams, name: string): number | null {
+  const raw = params.get(name)
+  const parsed = raw ? Number(raw) : NaN
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+function readNonEmptyStringParam(params: URLSearchParams, name: string): string | null {
+  const value = params.get(name)?.trim()
+  return value ? value : null
+}
+
+function resolveE2ECameraSettings(): E2ECameraSettings | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  const params = new URLSearchParams(window.location.search)
+  const width = readPositiveIntegerParam(params, 'e2eVideoWidth')
+  const height = readPositiveIntegerParam(params, 'e2eVideoHeight')
+  const framerate = readPositiveIntegerParam(params, 'e2eVideoFramerate')
+  const bitrate = readPositiveIntegerParam(params, 'e2eVideoBitrate')
+  const codec = readNonEmptyStringParam(params, 'e2eVideoCodec')
+  if (!width || !height || !framerate || !bitrate) {
+    return null
+  }
+  return { width, height, framerate, bitrate, codec }
+}
+
+const E2E_CAMERA_SETTINGS = resolveE2ECameraSettings()
+const INITIAL_CAMERA_ENCODING_SETTINGS: VideoEncodingSettings = E2E_CAMERA_SETTINGS
+  ? {
+      ...DEFAULT_VIDEO_ENCODING_SETTINGS,
+      width: E2E_CAMERA_SETTINGS.width,
+      height: E2E_CAMERA_SETTINGS.height,
+      framerate: E2E_CAMERA_SETTINGS.framerate,
+      bitrate: E2E_CAMERA_SETTINGS.bitrate,
+      ...(E2E_CAMERA_SETTINGS.codec ? { codec: E2E_CAMERA_SETTINGS.codec } : {})
+    }
+  : DEFAULT_VIDEO_ENCODING_SETTINGS
+
 type CatalogPresetSource = 'camera' | 'screenshare' | 'audio'
 type CatalogPreset = {
   label: string
@@ -175,7 +222,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
   const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState<string | null>(null)
   const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState<string | null>(null)
   const [selectedVideoEncoding, setSelectedVideoEncoding] = useState<VideoEncodingSettings>(
-    DEFAULT_VIDEO_ENCODING_SETTINGS
+    INITIAL_CAMERA_ENCODING_SETTINGS
   )
   const [selectedScreenShareEncoding, setSelectedScreenShareEncoding] = useState<VideoEncodingSettings>(
     DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS
@@ -188,9 +235,9 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
   const [captureSettings, setCaptureSettings] = useState<CaptureSettingsState>({
     videoEnabled: true,
     audioEnabled: true,
-    width: DEFAULT_VIDEO_ENCODING_SETTINGS.width,
-    height: DEFAULT_VIDEO_ENCODING_SETTINGS.height,
-    frameRate: 30,
+    width: E2E_CAMERA_SETTINGS?.width ?? DEFAULT_VIDEO_ENCODING_SETTINGS.width,
+    height: E2E_CAMERA_SETTINGS?.height ?? DEFAULT_VIDEO_ENCODING_SETTINGS.height,
+    frameRate: E2E_CAMERA_SETTINGS?.framerate ?? 30,
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true
@@ -245,7 +292,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     setCatalogTracks(initialCatalogTracks)
     const initialVideoEncoding = deriveCameraEncodingFromCatalogTracks(
       initialCatalogTracks,
-      DEFAULT_VIDEO_ENCODING_SETTINGS
+      INITIAL_CAMERA_ENCODING_SETTINGS
     )
     const initialScreenShareEncoding = deriveScreenShareEncodingFromCatalogTracks(
       initialCatalogTracks,

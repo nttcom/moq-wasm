@@ -2,7 +2,7 @@ export RUSTFLAGS := --cfg tokio_unstable --cfg web_sys_unstable_apis --remap-pat
 
 -include .env
 
-.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp test lint format browser-e2e-media browser-e2e-call browser-e2e-call-headed
+.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed
 
 # Applications
 relay:
@@ -25,6 +25,9 @@ live-ingest:
 		--moqt-url https://127.0.0.1:4433
 
 ## Media helpers
+relay-certs:
+	node scripts/ensure-relay-certs.mjs
+
 ffmpeg-rtmp:
 	ffmpeg -re \
 		-f lavfi -i "testsrc=size=1920x1080:rate=30" \

@@ -5,6 +5,7 @@ import {
   getCatalogStatus,
   getChatMessageByText,
   getMemberAudio,
+  getMemberCard,
   getMemberVideo,
   getSubscribeAudioButton,
   getSubscribeVideoButton,
@@ -16,7 +17,9 @@ import {
 // Assert that a video element is actively playing (decoded frames, time advancing, not paused).
 async function expectVideoPlaying(video: import('@playwright/test').Locator): Promise<void> {
   // Assert: video 要素がデコード済みデータを持つ readyState に達していることを確認する。
-  await expect.poll(async () => video.evaluate((el) => (el as HTMLVideoElement).readyState)).toBeGreaterThanOrEqual(2)
+  await expect
+    .poll(async () => video.evaluate((el) => (el as HTMLVideoElement).readyState), { timeout: 30_000 })
+    .toBeGreaterThanOrEqual(2)
   // Assert: 再生時刻が進み、映像が実際に流れていることを確認する。
   await expect
     .poll(async () => video.evaluate((el) => (el as HTMLVideoElement).currentTime), { timeout: 30_000 })
@@ -52,6 +55,8 @@ async function expectCatalogSubscribed(viewer: import('@playwright/test').Page, 
 async function subscribeMedia(viewer: import('@playwright/test').Page, memberName: string): Promise<void> {
   await getSubscribeVideoButton(viewer, memberName).click()
   await getSubscribeAudioButton(viewer, memberName).click()
+  await expect(getTrackStatus(viewer, 'video', memberName)).toHaveText('Subscribed', { timeout: 60_000 })
+  await expect(getTrackStatus(viewer, 'audio', memberName)).toHaveText('Subscribed', { timeout: 60_000 })
 }
 
 // Assert a remote member's video is playing and audio is being received.
@@ -91,12 +96,9 @@ test('cross-relay: two clients on different relays see each other and receive vi
     // Assert: Client2 側に alice のメンバーカードが現れ、カタログが自動購読されることを確認する。
     await expect(getCatalogStatus(client2.page.page, 'alice')).toHaveText('Subscribed', { timeout: 60_000 })
 
-    // Act: Client1 が bob の映像・音声を明示的に購読する。
-    await getSubscribeVideoButton(client1.page.page, 'bob').click()
-    await getSubscribeAudioButton(client1.page.page, 'bob').click()
-    // Act: Client2 が alice の映像・音声を明示的に購読する。
-    await getSubscribeVideoButton(client2.page.page, 'alice').click()
-    await getSubscribeAudioButton(client2.page.page, 'alice').click()
+    // Act: Client1/Client2 が相手の映像・音声を明示的に購読する。
+    await subscribeMedia(client1.page.page, 'bob')
+    await subscribeMedia(client2.page.page, 'alice')
 
     // Assert: Client1 が bob の映像を再生していることを確認する（クロスリレー経路）。
     await expectVideoPlaying(getMemberVideo(client1.page.page, 'bob'))
@@ -129,18 +131,19 @@ test('leave and rejoin with same memberName succeeds without stale-member failur
     await joinRoom(client2.page, roomName, 'bob', 'a')
     await enableMedia(client2.page)
 
-    // Assert: Client1 側に bob が現れカタログ購読が完了することを確認する。
-    await expect(getCatalogStatus(client1.page.page, 'bob')).toHaveText('Subscribed', { timeout: 60_000 })
+    // Assert: 双方に相手が現れカタログ購読が完了することを確認する。
+    await expectCatalogSubscribed(client1.page.page, 'bob')
+    await expectCatalogSubscribed(client2.page.page, 'alice')
 
     // Act: Client2 が映像・音声を購読し再生が始まることを確認する。
-    await getSubscribeVideoButton(client2.page.page, 'alice').click()
-    await getSubscribeAudioButton(client2.page.page, 'alice').click()
+    await subscribeMedia(client2.page.page, 'alice')
     await expectVideoPlaying(getMemberVideo(client2.page.page, 'alice'))
 
     // Act: Client2 がルームを退室する（Leave Room ボタン）。
     await client2.page.leaveButton.click()
-    // Assert: Join フォームに戻ることを確認する（ルームヘッダーが消える）。
+    // Assert: Join フォームに戻り、Client1 側から古い bob のメンバー表示が消える。
     await expect(client2.page.roomName).not.toBeVisible({ timeout: 15_000 })
+    await expect(getMemberCard(client1.page.page, 'bob')).not.toBeVisible({ timeout: 15_000 })
 
     // Act: Client2 が同じ名前・同じルームで再参加する。
     await joinRoom(client2.page, roomName, 'bob', 'a')
@@ -148,17 +151,13 @@ test('leave and rejoin with same memberName succeeds without stale-member failur
     // Assert: 再参加後もルームヘッダーにルーム名が表示されることを確認する。
     await expect(client2.page.roomName).toHaveText(roomName)
 
-    // Assert: Client1 側で bob が再度リモートメンバーとして現れカタログ購読されることを確認する。
-    await expect(getCatalogStatus(client1.page.page, 'bob')).toHaveText('Subscribed', { timeout: 60_000 })
+    // Assert: 再参加後も双方に相手が現れカタログ購読されることを確認する。
+    await expectCatalogSubscribed(client1.page.page, 'bob')
+    await expectCatalogSubscribed(client2.page.page, 'alice')
 
-    // Act: Client1 が bob の映像・音声を再購読する。
-    await getSubscribeVideoButton(client1.page.page, 'bob').click()
-    await getSubscribeAudioButton(client1.page.page, 'bob').click()
-
-    // Assert: 再参加後も Client1 が bob の映像を受信できることを確認する（再接続後の回帰検証）。
-    await expectVideoPlaying(getMemberVideo(client1.page.page, 'bob'))
-    // Assert: 音声も受信できることを確認する。
-    await expectAudioReceiving(getMemberAudio(client1.page.page, 'bob'))
+    // Assert: 再参加後も双方向で映像・音声が流れることを確認する。
+    await subscribeAndExpectMedia(client2.page.page, 'alice')
+    await subscribeAndExpectMedia(client1.page.page, 'bob')
   } finally {
     await client1.context.close()
     await client2.context.close()
@@ -227,28 +226,31 @@ test('repeated leave and rejoin keeps reconnecting with the same memberName', as
     await enableMedia(alice.page)
     await joinRoom(bob.page, roomName, 'bob', 'a')
     await enableMedia(bob.page)
-    // Assert: alice 側で bob のカタログ購読が完了する。
+    // Assert: 双方に相手が現れカタログ購読が完了する。
     await expectCatalogSubscribed(alice.page.page, 'bob')
+    await expectCatalogSubscribed(bob.page.page, 'alice')
 
     // Act / Assert: bob が退室→同名再参加を 3 回繰り返し、毎回問題なく再接続できることを確認する。
     for (let attempt = 1; attempt <= 3; attempt++) {
       // Act: bob がルームを退室する。
       await bob.page.leaveButton.click()
-      // Assert: Join フォームに戻る（ルームヘッダーが消える）。
+      // Assert: Join フォームに戻り、alice 側から古い bob のメンバー表示が消える。
       await expect(bob.page.roomName).not.toBeVisible({ timeout: 15_000 })
+      await expect(getMemberCard(alice.page.page, 'bob')).not.toBeVisible({ timeout: 15_000 })
 
       // Act: bob が同じ名前・同じルームに再参加する。
       await joinRoom(bob.page, roomName, 'bob', 'a')
       await enableMedia(bob.page)
       // Assert: 再参加のたびにルームヘッダーが表示される。
       await expect(bob.page.roomName).toHaveText(roomName)
-      // Assert: alice 側で bob が毎回リモートメンバーとして再認識される。
+      // Assert: 双方で相手が毎回リモートメンバーとして再認識される。
       await expectCatalogSubscribed(alice.page.page, 'bob')
-    }
+      await expectCatalogSubscribed(bob.page.page, 'alice')
 
-    // Assert: 繰り返し後も双方向で映像・音声が流れることを確認する。
-    await subscribeAndExpectMedia(bob.page.page, 'alice')
-    await subscribeAndExpectMedia(alice.page.page, 'bob')
+      // Assert: 各再参加直後に双方向で映像・音声が流れることを確認する。
+      await subscribeAndExpectMedia(bob.page.page, 'alice')
+      await subscribeAndExpectMedia(alice.page.page, 'bob')
+    }
   } finally {
     await alice.context.close()
     await bob.context.close()

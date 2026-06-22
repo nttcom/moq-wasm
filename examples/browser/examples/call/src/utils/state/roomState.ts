@@ -93,6 +93,15 @@ interface BuildRemoteMemberOptions {
   trackNamespace: string[]
 }
 
+function createFreshSubscribedTracks(): RemoteMember['subscribedTracks'] {
+  return {
+    chat: { isSubscribing: false, isSubscribed: false },
+    audio: { isSubscribing: false, isSubscribed: false },
+    video: { isSubscribing: false, isSubscribed: false },
+    screenshare: { isSubscribing: false, isSubscribed: false }
+  }
+}
+
 export function buildRemoteMember({
   existingMember,
   announcedUser,
@@ -107,28 +116,8 @@ export function buildRemoteMember({
         screenshare: { isAnnounced: true, trackNamespace },
         audio: { isAnnounced: true, trackNamespace }
       },
-      subscribedTracks: {
-        chat: {
-          isSubscribing: existingMember.subscribedTracks.chat.isSubscribing,
-          isSubscribed: existingMember.subscribedTracks.chat.isSubscribed,
-          subscribeId: existingMember.subscribedTracks.chat.subscribeId
-        },
-        audio: {
-          isSubscribing: existingMember.subscribedTracks.audio.isSubscribing,
-          isSubscribed: existingMember.subscribedTracks.audio.isSubscribed,
-          subscribeId: existingMember.subscribedTracks.audio.subscribeId
-        },
-        video: {
-          isSubscribing: existingMember.subscribedTracks.video.isSubscribing,
-          isSubscribed: existingMember.subscribedTracks.video.isSubscribed,
-          subscribeId: existingMember.subscribedTracks.video.subscribeId
-        },
-        screenshare: {
-          isSubscribing: existingMember.subscribedTracks.screenshare.isSubscribing,
-          isSubscribed: existingMember.subscribedTracks.screenshare.isSubscribed,
-          subscribeId: existingMember.subscribedTracks.screenshare.subscribeId
-        }
-      }
+      // Same-name rejoin is a fresh generation; do not carry stale subscription state forward.
+      subscribedTracks: createFreshSubscribedTracks()
     }
   }
 
@@ -143,11 +132,6 @@ export function buildRemoteMember({
     },
     // subscribeId is left undefined until the track is actually subscribed; the
     // id is then taken from subscribe()'s return value (issued by moqtClient).
-    subscribedTracks: {
-      chat: { isSubscribing: false, isSubscribed: false },
-      audio: { isSubscribing: false, isSubscribed: false },
-      video: { isSubscribing: false, isSubscribed: false },
-      screenshare: { isSubscribing: false, isSubscribed: false }
-    }
+    subscribedTracks: createFreshSubscribedTracks()
   }
 }

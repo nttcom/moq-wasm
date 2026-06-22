@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/call-e2e.yml"
+      - ".github/workflows/relay-image.yml"
+      - ".github/actions/setup-wasm-pack/**"
       - "scripts/setup-media-e2e.mjs"
       - "scripts/run-call-e2e.mjs"
       - "scripts/media-e2e-helpers.mjs"
@@ -22,6 +24,8 @@ on:
       - example-e2e-ci
     paths:
       - ".github/workflows/call-e2e.yml"
+      - ".github/workflows/relay-image.yml"
+      - ".github/actions/setup-wasm-pack/**"
       - "scripts/setup-media-e2e.mjs"
       - "scripts/run-call-e2e.mjs"
       - "scripts/media-e2e-helpers.mjs"
@@ -39,9 +43,20 @@ permissions:
   contents: read
 
 jobs:
+  # Build (or reuse) the shared relay image once; the e2e job pulls it.
+  relay-image:
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/relay-image.yml
+
   call-e2e:
+    needs: relay-image
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
 
     steps:
       - name: Checkout repository
@@ -70,7 +85,7 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+        uses: ./.github/actions/setup-wasm-pack
 
       - name: Prepare browser E2E environment
         run: node scripts/setup-media-e2e.mjs
@@ -79,8 +94,23 @@ jobs:
         working-directory: examples/browser
         run: npx playwright install --with-deps chromium
 
-      # The runner builds the relay image and starts redis + relay-a + relay-b via
-      # docker compose (preinstalled on ubuntu-latest), then runs the Playwright spec.
+      - name: Log in to GHCR
+        # docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 = v3.7.0
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull prebuilt relay image
+        # Tag it as moqt-relay:local so docker compose (and the runner) reuse it
+        # without rebuilding.
+        run: |
+          docker pull "${{ needs.relay-image.outputs.image }}"
+          docker tag "${{ needs.relay-image.outputs.image }}" moqt-relay:local
+
+      # The runner reuses the prebuilt moqt-relay:local image, starts redis +
+      # relay-a + relay-b via docker compose, then runs the Playwright spec.
       - name: Run call E2E
         env:
           CI: "true"

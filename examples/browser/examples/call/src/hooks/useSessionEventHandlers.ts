@@ -111,8 +111,8 @@ function createPublishNamespaceDoneHandler({ session, roomName, userName, setRoo
       if (!member) {
         return currentRoom
       }
-      // Release the dangling subscriptions outside the state updater.
-      queueMicrotask(() => unsubscribeMemberTracks(session, member))
+      // Release local media contexts immediately for the departed member.
+      unsubscribeMemberTracks(session, member)
       return removeRemoteMember(currentRoom, announcedUser)
     })
   }

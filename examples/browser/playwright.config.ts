@@ -1,11 +1,11 @@
 import { defineConfig } from '@playwright/test'
-import { computeCertificateSpkiBase64, ensureLinuxEnvironment } from './playwright.helpers'
+import { computeCertificateSpkiBase64, ensureFakeVideoCaptureFile, ensureLinuxEnvironment } from './playwright.helpers'
 
 ensureLinuxEnvironment()
 
 const certificateSpki = computeCertificateSpkiBase64()
+const fakeVideoPath = ensureFakeVideoCaptureFile()
 const baseURL = process.env.MEDIA_E2E_BASE_URL ?? 'http://127.0.0.1:4173'
-
 export default defineConfig({
   testDir: './tests',
   testMatch: /(media-e2e|call-e2e)\.spec\.ts/,
@@ -30,6 +30,7 @@ export default defineConfig({
         // Fallback for environments where SPKI pinning alone is insufficient.
         '--ignore-certificate-errors',
         '--use-fake-device-for-media-stream',
+        '--use-file-for-fake-video-capture=' + fakeVideoPath,
         '--use-fake-ui-for-media-stream',
         '--autoplay-policy=no-user-gesture-required'
       ]

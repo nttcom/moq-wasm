@@ -40,6 +40,9 @@ export class MediaTransportState {
 
   private readonly audioCodecSent = new Set<string>()
   private readonly videoCodecSent = new Set<string>()
+  // Tracks which video aliases have received at least one keyframe object.
+  // Cleared for an alias when it is removed so a re-subscriber starts clean.
+  private readonly videoKeyframeDelivered = new Set<string>()
 
   ensureVideoSubgroup(subgroupId: SubgroupId): void {
     this.ensureSubgroup(this.video, subgroupId)
@@ -137,6 +140,14 @@ export class MediaTransportState {
     this.videoCodecSent.add(aliasKey(trackAlias))
   }
 
+  hasVideoKeyframeDelivered(alias: bigint | string): boolean {
+    return this.videoKeyframeDelivered.has(aliasKey(alias))
+  }
+
+  markVideoKeyframeDelivered(alias: bigint | string): void {
+    this.videoKeyframeDelivered.add(aliasKey(alias))
+  }
+
   resetAlias(trackAlias: bigint | string): void {
     const key = aliasKey(trackAlias)
     for (const subgroup of this.video.subgroups.values()) {
@@ -147,6 +158,8 @@ export class MediaTransportState {
     }
     this.audioCodecSent.delete(key)
     this.videoCodecSent.delete(key)
+    // A re-subscribing alias must receive a keyframe again from scratch.
+    this.videoKeyframeDelivered.delete(key)
   }
 
   private ensureSubgroup(state: TrackCounters, subgroupId: SubgroupId): void {

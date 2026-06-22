@@ -1,20 +1,20 @@
 mod utils;
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 mod loc;
 mod media_streaming_format;
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 mod messages;
 
 pub use media_streaming_format::*;
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 pub use messages::*;
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 use anyhow::{Result, anyhow};
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 use bytes::{Buf, Bytes, BytesMut};
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 use moqt::wire::{
     AuthorizationToken, BufGetExt, BufPutExt, ClientSetup, ContentExists, ControlMessageType,
     DatagramField, ExtensionHeaders, Fetch, FetchHeader, FetchObjectField, FetchOk, FetchType,
@@ -23,19 +23,19 @@ use moqt::wire::{
     SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace,
     SubscribeOk, encode_control_message, take_control_message,
 };
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 use std::{
     cell::RefCell,
     collections::{BTreeSet, HashMap, HashSet},
     io::Cursor,
     rc::Rc,
 };
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 use wasm_bindgen_futures::JsFuture;
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 use web_sys::{
     ReadableStream, ReadableStreamDefaultReader, WebTransport, WritableStreamDefaultWriter,
 };
@@ -46,7 +46,7 @@ extern "C" {
     fn log(s: &str);
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 macro_rules! console_log {
     ($($t:tt)*) => {
         log(&format_args!($($t)*).to_string())
@@ -58,31 +58,31 @@ fn main() {
     utils::set_panic_hook();
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 type WriterKey = (u64, u64, u64);
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TrackKey {
     namespace: Vec<String>,
     name: String,
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 impl TrackKey {
     fn new(namespace: Vec<String>, name: String) -> Self {
         Self { namespace, name }
     }
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 #[derive(Debug, Clone)]
 struct OutgoingSubscribeRequest {
     track_key: TrackKey,
     track_alias: Option<u64>,
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 #[derive(Debug, Clone)]
 struct IncomingSubscribeRequest {
     track_key: TrackKey,
@@ -90,7 +90,7 @@ struct IncomingSubscribeRequest {
     track_alias: Option<u64>,
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 #[derive(Debug, Default)]
 struct ClientState {
     max_request_id: u64,
@@ -107,7 +107,7 @@ struct ClientState {
     next_track_alias: u64,
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 impl ClientState {
     fn configure(&mut self, max_request_id: u64) {
         self.max_request_id = max_request_id;
@@ -296,7 +296,7 @@ impl ClientState {
     }
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 pub struct MOQTClient {
     url: String,
@@ -309,7 +309,7 @@ pub struct MOQTClient {
     callbacks: Rc<RefCell<MOQTCallbacks>>,
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 impl MOQTClient {
     #[wasm_bindgen(constructor)]
@@ -1161,7 +1161,7 @@ impl MOQTClient {
     }
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 async fn receive_unidirectional_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
@@ -1177,7 +1177,7 @@ async fn receive_unidirectional_thread(
     Ok(())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 async fn control_stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     state: Rc<RefCell<ClientState>>,
@@ -1202,7 +1202,7 @@ async fn control_stream_read_thread(
     Ok(())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 async fn datagram_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
@@ -1216,7 +1216,7 @@ async fn datagram_read_thread(
     Ok(())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 async fn uni_directional_stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
@@ -1312,7 +1312,7 @@ async fn uni_directional_stream_read_thread(
     Ok(())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 async fn handle_control_message(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     state: Rc<RefCell<ClientState>>,
@@ -1513,7 +1513,7 @@ async fn handle_control_message(
     Ok(())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn emit_object_datagram(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     datagram: ObjectDatagram,
@@ -1648,7 +1648,7 @@ fn emit_object_datagram(
     Ok(())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn emit_subgroup_header(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     header: &SubgroupHeader,
@@ -1669,7 +1669,7 @@ fn emit_subgroup_header(
     Ok(())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn emit_fetch_object(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     request_id: u64,
@@ -1682,7 +1682,7 @@ fn emit_fetch_object(
     Ok(())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn emit_subgroup_object(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     header: &SubgroupHeader,
@@ -1724,7 +1724,7 @@ fn emit_subgroup_object(
     Ok(())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn default_setup_parameters(max_request_id: u64) -> SetupParameter {
     SetupParameter {
         path: None,
@@ -1736,7 +1736,7 @@ fn default_setup_parameters(max_request_id: u64) -> SetupParameter {
     }
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn authorization_tokens(auth_info: &str) -> Vec<AuthorizationToken> {
     if auth_info.trim().is_empty() {
         return vec![];
@@ -1748,7 +1748,7 @@ fn authorization_tokens(auth_info: &str) -> Vec<AuthorizationToken> {
     }]
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn empty_extension_headers() -> ExtensionHeaders {
     ExtensionHeaders {
         prior_group_id_gap: vec![],
@@ -1757,7 +1757,7 @@ fn empty_extension_headers() -> ExtensionHeaders {
     }
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn content_exists_from_fields(
     content_exists: bool,
     largest_group_id: Option<u64>,
@@ -1775,7 +1775,7 @@ fn content_exists_from_fields(
     }
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn filter_type_from_fields(
     filter_type: u8,
     start_group: Option<u64>,
@@ -1802,7 +1802,7 @@ fn filter_type_from_fields(
     }
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn take_subgroup_header(buf: &mut BytesMut) -> Result<Option<SubgroupHeader>> {
     let mut cursor = Cursor::new(buf.as_ref());
     match SubgroupHeader::decode(&mut cursor) {
@@ -1815,14 +1815,14 @@ fn take_subgroup_header(buf: &mut BytesMut) -> Result<Option<SubgroupHeader>> {
     }
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn decode_request_id(cursor: &mut Cursor<&[u8]>) -> Result<u64> {
     cursor
         .try_get_varint()
         .map_err(|error| anyhow!("failed to decode request id: {error}"))
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 async fn write_to_writer(
     writer: &WritableStreamDefaultWriter,
     bytes: &[u8],
@@ -1833,7 +1833,7 @@ async fn write_to_writer(
     Ok(())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 async fn read_byte_chunk(reader: &ReadableStreamDefaultReader) -> Result<Option<Vec<u8>>, JsValue> {
     let result = JsFuture::from(reader.read()).await?;
     let done = js_sys::Boolean::from(js_sys::Reflect::get(&result, &JsValue::from_str("done"))?)
@@ -1845,7 +1845,7 @@ async fn read_byte_chunk(reader: &ReadableStreamDefaultReader) -> Result<Option<
     Ok(Some(js_sys::Uint8Array::from(value).to_vec()))
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 async fn read_reader_value(
     reader: &ReadableStreamDefaultReader,
 ) -> Result<Option<JsValue>, JsValue> {
@@ -1859,7 +1859,7 @@ async fn read_reader_value(
     Ok(Some(value))
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn normalize_stream_chunk(stream_snapshot: &mut Vec<u8>, chunk: Vec<u8>) -> Vec<u8> {
     if !stream_snapshot.is_empty()
         && chunk.len() >= stream_snapshot.len()
@@ -1874,19 +1874,19 @@ fn normalize_stream_chunk(stream_snapshot: &mut Vec<u8>, chunk: Vec<u8>) -> Vec<
     chunk
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn webtransport_closed_promise(transport: &WebTransport) -> Option<js_sys::Promise> {
     js_sys::Reflect::get(transport.as_ref(), &JsValue::from_str("closed"))
         .ok()
         .and_then(|value| value.dyn_into::<js_sys::Promise>().ok())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 fn js_error(message: impl Into<String>) -> JsValue {
     JsValue::from_str(&message.into())
 }
 
-#[cfg(feature = "web_sys_unstable_apis")]
+#[cfg(web_sys_unstable_apis)]
 #[derive(Default)]
 struct MOQTCallbacks {
     server_setup_callback: Option<js_sys::Function>,
@@ -1908,6 +1908,6 @@ struct MOQTCallbacks {
     connection_closed_callback: Option<js_sys::Function>,
 }
 
-#[cfg(not(feature = "web_sys_unstable_apis"))]
+#[cfg(not(web_sys_unstable_apis))]
 #[wasm_bindgen]
 pub struct MOQTClient;

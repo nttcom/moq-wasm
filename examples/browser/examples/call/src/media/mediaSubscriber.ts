@@ -11,6 +11,7 @@ import {
 } from '../types/jitterBuffer'
 import type { JitterBufferEvent } from '../types/media'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import { isCallVideoPipelineDebugEnabled } from '../utils/debug'
 
 export type RemoteVideoSource = 'camera' | 'screenshare'
 type JitterBufferActivity = {
@@ -19,6 +20,7 @@ type JitterBufferActivity = {
   capacityFrames: number
 }
 const AUDIO_PLAYBACK_QUEUE_REPORT_INTERVAL_MS = 100
+const VIDEO_SUBSCRIBER_LOG_PREFIX = '[call][subscriber][video]'
 
 interface MediaSubscriberHandlers {
   onRemoteVideoStream?: (userId: string, stream: MediaStream, source: RemoteVideoSource) => void
@@ -92,6 +94,7 @@ interface VideoSubscriptionContext {
   worker: Worker
   writer: WritableStreamDefaultWriter<VideoFrame>
   stream: MediaStream
+  frameLogCount: number
 }
 
 interface AudioSubscriptionContext {
@@ -271,6 +274,7 @@ export class MediaSubscriber {
         return
       }
       if (data.type === 'frame') {
+        this.logVideoSubscriberFrame(context, trackAlias, 'worker-frame', data)
         const lastCodec = this.videoCodecByTrackAlias.get(trackAlias)
         const lastSize = this.videoSizeByTrackAlias.get(trackAlias)
         if (
@@ -291,12 +295,20 @@ export class MediaSubscriber {
           }
         }
       }
-      await writer.ready
-      await writer.write(data.frame)
+      try {
+        await writer.ready
+        this.logVideoSubscriberFrame(context, trackAlias, 'writer-ready', data)
+        await writer.write(data.frame)
+        this.logVideoSubscriberFrame(context, trackAlias, 'writer-written', data)
+      } catch (error) {
+        this.logVideoSubscriberFrame(context, trackAlias, 'writer-failed', data, error)
+        throw error
+      }
     }
 
     const stream = new MediaStream([generator])
-    this.videoContexts.set(trackAlias, { userId, source, worker, writer, stream })
+    const context: VideoSubscriptionContext = { userId, source, worker, writer, stream, frameLogCount: 0 }
+    this.videoContexts.set(trackAlias, context)
     this.handlers.onRemoteVideoStream?.(userId, stream, source)
     if (codec) {
       worker.postMessage({ type: 'catalog', codec })
@@ -305,10 +317,45 @@ export class MediaSubscriber {
     if (!this.videoJitterConfigByUserId.has(userId)) {
       this.videoJitterConfigByUserId.set(userId, config)
     }
-    worker.postMessage({ type: 'config', config })
+    worker.postMessage({
+      type: 'config',
+      config: { ...config, debugVideoPipeline: isCallVideoPipelineDebugEnabled() }
+    })
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
       this.forwardToWorker(worker, groupId, message)
+    )
+  }
+
+  private logVideoSubscriberFrame(
+    context: VideoSubscriptionContext,
+    trackAlias: bigint,
+    event: string,
+    frame: { width?: number; height?: number },
+    error?: unknown
+  ): void {
+    if (!isCallVideoPipelineDebugEnabled()) {
+      return
+    }
+    const shouldLog = context.frameLogCount < 5 || event === 'writer-failed'
+    if (event === 'worker-frame') {
+      context.frameLogCount += 1
+    }
+    if (!shouldLog) {
+      return
+    }
+    console.info(
+      VIDEO_SUBSCRIBER_LOG_PREFIX,
+      JSON.stringify({
+        event,
+        userId: context.userId,
+        source: context.source,
+        trackAlias: trackAlias.toString(),
+        frameLogCount: context.frameLogCount,
+        width: frame.width,
+        height: frame.height,
+        error: error instanceof Error ? error.message : undefined
+      })
     )
   }
 

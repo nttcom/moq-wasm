@@ -1,0 +1,78 @@
+name: Relay Image
+
+# Reusable workflow: build the relay docker image once per content hash and push
+# it to GHCR, so the e2e workflows (call-e2e, cascading-relay-e2e) can pull a
+# prebuilt image instead of each compiling the relay from scratch.
+#
+# The image tag is a hash of every input that affects the relay binary, so the
+# build runs only when one of those inputs changes; otherwise the existing image
+# is reused. Callers receive the fully-qualified image reference via the `image`
+# output.
+
+on:
+  workflow_call:
+    outputs:
+      image:
+        description: "Fully-qualified relay image reference to pull"
+        value: ${{ jobs.build-relay-image.outputs.image }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-relay-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout repository
+        # actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 = v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Resolve image reference
+        id: meta
+        # Tag = hash of everything that affects the relay binary. The repository
+        # name is lowercased because GHCR namespaces must be lowercase.
+        run: |
+          tag="${{ hashFiles('relay/**', 'moqt/**', 'shared/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain', 'relay/Dockerfile') }}"
+          repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${repo}/relay:${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        # docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 = v3.7.0
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check whether the image already exists
+        id: exists
+        run: |
+          if docker manifest inspect "${{ steps.meta.outputs.image }}" >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Relay image already present: ${{ steps.meta.outputs.image }}"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.exists.outputs.found == 'false'
+        # docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f = v3.12.0
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build and push relay image
+        if: steps.exists.outputs.found == 'false'
+        # docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 = v6.19.2
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: relay/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+          cache-from: type=gha,scope=relay
+          cache-to: type=gha,scope=relay,mode=max

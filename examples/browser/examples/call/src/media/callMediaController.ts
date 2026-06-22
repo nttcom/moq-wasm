@@ -9,6 +9,7 @@ import type { SubscribeMessage } from '../../../../pkg/moqt_client_wasm'
 import type { CallCatalogTrack, CatalogSubscribeRole, CatalogTrackRole } from '../types/catalog'
 import type { JitterBufferEvent } from '../types/media'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import { isCallVideoPipelineDebugEnabled } from '../utils/debug'
 
 export interface MediaHandlers {
   onLocalVideoStream?: (stream: MediaStream | null, source: 'camera' | 'screenshare') => void
@@ -155,30 +156,40 @@ export class CallMediaController {
     })
 
     client.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
-      console.info('[call][moqt] received SUBSCRIBE', {
-        subscribe,
-        isSuccess,
-        code
-      })
+      const trackName = subscribe.trackName ?? ''
+      const isLocalTrack = this.isLocalTrack(subscribe)
+      const isCatalogTrack = this.publisher.isCatalogTrack(trackName)
+      const debugVideoPipeline = isCallVideoPipelineDebugEnabled()
+      if (debugVideoPipeline) {
+        this.logIncomingSubscribe(subscribe, isSuccess, code, isLocalTrack, isCatalogTrack)
+      } else {
+        console.info('[call][moqt] received SUBSCRIBE', {
+          subscribe,
+          isSuccess,
+          code
+        })
+      }
       if (!isSuccess) {
         await respondError(BigInt(code), 'Subscription validation failed')
         return
       }
-      if (!this.isLocalTrack(subscribe)) {
+      if (!isLocalTrack) {
         await respondError(404n, 'Unknown namespace')
         return
       }
-      const trackName = subscribe.trackName ?? ''
       if (trackName === 'chat') {
         await respondOk(0n)
         return
       }
-      if (this.publisher.isCatalogTrack(trackName)) {
+      if (isCatalogTrack) {
         const trackAlias = await respondOk(0n)
         await this.publisher.sendCatalogToAlias(trackAlias)
         return
       }
       const role = this.publisher.resolveTrackRole(trackName)
+      if (debugVideoPipeline) {
+        this.logIncomingSubscribe(subscribe, isSuccess, code, isLocalTrack, isCatalogTrack, role)
+      }
       if (!role) {
         await respondError(404n, 'Unknown track')
         return
@@ -187,6 +198,7 @@ export class CallMediaController {
       try {
         if (role === 'video') {
           await this.publisher.applyVideoEncodingForTrack(trackName)
+          this.publisher.forceVideoKeyframeForTrack(trackName)
         } else if (role === 'audio') {
           await this.publisher.applyAudioEncodingForTrack(trackName)
         }
@@ -305,6 +317,29 @@ export class CallMediaController {
 
   setAudioCaptureConstraints(constraints: AudioCaptureConstraints): void {
     this.publisher.setAudioCaptureConstraints(constraints)
+  }
+
+  private logIncomingSubscribe(
+    subscribe: SubscribeMessage,
+    isSuccess: boolean,
+    code: number,
+    isLocalTrack: boolean,
+    isCatalogTrack: boolean,
+    role?: CatalogTrackRole | null
+  ): void {
+    console.info(
+      '[call][moqt] received SUBSCRIBE',
+      JSON.stringify({
+        trackNamespace: [...subscribe.trackNamespace],
+        trackName: subscribe.trackName,
+        requestId: subscribe.requestId.toString(),
+        isSuccess,
+        code,
+        isLocalTrack,
+        isCatalogTrack,
+        role: role ?? null
+      })
+    )
   }
 
   private isLocalTrack(subscribe: SubscribeMessage): boolean {

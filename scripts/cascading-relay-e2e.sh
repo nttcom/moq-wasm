@@ -25,7 +25,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker compose build relay-common
+node scripts/ensure-relay-certs.mjs
+
+# Reuse a prebuilt relay image when present (pulled from the registry in CI);
+# otherwise build it locally.
+if docker image inspect moqt-relay:local >/dev/null 2>&1; then
+  echo "Reusing existing moqt-relay:local image (skipping build)."
+else
+  docker compose build relay-common
+fi
 docker compose up -d redis relay-a relay-b
 docker compose logs -f --no-color relay-a relay-b &
 LOGS_PID=$!

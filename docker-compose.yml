@@ -44,6 +44,9 @@ services:
       RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
     ports:
       - "4433:443/udp"
+    # Playwright pins the host certificate SPKI; relay must serve the same keypair.
+    volumes:
+      - ./relay/keys:/workspace/relay/keys:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -65,6 +68,9 @@ services:
       RELAY_LOG_FILTER: ${RELAY_LOG_FILTER:-relay=info,moqt=info}
     ports:
       - "4434:443/udp"
+    # Playwright pins the host certificate SPKI; relay must serve the same keypair.
+    volumes:
+      - ./relay/keys:/workspace/relay/keys:ro
     depends_on:
       redis:
         condition: service_healthy

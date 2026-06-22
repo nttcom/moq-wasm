@@ -149,6 +149,7 @@ export class LocalSession {
 
     this.transitionToState(LocalSessionState.Disconnecting)
     try {
+      await this.unsubscribeAllActiveSubscriptions()
       await this.mediaController.dispose()
       this.subscribeTrackAliases.clear()
       this.chatMessageHandler = null
@@ -318,18 +319,30 @@ export class LocalSession {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot unsubscribe when session state is "${this.state}"`)
     }
-    await this.client.unsubscribe(subscribeId)
+
     const trackAlias = this.subscribeTrackAliases.get(subscribeId)
     this.subscribeTrackAliases.delete(subscribeId)
-    if (role === 'video' || role === 'screenshare' || role === 'audio') {
-      if (trackAlias !== undefined) {
-        this.mediaController.unregisterRemoteTrack(trackAlias, role)
-      }
+    if (trackAlias !== undefined) {
+      this.mediaController.unregisterRemoteTrack(trackAlias, role)
+    }
+
+    await this.client.unsubscribe(subscribeId)
+  }
+
+  private async unsubscribeAllActiveSubscriptions(): Promise<void> {
+    const subscribeIds = Array.from(this.subscribeTrackAliases.keys())
+    if (!subscribeIds.length) {
       return
     }
-    if (trackAlias !== undefined) {
-      this.mediaController.unregisterRemoteTrack(trackAlias)
-    }
+    await Promise.all(
+      subscribeIds.map(async (subscribeId) => {
+        try {
+          await this.client.unsubscribe(subscribeId)
+        } catch (error) {
+          console.warn(`[call] failed to unsubscribe during disconnect (${subscribeId.toString()})`, error)
+        }
+      })
+    )
   }
 
   async sendChatMessage(message: string): Promise<void> {

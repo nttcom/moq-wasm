@@ -2,8 +2,10 @@ import { createBitrateLogger } from '../bitrate'
 import { monotonicUnixMicros } from '../clock'
 
 let videoEncoder: VideoEncoder | undefined
-let keyframeInterval: number
+// Default keeps periodic keyframes alive even before the first keyframeInterval message.
+let keyframeInterval: number = 30
 let encoderConfig: VideoEncoderConfig | null = null
+let forceNextKeyframe = false
 let timestampOffset: number | null = null
 const captureTimestampByChunkTimestamp = new Map<number, number>()
 
@@ -125,7 +127,12 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
       continue
     }
 
-    const keyFrame = frameCounter % keyframeInterval == 0
+    const forced = forceNextKeyframe
+    const keyFrame = forced || frameCounter % keyframeInterval === 0
+    if (forced) {
+      forceNextKeyframe = false
+      frameCounter = 0
+    }
     setCaptureTimestampMicros(videoFrame.timestamp, monotonicUnixMicros())
     videoEncoder.encode(videoFrame, { keyFrame })
     frameCounter++
@@ -161,6 +168,8 @@ function takeCaptureTimestampMicros(timestamp: number): number | undefined {
 self.onmessage = async (event) => {
   if (event.data.type === 'keyframeInterval') {
     keyframeInterval = event.data.keyframeInterval
+  } else if (event.data.type === 'forceKeyframe') {
+    forceNextKeyframe = true
   } else if (event.data.type === 'encoderConfig') {
     const newConfig = buildConfigFromMessage(event.data.config)
     encoderConfig = newConfig

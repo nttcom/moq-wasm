@@ -14,6 +14,7 @@ import {
   type CallCatalogTrack
 } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import { isCallVideoPipelineDebugEnabled } from '../utils/debug'
 
 type LocalStreamHandler = (stream: MediaStream | null) => void
 type VideoSource = 'camera' | 'screenshare'
@@ -62,7 +63,10 @@ type VideoTrackEncoderContext = {
   pendingSendJobs: number
   activeAliases: Set<string>
   videoGroupStates: Map<bigint, GroupState>
+  videoObjectLogCounts: Map<string, number>
 }
+
+type VideoTrackTransportState = Pick<VideoTrackEncoderContext, 'transportState' | 'videoGroupStates'>
 
 type VideoSendTimingAccumulator = {
   objectSendMs: number
@@ -94,6 +98,7 @@ export type SubscribedCatalogTrack = CallCatalogTrack & {
 
 const CATALOG_TRACK_NAME = 'catalog'
 const CHAT_TRACK_NAME = 'chat'
+const VIDEO_PUBLISHER_LOG_PREFIX = '[call][publisher][video]'
 
 export class MediaPublisher {
   private handlers: MediaPublisherHandlers = {}
@@ -413,7 +418,9 @@ export class MediaPublisher {
       }
       context.worker.postMessage({ type: 'keyframeInterval', keyframeInterval })
       if (!context.encodingStarted) {
-        this.startVideoTrackEncoding(context)
+        // A suspended context may hold a stale cloned track/worker after the last subscriber left.
+        // Refresh it on subscribe while retaining transport counters for monotonic groups.
+        this.restartVideoTrackContext(trackName)
         return
       }
       this.restartVideoTrackContext(trackName)
@@ -430,6 +437,18 @@ export class MediaPublisher {
       return
     }
     this.restartVideoTrackContext(trackName)
+  }
+
+  isVideoTrackEncodingStarted(trackName: string): boolean {
+    return this.videoTrackContexts.get(trackName)?.encodingStarted === true
+  }
+
+  forceVideoKeyframeForTrack(trackName: string): void {
+    const context = this.videoTrackContexts.get(trackName)
+    if (!context || !context.encodingStarted) {
+      return
+    }
+    context.worker.postMessage({ type: 'forceKeyframe' })
   }
 
   async applyAudioEncodingForTrack(trackName: string): Promise<void> {
@@ -552,7 +571,8 @@ export class MediaPublisher {
     trackName: string,
     sourceTrack: MediaStreamTrack,
     config: VideoEncodingSettings,
-    keyframeInterval: number
+    keyframeInterval: number,
+    retainedState?: VideoTrackTransportState
   ): void {
     const track = sourceTrack.clone()
     const processor = new MediaStreamTrackProcessor({ track })
@@ -568,11 +588,12 @@ export class MediaPublisher {
         type: 'module'
       }),
       encodingStarted: false,
-      transportState: new MediaTransportState(),
+      transportState: retainedState?.transportState ?? new MediaTransportState(),
       sendQueue: Promise.resolve(),
       pendingSendJobs: 0,
       activeAliases: new Set<string>(),
-      videoGroupStates: new Map<bigint, GroupState>()
+      videoGroupStates: retainedState?.videoGroupStates ?? new Map<bigint, GroupState>(),
+      videoObjectLogCounts: new Map<string, number>()
     }
 
     context.worker.onmessage = async (event: MessageEvent) => {
@@ -779,10 +800,13 @@ export class MediaPublisher {
     if (!sourceTrack) {
       return
     }
-    const { source, config, encodingStarted } = context
+    const { source, config, encodingStarted, transportState, videoGroupStates } = context
     const keyframeInterval = this.getKeyframeIntervalForTrackName(trackName)
     this.stopVideoTrackContext(trackName)
-    this.createVideoTrackContext(source, trackName, sourceTrack, config, keyframeInterval)
+    this.createVideoTrackContext(source, trackName, sourceTrack, config, keyframeInterval, {
+      transportState,
+      videoGroupStates
+    })
     if (encodingStarted) {
       const next = this.videoTrackContexts.get(trackName)
       if (next) {
@@ -830,6 +854,19 @@ export class MediaPublisher {
       return
     }
 
+    const isKeyframe = chunk.type === 'key'
+    if (isKeyframe) {
+      this.logVideoPublisherEvent({
+        event: 'keyframe-chunk',
+        trackName: context.trackName,
+        source: context.source,
+        codec: context.config.codec,
+        chunkType: chunk.type,
+        aliases: aliases.map((alias) => alias.toString()),
+        payloadBytes: chunk.byteLength
+      })
+    }
+
     const enqueueStartedAtMs = performance.now()
     const captureToEncodeDoneMs =
       typeof captureTimestampMicros === 'number' &&
@@ -864,10 +901,11 @@ export class MediaPublisher {
             payload,
             rawClient,
             loc,
-            timingAcc
+            timingAcc,
+            isKeyframe
           )
         }
-        await sendVideoChunkViaMoqt({
+        const { needsKeyframe } = await sendVideoChunkViaMoqt({
           chunk,
           metadata,
           captureTimestampMicros,
@@ -877,6 +915,11 @@ export class MediaPublisher {
           transportState: context.transportState,
           sender
         })
+        // A newly-subscribed alias has not received a keyframe yet; force one so
+        // it can start decoding instead of waiting for the next GOP boundary.
+        if (needsKeyframe) {
+          this.forceVideoKeyframeForTrack(context.trackName)
+        }
         const sendFinishedAtMs = performance.now()
         this.handlers.onLocalVideoSendTiming?.(
           {
@@ -900,6 +943,17 @@ export class MediaPublisher {
         )
       })
       .catch((error) => {
+        if (isKeyframe) {
+          this.logVideoPublisherEvent({
+            event: 'keyframe-send-failed',
+            trackName: context.trackName,
+            source: context.source,
+            codec: context.config.codec,
+            chunkType: chunk.type,
+            aliases: aliases.map((alias) => alias.toString()),
+            payloadBytes: chunk.byteLength
+          })
+        }
         console.error(`${context.trackName} video send failed:`, error)
       })
       .finally(() => {
@@ -952,7 +1006,8 @@ export class MediaPublisher {
     payload: Uint8Array,
     client: MOQTClient,
     locHeader?: LocHeader,
-    timingAcc?: VideoSendTimingAccumulator
+    timingAcc?: VideoSendTimingAccumulator,
+    logKeyframeSend = false
   ): Promise<void> {
     const previousState = context.videoGroupStates.get(trackAlias)
     if (previousState && previousState.groupId !== groupId) {
@@ -980,7 +1035,54 @@ export class MediaPublisher {
     if (timingAcc) {
       timingAcc.objectSendMs += Math.max(0, performance.now() - objectSendStartedAtMs)
     }
+    if (
+      isCallVideoPipelineDebugEnabled() &&
+      (logKeyframeSend || this.shouldLogSampledVideoObject(context, trackAlias, groupId, objectId))
+    ) {
+      this.logVideoPublisherEvent({
+        event: logKeyframeSend ? 'keyframe-object-sent' : 'sampled-delta-object-sent',
+        trackName: context.trackName,
+        source: context.source,
+        codec: context.config.codec,
+        chunkType: logKeyframeSend ? 'key' : 'delta',
+        aliases: [trackAlias.toString()],
+        groupId: groupId.toString(),
+        subgroupId: subgroupId.toString(),
+        objectId: objectId.toString(),
+        payloadBytes: payload.byteLength
+      })
+    }
     context.videoGroupStates.set(trackAlias, { groupId, lastObjectId: objectId })
+  }
+
+  private shouldLogSampledVideoObject(
+    context: VideoTrackEncoderContext,
+    trackAlias: bigint,
+    groupId: bigint,
+    objectId: bigint
+  ): boolean {
+    const key = `${trackAlias.toString()}:${groupId.toString()}`
+    const count = context.videoObjectLogCounts.get(key) ?? 0
+    context.videoObjectLogCounts.set(key, count + 1)
+    return objectId <= 2n || objectId % 30n === 0n
+  }
+
+  private logVideoPublisherEvent(fields: {
+    event: string
+    trackName: string
+    source: VideoSource
+    codec: string
+    chunkType: EncodedVideoChunkType
+    aliases: string[]
+    groupId?: string
+    subgroupId?: string
+    objectId?: string
+    payloadBytes?: number
+  }): void {
+    if (!isCallVideoPipelineDebugEnabled()) {
+      return
+    }
+    console.info(VIDEO_PUBLISHER_LOG_PREFIX, JSON.stringify(fields))
   }
 
   private collectAliasesForTrack(
@@ -1046,11 +1148,19 @@ export class MediaPublisher {
     if (!sourceTrack) {
       return
     }
-    const { source, config } = current
+    const { source, config, transportState, videoGroupStates } = current
+    for (const alias of current.activeAliases) {
+      current.transportState.resetAlias(alias)
+      current.videoGroupStates.delete(BigInt(alias))
+    }
+    current.activeAliases.clear()
     const keyframeInterval = this.getKeyframeIntervalForTrackName(trackName)
     this.handlers.onLocalVideoSendTiming?.(null, source)
     this.stopVideoTrackContext(trackName)
-    this.createVideoTrackContext(source, trackName, sourceTrack, config, keyframeInterval)
+    this.createVideoTrackContext(source, trackName, sourceTrack, config, keyframeInterval, {
+      transportState,
+      videoGroupStates
+    })
   }
 
   private suspendAudioTrackEncodingIfNoSubscribers(trackName: string, expectedContext: AudioTrackEncoderContext): void {

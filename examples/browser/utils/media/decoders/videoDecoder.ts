@@ -13,6 +13,7 @@ type VideoDecoderHardwareAcceleration = 'prefer-hardware' | 'prefer-software'
 const DEFAULT_VIDEO_DECODER_HARDWARE_ACCELERATION: VideoDecoderHardwareAcceleration = 'prefer-software'
 let telemetryEnabled = true
 let bypassJitterBuffer = false
+let debugVideoPipeline = false
 
 function postTelemetry(message: unknown): void {
   if (!telemetryEnabled) {
@@ -195,6 +196,9 @@ let decodedDrainTimer: number | null = null
 let outputPendingMeta: Map<number, OutputMeta[]> = new Map()
 let receivedFrameTimes: Map<string, number> = new Map()
 let lastOutputMetaResetAtMs = Number.NEGATIVE_INFINITY
+let decodedInputLogCount = 0
+let decodedOutputLogCount = 0
+let keyframeFlushInFlight: Promise<void> | null = null
 
 type OutputMeta = {
   groupId: bigint
@@ -365,15 +369,15 @@ function resolvePlayoutDelayMs(): number {
   return pacingDelayMs
 }
 
-function resetPlayoutTiming(reason: 'config' | 'error' | 'jump'): void {
+function resetPlayoutTiming(reason: 'config' | 'error' | 'jump', preservePendingOutputMeta = false): void {
   playoutBaseMediaTs = null
   playoutBaseWallMs = null
   pacingDelayMs = currentJitterConfig.minDelayMs
-  clearOutputQueue()
+  clearOutputQueue(preservePendingOutputMeta)
   reportPacingStatus(reason)
 }
 
-function clearOutputQueue(): void {
+function clearOutputQueue(preservePendingOutputMeta = false): void {
   if (encodedPacingTimer !== null) {
     clearTimeout(encodedPacingTimer)
     encodedPacingTimer = null
@@ -392,9 +396,11 @@ function clearOutputQueue(): void {
   decodedFrameBuffer = []
   encodedPacingBuffer = []
   pendingEncodedEntry = null
-  outputPendingMeta.clear()
+  if (!preservePendingOutputMeta) {
+    outputPendingMeta.clear()
+    receivedFrameTimes.clear()
+  }
   lastOutputMetaResetAtMs = performance.now()
-  receivedFrameTimes.clear()
   lastDecodingObject = null
 }
 
@@ -585,6 +591,7 @@ function enqueueOutputFrame(frame: VideoFrame): void {
   }
   const decodeDoneMs = performance.now()
   postDecodingObject('output', meta.groupId.toString(), meta.objectId.toString(), meta.chunkType)
+  logDecodedOutputFrame(meta, frame, receivedMs, decodeDoneMs)
   pushDecodedFrame({
     groupId: meta.groupId,
     objectId: meta.objectId,
@@ -596,6 +603,83 @@ function enqueueOutputFrame(frame: VideoFrame): void {
     captureTimestampMicros: meta.captureTimestampMicros
   })
   drainDecodedOutput()
+}
+
+function logDecodeConfig(
+  groupId: bigint,
+  objectId: bigint,
+  metadata: ChunkMetadata,
+  isWaitingForKeyFrame: boolean,
+  resolvedConfig: CachedVideoConfig,
+  desiredConfig: VideoDecoderConfig,
+  desiredDescription: Uint8Array | undefined
+): void {
+  if (!debugVideoPipeline) {
+    return
+  }
+  const shouldLog = decodedInputLogCount < 5 || metadata.type === 'key' || objectId % 30n === 0n
+  decodedInputLogCount += 1
+  if (!shouldLog) {
+    return
+  }
+  console.info('[videoDecoder] decode config', {
+    groupId: groupId.toString(),
+    objectId: objectId.toString(),
+    chunkType: metadata.type,
+    waitingForKeyFrame: isWaitingForKeyFrame,
+    metadata: {
+      codec: metadata.codec,
+      avcFormat: metadata.avcFormat,
+      timestamp: metadata.timestamp,
+      duration: metadata.duration,
+      description: summarizeDescriptionBase64(metadata.descriptionBase64)
+    },
+    resolvedConfig: {
+      codec: resolvedConfig.codec,
+      avcFormat: resolvedConfig.avcFormat,
+      description: summarizeDescriptionBase64(resolvedConfig.descriptionBase64)
+    },
+    desiredConfig: {
+      codec: desiredConfig.codec,
+      avcFormat:
+        desiredConfig.avc?.format === 'avc' || desiredConfig.avc?.format === 'annexb'
+          ? desiredConfig.avc.format
+          : undefined,
+      description: summarizeUint8Array(desiredDescription),
+      hardwareAcceleration: desiredConfig.hardwareAcceleration
+    },
+    cachedVideoConfig
+  })
+}
+
+function logDecodedOutputFrame(
+  meta: OutputMeta,
+  frame: VideoFrame,
+  receivedMs: number | null,
+  decodeDoneMs: number
+): void {
+  if (!debugVideoPipeline) {
+    return
+  }
+  const shouldLog = decodedOutputLogCount < 5 || meta.chunkType === 'key' || meta.objectId % 30n === 0n
+  decodedOutputLogCount += 1
+  if (!shouldLog) {
+    return
+  }
+  console.info(
+    '[videoDecoder][output]',
+    JSON.stringify({
+      event: 'output-frame',
+      groupId: meta.groupId.toString(),
+      objectId: meta.objectId.toString(),
+      chunkType: meta.chunkType,
+      timestampUs: meta.timestampUs,
+      displayWidth: frame.displayWidth,
+      displayHeight: frame.displayHeight,
+      decodeQueueSize: videoDecoder?.decodeQueueSize ?? null,
+      receiveToDecodeMs: receivedMs !== null ? Math.round(decodeDoneMs - receivedMs) : null
+    })
+  )
 }
 
 function pushDecodedFrame(entry: DecodedFrameEntry): void {
@@ -662,13 +746,24 @@ function emitDecodedFrame(): void {
 schedulePop(currentPacingConfig.fallbackIntervalMs)
 
 type DecoderControlMessage =
-  | { type: 'config'; config: VideoJitterBufferConfig & { telemetryEnabled?: boolean; bypassJitterBuffer?: boolean } }
+  | {
+      type: 'config'
+      config: VideoJitterBufferConfig & {
+        telemetryEnabled?: boolean
+        bypassJitterBuffer?: boolean
+        debugVideoPipeline?: boolean
+      }
+    }
   | { type: 'catalog'; codec?: string; framerate?: number }
 type WorkerMessage = SubgroupWorkerMessage | DecoderControlMessage
 
 function isConfigMessage(message: WorkerMessage): message is {
   type: 'config'
-  config: VideoJitterBufferConfig & { telemetryEnabled?: boolean; bypassJitterBuffer?: boolean }
+  config: VideoJitterBufferConfig & {
+    telemetryEnabled?: boolean
+    bypassJitterBuffer?: boolean
+    debugVideoPipeline?: boolean
+  }
 } {
   return (message as { type?: string }).type === 'config'
 }
@@ -681,6 +776,7 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
   if (isConfigMessage(event.data)) {
     telemetryEnabled = event.data.config.telemetryEnabled ?? telemetryEnabled
     bypassJitterBuffer = event.data.config.bypassJitterBuffer ?? bypassJitterBuffer
+    debugVideoPipeline = event.data.config.debugVideoPipeline ?? debugVideoPipeline
     updateJitterBuffer(event.data.config)
     return
   }
@@ -848,34 +944,15 @@ async function decode(
   }
   const desiredConfig = buildVideoDecoderConfig(resolvedConfig)
   const desiredDescription = desiredConfig.description instanceof Uint8Array ? desiredConfig.description : undefined
-  console.info('[videoDecoder] decode config', {
-    groupId: groupId.toString(),
-    objectId: subgroupStreamObject.objectId.toString(),
-    chunkType: decoded.metadata.type,
+  logDecodeConfig(
+    groupId,
+    subgroupStreamObject.objectId,
+    decoded.metadata,
     waitingForKeyFrame,
-    metadata: {
-      codec: decoded.metadata.codec,
-      avcFormat: decoded.metadata.avcFormat,
-      timestamp: decoded.metadata.timestamp,
-      duration: decoded.metadata.duration,
-      description: summarizeDescriptionBase64(decoded.metadata.descriptionBase64)
-    },
-    resolvedConfig: {
-      codec: resolvedConfig.codec,
-      avcFormat: resolvedConfig.avcFormat,
-      description: summarizeDescriptionBase64(resolvedConfig.descriptionBase64)
-    },
-    desiredConfig: {
-      codec: desiredConfig.codec,
-      avcFormat:
-        desiredConfig.avc?.format === 'avc' || desiredConfig.avc?.format === 'annexb'
-          ? desiredConfig.avc.format
-          : undefined,
-      description: summarizeUint8Array(desiredDescription),
-      hardwareAcceleration: desiredConfig.hardwareAcceleration
-    },
-    cachedVideoConfig
-  })
+    resolvedConfig,
+    desiredConfig,
+    desiredDescription
+  )
 
   const encodedVideoChunk = new EncodedVideoChunk({
     type: decoded.metadata.type as EncodedVideoChunkType,
@@ -892,7 +969,9 @@ async function decode(
     cachedVideoConfig = resolvedConfig
     postDecoderConfig(resolvedConfig, desiredConfig)
     waitingForKeyFrame = true
-    resetPlayoutTiming('config')
+    // The current keyframe's output metadata was registered before decode();
+    // preserve it across first decoder configuration so the first frame is not dropped.
+    resetPlayoutTiming('config', true)
     if (decoded.metadata.type !== 'key') {
       return
     }
@@ -903,6 +982,7 @@ async function decode(
   }
 
   try {
+    const wasWaitingForKeyFrame = waitingForKeyFrame
     lastDecodingObject = {
       groupId: groupId.toString(),
       objectId: subgroupStreamObject.objectId.toString(),
@@ -919,6 +999,9 @@ async function decode(
     await videoDecoder.decode(encodedVideoChunk)
     if (decoded.metadata.type === 'key') {
       waitingForKeyFrame = false
+      if (wasWaitingForKeyFrame) {
+        flushWaitingKeyframe(videoDecoder, lastDecodingObject)
+      }
     }
   } catch (error) {
     if (isKeyFrameRequiredError(error)) {
@@ -933,6 +1016,55 @@ async function decode(
     }
     throw error
   }
+}
+
+function flushWaitingKeyframe(decoder: VideoDecoder, object: LastDecodingObjectInfo | null): void {
+  if (keyframeFlushInFlight || decoder.state === 'closed') {
+    return
+  }
+  if (debugVideoPipeline) {
+    console.info(
+      '[videoDecoder][flush]',
+      JSON.stringify({
+        event: 'start',
+        groupId: object?.groupId,
+        objectId: object?.objectId,
+        chunkType: object?.chunkType,
+        codec: object?.codec,
+        decodeQueueSize: decoder.decodeQueueSize
+      })
+    )
+  }
+  keyframeFlushInFlight = decoder
+    .flush()
+    .then(() => {
+      if (debugVideoPipeline) {
+        console.info(
+          '[videoDecoder][flush]',
+          JSON.stringify({
+            event: 'done',
+            groupId: object?.groupId,
+            objectId: object?.objectId,
+            chunkType: object?.chunkType,
+            codec: object?.codec,
+            decodeQueueSize: decoder.state === 'closed' ? null : decoder.decodeQueueSize
+          })
+        )
+      }
+    })
+    .catch((error) => {
+      waitingForKeyFrame = true
+      resetPlayoutTiming('error')
+      console.warn('[videoDecoder][flush] failed after waiting keyframe', {
+        groupId: object?.groupId,
+        objectId: object?.objectId,
+        chunkType: object?.chunkType,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    })
+    .finally(() => {
+      keyframeFlushInFlight = null
+    })
 }
 
 function reportPacingStatus(action: 'decode' | 'wait' | 'config' | 'error' | 'jump', detailMs?: number) {

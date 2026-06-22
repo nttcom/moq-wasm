@@ -1,0 +1,33 @@
+name: Setup wasm-pack
+description: Install a prebuilt wasm-pack binary (no source compilation)
+
+inputs:
+  version:
+    description: wasm-pack release tag to install
+    default: v0.15.0
+  sha256:
+    description: SHA256 checksum for the selected wasm-pack archive
+    default: c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        version="${{ inputs.version }}"
+        sha256="${{ inputs.sha256 }}"
+        target="x86_64-unknown-linux-musl"
+        archive="wasm-pack-${version}-${target}"
+        archive_file="$(mktemp)"
+        dest="${HOME}/.cargo/bin"
+        trap 'rm -f "${archive_file}"' EXIT
+        mkdir -p "${dest}"
+        echo "Installing prebuilt wasm-pack ${version}..."
+        curl -fsSL \
+          "https://github.com/rustwasm/wasm-pack/releases/download/${version}/${archive}.tar.gz" \
+          -o "${archive_file}"
+        echo "${sha256}  ${archive_file}" | sha256sum -c -
+        tar -xzf "${archive_file}" --strip-components=1 -C "${dest}" "${archive}/wasm-pack"
+        echo "${dest}" >> "$GITHUB_PATH"
+        "${dest}/wasm-pack" --version

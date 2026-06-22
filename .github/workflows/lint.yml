@@ -7,17 +7,23 @@ on:
       - master
       - draft-*
 
+permissions:
+  contents: read
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     container:
-      image: rust:latest
+      image: rust:1.96.0@sha256:4fd8406017c992f7b8ab55a2f99a1d56aeb1d7ecd255850dfa04239a88601f73
     env:
       RUSTFLAGS: "--cfg=tokio_unstable --cfg=web_sys_unstable_apis"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - name: Install Clippy and Rustfmt
         run: |
           rustup component add clippy
@@ -33,26 +39,52 @@ jobs:
   cargo-audit:
     runs-on: ubuntu-latest
     container:
-      image: rust:latest
+      image: rust:1.96.0@sha256:4fd8406017c992f7b8ab55a2f99a1d56aeb1d7ecd255850dfa04239a88601f73
+    env:
+      CARGO_AUDIT_VERSION: 0.22.2
+      CARGO_HOME: /usr/local/cargo
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+      - name: Cache cargo-audit binary
+        id: cache-cargo-audit
+        # actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 = v4.3.0
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: /usr/local/cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-rust-1.96.0-${{ env.CARGO_AUDIT_VERSION }}
       - name: Install cargo-audit
-        run: cargo install --locked cargo-audit
+        if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
+        run: cargo install --locked cargo-audit --version "$CARGO_AUDIT_VERSION"
+      - name: Verify cargo-audit version
+        run: |
+          actual="$(cargo-audit --version)"
+          expected="cargo-audit ${CARGO_AUDIT_VERSION}"
+          case "$actual" in
+            "$expected"*) ;;
+            *)
+              echo "Unexpected cargo-audit version: $actual" >&2
+              exit 1
+              ;;
+          esac
       - name: Run cargo audit
         run: cargo audit
   test-coverage-report:
     name: coverage
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     container:
-      image: xd009642/tarpaulin
+      image: xd009642/tarpaulin@sha256:71d8b18946f16ad3f8dc2d8e5055094b750e996c9e880573b03374dd78806228
       options: --security-opt seccomp=unconfined
     steps:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - name: Install FFmpeg build dependencies
         uses: ./.github/actions/install-ffmpeg-deps
       - name: Generate code coverage
@@ -66,7 +98,7 @@ jobs:
   prettier:
     runs-on: ubuntu-latest
     container:
-      image: cimg/node:21.6.2
+      image: cimg/node:21.6.2@sha256:c95ae0b7d9bc23abf5dd8a7794c79ba480660f71f07ba9d5a95309d18644ac5d
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:

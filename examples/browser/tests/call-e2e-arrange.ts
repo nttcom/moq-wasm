@@ -1,4 +1,4 @@
-import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
+import { expect, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import { CALL_INDEX_PATH } from '../playwright.helpers'
 
 export const RELAY_A_URL = 'https://127.0.0.1:4433'
@@ -24,12 +24,38 @@ export interface CallE2EClient {
   page: CallClientPageModel
 }
 
-// Use a short camera keyframe interval (~1s at 30fps) so newly-subscribed clients
+// Use a short camera keyframe interval (~1s at 15fps) so newly-subscribed clients
 // get a renderable keyframe quickly even when several streams decode concurrently.
-const KEYFRAME_INTERVAL = 30
+const KEYFRAME_INTERVAL = 15
+const E2E_VIDEO_WIDTH = 160
+const E2E_VIDEO_HEIGHT = 90
+const E2E_VIDEO_FRAMERATE = 15
+const E2E_VIDEO_BITRATE = 100_000
+let callClientCounter = 0
+
+const FORWARDED_CONSOLE_TEXT_PATTERN =
+  /\[call\]\[publisher\]\[video\]|\[call\]\[subscriber\]\[video\]|\[call\]\[media-element\]\[video\]|\[videoDecoder\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
 
 async function openCallPage(page: Page): Promise<void> {
-  await page.goto(`${CALL_INDEX_PATH}?keyframeInterval=${KEYFRAME_INTERVAL}`, { waitUntil: 'domcontentloaded' })
+  const params = new URLSearchParams({
+    keyframeInterval: String(KEYFRAME_INTERVAL),
+    e2eVideoWidth: String(E2E_VIDEO_WIDTH),
+    e2eVideoHeight: String(E2E_VIDEO_HEIGHT),
+    e2eVideoFramerate: String(E2E_VIDEO_FRAMERATE),
+    e2eVideoBitrate: String(E2E_VIDEO_BITRATE),
+    debugVideoPipeline: '1'
+  })
+  await page.goto(`${CALL_INDEX_PATH}?${params.toString()}`, { waitUntil: 'domcontentloaded' })
+}
+
+function forwardFilteredPageConsole(page: Page, label: string): void {
+  page.on('console', (message) => {
+    const text = message.text()
+    if (!FORWARDED_CONSOLE_TEXT_PATTERN.test(text)) {
+      return
+    }
+    console.log(`[call-e2e][${label}][${message.type()}] ${text}`)
+  })
 }
 
 function createCallClientPageModel(page: Page): CallClientPageModel {
@@ -55,6 +81,8 @@ export async function arrangeCallClient(browser: Browser): Promise<CallE2EClient
     permissions: ['camera', 'microphone']
   })
   const rawPage = await context.newPage()
+  const label = `call-client-${++callClientCounter}`
+  forwardFilteredPageConsole(rawPage, label)
   await openCallPage(rawPage)
   return {
     context,
@@ -77,12 +105,18 @@ export async function joinRoom(
     await model.relayARadio.click()
   }
   await model.submitButton.click()
+  await expect(model.roomName).toHaveText(roomName, { timeout: 30_000 })
 }
 
 // Enable camera and mic so the client publishes video+audio.
 export async function enableMedia(model: CallClientPageModel): Promise<void> {
+  await expect(model.toggleCameraButton).toBeEnabled({ timeout: 30_000 })
   await model.toggleCameraButton.click()
+  await expect(model.toggleCameraButton).toHaveAccessibleName('Turn camera off', { timeout: 15_000 })
+
+  await expect(model.toggleMicrophoneButton).toBeEnabled({ timeout: 30_000 })
   await model.toggleMicrophoneButton.click()
+  await expect(model.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone off', { timeout: 15_000 })
 }
 
 // Locate the member card for a remote member by name.

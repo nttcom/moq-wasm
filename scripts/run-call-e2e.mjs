@@ -12,6 +12,7 @@ import {
   assertPathExists,
   certPath,
   ensureLinuxEnvironment,
+  keyPath,
   getDefaultBaseUrl,
   getDefaultWebPort,
   getErrorMessage,
@@ -24,6 +25,7 @@ import {
 const callIndexPath = "/moq-wasm/examples/call/index.html";
 
 const childProcesses = [];
+const playwrightArgs = process.argv.slice(2);
 // Track whether we started docker services ourselves (so we can stop them).
 let ownedDockerServices = false;
 
@@ -32,6 +34,11 @@ async function main() {
   assertPathExists(
     certPath,
     "TLS certificate",
+    "Run node scripts/setup-media-e2e.mjs first.",
+  );
+  assertPathExists(
+    keyPath,
+    "TLS private key",
     "Run node scripts/setup-media-e2e.mjs first.",
   );
   assertPathExists(
@@ -71,14 +78,20 @@ async function main() {
         "[setup] Relay ports 4433/4434 already occupied — reusing existing relay containers.",
       );
     } else {
-      // Build the relay docker image from the local source. Subsequent runs
-      // are fast because Docker reuses the cached layer when nothing changed.
-      console.error("[setup] Building relay docker image...");
-      await runCommand(
-        resolveCommandName("docker"),
-        ["compose", "build", "relay-common"],
-        { cwd: repoRoot },
-      );
+      // Reuse a prebuilt relay image when one is already present (e.g. pulled from
+      // the registry in CI, or built by a previous local run); otherwise build it.
+      if (relayImageExists()) {
+        console.error(
+          "[setup] Reusing existing moqt-relay:local image (skipping build).",
+        );
+      } else {
+        console.error("[setup] Building relay docker image...");
+        await runCommand(
+          resolveCommandName("docker"),
+          ["compose", "build", "relay-common"],
+          { cwd: repoRoot },
+        );
+      }
 
       console.error(
         "[setup] Starting redis, relay-a, relay-b via docker compose...",
@@ -121,15 +134,34 @@ async function main() {
       waitForHttpOk(`${baseUrl}${callIndexPath}`, 120_000),
     ]);
 
-    await runCommand(resolveCommandName("npm"), ["run", "e2e:call"], {
-      cwd: jsDir,
-      env: {
-        ...process.env,
-        MEDIA_E2E_BASE_URL: baseUrl,
+    await runCommand(
+      resolveCommandName("npm"),
+      playwrightArgs.length > 0
+        ? ["run", "e2e:call", "--", ...playwrightArgs]
+        : ["run", "e2e:call"],
+      {
+        cwd: jsDir,
+        env: {
+          ...process.env,
+          MEDIA_E2E_BASE_URL: baseUrl,
+        },
       },
-    });
+    );
   } finally {
     await cleanup();
+  }
+}
+
+// Return true if the relay image used by docker compose is already available
+// locally (pulled from the registry in CI, or built by an earlier run).
+function relayImageExists() {
+  try {
+    execFileSync("docker", ["image", "inspect", "moqt-relay:local"], {
+      stdio: "ignore",
+    });
+    return true;
+  } catch (_error) {
+    return false;
   }
 }
 
@@ -193,7 +225,7 @@ function waitForRelayReadyFollow(cwd, timeoutMs) {
       clearTimeout(timer);
       rejectPromise(
         new Error(
-          `relay-logs process exited before relays became ready (code ${code ?? "unknown"}).`,
+          `docker compose logs process exited before relays became ready (code ${code ?? "unknown"}).`,
         ),
       );
     };
