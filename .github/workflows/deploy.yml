@@ -19,11 +19,11 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        uses: actions-rs/toolchain@63eb9591781c46a70274cb3ebdf190fce92702e8
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: stable
-          target: wasm32-unknown-unknown
-          override: true
+          targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack

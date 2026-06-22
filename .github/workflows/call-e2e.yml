@@ -109,6 +109,9 @@ jobs:
           docker pull "${{ needs.relay-image.outputs.image }}"
           docker tag "${{ needs.relay-image.outputs.image }}" moqt-relay:local
 
+      - name: Log out from GHCR
+        run: docker logout ghcr.io
+
       # The runner reuses the prebuilt moqt-relay:local image, starts redis +
       # relay-a + relay-b via docker compose, then runs the Playwright spec.
       - name: Run call E2E

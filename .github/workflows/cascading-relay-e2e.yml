@@ -80,6 +80,9 @@ jobs:
           docker pull "${{ needs.relay-image.outputs.image }}"
           docker tag "${{ needs.relay-image.outputs.image }}" moqt-relay:local
 
+      - name: Log out from GHCR
+        run: docker logout ghcr.io
+
       - name: Run cascading relay E2E
         env:
           CI: "true"
