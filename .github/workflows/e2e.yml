@@ -1,0 +1,383 @@
+name: E2E
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/e2e.yml"
+      - ".github/workflows/relay-image.yml"
+      - ".github/actions/setup-wasm-pack/**"
+      - "README.md"
+      - "scripts/setup-media-e2e.mjs"
+      - "scripts/run-media-e2e.mjs"
+      - "scripts/run-call-e2e.mjs"
+      - "scripts/media-e2e-helpers.mjs"
+      - "scripts/ensure-relay-certs.mjs"
+      - "scripts/chrome_linux.sh"
+      - "scripts/cascading-relay-e2e.sh"
+      - "docker-compose.yml"
+      - "examples/browser/**"
+      - "bindings/wasm/**"
+      - "relay/**"
+      - "moqt/**"
+      - "shared/**"
+      - "tests/cascading-relay-e2e/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain"
+  push:
+    branches:
+      - master
+      - draft-*
+      - example-e2e-ci
+    paths:
+      - ".github/workflows/e2e.yml"
+      - ".github/workflows/relay-image.yml"
+      - ".github/actions/setup-wasm-pack/**"
+      - "README.md"
+      - "scripts/setup-media-e2e.mjs"
+      - "scripts/run-media-e2e.mjs"
+      - "scripts/run-call-e2e.mjs"
+      - "scripts/media-e2e-helpers.mjs"
+      - "scripts/ensure-relay-certs.mjs"
+      - "scripts/chrome_linux.sh"
+      - "scripts/cascading-relay-e2e.sh"
+      - "docker-compose.yml"
+      - "examples/browser/**"
+      - "bindings/wasm/**"
+      - "relay/**"
+      - "moqt/**"
+      - "shared/**"
+      - "tests/cascading-relay-e2e/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      media: ${{ steps.filter.outputs.media }}
+      call: ${{ steps.filter.outputs.call }}
+      cascading: ${{ steps.filter.outputs.cascading }}
+      relay: ${{ steps.filter.outputs.relay }}
+    steps:
+      - name: Checkout repository
+        # actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 = v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect changed E2E inputs
+        id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            media=true
+            call=true
+            cascading=true
+          else
+            base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
+
+            if [[ -n "$base" && ! "$base" =~ ^0+$ ]] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+              git diff --name-only "$base" HEAD > changed-files.txt
+            else
+              git ls-tree -r --name-only HEAD > changed-files.txt
+            fi
+
+            media=false
+            call=false
+            cascading=false
+
+            while IFS= read -r path; do
+              case "$path" in
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|README.md|scripts/setup-media-e2e.mjs|scripts/run-media-e2e.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  media=true
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-call-e2e.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  call=true
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cascading-relay-e2e.sh|scripts/ensure-relay-certs.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cascading-relay-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  cascading=true
+                  ;;
+              esac
+            done < changed-files.txt
+          fi
+
+          if [[ "$call" == "true" || "$cascading" == "true" ]]; then
+            relay=true
+          else
+            relay=false
+          fi
+
+          {
+            echo "media=$media"
+            echo "call=$call"
+            echo "cascading=$cascading"
+            echo "relay=$relay"
+          } >> "$GITHUB_OUTPUT"
+
+  relay_image_pr:
+    needs: changes
+    if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.relay == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        # actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 = v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Build relay image for PR E2E
+        run: docker build -t moqt-relay:pr -f relay/Dockerfile .
+
+      - name: Save relay image
+        run: docker save moqt-relay:pr | gzip > "${RUNNER_TEMP}/relay-image.tar.gz"
+
+      - name: Upload relay image artifact
+        # actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 = v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: relay-image-pr
+          path: ${{ runner.temp }}/relay-image.tar.gz
+          retention-days: 1
+
+  relay_image:
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.relay == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/relay-image.yml
+
+  media_e2e:
+    needs: changes
+    if: ${{ needs.changes.outputs.media == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        # actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 = v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        # actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 = v4.4.0
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/browser/package-lock.json
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.96.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Install wasm-pack
+        uses: ./.github/actions/setup-wasm-pack
+
+      - name: Prepare media E2E environment
+        run: node scripts/setup-media-e2e.mjs
+
+      - name: Install Playwright Linux dependencies
+        working-directory: examples/browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run media E2E
+        env:
+          CI: "true"
+        run: node scripts/run-media-e2e.mjs
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        # actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 = v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: media-e2e-artifacts
+          path: |
+            examples/browser/test-results
+            examples/browser/playwright-report
+          if-no-files-found: ignore
+
+  call_e2e:
+    needs: [changes, relay_image_pr, relay_image]
+    if: ${{ always() && needs.changes.outputs.call == 'true' && ((github.event_name == 'pull_request' && needs.relay_image_pr.result == 'success') || (github.event_name != 'pull_request' && needs.relay_image.result == 'success')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        # actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 = v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        # actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 = v4.4.0
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/browser/package-lock.json
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.96.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Install wasm-pack
+        uses: ./.github/actions/setup-wasm-pack
+
+      - name: Prepare browser E2E environment
+        run: node scripts/setup-media-e2e.mjs
+
+      - name: Install Playwright Linux dependencies
+        working-directory: examples/browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Download PR relay image
+        if: ${{ github.event_name == 'pull_request' }}
+        # actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 = v4.3.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: relay-image-pr
+          path: ${{ runner.temp }}/relay-image
+
+      - name: Load PR relay image
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          gunzip -c "${RUNNER_TEMP}/relay-image/relay-image.tar.gz" | docker load
+          docker tag moqt-relay:pr moqt-relay:local
+
+      - name: Log in to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        # docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 = v3.7.0
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull prebuilt relay image
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          docker pull "${{ needs.relay_image.outputs.image }}"
+          docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
+
+      - name: Log out from GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        run: docker logout ghcr.io
+
+      - name: Run call E2E
+        env:
+          CI: "true"
+        run: node scripts/run-call-e2e.mjs
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        # actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 = v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: call-e2e-artifacts
+          path: |
+            examples/browser/test-results
+            examples/browser/playwright-report
+          if-no-files-found: ignore
+
+  cascading_relay_e2e:
+    needs: [changes, relay_image_pr, relay_image]
+    if: ${{ always() && needs.changes.outputs.cascading == 'true' && ((github.event_name == 'pull_request' && needs.relay_image_pr.result == 'success') || (github.event_name != 'pull_request' && needs.relay_image.result == 'success')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        # actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 = v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.96.0
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Download PR relay image
+        if: ${{ github.event_name == 'pull_request' }}
+        # actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 = v4.3.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: relay-image-pr
+          path: ${{ runner.temp }}/relay-image
+
+      - name: Load PR relay image
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          gunzip -c "${RUNNER_TEMP}/relay-image/relay-image.tar.gz" | docker load
+          docker tag moqt-relay:pr moqt-relay:local
+
+      - name: Log in to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        # docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 = v3.7.0
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull prebuilt relay image
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          docker pull "${{ needs.relay_image.outputs.image }}"
+          docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
+
+      - name: Log out from GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        run: docker logout ghcr.io
+
+      - name: Run cascading relay E2E
+        env:
+          CI: "true"
+        run: ./scripts/cascading-relay-e2e.sh

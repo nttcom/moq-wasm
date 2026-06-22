@@ -1,7 +1,7 @@
 name: Relay Image
 
 # Reusable workflow: build the relay docker image once per content hash and push
-# it to GHCR, so the e2e workflows (call-e2e, cascading-relay-e2e) can pull a
+# it to GHCR, so the E2E workflow can pull a
 # prebuilt image instead of each compiling the relay from scratch.
 #
 # The image tag is a hash of every input that affects the relay binary, so the
