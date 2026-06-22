@@ -6,6 +6,7 @@ runs:
   steps:
     - shell: bash
       run: |
+        set -euo pipefail
         apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
           ffmpeg \
@@ -20,5 +21,5 @@ runs:
           clang \
           libclang-dev \
           llvm-dev
-        echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
-        echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
+        echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+        echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"

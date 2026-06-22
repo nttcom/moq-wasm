@@ -76,3 +76,7 @@ jobs:
           tags: ${{ steps.meta.outputs.image }}
           cache-from: type=gha,scope=relay
           cache-to: type=gha,scope=relay,mode=max
+
+      - name: Log out from GHCR
+        if: always()
+        run: docker logout ghcr.io

@@ -68,6 +68,7 @@ jobs:
       call: ${{ steps.filter.outputs.call }}
       cascading: ${{ steps.filter.outputs.cascading }}
       relay: ${{ steps.filter.outputs.relay }}
+      relay_image_source: ${{ steps.filter.outputs.relay_image_source }}
     steps:
       - name: Checkout repository
         # actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 = v4.3.1
@@ -126,16 +127,27 @@ jobs:
             relay=false
           fi
 
+          if [[ "$relay" == "true" ]]; then
+            if [[ "${{ github.event_name }}" == "pull_request" || ( "${{ github.event_name }}" == "push" && "${{ github.ref }}" != "refs/heads/master" ) ]]; then
+              relay_image_source=local
+            else
+              relay_image_source=prebuilt
+            fi
+          else
+            relay_image_source=none
+          fi
+
           {
             echo "media=$media"
             echo "call=$call"
             echo "cascading=$cascading"
             echo "relay=$relay"
+            echo "relay_image_source=$relay_image_source"
           } >> "$GITHUB_OUTPUT"
 
-  relay_image_pr:
+  relay_image_local:
     needs: changes
-    if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.relay == 'true' }}
+    if: ${{ needs.changes.outputs.relay == 'true' && needs.changes.outputs.relay_image_source == 'local' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -147,23 +159,23 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build relay image for PR E2E
-        run: docker build -t moqt-relay:pr -f relay/Dockerfile .
+      - name: Build local relay image for E2E
+        run: docker build -t moqt-relay:local-source -f relay/Dockerfile .
 
       - name: Save relay image
-        run: docker save moqt-relay:pr | gzip > "${RUNNER_TEMP}/relay-image.tar.gz"
+        run: docker save moqt-relay:local-source | gzip > "${RUNNER_TEMP}/relay-image.tar.gz"
 
       - name: Upload relay image artifact
         # actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 = v4.6.2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: relay-image-pr
+          name: relay-image-local
           path: ${{ runner.temp }}/relay-image.tar.gz
           retention-days: 1
 
   relay_image:
     needs: changes
-    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.relay == 'true' }}
+    if: ${{ needs.changes.outputs.relay == 'true' && needs.changes.outputs.relay_image_source == 'prebuilt' }}
     permissions:
       contents: read
       packages: write
@@ -227,8 +239,8 @@ jobs:
           if-no-files-found: ignore
 
   call_e2e:
-    needs: [changes, relay_image_pr, relay_image]
-    if: ${{ always() && needs.changes.outputs.call == 'true' && ((github.event_name == 'pull_request' && needs.relay_image_pr.result == 'success') || (github.event_name != 'pull_request' && needs.relay_image.result == 'success')) }}
+    needs: [changes, relay_image_local, relay_image]
+    if: ${{ always() && needs.changes.outputs.call == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -270,22 +282,22 @@ jobs:
         working-directory: examples/browser
         run: npx playwright install --with-deps chromium
 
-      - name: Download PR relay image
-        if: ${{ github.event_name == 'pull_request' }}
+      - name: Download local relay image
+        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
         # actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 = v4.3.0
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: relay-image-pr
+          name: relay-image-local
           path: ${{ runner.temp }}/relay-image
 
-      - name: Load PR relay image
-        if: ${{ github.event_name == 'pull_request' }}
+      - name: Load local relay image
+        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
         run: |
           gunzip -c "${RUNNER_TEMP}/relay-image/relay-image.tar.gz" | docker load
-          docker tag moqt-relay:pr moqt-relay:local
+          docker tag moqt-relay:local-source moqt-relay:local
 
       - name: Log in to GHCR
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
         # docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 = v3.7.0
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
@@ -294,13 +306,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull prebuilt relay image
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
         run: |
           docker pull "${{ needs.relay_image.outputs.image }}"
           docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
 
       - name: Log out from GHCR
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
         run: docker logout ghcr.io
 
       - name: Run call E2E
@@ -320,8 +332,8 @@ jobs:
           if-no-files-found: ignore
 
   cascading_relay_e2e:
-    needs: [changes, relay_image_pr, relay_image]
-    if: ${{ always() && needs.changes.outputs.cascading == 'true' && ((github.event_name == 'pull_request' && needs.relay_image_pr.result == 'success') || (github.event_name != 'pull_request' && needs.relay_image.result == 'success')) }}
+    needs: [changes, relay_image_local, relay_image]
+    if: ${{ always() && needs.changes.outputs.cascading == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -344,22 +356,22 @@ jobs:
         # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
-      - name: Download PR relay image
-        if: ${{ github.event_name == 'pull_request' }}
+      - name: Download local relay image
+        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
         # actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 = v4.3.0
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: relay-image-pr
+          name: relay-image-local
           path: ${{ runner.temp }}/relay-image
 
-      - name: Load PR relay image
-        if: ${{ github.event_name == 'pull_request' }}
+      - name: Load local relay image
+        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
         run: |
           gunzip -c "${RUNNER_TEMP}/relay-image/relay-image.tar.gz" | docker load
-          docker tag moqt-relay:pr moqt-relay:local
+          docker tag moqt-relay:local-source moqt-relay:local
 
       - name: Log in to GHCR
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
         # docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 = v3.7.0
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
@@ -368,13 +380,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull prebuilt relay image
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
         run: |
           docker pull "${{ needs.relay_image.outputs.image }}"
           docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
 
       - name: Log out from GHCR
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
         run: docker logout ghcr.io
 
       - name: Run cascading relay E2E
