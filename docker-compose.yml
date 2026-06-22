@@ -1,6 +1,6 @@
 services:
   redis:
-    image: redis:7
+    image: redis:7@sha256:33d7c9a245edd95e6703a0addbeaa48fe40c3b3b4783627a72085155462ebfdb
     ports:
       - "6379:6379"
     # Relays connect to redis once at startup with no retry, so gate them on health.
@@ -11,7 +11,7 @@ services:
       retries: 10
 
   redisinsight:
-    image: redis/redisinsight:latest
+    image: redis/redisinsight:3.6.0@sha256:aa21bbd198455b4ad964f76782db951155aa0d712321f599972d1525f031f0e6
     ports:
       - "5540:5540"
     depends_on:
