@@ -15,6 +15,9 @@ use crate::modules::{
 
 use super::scheduler::GroupSendTask;
 
+// FIXME: assumes gapless object_ids (cache position == object_id + 1, +1 for the
+// subgroup header). With object_id gaps, non-zero starts (LargestObject/
+// AbsoluteStart) resolve to the wrong cache position.
 fn stream_object_id_to_cache_index(object_id: u64) -> u64 {
     object_id + 1
 }
@@ -228,6 +231,8 @@ impl GroupSender {
         cache: Arc<TrackCache>,
         mut sender: Box<dyn DataSender>,
     ) {
+        // FIXME: assumes gapless object_ids (cache position == object_id). With object_id
+        // gaps, non-zero starts resolve to the wrong cache position.
         let mut next_index = object_id;
         while let Some(object) = cache
             .get_datagram_object_or_wait(group_id, next_index)
