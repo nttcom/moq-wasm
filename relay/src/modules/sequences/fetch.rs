@@ -1,9 +1,14 @@
+use std::sync::Arc;
+
 use tracing::Span;
 
 use crate::modules::{
     core::handler::fetch::FetchHandler,
     enums::FetchErrorCode,
-    relay::egress::coordinator::{EgressCommand, EgressFetchRequest},
+    relay::{
+        cache::store::TrackCacheStore,
+        egress::coordinator::{EgressCommand, EgressFetchRequest},
+    },
     sequences::tables::table::LocalPubSubDirectory,
     types::{SessionId, TrackKey},
 };
@@ -56,6 +61,7 @@ impl Fetch {
         session_id: SessionId,
         session_span: &Span,
         table: &dyn LocalPubSubDirectory,
+        cache_store: &Arc<TrackCacheStore>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn FetchHandler>,
     ) {
@@ -65,7 +71,7 @@ impl Fetch {
             start_location,
             end_location,
         } = match self
-            .resolve_fetch(session_id, handler.fetch_type(), table)
+            .resolve_fetch(session_id, handler.fetch_type(), table, cache_store)
             .await
         {
             Ok(r) => r,
@@ -104,6 +110,7 @@ impl Fetch {
         session_id: SessionId,
         fetch_type: moqt::wire::FetchType,
         table: &dyn LocalPubSubDirectory,
+        cache_store: &Arc<TrackCacheStore>,
     ) -> Result<ResolvedFetch, FetchError> {
         match fetch_type {
             moqt::wire::FetchType::Standalone {
@@ -113,7 +120,7 @@ impl Fetch {
                 end_location,
             } => {
                 self.resolve_standalone(
-                    table,
+                    cache_store,
                     track_namespace,
                     track_name,
                     start_location,
@@ -190,40 +197,22 @@ impl Fetch {
 
     async fn resolve_standalone(
         &self,
-        table: &dyn LocalPubSubDirectory,
+        cache_store: &Arc<TrackCacheStore>,
         track_namespace: Vec<String>,
         track_name: String,
         start_location: moqt::Location,
         end_location: moqt::Location,
     ) -> Result<ResolvedFetch, FetchError> {
         let track_namespace = track_namespace.join("/");
-        // FIXME: fails if publisher has disconnected (active_upstream_subscriptions cleared on disconnect).
-        let active_upstream_keys =
-            table.find_active_upstream_subscriptions(&track_namespace, &track_name);
-        let Some(key) = active_upstream_keys.into_iter().next() else {
-            tracing::warn!(
-                track_namespace,
-                track_name,
-                "No active upstream subscription found for fetch"
-            );
+        let track_key = TrackKey::new(&track_namespace, &track_name);
+        if cache_store.get(&track_key).is_none() {
+            tracing::warn!(track_namespace, track_name, "No cached track for fetch");
             return Err(FetchError::TrackNotFound);
-        };
-        let Some(active_upstream) = table.get_active_upstream_subscription(
-            key.publisher_session_id,
-            &track_namespace,
-            &track_name,
-        ) else {
-            tracing::warn!(
-                track_namespace,
-                track_name,
-                "Active upstream subscription data not found"
-            );
-            return Err(FetchError::TrackNotFound);
-        };
+        }
         // FIXME: end_location should reflect what is actually available in cache,
         // not the client-requested end.
         Ok(ResolvedFetch {
-            track_key: active_upstream.track_key,
+            track_key,
             start_location,
             end_location,
         })
@@ -302,6 +291,52 @@ mod tests {
             },
         );
         key
+    }
+
+    #[tokio::test]
+    async fn resolve_standalone_track_not_found() {
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let loc = moqt::Location {
+            group_id: 0,
+            object_id: 0,
+        };
+        let result = Fetch
+            .resolve_standalone(
+                &cache_store,
+                vec!["ns".to_string()],
+                "track".to_string(),
+                loc,
+                loc,
+            )
+            .await;
+        assert!(matches!(result, Err(FetchError::TrackNotFound)));
+    }
+
+    #[tokio::test]
+    async fn resolve_standalone_returns_resolved() {
+        let cache_store = Arc::new(TrackCacheStore::new());
+        cache_store.get_or_create(&TrackKey::new("ns", "track"));
+        let start = moqt::Location {
+            group_id: 1,
+            object_id: 2,
+        };
+        let end = moqt::Location {
+            group_id: 3,
+            object_id: 4,
+        };
+        let resolved = Fetch
+            .resolve_standalone(
+                &cache_store,
+                vec!["ns".to_string()],
+                "track".to_string(),
+                start,
+                end,
+            )
+            .await
+            .unwrap();
+        assert_eq!(resolved.track_key, TrackKey::new("ns", "track"));
+        assert_eq!(resolved.start_location, start);
+        assert_eq!(resolved.end_location, end);
     }
 
     #[tokio::test]

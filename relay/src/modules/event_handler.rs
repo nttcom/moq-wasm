@@ -368,6 +368,7 @@ impl EventHandler {
                             session_id,
                             &session_span,
                             local_pub_sub_directory.as_ref(),
+                            &cache_store,
                             &egress_sender,
                             handler,
                         )
