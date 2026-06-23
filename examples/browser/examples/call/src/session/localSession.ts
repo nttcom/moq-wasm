@@ -39,7 +39,7 @@ export class LocalSession {
 
   constructor({ roomName, userName, relayUrl, defaultAuthInfo = 'secret' }: LocalSessionOptions) {
     this.roomName = roomName
-    this.relayUrl = relayUrl ?? 'https://moqt.research.skyway.io:4433'
+    this.relayUrl = relayUrl ?? 'https://relay-1.moqt.research.skyway.io:443'
     this.defaultAuthInfo = defaultAuthInfo
     this.localMember = {
       id: userName,

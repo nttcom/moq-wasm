@@ -1,6 +1,4 @@
 use std::{
-    fs::File,
-    io::BufReader,
     net::{Ipv6Addr, SocketAddr},
     sync::Arc,
 };
@@ -8,7 +6,7 @@ use std::{
 use async_trait::async_trait;
 use quinn::rustls::{
     self,
-    pki_types::{PrivateKeyDer, pem::PemObject},
+    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
 
 use super::dual_connection::DualConnection;
@@ -43,12 +41,10 @@ impl TransportConnectionCreator for DualProtocolCreator {
         install_default_crypto_provider();
 
         // 証明書を同期的に読み込む
-        let cert = rustls_pemfile::certs(&mut BufReader::new(
-            File::open(cert_path)
-                .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?,
-        ))
-        .collect::<Result<Vec<_>, _>>()
-        .inspect_err(|e| tracing::error!("Parsing certificates failed: {:?}", e))?;
+        let cert = CertificateDer::pem_file_iter(cert_path)
+            .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .inspect_err(|e| tracing::error!("Parsing certificates failed: {:?}", e))?;
 
         // 秘密鍵を同期的に読み込む
         let key = PrivateKeyDer::from_pem_file(key_path)

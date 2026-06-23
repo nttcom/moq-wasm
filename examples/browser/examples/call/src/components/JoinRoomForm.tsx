@@ -19,9 +19,19 @@ const RELAY_OPTIONS = [
     helper: 'Docker compose relay-b'
   },
   {
-    label: 'moqt.research.skyway.io:4433',
-    value: 'https://moqt.research.skyway.io:4433',
-    helper: 'Domain relay'
+    label: 'Relay 1',
+    value: 'https://relay-1.moqt.research.skyway.io:443',
+    helper: 'relay-1.moqt.research.skyway.io:443'
+  },
+  {
+    label: 'Relay 2',
+    value: 'https://relay-2.moqt.research.skyway.io:443',
+    helper: 'relay-2.moqt.research.skyway.io:443'
+  },
+  {
+    label: 'Relay 3',
+    value: 'https://relay-3.moqt.research.skyway.io:443',
+    helper: 'relay-3.moqt.research.skyway.io:443'
   }
 ] as const
 
