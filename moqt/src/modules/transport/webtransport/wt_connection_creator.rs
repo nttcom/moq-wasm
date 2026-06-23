@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use async_trait::async_trait;
+use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 
 use super::wt_connection::WtConnection;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
@@ -35,14 +36,9 @@ impl TransportConnectionCreator for WtConnectionCreator {
     }
 
     fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
-        use std::fs::File;
-        use std::io::BufReader;
-
         // 証明書を読み込む
-        let cert_file = File::open(custom_cert_path)
-            .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?;
-        let mut cert_reader = BufReader::new(cert_file);
-        let certs: Vec<_> = rustls_pemfile::certs(&mut cert_reader)
+        let certs: Vec<_> = CertificateDer::pem_file_iter(custom_cert_path)
+            .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?
             .collect::<Result<Vec<_>, _>>()
             .inspect_err(|e| tracing::error!("Parsing certificate failed: {:?}", e))?;
 
@@ -62,23 +58,15 @@ impl TransportConnectionCreator for WtConnectionCreator {
         port_num: u16,
         _keep_alive_sec: u64,
     ) -> anyhow::Result<Self> {
-        use std::fs::File;
-        use std::io::BufReader;
-
         // 証明書を同期的に読み込む
-        let cert_file = File::open(cert_path)
-            .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?;
-        let mut cert_reader = BufReader::new(cert_file);
-        let certs: Vec<_> = rustls_pemfile::certs(&mut cert_reader)
+        let certs: Vec<_> = CertificateDer::pem_file_iter(cert_path)
+            .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?
             .collect::<Result<Vec<_>, _>>()
             .inspect_err(|e| tracing::error!("Parsing certificates failed: {:?}", e))?;
 
         // 秘密鍵を同期的に読み込む
-        let key_file = File::open(key_path)
-            .inspect_err(|e| tracing::error!("Opening key file failed: {:?}", e))?;
-        let mut key_reader = BufReader::new(key_file);
-        let key = rustls_pemfile::private_key(&mut key_reader)?
-            .ok_or_else(|| anyhow::anyhow!("No private key found"))?;
+        let key = PrivateKeyDer::from_pem_file(key_path)
+            .inspect_err(|e| tracing::error!("Creating private key failed: {:?}", e.to_string()))?;
 
         let addr: SocketAddr = format!("[::]:{}", port_num).parse()?;
         let server = web_transport_quinn::ServerBuilder::new()

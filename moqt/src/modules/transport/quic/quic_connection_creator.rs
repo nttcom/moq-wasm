@@ -1,8 +1,6 @@
 use anyhow::Ok;
 use async_trait::async_trait;
 use std::{
-    fs::File,
-    io::BufReader,
     net::{Ipv6Addr, SocketAddr},
     sync::Arc,
 };
@@ -31,12 +29,10 @@ impl QUICConnectionCreator {
     ) -> anyhow::Result<quinn::ServerConfig> {
         install_default_crypto_provider();
 
-        let cert = rustls_pemfile::certs(&mut BufReader::new(
-            File::open(cert_path)
-                .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?,
-        ))
-        .collect::<Result<Vec<_>, _>>()
-        .inspect_err(|e| tracing::error!("Parsing certificates failed: {:?}", e))?;
+        let cert = CertificateDer::pem_file_iter(cert_path)
+            .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .inspect_err(|e| tracing::error!("Parsing certificates failed: {:?}", e))?;
         let key = PrivateKeyDer::from_pem_file(key_path)
             .inspect_err(|e| tracing::error!("Creating private key failed: {:?}", e.to_string()))?;
         let mut server_crypto = rustls::ServerConfig::builder()
