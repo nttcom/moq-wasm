@@ -314,7 +314,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_joined_subscription_no_objects_published() {
         let table = InMemoryLocalPubSubDirectory::new();
-        let key = setup_upstream(&table, 42);
+        let key = setup_upstream(&table, TrackKey::new("ns", "track"));
         table.register_downstream_subscription(2, 100, key, None);
         let result = Fetch.resolve_joined_subscription(2, 100, &table).await;
         assert!(matches!(result, Err(FetchError::NoObjectsPublished)));
@@ -327,13 +327,13 @@ mod tests {
             group_id: 10,
             object_id: 5,
         };
-        let key = setup_upstream(&table, 42);
+        let key = setup_upstream(&table, TrackKey::new("ns", "track"));
         table.register_downstream_subscription(2, 100, key, Some(largest));
         let (track_key, loc) = Fetch
             .resolve_joined_subscription(2, 100, &table)
             .await
             .unwrap();
-        assert_eq!(track_key, 42);
+        assert_eq!(track_key, TrackKey::new("ns", "track"));
         assert_eq!(
             loc,
             moqt::Location {

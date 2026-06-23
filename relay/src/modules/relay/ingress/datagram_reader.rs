@@ -42,20 +42,20 @@ impl DatagramReader {
                     Some(command) = receiver.recv() => {
                         match command {
                             DatagramReceiveCommand::Start(cmd) => {
-                                if let Some(stop_sender) = stop_senders.remove(&cmd.track_key) {
+                                let DatagramReceiveStart { track_key, receiver } = cmd;
+                                if let Some(stop_sender) = stop_senders.remove(&track_key) {
                                     let _ = stop_sender.send(true);
                                 }
 
                                 let (stop_sender, stop_receiver) = watch::channel(false);
-                                stop_senders.insert(cmd.track_key, stop_sender);
+                                stop_senders.insert(track_key.clone(), stop_sender);
 
-                                let track_key = cmd.track_key;
                                 let cache_store = cache_store.clone();
                                 let sender_map = object_notify_producer_map.clone();
                                 joinset.spawn(async move {
                                     Self::read_loop(
-                                        track_key,
-                                        cmd.receiver,
+                                        track_key.clone(),
+                                        receiver,
                                         stop_receiver,
                                         cache_store,
                                         sender_map,
@@ -67,7 +67,7 @@ impl DatagramReader {
                             DatagramReceiveCommand::Stop { track_key } => {
                                 if let Some(stop_sender) = stop_senders.remove(&track_key) {
                                     let _ = stop_sender.send(true);
-                                    tracing::info!(track_key, "datagram ingress track stop requested");
+                                    tracing::info!(%track_key, "datagram ingress track stop requested");
                                 }
                             }
                         }
@@ -76,7 +76,7 @@ impl DatagramReader {
                         match result {
                             Ok(track_key) => {
                                 stop_senders.remove(&track_key);
-                                tracing::debug!(track_key, "datagram ingress track ended");
+                                tracing::debug!(%track_key, "datagram ingress track ended");
                             }
                             Err(e) => {
                                 tracing::error!("datagram read task panicked: {:?}", e);
@@ -98,14 +98,15 @@ impl DatagramReader {
         object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
     ) {
         let mut current_group_id: Option<u64> = None;
+        let cache = cache_store.get_or_create(&track_key);
+        let notify = object_notify_producer_map.get_or_create(&track_key);
         loop {
             let receive_result = tokio::select! {
                 _ = stop_receiver.changed() => {
                     if let Some(group_id) = current_group_id {
-                        let cache = cache_store.get_or_create(track_key);
                         cache.close_datagram_group(group_id).await;
                     }
-                    tracing::info!(track_key, "datagram reader stopped");
+                    tracing::info!(%track_key, "datagram reader stopped");
                     return;
                 }
                 result = receiver.receive_object() => result,
@@ -116,24 +117,19 @@ impl DatagramReader {
                     let group_id = object.group_id().or(current_group_id).unwrap_or(0);
                     if current_group_id != Some(group_id) {
                         if let Some(old_group) = current_group_id {
-                            let cache = cache_store.get_or_create(track_key);
                             cache.close_datagram_group(old_group).await;
                         }
                         current_group_id = Some(group_id);
-                        let _ = object_notify_producer_map
-                            .get_or_create(track_key)
-                            .send(TrackEvent::DatagramOpened { group_id });
+                        let _ = notify.send(TrackEvent::DatagramOpened { group_id });
                     }
-                    let cache = cache_store.get_or_create(track_key);
                     cache.append_datagram_object(group_id, object).await;
                 }
                 Err(_) => {
                     // Ensure the last group is closed before exiting.
                     if let Some(group_id) = current_group_id {
-                        let cache = cache_store.get_or_create(track_key);
                         cache.close_datagram_group(group_id).await;
                     }
-                    tracing::debug!(track_key, "datagram receiver ended");
+                    tracing::debug!(%track_key, "datagram receiver ended");
                     return;
                 }
             }

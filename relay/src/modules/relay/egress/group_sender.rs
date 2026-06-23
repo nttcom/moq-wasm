@@ -63,7 +63,7 @@ impl GroupSender {
                                 .get_or_insert_with(|| self.publisher.new_stream_factory(&self.downstream_subscription));
                             let span = tracing::info_span!(
                                 "relay.dataplane.egress.stream",
-                                track_key = self.track_key,
+                                track_key = %self.track_key,
                                 track_alias = track_alias,
                                 group_id = group_id,
                                 subgroup_id = tracing::field::debug(&subgroup_id),
@@ -87,7 +87,7 @@ impl GroupSender {
                                         group_id,
                                         subgroup_id,
                                         object_id,
-                                        self.track_key,
+                                        self.track_key.clone(),
                                         self.cache.clone(),
                                         sender,
                                     ).instrument(span));
@@ -142,7 +142,7 @@ impl GroupSender {
             span.record("object_count", object_count);
             span.record("end_reason", "header_unavailable");
             tracing::warn!(
-                track_key,
+                track_key = %track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,
@@ -151,7 +151,7 @@ impl GroupSender {
             return;
         };
         tracing::debug!(
-            track_key,
+            track_key = %track_key,
             track_alias,
             group_id,
             subgroup_id = ?subgroup_id,
@@ -162,7 +162,7 @@ impl GroupSender {
             span.record("end_reason", "send_header_failed");
             tracing::error!(
                 ?error,
-                track_key,
+                track_key = %track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,
@@ -183,7 +183,7 @@ impl GroupSender {
                 _ => None,
             };
             tracing::debug!(
-                track_key,
+                track_key = %track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,
@@ -195,7 +195,7 @@ impl GroupSender {
                 span.record("object_count", object_count);
                 span.record("end_reason", "send_object_failed");
                 tracing::error!(
-                    track_key,
+                    track_key = %track_key,
                     track_alias,
                     group_id,
                     subgroup_id = ?subgroup_id,
@@ -212,7 +212,7 @@ impl GroupSender {
         if let Err(error) = sender.close().await {
             tracing::warn!(
                 ?error,
-                track_key,
+                track_key = %track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,

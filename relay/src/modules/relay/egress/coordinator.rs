@@ -138,7 +138,7 @@ impl EgressCoordinator {
             return;
         };
 
-        let Some(cache) = cache_store.get(request.track_key) else {
+        let Some(cache) = cache_store.get(&request.track_key) else {
             tracing::error!("cache not found for fetch");
             return;
         };
@@ -184,15 +184,15 @@ impl EgressCoordinator {
             return None;
         };
 
-        let cache = cache_store.get_or_create(request.track_key);
-        let latest_info_sender = object_notify_producer_map.get_or_create(request.track_key);
+        let cache = cache_store.get_or_create(&request.track_key);
+        let latest_info_sender = object_notify_producer_map.get_or_create(&request.track_key);
         let track_alias = request.downstream_subscription.track_alias();
         let egress_track_span = tracing::info_span!(
             parent: &request.parent_span,
             "relay.dataplane.egress.track",
             subscriber_session_id = %request.subscriber_session_id,
             downstream_subscribe_id = request.downstream_subscribe_id,
-            track_key = request.track_key,
+            track_key = %request.track_key,
             track_alias = track_alias,
             track_namespace = %request.track_namespace,
             track_name = %request.track_name,

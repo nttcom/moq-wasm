@@ -49,26 +49,26 @@ impl StreamIngressTask {
                     Some(command) = receiver.recv() => {
                         match command {
                             StreamIngressCommand::Start(cmd) => {
-                                if let Some(stop_sender) = stop_senders.remove(&cmd.track_key) {
+                                let StreamReceiveStart { track_key, factory, track_span } = cmd;
+                                if let Some(stop_sender) = stop_senders.remove(&track_key) {
                                     let _ = stop_sender.send(true);
                                 }
 
                                 let (stop_sender, stop_receiver) = watch::channel(false);
-                                stop_senders.insert(cmd.track_key, stop_sender);
+                                stop_senders.insert(track_key.clone(), stop_sender);
 
                                 let span = tracing::debug_span!(
-                                    parent: &cmd.track_span,
+                                    parent: &track_span,
                                     "relay.dataplane.ingress.stream_factory",
-                                    track_key = cmd.track_key,
+                                    track_key = %track_key,
                                 );
-                                let track_key = cmd.track_key;
                                 let opened_tx = opened_tx.clone();
                                 joinset.spawn(async move {
                                     Self::factory_loop(
-                                        track_key,
-                                        cmd.factory,
+                                        track_key.clone(),
+                                        factory,
                                         opened_tx,
-                                        cmd.track_span,
+                                        track_span,
                                         stop_receiver,
                                     )
                                     .await;
@@ -78,7 +78,7 @@ impl StreamIngressTask {
                             StreamIngressCommand::Stop { track_key } => {
                                 if let Some(stop_sender) = stop_senders.remove(&track_key) {
                                     let _ = stop_sender.send(true);
-                                    tracing::info!(track_key, "stream ingress track stop requested");
+                                    tracing::info!(%track_key, "stream ingress track stop requested");
                                 }
                             }
                         }
@@ -87,7 +87,7 @@ impl StreamIngressTask {
                         match result {
                             Ok(track_key) => {
                                 stop_senders.remove(&track_key);
-                                tracing::debug!(track_key, "stream ingress track ended");
+                                tracing::debug!(%track_key, "stream ingress track ended");
                             }
                             Err(e) => {
                                 tracing::error!("stream accept task panicked: {:?}", e);
@@ -114,7 +114,7 @@ impl StreamIngressTask {
         loop {
             let receiver = tokio::select! {
                 _ = stop_receiver.changed() => {
-                    tracing::info!(track_key, "stream ingress factory stopped");
+                    tracing::info!(%track_key, "stream ingress factory stopped");
                     return;
                 }
                 receiver = factory.next() => match receiver {
@@ -124,7 +124,7 @@ impl StreamIngressTask {
             };
             if stream_tx
                 .send(StreamOpened {
-                    track_key,
+                    track_key: track_key.clone(),
                     receiver,
                     parent_span: track_span.clone(),
                     stop_receiver: stop_receiver.clone(),

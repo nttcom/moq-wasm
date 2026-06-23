@@ -16,7 +16,7 @@ use crate::modules::{
         },
         upstream_serializer::UpstreamCreationSerializer,
     },
-    types::{SessionId, compose_session_track_key},
+    types::{SessionId, TrackKey},
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 use tracing::Span;
@@ -306,7 +306,7 @@ impl Subscribe {
             "upstream subscribe ok received"
         );
 
-        let track_key = compose_session_track_key(pub_session_id, subscription.track_alias());
+        let track_key = TrackKey::new(&upstream_key.track_namespace, &upstream_key.track_name);
         let active_upstream = ActiveUpstreamSubscription {
             upstream_request_id: subscription.request_id(),
             track_key,
@@ -373,7 +373,7 @@ impl Subscribe {
         // and the egress delivery start agree.
         let largest_location = match &largest_source {
             LargestObjectSource::SubscribeOk(location) => *location,
-            LargestObjectSource::LocalCache => match cache_store.get(active_upstream.track_key) {
+            LargestObjectSource::LocalCache => match cache_store.get(&active_upstream.track_key) {
                 Some(cache) => cache.largest_location().await,
                 None => None,
             },

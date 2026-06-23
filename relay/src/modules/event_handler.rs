@@ -636,11 +636,13 @@ impl EventHandler {
         track_key: TrackKey,
     ) {
         if ingress_sender
-            .send(IngressCommand::StopTrack { track_key })
+            .send(IngressCommand::StopTrack {
+                track_key: track_key.clone(),
+            })
             .await
             .is_err()
         {
-            tracing::debug!(track_key, "failed to send ingress stop request");
+            tracing::debug!(%track_key, "failed to send ingress stop request");
         }
     }
 }

@@ -91,13 +91,13 @@ impl Unsubscribe {
 
             if ingress_sender
                 .send(IngressCommand::StopTrack {
-                    track_key: removed.track_key,
+                    track_key: removed.track_key.clone(),
                 })
                 .await
                 .is_err()
             {
                 tracing::error!(
-                    track_key = removed.track_key,
+                    track_key = %removed.track_key,
                     "failed to send ingress stop request"
                 );
             }

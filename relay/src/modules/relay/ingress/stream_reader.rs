@@ -42,7 +42,7 @@ impl StreamReader {
                         let span = tracing::info_span!(
                             parent: &cmd.parent_span,
                             "relay.dataplane.ingress.stream",
-                            track_key = cmd.track_key,
+                            track_key = %cmd.track_key,
                             group_id = tracing::field::Empty,
                             subgroup_id = tracing::field::Empty,
                             end_reason = tracing::field::Empty,
@@ -78,18 +78,17 @@ impl StreamReader {
         let mut group_id = 0u64;
         let mut subgroup_id = StreamSubgroupId::None;
         let mut has_subgroup = false;
+        let cache = cache_store.get_or_create(&track_key);
+        let notify = object_notify_producer_map.get_or_create(&track_key);
         loop {
             let receive_result = tokio::select! {
                 _ = stop_receiver.changed() => {
                     span.record("end_reason", "stopped");
                     if has_subgroup {
-                        let cache = cache_store.get_or_create(track_key);
                         cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                        let _ = object_notify_producer_map
-                            .get_or_create(track_key)
-                            .send(TrackEvent::EndOfGroup);
+                        let _ = notify.send(TrackEvent::EndOfGroup);
                     }
-                    tracing::info!(track_key, "stream reader stopped");
+                    tracing::info!(%track_key, "stream reader stopped");
                     return;
                 }
                 result = receiver.receive_object() => result,
@@ -102,7 +101,6 @@ impl StreamReader {
                     has_subgroup = true;
                     span.record("group_id", group_id);
                     span.record("subgroup_id", tracing::field::debug(&subgroup_id));
-                    let cache = cache_store.get_or_create(track_key);
                     cache
                         .append_stream_object(
                             group_id,
@@ -110,12 +108,10 @@ impl StreamReader {
                             DataObject::SubgroupHeader(header),
                         )
                         .await;
-                    let _ = object_notify_producer_map.get_or_create(track_key).send(
-                        TrackEvent::StreamOpened {
-                            group_id,
-                            subgroup_id: subgroup_id.clone(),
-                        },
-                    );
+                    let _ = notify.send(TrackEvent::StreamOpened {
+                        group_id,
+                        subgroup_id: subgroup_id.clone(),
+                    });
                 }
                 Ok(object) => {
                     let end_reason = match &object {
@@ -134,27 +130,21 @@ impl StreamReader {
                         },
                         _ => None,
                     };
-                    let cache = cache_store.get_or_create(track_key);
                     cache
                         .append_stream_object(group_id, &subgroup_id, object)
                         .await;
                     if let Some(end_reason) = end_reason {
                         span.record("end_reason", end_reason);
                         cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                        let _ = object_notify_producer_map
-                            .get_or_create(track_key)
-                            .send(TrackEvent::EndOfGroup);
+                        let _ = notify.send(TrackEvent::EndOfGroup);
                         return;
                     }
                 }
                 Err(_) => {
                     span.record("end_reason", "receiver_error");
                     if has_subgroup {
-                        let cache = cache_store.get_or_create(track_key);
                         cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                        let _ = object_notify_producer_map
-                            .get_or_create(track_key)
-                            .send(TrackEvent::EndOfGroup);
+                        let _ = notify.send(TrackEvent::EndOfGroup);
                     }
                     return;
                 }
