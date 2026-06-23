@@ -43,8 +43,11 @@ impl DatagramReader {
                         match command {
                             DatagramReceiveCommand::Start(cmd) => {
                                 let DatagramReceiveStart { track_key, receiver } = cmd;
-                                if let Some(stop_sender) = stop_senders.remove(&track_key) {
-                                    let _ = stop_sender.send(true);
+                                // draft-14 §8.2 Multiple Publishers: keep the first publisher, ignore later
+                                // ones. FIXME: per-object dedup across publishers (SHOULD) intentionally skipped.
+                                if stop_senders.contains_key(&track_key) {
+                                    tracing::warn!(%track_key, "ignoring additional publisher for active track");
+                                    continue;
                                 }
 
                                 let (stop_sender, stop_receiver) = watch::channel(false);
