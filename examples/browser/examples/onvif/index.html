@@ -28,7 +28,8 @@
       body {
         margin: 0;
         font-family: 'Space Grotesk', sans-serif;
-        background: radial-gradient(1200px 600px at 15% 20%, #1b2a3a, transparent 60%),
+        background:
+          radial-gradient(1200px 600px at 15% 20%, #1b2a3a, transparent 60%),
           radial-gradient(1000px 600px at 80% 10%, #2c1c2a, transparent 55%),
           linear-gradient(160deg, var(--bg), var(--bg-2));
         color: var(--text);
@@ -537,11 +538,17 @@
           <form id="connect-form">
             <label>
               MoQ URL
-              <input id="moqt-url" type="text" value="https://moqt.research.skyway.io:4433" />
+              <input id="moqt-url" type="text" value="https://relay-1.moqt.research.skyway.io:443" />
             </label>
             <div class="button-row">
-              <button class="secondary" type="button" data-url="https://moqt.research.skyway.io:4433">
-                moqt.research.skyway.io
+              <button class="secondary" type="button" data-url="https://relay-1.moqt.research.skyway.io:443">
+                relay-1
+              </button>
+              <button class="secondary" type="button" data-url="https://relay-2.moqt.research.skyway.io:443">
+                relay-2
+              </button>
+              <button class="secondary" type="button" data-url="https://relay-3.moqt.research.skyway.io:443">
+                relay-3
               </button>
               <button class="secondary" type="button" data-url="https://127.0.0.1:4433">127.0.0.1</button>
             </div>

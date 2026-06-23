@@ -1,4 +1,4 @@
-export const DEFAULT_MOQT_URL = 'https://moqt.research.skyway.io:4433'
+export const DEFAULT_MOQT_URL = 'https://relay-1.moqt.research.skyway.io:443'
 export type MediaVideoHardwareAcceleration = 'prefer-hardware' | 'prefer-software' | 'no-preference'
 
 export type MediaVideoEncodingOverrides = {
