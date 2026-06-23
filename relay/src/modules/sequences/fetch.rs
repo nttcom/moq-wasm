@@ -205,6 +205,8 @@ impl Fetch {
     ) -> Result<ResolvedFetch, FetchError> {
         let track_namespace = track_namespace.join("/");
         let track_key = TrackKey::new(&track_namespace, &track_name);
+        // FIXME: cache miss returns TrackNotFound. draft §9.16 allows forwarding
+        // FETCH upstream to fill the gap (MAY); not implemented.
         if cache_store.get(&track_key).is_none() {
             tracing::warn!(track_namespace, track_name, "No cached track for fetch");
             return Err(FetchError::TrackNotFound);
