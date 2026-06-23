@@ -30,7 +30,10 @@ pub(crate) struct IngressStartRequest {
 
 pub(crate) enum IngressCommand {
     Start(Box<IngressStartRequest>),
-    StopTrack { track_key: TrackKey },
+    StopTrack {
+        track_key: TrackKey,
+        publisher_session_id: SessionId,
+    },
 }
 
 pub(crate) struct IngressCoordinator {
@@ -155,6 +158,7 @@ impl IngressCoordinator {
                                     if stream_tx
                                         .send(StreamIngressCommand::Start(StreamReceiveStart {
                                             track_key: track_key.clone(),
+                                            publisher_session_id: command.publisher_session_id,
                                             factory,
                                             track_span: dataplane_track_span,
                                         }))
@@ -170,6 +174,7 @@ impl IngressCoordinator {
                                     if datagram_tx
                                         .send(DatagramReceiveCommand::Start(DatagramReceiveStart {
                                             track_key: track_key.clone(),
+                                            publisher_session_id: command.publisher_session_id,
                                             receiver: datagram_receiver,
                                         }))
                                         .await
@@ -184,7 +189,7 @@ impl IngressCoordinator {
                             track_key
                         }.instrument(create_receiver_span));
                         }
-                        IngressCommand::StopTrack { track_key } => {
+                        IngressCommand::StopTrack { track_key, publisher_session_id } => {
                             if let Some(stop_sender) = create_stop_senders.remove(&track_key) {
                                 let _ = stop_sender.send(true);
                                 tracing::info!(%track_key, "upstream ingress stop requested");
@@ -192,11 +197,13 @@ impl IngressCoordinator {
                             let stream_result = stream_tx
                                 .send(StreamIngressCommand::Stop {
                                     track_key: track_key.clone(),
+                                    publisher_session_id,
                                 })
                                 .await;
                             let datagram_result = datagram_tx
                                 .send(DatagramReceiveCommand::Stop {
                                     track_key: track_key.clone(),
+                                    publisher_session_id,
                                 })
                                 .await;
                             if stream_result.is_err() || datagram_result.is_err() {

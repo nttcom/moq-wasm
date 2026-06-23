@@ -92,6 +92,7 @@ impl Unsubscribe {
             if ingress_sender
                 .send(IngressCommand::StopTrack {
                     track_key: removed.track_key.clone(),
+                    publisher_session_id: removed.upstream_key.publisher_session_id,
                 })
                 .await
                 .is_err()

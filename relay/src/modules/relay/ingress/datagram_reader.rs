@@ -11,17 +11,21 @@ use crate::modules::{
         cache::store::TrackCacheStore,
         notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
     },
-    types::TrackKey,
+    types::{SessionId, TrackKey},
 };
 
 pub(crate) struct DatagramReceiveStart {
     pub(crate) track_key: TrackKey,
+    pub(crate) publisher_session_id: SessionId,
     pub(crate) receiver: Box<dyn DatagramReceiver>,
 }
 
 pub(crate) enum DatagramReceiveCommand {
     Start(DatagramReceiveStart),
-    Stop { track_key: TrackKey },
+    Stop {
+        track_key: TrackKey,
+        publisher_session_id: SessionId,
+    },
 }
 
 pub(crate) struct DatagramReader {
@@ -36,22 +40,23 @@ impl DatagramReader {
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
-            let mut stop_senders = HashMap::<TrackKey, watch::Sender<bool>>::new();
+            let mut stop_senders = HashMap::<TrackKey, (watch::Sender<bool>, SessionId)>::new();
             loop {
                 tokio::select! {
                     Some(command) = receiver.recv() => {
                         match command {
                             DatagramReceiveCommand::Start(cmd) => {
-                                let DatagramReceiveStart { track_key, receiver } = cmd;
-                                // draft-14 §8.2 Multiple Publishers: keep the first publisher, ignore later
-                                // ones. FIXME: per-object dedup across publishers (SHOULD) intentionally skipped.
+                                let DatagramReceiveStart { track_key, publisher_session_id, receiver } = cmd;
+                                // draft-14 §8.2 Multiple Publishers: for now keep the first publisher and
+                                // ignore later ones. FIXME: GOAWAY migration needs ingesting from multiple
+                                // publishers with per-object dedup (SHOULD); first-writer-wins is a stopgap.
                                 if stop_senders.contains_key(&track_key) {
                                     tracing::warn!(%track_key, "ignoring additional publisher for active track");
                                     continue;
                                 }
 
                                 let (stop_sender, stop_receiver) = watch::channel(false);
-                                stop_senders.insert(track_key.clone(), stop_sender);
+                                stop_senders.insert(track_key.clone(), (stop_sender, publisher_session_id));
 
                                 let cache_store = cache_store.clone();
                                 let sender_map = object_notify_producer_map.clone();
@@ -67,8 +72,12 @@ impl DatagramReader {
                                     track_key
                                 });
                             }
-                            DatagramReceiveCommand::Stop { track_key } => {
-                                if let Some(stop_sender) = stop_senders.remove(&track_key) {
+                            DatagramReceiveCommand::Stop { track_key, publisher_session_id } => {
+                                // Only the owning publisher may stop the reader, so a different
+                                // publisher of the same track leaving does not tear down the active one.
+                                if stop_senders.get(&track_key).is_some_and(|(_, owner)| *owner == publisher_session_id)
+                                    && let Some((stop_sender, _)) = stop_senders.remove(&track_key)
+                                {
                                     let _ = stop_sender.send(true);
                                     tracing::info!(%track_key, "datagram ingress track stop requested");
                                 }

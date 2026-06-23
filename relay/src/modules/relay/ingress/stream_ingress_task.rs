@@ -13,18 +13,22 @@ use crate::modules::{
         ingress::stream_reader::{StreamOpened, StreamReader},
         notifications::track_notifier::ObjectNotifyProducerMap,
     },
-    types::TrackKey,
+    types::{SessionId, TrackKey},
 };
 
 pub(crate) struct StreamReceiveStart {
     pub(crate) track_key: TrackKey,
+    pub(crate) publisher_session_id: SessionId,
     pub(crate) factory: Box<dyn StreamReceiverFactory>,
     pub(crate) track_span: Span,
 }
 
 pub(crate) enum StreamIngressCommand {
     Start(StreamReceiveStart),
-    Stop { track_key: TrackKey },
+    Stop {
+        track_key: TrackKey,
+        publisher_session_id: SessionId,
+    },
 }
 
 pub(crate) struct StreamIngressTask {
@@ -43,22 +47,23 @@ impl StreamIngressTask {
 
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
-            let mut stop_senders = HashMap::<TrackKey, watch::Sender<bool>>::new();
+            let mut stop_senders = HashMap::<TrackKey, (watch::Sender<bool>, SessionId)>::new();
             loop {
                 tokio::select! {
                     Some(command) = receiver.recv() => {
                         match command {
                             StreamIngressCommand::Start(cmd) => {
-                                let StreamReceiveStart { track_key, factory, track_span } = cmd;
-                                // draft-14 §8.2 Multiple Publishers: keep the first publisher, ignore later
-                                // ones. FIXME: per-object dedup across publishers (SHOULD) intentionally skipped.
+                                let StreamReceiveStart { track_key, publisher_session_id, factory, track_span } = cmd;
+                                // draft-14 §8.2 Multiple Publishers: for now keep the first publisher and
+                                // ignore later ones. FIXME: GOAWAY migration needs ingesting from multiple
+                                // publishers with per-object dedup (SHOULD); first-writer-wins is a stopgap.
                                 if stop_senders.contains_key(&track_key) {
                                     tracing::warn!(%track_key, "ignoring additional publisher for active track");
                                     continue;
                                 }
 
                                 let (stop_sender, stop_receiver) = watch::channel(false);
-                                stop_senders.insert(track_key.clone(), stop_sender);
+                                stop_senders.insert(track_key.clone(), (stop_sender, publisher_session_id));
 
                                 let span = tracing::debug_span!(
                                     parent: &track_span,
@@ -78,8 +83,12 @@ impl StreamIngressTask {
                                     track_key
                                 }.instrument(span));
                             }
-                            StreamIngressCommand::Stop { track_key } => {
-                                if let Some(stop_sender) = stop_senders.remove(&track_key) {
+                            StreamIngressCommand::Stop { track_key, publisher_session_id } => {
+                                // Only the owning publisher may stop the reader, so a different
+                                // publisher of the same track leaving does not tear down the active one.
+                                if stop_senders.get(&track_key).is_some_and(|(_, owner)| *owner == publisher_session_id)
+                                    && let Some((stop_sender, _)) = stop_senders.remove(&track_key)
+                                {
                                     let _ = stop_sender.send(true);
                                     tracing::info!(%track_key, "stream ingress track stop requested");
                                 }
