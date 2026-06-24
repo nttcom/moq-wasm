@@ -7,38 +7,58 @@ interface JoinRoomFormProps {
   onJoin: (roomName: string, userName: string, relayUrl: string) => void
 }
 
-const RELAY_OPTIONS = [
+const RELAY_OPTION_GROUPS = [
   {
-    label: 'Relay A (127.0.0.1:4433)',
-    value: 'https://127.0.0.1:4433',
-    helper: 'Docker compose relay-a'
+    label: 'Local Relay',
+    options: [
+      {
+        label: 'relay-a',
+        value: 'https://127.0.0.1:4433',
+        helper: 'Docker compose relay-a'
+      },
+      {
+        label: 'relay-b',
+        value: 'https://127.0.0.1:4434',
+        helper: 'Docker compose relay-b'
+      }
+    ]
   },
   {
-    label: 'Relay B (127.0.0.1:4434)',
-    value: 'https://127.0.0.1:4434',
-    helper: 'Docker compose relay-b'
+    label: 'Cloud (LB)',
+    options: [
+      {
+        label: 'relay.moqt.research.skyway.io',
+        value: 'https://relay.moqt.research.skyway.io:443',
+        helper: 'Load-balanced cloud relay'
+      }
+    ]
   },
   {
-    label: 'Relay 1',
-    value: 'https://relay-1.moqt.research.skyway.io:443',
-    helper: 'relay-1.moqt.research.skyway.io:443'
-  },
-  {
-    label: 'Relay 2',
-    value: 'https://relay-2.moqt.research.skyway.io:443',
-    helper: 'relay-2.moqt.research.skyway.io:443'
-  },
-  {
-    label: 'Relay 3',
-    value: 'https://relay-3.moqt.research.skyway.io:443',
-    helper: 'relay-3.moqt.research.skyway.io:443'
+    label: 'Cloud (specific relay)',
+    options: [
+      {
+        label: 'relay-1',
+        value: 'https://relay-1.moqt.research.skyway.io:443',
+        helper: 'relay-1.moqt.research.skyway.io:443'
+      },
+      {
+        label: 'relay-2',
+        value: 'https://relay-2.moqt.research.skyway.io:443',
+        helper: 'relay-2.moqt.research.skyway.io:443'
+      },
+      {
+        label: 'relay-3',
+        value: 'https://relay-3.moqt.research.skyway.io:443',
+        helper: 'relay-3.moqt.research.skyway.io:443'
+      }
+    ]
   }
 ] as const
 
 export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
   const [roomName, setRoomName] = useState('')
   const [userName, setUserName] = useState('')
-  const [relayUrl, setRelayUrl] = useState<string>(RELAY_OPTIONS[0].value)
+  const [relayUrl, setRelayUrl] = useState<string>(RELAY_OPTION_GROUPS[0].options[0].value)
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
@@ -87,32 +107,41 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
           </div>
           <div className="space-y-4">
             <Label className="text-2xl">Relay</Label>
-            <div className="grid gap-4">
-              {RELAY_OPTIONS.map((option) => (
-                <label
-                  key={option.value}
-                  className="flex items-center gap-4 rounded-xl border border-input bg-background px-5 py-4 text-lg"
-                >
-                  <input
-                    type="radio"
-                    name="relayUrl"
-                    value={option.value}
-                    checked={relayUrl === option.value}
-                    onChange={() => setRelayUrl(option.value)}
-                    className="h-5 w-5 accent-blue-600"
-                    data-testid={
-                      option.value === 'https://127.0.0.1:4433'
-                        ? 'join-relay-a-radio'
-                        : option.value === 'https://127.0.0.1:4434'
-                          ? 'join-relay-b-radio'
-                          : undefined
-                    }
-                  />
-                  <div>
-                    <div className="font-semibold">{option.label}</div>
-                    <div className="text-sm text-muted-foreground">{option.helper}</div>
+            <div className="space-y-5">
+              {RELAY_OPTION_GROUPS.map((group) => (
+                <fieldset key={group.label} className="space-y-3">
+                  <legend className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                    {group.label}
+                  </legend>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {group.options.map((option) => (
+                      <label
+                        key={option.value}
+                        className="flex min-h-24 items-center gap-4 rounded-xl border border-input bg-background px-5 py-4 text-lg"
+                      >
+                        <input
+                          type="radio"
+                          name="relayUrl"
+                          value={option.value}
+                          checked={relayUrl === option.value}
+                          onChange={() => setRelayUrl(option.value)}
+                          className="h-5 w-5 shrink-0 accent-blue-600"
+                          data-testid={
+                            option.value === 'https://127.0.0.1:4433'
+                              ? 'join-relay-a-radio'
+                              : option.value === 'https://127.0.0.1:4434'
+                                ? 'join-relay-b-radio'
+                                : undefined
+                          }
+                        />
+                        <div className="min-w-0">
+                          <div className="font-semibold">{option.label}</div>
+                          <div className="break-all text-sm text-muted-foreground">{option.helper}</div>
+                        </div>
+                      </label>
+                    ))}
                   </div>
-                </label>
+                </fieldset>
               ))}
             </div>
           </div>
