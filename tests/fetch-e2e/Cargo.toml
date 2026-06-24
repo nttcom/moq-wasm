@@ -1,10 +1,10 @@
 [package]
-name = "multiple-publishers-e2e"
+name = "fetch-e2e"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-moqt = { path = "../../../moqt" }
+moqt = { path = "../../moqt" }
 tokio = { version = "1.52.3", features = ["full", "tracing"] }
 tracing = "0.1.44"
 anyhow = { version = "1.0.102", features = ["backtrace"] }
