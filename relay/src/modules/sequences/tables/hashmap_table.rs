@@ -145,7 +145,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             self.active_upstream_subscriptions.remove(&upstream_key);
             removed
                 .upstream_track_keys
-                .push(active_subscription.track_key);
+                .push(active_subscription.track_key.clone());
 
             let downstream_keys: Vec<_> = self
                 .downstream_subscriptions
@@ -164,7 +164,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
                         downstream_subscribe_id,
                         upstream_key: upstream_key.clone(),
                         upstream_request_id: active_subscription.upstream_request_id,
-                        track_key: active_subscription.track_key,
+                        track_key: active_subscription.track_key.clone(),
                         remaining_downstream_subscriber_count: 0,
                         upstream_origin: active_subscription.origin,
                     });
@@ -581,7 +581,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             downstream_subscribe_id,
             upstream_key: upstream_key.clone(),
             upstream_request_id: entry.upstream_request_id,
-            track_key: entry.track_key,
+            track_key: entry.track_key.clone(),
             remaining_downstream_subscriber_count: entry.downstream_subscriber_count,
             upstream_origin: entry.origin,
         };
@@ -599,6 +599,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
 mod tests {
     use super::*;
     use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
+    use crate::modules::types::TrackKey;
 
     #[derive(Debug)]
     struct StubPublishHandler {
@@ -979,7 +980,7 @@ mod tests {
             upstream_key.clone(),
             ActiveUpstreamSubscription {
                 upstream_request_id: 1,
-                track_key: 42,
+                track_key: TrackKey::new("ns", "track"),
                 expires: None,
                 content_exists: ContentExists::False,
                 downstream_subscriber_count: 0,
@@ -1021,7 +1022,7 @@ mod tests {
             upstream_key.clone(),
             ActiveUpstreamSubscription {
                 upstream_request_id: 1,
-                track_key: 42,
+                track_key: TrackKey::new("ns", "track"),
                 expires: None,
                 content_exists: ContentExists::False,
                 downstream_subscriber_count: 0,
@@ -1050,7 +1051,7 @@ mod tests {
             upstream_key.clone(),
             ActiveUpstreamSubscription {
                 upstream_request_id: 10,
-                track_key: 20,
+                track_key: TrackKey::new("room/member", "video"),
                 expires: Some(30),
                 content_exists: ContentExists::False,
                 downstream_subscriber_count: 1,

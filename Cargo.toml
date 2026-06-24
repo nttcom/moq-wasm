@@ -8,6 +8,7 @@ members = [
     'examples/rust/manual-client',
     'tests/cascading-relay-e2e',
     'examples/rust/fetch-e2e',
+    'examples/rust/multiple-publishers-e2e',
     'examples/cross-protocol-test/publisher',
     'examples/cross-protocol-test/quic-subscriber',
     'bindings/wasm',

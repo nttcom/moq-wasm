@@ -102,11 +102,6 @@ impl TrackCache {
     }
 
     /// Returns the Largest Location as defined in the MoQT spec.
-    ///
-    /// NOTE: This scans the latest subgroup to resolve object_id from the delta chain,
-    /// which is O(n) in the number of objects in the subgroup.
-    /// Ideally, the cache should track {group_id, object_id} directly at ingestion time
-    /// to make this O(1). Deferred to a cache redesign task.
     pub(crate) async fn largest_location(&self) -> Option<moqt::Location> {
         let (group_id, cache) = {
             let groups = self.stream_groups.read().await;
@@ -115,22 +110,9 @@ impl TrackCache {
             (group_id, cache.clone())
         };
 
-        let objects = cache.snapshot().await;
-        let mut prev_object_id: Option<u64> = None;
-        let mut last_object_id: Option<u64> = None;
-
-        for obj in objects.iter().skip(1) {
-            let DataObject::SubgroupObject(field) = obj.as_ref() else {
-                continue;
-            };
-            let current_object_id = field.resolve_object_id(prev_object_id);
-            prev_object_id = Some(current_object_id);
-            last_object_id = Some(current_object_id);
-        }
-
         Some(moqt::Location {
             group_id,
-            object_id: last_object_id?,
+            object_id: cache.last_object_id().await?,
         })
     }
 
@@ -211,7 +193,7 @@ impl TrackCache {
                 tracing::error!("unexpected: GroupCache is empty");
                 continue;
             };
-            let (publisher_priority, subgroup_id) = match header.as_ref() {
+            let (publisher_priority, subgroup_id) = match header.data.as_ref() {
                 DataObject::SubgroupHeader(h) => (h.publisher_priority, h.subgroup_id.resolve()),
                 _ => {
                     tracing::error!("unexpected: GroupCache does not start with SubgroupHeader");
@@ -219,16 +201,15 @@ impl TrackCache {
                 }
             };
 
-            let mut prev_object_id: Option<u64> = None;
             // skip index=0 which is SubgroupHeader
-            for obj in subgroup_objects.iter().skip(1) {
-                let field = match obj.as_ref() {
+            for cached in subgroup_objects.iter().skip(1) {
+                let field = match cached.data.as_ref() {
                     DataObject::SubgroupObject(f) => f,
                     _ => continue,
                 };
-                // Resolve absolute object_id from object_id_delta
-                let current_object_id = field.resolve_object_id(prev_object_id);
-                prev_object_id = Some(current_object_id);
+                let Some(current_object_id) = cached.object_id else {
+                    continue;
+                };
 
                 // Apply range filter for first and last groups
                 if group_id == start.group_id && current_object_id < start.object_id {

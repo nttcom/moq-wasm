@@ -15,6 +15,9 @@ use crate::modules::{
 
 use super::scheduler::GroupSendTask;
 
+// FIXME: assumes gapless object_ids (cache position == object_id + 1, +1 for the
+// subgroup header). With object_id gaps, non-zero starts (LargestObject/
+// AbsoluteStart) resolve to the wrong cache position.
 fn stream_object_id_to_cache_index(object_id: u64) -> u64 {
     object_id + 1
 }
@@ -63,7 +66,7 @@ impl GroupSender {
                                 .get_or_insert_with(|| self.publisher.new_stream_factory(&self.downstream_subscription));
                             let span = tracing::info_span!(
                                 "relay.dataplane.egress.stream",
-                                track_key = self.track_key,
+                                track_key = %self.track_key,
                                 track_alias = track_alias,
                                 group_id = group_id,
                                 subgroup_id = tracing::field::debug(&subgroup_id),
@@ -87,7 +90,7 @@ impl GroupSender {
                                         group_id,
                                         subgroup_id,
                                         object_id,
-                                        self.track_key,
+                                        self.track_key.clone(),
                                         self.cache.clone(),
                                         sender,
                                     ).instrument(span));
@@ -142,7 +145,7 @@ impl GroupSender {
             span.record("object_count", object_count);
             span.record("end_reason", "header_unavailable");
             tracing::warn!(
-                track_key,
+                track_key = %track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,
@@ -151,7 +154,7 @@ impl GroupSender {
             return;
         };
         tracing::debug!(
-            track_key,
+            track_key = %track_key,
             track_alias,
             group_id,
             subgroup_id = ?subgroup_id,
@@ -162,7 +165,7 @@ impl GroupSender {
             span.record("end_reason", "send_header_failed");
             tracing::error!(
                 ?error,
-                track_key,
+                track_key = %track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,
@@ -183,7 +186,7 @@ impl GroupSender {
                 _ => None,
             };
             tracing::debug!(
-                track_key,
+                track_key = %track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,
@@ -195,7 +198,7 @@ impl GroupSender {
                 span.record("object_count", object_count);
                 span.record("end_reason", "send_object_failed");
                 tracing::error!(
-                    track_key,
+                    track_key = %track_key,
                     track_alias,
                     group_id,
                     subgroup_id = ?subgroup_id,
@@ -212,7 +215,7 @@ impl GroupSender {
         if let Err(error) = sender.close().await {
             tracing::warn!(
                 ?error,
-                track_key,
+                track_key = %track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,
@@ -228,6 +231,8 @@ impl GroupSender {
         cache: Arc<TrackCache>,
         mut sender: Box<dyn DataSender>,
     ) {
+        // FIXME: assumes gapless object_ids (cache position == object_id). With object_id
+        // gaps, non-zero starts resolve to the wrong cache position.
         let mut next_index = object_id;
         while let Some(object) = cache
             .get_datagram_object_or_wait(group_id, next_index)

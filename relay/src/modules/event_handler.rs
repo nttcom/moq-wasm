@@ -368,6 +368,7 @@ impl EventHandler {
                             session_id,
                             &session_span,
                             local_pub_sub_directory.as_ref(),
+                            &cache_store,
                             &egress_sender,
                             handler,
                         )
@@ -586,12 +587,17 @@ impl EventHandler {
                     );
                 }
 
-                Self::stop_ingress_track(ingress_sender, removed_downstream.track_key).await;
+                Self::stop_ingress_track(
+                    ingress_sender,
+                    removed_downstream.track_key,
+                    removed_downstream.upstream_key.publisher_session_id,
+                )
+                .await;
             }
         }
 
         for track_key in removed.upstream_track_keys {
-            Self::stop_ingress_track(ingress_sender, track_key).await;
+            Self::stop_ingress_track(ingress_sender, track_key, removed_session_id).await;
         }
 
         // TODO(deadlock-core): iteration 4 — make upstream join/remove atomic across sessions
@@ -634,13 +640,17 @@ impl EventHandler {
     async fn stop_ingress_track(
         ingress_sender: &mpsc::Sender<IngressCommand>,
         track_key: TrackKey,
+        publisher_session_id: SessionId,
     ) {
         if ingress_sender
-            .send(IngressCommand::StopTrack { track_key })
+            .send(IngressCommand::StopTrack {
+                track_key: track_key.clone(),
+                publisher_session_id,
+            })
             .await
             .is_err()
         {
-            tracing::debug!(track_key, "failed to send ingress stop request");
+            tracing::debug!(%track_key, "failed to send ingress stop request");
         }
     }
 }

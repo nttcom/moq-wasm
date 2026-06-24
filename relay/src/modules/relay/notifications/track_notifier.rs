@@ -15,12 +15,11 @@ impl ObjectNotifyProducerMap {
 
     pub(crate) fn get_or_create(
         &self,
-        track_key: TrackKey,
+        track_key: &TrackKey,
     ) -> tokio::sync::broadcast::Sender<TrackEvent> {
-        let _ = self
-            .map
-            .entry(track_key)
-            .or_insert_with(|| tokio::sync::broadcast::channel(256).0);
-        self.map.get(&track_key).unwrap().clone()
+        self.map
+            .entry(track_key.clone())
+            .or_insert_with(|| tokio::sync::broadcast::channel(256).0)
+            .clone()
     }
 }

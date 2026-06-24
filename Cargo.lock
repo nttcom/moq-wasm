@@ -3131,6 +3131,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "multiple-publishers-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "moqt",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "naga"
 version = "29.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

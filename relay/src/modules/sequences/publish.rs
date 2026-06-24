@@ -14,7 +14,7 @@ use crate::modules::{
             UpstreamSubscriptionOrigin,
         },
     },
-    types::{SessionId, compose_session_track_key},
+    types::{SessionId, TrackKey},
 };
 use tracing::Span;
 
@@ -226,7 +226,7 @@ impl Publish {
     ) -> Result<(), RegisterUpstreamSubscriptionError> {
         let track_namespace = subscription.track_namespace().to_string();
         let track_name = subscription.track_name().to_string();
-        let track_key = compose_session_track_key(session_id, subscription.track_alias());
+        let track_key = TrackKey::new(&track_namespace, &track_name);
         let upstream_key = UpstreamSubscriptionKey {
             publisher_session_id: session_id,
             track_namespace: track_namespace.clone(),
