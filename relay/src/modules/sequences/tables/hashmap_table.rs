@@ -599,6 +599,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
 mod tests {
     use super::*;
     use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
+    use crate::modules::types::TrackKey;
 
     #[derive(Debug)]
     struct StubPublishHandler {
@@ -979,7 +980,7 @@ mod tests {
             upstream_key.clone(),
             ActiveUpstreamSubscription {
                 upstream_request_id: 1,
-                track_key: crate::modules::types::TrackKey::new("ns", "track"),
+                track_key: TrackKey::new("ns", "track"),
                 expires: None,
                 content_exists: ContentExists::False,
                 downstream_subscriber_count: 0,
@@ -1021,7 +1022,7 @@ mod tests {
             upstream_key.clone(),
             ActiveUpstreamSubscription {
                 upstream_request_id: 1,
-                track_key: crate::modules::types::TrackKey::new("ns", "track"),
+                track_key: TrackKey::new("ns", "track"),
                 expires: None,
                 content_exists: ContentExists::False,
                 downstream_subscriber_count: 0,
@@ -1050,7 +1051,7 @@ mod tests {
             upstream_key.clone(),
             ActiveUpstreamSubscription {
                 upstream_request_id: 10,
-                track_key: crate::modules::types::TrackKey::new("room/member", "video"),
+                track_key: TrackKey::new("room/member", "video"),
                 expires: Some(30),
                 content_exists: ContentExists::False,
                 downstream_subscriber_count: 1,
