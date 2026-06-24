@@ -18,9 +18,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use moqt::{
-    DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder, PublishOption, QUIC, Session,
-    StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupId, SubgroupObject,
-    SubscribeOption,
+    ClientConfig, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder, PublishOption,
+    QUIC, Session, StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupId,
+    SubgroupObject, SubscribeOption,
 };
 use tokio::sync::oneshot;
 
@@ -35,14 +35,17 @@ const OBJECTS_PER_GROUP: u64 = 5;
 // proves Carol's departure did not stop Alice's ingest.
 const LATE_GROUP: u64 = 4;
 
-async fn new_session(cert_path: &str) -> anyhow::Result<Session<QUIC>> {
+async fn new_session() -> anyhow::Result<Session<QUIC>> {
     let url = url::Url::from_str(RELAY_URL).unwrap();
     let host = url.host_str().unwrap();
     let remote = (host, url.port().unwrap_or(4433))
         .to_socket_addrs()?
         .next()
         .unwrap();
-    let endpoint = Endpoint::<QUIC>::create_client_with_custom_cert(0, cert_path)?;
+    let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
+        port: 0,
+        verify_certificate: false,
+    })?;
     let connecting = endpoint.connect(remote, host).await?;
     connecting.await
 }
@@ -73,11 +76,10 @@ async fn send_group(
 }
 
 async fn alice(
-    cert_path: String,
     ready_tx: oneshot::Sender<()>,
     done_rx: oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
-    let session = new_session(&cert_path).await?;
+    let session = new_session().await?;
     let publisher = session.publisher();
     let subscription = publisher
         .publish(
@@ -99,12 +101,12 @@ async fn alice(
     Ok(())
 }
 
-async fn carol(cert_path: String, go_rx: oneshot::Receiver<()>) -> anyhow::Result<()> {
+async fn carol(go_rx: oneshot::Receiver<()>) -> anyhow::Result<()> {
     let _ = go_rx.await;
     // Give Alice's ingress a moment to be the established writer before joining.
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let session = new_session(&cert_path).await?;
+    let session = new_session().await?;
     let publisher = session.publisher();
     let subscription = match publisher
         .publish(
@@ -130,14 +132,13 @@ async fn carol(cert_path: String, go_rx: oneshot::Receiver<()>) -> anyhow::Resul
 }
 
 async fn bob(
-    cert_path: String,
     alice_ready_rx: oneshot::Receiver<()>,
     carol_go_tx: oneshot::Sender<()>,
     done_tx: oneshot::Sender<()>,
 ) -> anyhow::Result<()> {
     let _ = alice_ready_rx.await;
 
-    let session = new_session(&cert_path).await?;
+    let session = new_session().await?;
     let mut subscriber = session.subscriber();
     let subscription = subscriber
         .subscribe(
@@ -235,23 +236,23 @@ async fn main() -> anyhow::Result<()> {
         .try_init()
         .ok();
 
-    let cert_path = format!(
-        "{}/relay/keys/cert.pem",
-        std::env::current_dir()?.to_str().unwrap()
-    );
-
     let (alice_ready_tx, alice_ready_rx) = oneshot::channel::<()>();
     let (carol_go_tx, carol_go_rx) = oneshot::channel::<()>();
     let (done_tx, done_rx) = oneshot::channel::<()>();
 
-    let alice_handle = tokio::spawn(alice(cert_path.clone(), alice_ready_tx, done_rx));
-    let bob_handle = tokio::spawn(bob(cert_path.clone(), alice_ready_rx, carol_go_tx, done_tx));
-    tokio::spawn(carol(cert_path, carol_go_rx));
+    let alice_handle = tokio::spawn(alice(alice_ready_tx, done_rx));
+    let mut bob_handle = tokio::spawn(bob(alice_ready_rx, carol_go_tx, done_tx));
+    tokio::spawn(carol(carol_go_rx));
 
+    // Success requires Bob's assertions to actually run, so always wait for Bob to
+    // finish. Alice is a background producer; only surface her early exit if it is
+    // an error.
     tokio::select! {
-        r = bob_handle => { r??; }
-        r = alice_handle => { r??; }
-        _ = tokio::signal::ctrl_c() => {}
+        r = &mut bob_handle => { r??; }
+        r = alice_handle => {
+            r??;
+            bob_handle.await??;
+        }
     }
 
     Ok(())
