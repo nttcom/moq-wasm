@@ -3622,6 +3622,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "object-dedup-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "moqt",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "oid-registry"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
