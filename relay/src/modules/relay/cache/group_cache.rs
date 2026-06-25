@@ -16,14 +16,6 @@ pub(crate) struct GroupCache {
     notify: Notify,
 }
 
-fn resolve_absolute_object_id(object: &DataObject, prev_object_id: Option<u64>) -> Option<u64> {
-    match object {
-        DataObject::SubgroupHeader(_) => None,
-        DataObject::SubgroupObject(field) => Some(field.resolve_object_id(prev_object_id)),
-        DataObject::ObjectDatagram(datagram) => datagram.field.object_id(),
-    }
-}
-
 impl GroupCache {
     pub(crate) fn new() -> Self {
         Self {
@@ -33,10 +25,8 @@ impl GroupCache {
         }
     }
 
-    pub(crate) async fn append(&self, object: Arc<DataObject>) -> u64 {
+    pub(crate) async fn append(&self, object_id: Option<u64>, object: Arc<DataObject>) -> u64 {
         let mut objects = self.objects.write().await;
-        let prev_object_id = objects.last().and_then(|o| o.object_id);
-        let object_id = resolve_absolute_object_id(&object, prev_object_id);
         objects.push(CachedObject {
             object_id,
             data: object,

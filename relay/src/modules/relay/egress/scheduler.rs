@@ -334,6 +334,22 @@ mod tests {
         })
     }
 
+    // Resolves the object_id the way the ingest stream reader does (per-stream prev),
+    // then appends. A SubgroupHeader resolves to None and resets the chain.
+    async fn append_stream(
+        cache: &TrackCache,
+        group_id: u64,
+        subgroup: &StreamSubgroupId,
+        prev_object_id: &mut Option<u64>,
+        object: DataObject,
+    ) {
+        let object_id = object.resolve_absolute_object_id(*prev_object_id);
+        *prev_object_id = object_id;
+        cache
+            .append_stream_object(group_id, subgroup, object_id, object)
+            .await;
+    }
+
     // Largest Object (0x2) filter must start delivery just after the Largest
     // Object (§9.7: Start = {Largest.Group, Largest.Object + 1}), not include it.
     #[tokio::test]
@@ -341,12 +357,9 @@ mod tests {
         let cache = Arc::new(TrackCache::new());
         let subgroup = StreamSubgroupId::Value(0);
         // index 0: subgroup header, index 1: the Largest Object
-        cache
-            .append_stream_object(0, &subgroup, make_header())
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await;
+        let mut prev = None;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_header()).await;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_object(0)).await;
 
         let (info_tx, _info_rx) = broadcast::channel(16);
         let (task_tx, mut task_rx) = mpsc::channel(16);
@@ -392,12 +405,9 @@ mod tests {
         let cache = Arc::new(TrackCache::new());
         let subgroup = StreamSubgroupId::Value(0);
         for group_id in 0..3 {
-            cache
-                .append_stream_object(group_id, &subgroup, make_header())
-                .await;
-            cache
-                .append_stream_object(group_id, &subgroup, make_object(0))
-                .await;
+            let mut prev = None;
+            append_stream(&cache, group_id, &subgroup, &mut prev, make_header()).await;
+            append_stream(&cache, group_id, &subgroup, &mut prev, make_object(0)).await;
         }
 
         let (info_tx, _info_rx) = broadcast::channel(16);
@@ -492,12 +502,9 @@ mod tests {
     async fn new_upstream_largest_object_without_content_starts_from_first_object() {
         let cache = Arc::new(TrackCache::new());
         let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(0, &subgroup, make_header())
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await;
+        let mut prev = None;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_header()).await;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_object(0)).await;
 
         let (info_tx, _info_rx) = broadcast::channel(16);
         let (task_tx, mut task_rx) = mpsc::channel(16);
@@ -532,15 +539,10 @@ mod tests {
     async fn new_upstream_largest_object_with_content_starts_after_subscribe_ok_location() {
         let cache = Arc::new(TrackCache::new());
         let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(0, &subgroup, make_header())
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(1))
-            .await;
+        let mut prev = None;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_header()).await;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_object(0)).await;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_object(1)).await;
 
         let (info_tx, _info_rx) = broadcast::channel(16);
         let (task_tx, mut task_rx) = mpsc::channel(16);

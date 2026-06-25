@@ -66,11 +66,12 @@ impl TrackCache {
         &self,
         group_id: u64,
         subgroup_id: &StreamSubgroupId,
+        object_id: Option<u64>,
         object: DataObject,
     ) -> u64 {
         let group = self.ensure_stream_subgroup(group_id, subgroup_id).await;
         let object = Arc::new(object);
-        let index = group.append(object).await;
+        let index = group.append(object_id, object).await;
         *self.latest.write().await = Some(CacheLocation::Stream {
             group_id,
             subgroup_id: subgroup_id.clone(),
@@ -79,10 +80,15 @@ impl TrackCache {
         index
     }
 
-    pub(crate) async fn append_datagram_object(&self, group_id: u64, object: DataObject) -> u64 {
+    pub(crate) async fn append_datagram_object(
+        &self,
+        group_id: u64,
+        object_id: Option<u64>,
+        object: DataObject,
+    ) -> u64 {
         let group = self.ensure_datagram_group(group_id).await;
         let object = Arc::new(object);
-        let index = group.append(object).await;
+        let index = group.append(object_id, object).await;
         *self.latest.write().await = Some(CacheLocation::Datagram { group_id, index });
         index
     }
@@ -282,6 +288,22 @@ mod tests {
         })
     }
 
+    // Resolves the object_id the way the ingest stream reader does (per-stream prev),
+    // then appends. A SubgroupHeader resolves to None and resets the chain.
+    async fn append_stream(
+        cache: &TrackCache,
+        group_id: u64,
+        subgroup: &StreamSubgroupId,
+        prev_object_id: &mut Option<u64>,
+        object: DataObject,
+    ) {
+        let object_id = object.resolve_absolute_object_id(*prev_object_id);
+        *prev_object_id = object_id;
+        cache
+            .append_stream_object(group_id, subgroup, object_id, object)
+            .await;
+    }
+
     #[tokio::test]
     async fn largest_location_returns_none_when_empty() {
         // Arrange: empty cache
@@ -295,9 +317,8 @@ mod tests {
         // Arrange: append a SubgroupHeader only, no SubgroupObject
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(0, &subgroup, make_header(0))
-            .await;
+        let mut prev = None;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_header(0)).await;
         // Act / Assert: a header is not an object, so None is returned
         assert!(cache.largest_location().await.is_none());
     }
@@ -307,12 +328,9 @@ mod tests {
         // Arrange: one SubgroupObject with delta=0 in group_id=0
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(0, &subgroup, make_header(0))
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await;
+        let mut prev = None;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_header(0)).await;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_object(0)).await;
         // Act
         let loc = cache.largest_location().await.unwrap();
         // Assert: object_id resolves to 0 (delta=0, no previous)
@@ -325,18 +343,11 @@ mod tests {
         // Arrange: three objects with delta=0, yielding object_ids 0, 1, 2
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(0, &subgroup, make_header(0))
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await; // object_id = 0
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await; // object_id = 1
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await; // object_id = 2
+        let mut prev = None;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_header(0)).await;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_object(0)).await; // object_id = 0
+        append_stream(&cache, 0, &subgroup, &mut prev, make_object(0)).await; // object_id = 1
+        append_stream(&cache, 0, &subgroup, &mut prev, make_object(0)).await; // object_id = 2
         // Act
         let loc = cache.largest_location().await.unwrap();
         // Assert: largest object_id in the delta chain is returned
@@ -349,15 +360,10 @@ mod tests {
         // Arrange: first object has delta=5 (object_id=5), second has delta=2 (object_id=8)
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(0, &subgroup, make_header(0))
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(5))
-            .await; // object_id = 5
-        cache
-            .append_stream_object(0, &subgroup, make_object(2))
-            .await; // object_id = 5+1+2 = 8
+        let mut prev = None;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_header(0)).await;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_object(5)).await; // object_id = 5
+        append_stream(&cache, 0, &subgroup, &mut prev, make_object(2)).await; // object_id = 5+1+2 = 8
         // Act
         let loc = cache.largest_location().await.unwrap();
         // Assert: delta gaps are resolved correctly
@@ -370,18 +376,11 @@ mod tests {
         // Arrange: objects in group 0 and group 1
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(0, &subgroup, make_header(0))
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await; // group=0, object_id=0
-        cache
-            .append_stream_object(1, &subgroup, make_header(1))
-            .await;
-        cache
-            .append_stream_object(1, &subgroup, make_object(0))
-            .await; // group=1, object_id=0
+        let mut prev = None;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_header(0)).await;
+        append_stream(&cache, 0, &subgroup, &mut prev, make_object(0)).await; // group=0, object_id=0
+        append_stream(&cache, 1, &subgroup, &mut prev, make_header(1)).await;
+        append_stream(&cache, 1, &subgroup, &mut prev, make_object(0)).await; // group=1, object_id=0
         // Act
         let loc = cache.largest_location().await.unwrap();
         // Assert: the latest group's location is returned
@@ -391,14 +390,11 @@ mod tests {
 
     async fn fill_group(cache: &TrackCache, group_id: u64, count: u64) {
         let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(group_id, &subgroup, make_header(group_id))
-            .await;
+        let mut prev = None;
+        append_stream(cache, group_id, &subgroup, &mut prev, make_header(group_id)).await;
         // count objects with delta=0 -> object_ids 0, 1, ..., count-1
         for _ in 0..count {
-            cache
-                .append_stream_object(group_id, &subgroup, make_object(0))
-                .await;
+            append_stream(cache, group_id, &subgroup, &mut prev, make_object(0)).await;
         }
     }
 

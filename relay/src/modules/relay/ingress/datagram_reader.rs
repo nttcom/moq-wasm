@@ -134,7 +134,10 @@ impl DatagramReader {
                         current_group_id = Some(group_id);
                         let _ = notify.send(TrackEvent::DatagramOpened { group_id });
                     }
-                    cache.append_datagram_object(group_id, object).await;
+                    let object_id = object.resolve_absolute_object_id(None);
+                    cache
+                        .append_datagram_object(group_id, object_id, object)
+                        .await;
                 }
                 Err(_) => {
                     // Ensure the last group is closed before exiting.
