@@ -39,10 +39,26 @@ CERT_SPKI_BASE64=$(
     | openssl enc -base64
 )
 
+CLEANUP_USER_DATA_DIR=0
+USER_DATA_DIR="${CHROME_USER_DATA_DIR:-}"
+if [[ -z "${USER_DATA_DIR}" ]]; then
+  USER_DATA_DIR=$(mktemp -d -t moq-chrome-mac-XXXXXX)
+  CLEANUP_USER_DATA_DIR=1
+fi
+
+cleanup() {
+  if [[ "${CLEANUP_USER_DATA_DIR}" -eq 1 && -d "${USER_DATA_DIR}" ]]; then
+    rm -rf "${USER_DATA_DIR}"
+  fi
+}
+
+trap cleanup EXIT
+
 echo "Launching Chrome with certificate: ${CERT_PEM}"
 
-exec "${CHROME_BIN}" \
+"${CHROME_BIN}" \
   --test-type \
+  --user-data-dir="${USER_DATA_DIR}" \
   --origin-to-force-quic-on=127.0.0.1:4433,localhost:4433,127.0.0.1:4434,localhost:4434 \
   --ignore-certificate-errors-spki-list="${CERT_SPKI_BASE64}" \
   --use-fake-device-for-media-stream
