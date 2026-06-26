@@ -110,6 +110,7 @@ impl DatagramReader {
         object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
     ) {
         let mut current_group_id: Option<u64> = None;
+        let mut prev_object_id: Option<u64> = None;
         let cache = cache_store.get_or_create(&track_key);
         let notify = object_notify_producer_map.get_or_create(&track_key);
         loop {
@@ -132,9 +133,11 @@ impl DatagramReader {
                             cache.close_datagram_group(old_group).await;
                         }
                         current_group_id = Some(group_id);
+                        prev_object_id = None;
                         let _ = notify.send(TrackEvent::DatagramOpened { group_id });
                     }
-                    let object_id = object.resolve_absolute_object_id(None);
+                    let object_id = object.resolve_absolute_object_id(prev_object_id);
+                    prev_object_id = object_id;
                     cache
                         .append_datagram_object(group_id, object_id, object)
                         .await;
