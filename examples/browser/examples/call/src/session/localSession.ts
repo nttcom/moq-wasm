@@ -252,9 +252,15 @@ export class LocalSession {
         reject(new Error('Catalog subscribe timed out'))
       }, timeoutMs)
 
-      const handleCatalogPayload = (payload: string) => {
+      const handleCatalogPayload = (payload: string, source: string, groupId?: bigint) => {
         try {
           const tracks = parseCallCatalogTracks(payload)
+          console.info('[call][catalog] apply', {
+            trackNamespace,
+            source,
+            groupId: groupId?.toString(),
+            tracks: tracks.map((t) => t.role)
+          })
           onTracksUpdated?.(tracks)
           if (settled) return
           settled = true
@@ -284,26 +290,20 @@ export class LocalSession {
           // The fetch id is issued internally by moqtClient; joiningRequestId is the
           // catalog subscribe's request id we just received.
           const contentExists = (subscribeOk as any).contentExists ?? (subscribeOk as any).content_exists
+          console.info('[call][catalog] subscribed', { trackNamespace, contentExists: Boolean(contentExists) })
           if (contentExists) {
-            console.info('[call][catalog] content exists; fetching via Joining Fetch', { trackNamespace })
             await this.client.relativeJoiningFetch(catalogRequestId, 0n, {
               onObject: (msg) => {
                 if (msg.objectPayload.length > 0) {
-                  console.info('[call][catalog] payload received via Joining Fetch')
-                  handleCatalogPayload(new TextDecoder().decode(new Uint8Array(msg.objectPayload)))
+                  handleCatalogPayload(new TextDecoder().decode(new Uint8Array(msg.objectPayload)), 'joining-fetch')
                 }
               }
             })
-          } else {
-            console.info('[call][catalog] no content yet; waiting for subscribe stream', { trackNamespace })
           }
 
           // Always set up stream handler for future catalog updates.
           this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroup) => {
-            console.info('[call][catalog] payload received via subscribe stream', {
-              groupId: groupId.toString()
-            })
-            handleCatalogPayload(new TextDecoder().decode(new Uint8Array(subgroup.objectPayload)))
+            handleCatalogPayload(new TextDecoder().decode(new Uint8Array(subgroup.objectPayload)), 'stream', groupId)
           })
         })
         .catch((error) => {

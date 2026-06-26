@@ -1437,6 +1437,10 @@ export class MediaPublisher {
     const aliases = Array.from(client.getTrackSubscribers(this.trackNamespace, CATALOG_TRACK_NAME), (value) =>
       BigInt(value)
     )
+    console.info('[call][catalog] broadcast', {
+      subscribers: aliases.length,
+      tracks: this.catalogTracks.map((t) => t.role)
+    })
     if (!aliases.length) {
       return
     }
@@ -1451,6 +1455,11 @@ export class MediaPublisher {
     const groupId = previousGroup + 1n
     this.catalogGroupByAlias.set(aliasKey, groupId)
 
+    console.info('[call][catalog] send object', {
+      alias: aliasKey,
+      groupId: groupId.toString(),
+      tracks: this.catalogTracks.map((t) => t.role)
+    })
     const payload = new TextEncoder().encode(buildCallCatalogJson(this.trackNamespace, this.catalogTracks))
     await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
     await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
