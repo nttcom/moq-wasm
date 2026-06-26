@@ -116,6 +116,9 @@
       .grid .card:nth-child(6) {
         animation-delay: 250ms;
       }
+      .grid .card:nth-child(7) {
+        animation-delay: 300ms;
+      }
 
       .card:hover {
         transform: translateY(-4px);
@@ -200,8 +203,8 @@
         <h1>Examples Hub</h1>
         <p>
           MoQ / WebTransport / WebCodecs を使ったサンプル群への入口です。<br />
-          目的別に「シグナリング検証」「送受信デバッグ」「CMAF 配信検証」「ONVIF連携」「通話アプリ」「単体 WebCodecs
-          テスト」を選べます。
+          目的別に「シグナリング検証」「送受信デバッグ」「CMAF 配信検証」「ONVIF連携」「通話アプリ」「遠隔監視」「単体
+          WebCodecs テスト」を選べます。
         </p>
       </section>
 
@@ -234,6 +237,12 @@
           <span class="tag">Application</span>
           <h2>Call</h2>
           <p>Catalog / Subscribe 運用や jitter/pacing のチューニングを含む、実運用寄りの通話 UI。</p>
+          <span class="arrow">Open Example</span>
+        </a>
+        <a class="card" href="examples/remote-monitoring/index.html">
+          <span class="tag">Application</span>
+          <h2>Remote Monitoring</h2>
+          <p>複数カメラを監視ルームで一覧表示。publisher / monitor モードを切り替えて多拠点の遠隔監視を検証。</p>
           <span class="arrow">Open Example</span>
         </a>
         <a class="card" href="examples/webcodecs/index.html">
