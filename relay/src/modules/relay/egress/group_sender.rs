@@ -15,13 +15,6 @@ use crate::modules::{
 
 use super::scheduler::GroupSendTask;
 
-// FIXME: assumes gapless object_ids (cache position == object_id + 1, +1 for the
-// subgroup header). With object_id gaps, non-zero starts (LargestObject/
-// AbsoluteStart) resolve to the wrong cache position.
-fn stream_object_id_to_cache_index(object_id: u64) -> u64 {
-    object_id + 1
-}
-
 /// Receives `GroupSendTask` entries and spawns per-group send tasks.
 pub(crate) struct GroupSender {
     track_key: TrackKey,
@@ -139,7 +132,7 @@ impl GroupSender {
         let span = Span::current();
         let mut object_count = 0u64;
         let Some(header) = cache
-            .get_stream_object_or_wait(group_id, &subgroup_id, 0)
+            .get_stream_header_or_wait(group_id, &subgroup_id)
             .await
         else {
             span.record("object_count", object_count);
@@ -174,24 +167,17 @@ impl GroupSender {
             return;
         }
 
-        let mut next_index = stream_object_id_to_cache_index(object_id);
-        while let Some(object) = cache
-            .get_stream_object_or_wait(group_id, &subgroup_id, next_index)
+        let mut cursor = object_id;
+        while let Some((id, object)) = cache
+            .stream_object_from_or_wait(group_id, &subgroup_id, cursor)
             .await
         {
-            let object_id_delta = match &*object {
-                crate::modules::core::data_object::DataObject::SubgroupObject(field) => {
-                    Some(field.object_id_delta)
-                }
-                _ => None,
-            };
             tracing::debug!(
                 track_key = %track_key,
                 track_alias,
                 group_id,
                 subgroup_id = ?subgroup_id,
-                object_id_delta,
-                cache_index = next_index,
+                object_id = id,
                 "egress sending subgroup object"
             );
             if sender.send_object((*object).clone()).await.is_err() {
@@ -202,13 +188,13 @@ impl GroupSender {
                     track_alias,
                     group_id,
                     subgroup_id = ?subgroup_id,
-                    object_index = next_index,
+                    object_id = id,
                     "failed to send subgroup object"
                 );
                 return;
             }
             object_count += 1;
-            next_index += 1;
+            cursor = id + 1;
         }
         span.record("object_count", object_count);
         span.record("end_reason", "cache_closed");
@@ -231,30 +217,18 @@ impl GroupSender {
         cache: Arc<TrackCache>,
         mut sender: Box<dyn DataSender>,
     ) {
-        // FIXME: assumes gapless object_ids (cache position == object_id). With object_id
-        // gaps, non-zero starts resolve to the wrong cache position.
-        let mut next_index = object_id;
-        while let Some(object) = cache
-            .get_datagram_object_or_wait(group_id, next_index)
-            .await
-        {
-            let datagram_object_id = match &*object {
-                crate::modules::core::data_object::DataObject::ObjectDatagram(datagram) => {
-                    datagram.field.object_id()
-                }
-                _ => None,
-            };
+        let mut cursor = object_id;
+        while let Some((id, object)) = cache.datagram_object_from_or_wait(group_id, cursor).await {
             tracing::debug!(
                 track_alias,
                 group_id,
-                object_id = datagram_object_id,
-                cache_index = next_index,
+                object_id = id,
                 "egress sending datagram object"
             );
             if sender.send_object((*object).clone()).await.is_err() {
                 return;
             }
-            next_index += 1;
+            cursor = id + 1;
         }
     }
 }

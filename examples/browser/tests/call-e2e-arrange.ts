@@ -34,7 +34,7 @@ const E2E_VIDEO_BITRATE = 100_000
 let callClientCounter = 0
 
 const FORWARDED_CONSOLE_TEXT_PATTERN =
-  /\[call\]\[publisher\]\[video\]|\[call\]\[subscriber\]\[video\]|\[call\]\[media-element\]\[video\]|\[videoDecoder\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
+  /\[call\]\[publisher\]\[video\]|\[call\]\[subscriber\]\[video\]|\[call\]\[media-element\]\[video\]|\[call\]\[catalog\]|\[videoDecoder\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
 
 async function openCallPage(page: Page): Promise<void> {
   const params = new URLSearchParams({

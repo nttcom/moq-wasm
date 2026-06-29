@@ -14,16 +14,3 @@ impl From<&moqt::SubgroupId> for StreamSubgroupId {
         }
     }
 }
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum CacheLocation {
-    Stream {
-        group_id: u64,
-        subgroup_id: StreamSubgroupId,
-        index: u64,
-    },
-    Datagram {
-        group_id: u64,
-        index: u64,
-    },
-}

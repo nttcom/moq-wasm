@@ -30,6 +30,45 @@ enum LargestObjectSource {
     SubscribeOk(Option<moqt::Location>),
 }
 
+/// Return the location with the greater `(group_id, object_id)`, treating
+/// `None` as "no content" (i.e. smaller than any location).
+fn max_location(a: Option<moqt::Location>, b: Option<moqt::Location>) -> Option<moqt::Location> {
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            if (a.group_id, a.object_id) >= (b.group_id, b.object_id) {
+                Some(a)
+            } else {
+                Some(b)
+            }
+        }
+        (some, None) | (None, some) => some,
+    }
+}
+
+/// Resolve the subscribe-time Largest Object for a downstream subscription,
+/// from the upstream SUBSCRIBE_OK and/or the local cache for this track.
+///
+/// The cache is always consulted, even for a freshly created upstream: a
+/// publisher that left and rejoined under the same track leaves its prior
+/// objects cached, and ignoring them (when the new upstream reports no content)
+/// makes the relay advertise contentExists=false and replay the stale cache
+/// from {0,0}. Taking the max also covers a publisher that already had content
+/// at SUBSCRIBE_OK time before the cache caught up.
+async fn resolve_subscribe_largest(
+    largest_source: &LargestObjectSource,
+    track_key: &TrackKey,
+    cache_store: &TrackCacheStore,
+) -> Option<moqt::Location> {
+    let cached = match cache_store.get(track_key) {
+        Some(cache) => cache.largest_location().await,
+        None => None,
+    };
+    match largest_source {
+        LargestObjectSource::LocalCache => cached,
+        LargestObjectSource::SubscribeOk(location) => max_location(*location, cached),
+    }
+}
+
 enum UpstreamSubscriptionError {
     PublisherNotFound,
     SubscribeFailed,
@@ -371,13 +410,9 @@ impl Subscribe {
 
         // Determined here so the Largest Location advertised in SUBSCRIBE_OK
         // and the egress delivery start agree.
-        let largest_location = match &largest_source {
-            LargestObjectSource::SubscribeOk(location) => *location,
-            LargestObjectSource::LocalCache => match cache_store.get(&active_upstream.track_key) {
-                Some(cache) => cache.largest_location().await,
-                None => None,
-            },
-        };
+        let largest_location =
+            resolve_subscribe_largest(&largest_source, &active_upstream.track_key, cache_store)
+                .await;
         let content_exists = match &largest_location {
             Some(loc) => ContentExists::True {
                 location: Location {
@@ -496,5 +531,110 @@ impl Subscribe {
             "Sending `SUBSCRIBE_ERROR`"
         );
         handler.error(code, reason_phrase).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::core::data_object::DataObject;
+    use crate::modules::relay::cache::track_cache::TrackCache;
+    use crate::modules::relay::types::StreamSubgroupId;
+    use bytes::Bytes;
+    use moqt::{ExtensionHeaders, SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField};
+
+    fn make_header() -> DataObject {
+        DataObject::SubgroupHeader(SubgroupHeader::new(
+            0,
+            0,
+            SubgroupId::Value(0),
+            0,
+            false,
+            false,
+        ))
+    }
+
+    fn make_object() -> DataObject {
+        let message_type =
+            SubgroupHeader::new(0, 0, SubgroupId::Value(0), 0, false, false).message_type;
+        DataObject::SubgroupObject(SubgroupObjectField {
+            message_type,
+            object_id_delta: 0,
+            extension_headers: ExtensionHeaders {
+                prior_group_id_gap: vec![],
+                prior_object_id_gap: vec![],
+                immutable_extensions: vec![],
+            },
+            subgroup_object: SubgroupObject::new_payload(Bytes::from(vec![])),
+        })
+    }
+
+    // Append a single object (id 0) to `group_id` so the cache reports it as content.
+    async fn append_one_object(cache: &TrackCache, group_id: u64) {
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .append_stream_object(group_id, &subgroup, None, make_header())
+            .await;
+        cache
+            .append_stream_object(group_id, &subgroup, Some(0), make_object())
+            .await;
+    }
+
+    // A publisher that left a catalog cache (groups 0..=4) then reconnected as a
+    // fresh upstream reporting no content (SubscribeOk(None)) must still resolve
+    // the cached Largest Object (group 4), not None. Returning None makes the
+    // relay advertise contentExists=false and replay the stale cache from {0,0}
+    // out of order, leaving the subscriber on an old catalog version.
+    #[tokio::test]
+    async fn subscribe_largest_uses_cache_when_fresh_upstream_reports_no_content() {
+        let cache_store = TrackCacheStore::new();
+        let track_key = TrackKey::new("e2e-room/bob", "catalog");
+        let cache = cache_store.get_or_create(&track_key);
+        for group_id in 0..=4 {
+            append_one_object(&cache, group_id).await;
+        }
+
+        let largest = resolve_subscribe_largest(
+            &LargestObjectSource::SubscribeOk(None),
+            &track_key,
+            &cache_store,
+        )
+        .await;
+
+        assert_eq!(
+            largest,
+            Some(moqt::Location {
+                group_id: 4,
+                object_id: 0,
+            })
+        );
+    }
+
+    // When the publisher already had content at SUBSCRIBE_OK time but the cache
+    // has not caught up yet, the SUBSCRIBE_OK location is larger and must win.
+    #[tokio::test]
+    async fn subscribe_largest_prefers_subscribe_ok_when_ahead_of_cache() {
+        let cache_store = TrackCacheStore::new();
+        let track_key = TrackKey::new("e2e-room/bob", "catalog");
+        let cache = cache_store.get_or_create(&track_key);
+        append_one_object(&cache, 3).await;
+
+        let largest = resolve_subscribe_largest(
+            &LargestObjectSource::SubscribeOk(Some(moqt::Location {
+                group_id: 10,
+                object_id: 0,
+            })),
+            &track_key,
+            &cache_store,
+        )
+        .await;
+
+        assert_eq!(
+            largest,
+            Some(moqt::Location {
+                group_id: 10,
+                object_id: 0,
+            })
+        );
     }
 }

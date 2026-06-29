@@ -4,16 +4,12 @@ use tokio::sync::RwLock;
 
 use crate::modules::{
     core::data_object::DataObject,
-    relay::{
-        cache::group_cache::GroupCache,
-        types::{CacheLocation, StreamSubgroupId},
-    },
+    relay::{cache::group_cache::GroupCache, types::StreamSubgroupId},
 };
 
 pub(crate) struct TrackCache {
     stream_groups: RwLock<BTreeMap<u64, BTreeMap<StreamSubgroupId, Arc<GroupCache>>>>,
     datagram_groups: RwLock<BTreeMap<u64, Arc<GroupCache>>>,
-    latest: RwLock<Option<CacheLocation>>,
 }
 
 impl TrackCache {
@@ -21,7 +17,6 @@ impl TrackCache {
         Self {
             stream_groups: RwLock::new(BTreeMap::new()),
             datagram_groups: RwLock::new(BTreeMap::new()),
-            latest: RwLock::new(None),
         }
     }
 
@@ -66,25 +61,26 @@ impl TrackCache {
         &self,
         group_id: u64,
         subgroup_id: &StreamSubgroupId,
+        object_id: Option<u64>,
         object: DataObject,
-    ) -> u64 {
+    ) {
         let group = self.ensure_stream_subgroup(group_id, subgroup_id).await;
-        let object = Arc::new(object);
-        let index = group.append(object).await;
-        *self.latest.write().await = Some(CacheLocation::Stream {
-            group_id,
-            subgroup_id: subgroup_id.clone(),
-            index,
-        });
-        index
+        group.append(object_id, Arc::new(object)).await;
     }
 
-    pub(crate) async fn append_datagram_object(&self, group_id: u64, object: DataObject) -> u64 {
+    pub(crate) async fn append_datagram_object(
+        &self,
+        group_id: u64,
+        object_id: Option<u64>,
+        object: DataObject,
+    ) {
+        // Datagrams have no subgroup header, so a resolved object_id is always expected.
+        let Some(object_id) = object_id else {
+            tracing::error!(group_id, "unexpected: datagram object without object_id");
+            return;
+        };
         let group = self.ensure_datagram_group(group_id).await;
-        let object = Arc::new(object);
-        let index = group.append(object).await;
-        *self.latest.write().await = Some(CacheLocation::Datagram { group_id, index });
-        index
+        group.append(Some(object_id), Arc::new(object)).await;
     }
 
     pub(crate) async fn close_stream_subgroup(
@@ -112,15 +108,14 @@ impl TrackCache {
 
         Some(moqt::Location {
             group_id,
-            object_id: cache.last_object_id().await?,
+            object_id: cache.largest_object_id().await?,
         })
     }
 
-    pub(crate) async fn get_stream_object_or_wait(
+    pub(crate) async fn get_stream_header_or_wait(
         &self,
         group_id: u64,
         subgroup_id: &StreamSubgroupId,
-        index: u64,
     ) -> Option<Arc<DataObject>> {
         let group = self
             .stream_groups
@@ -129,16 +124,32 @@ impl TrackCache {
             .get(&group_id)
             .and_then(|subgroups| subgroups.get(subgroup_id))
             .cloned()?;
-        group.get_or_wait(index).await
+        group.header_or_wait().await
     }
 
-    pub(crate) async fn get_datagram_object_or_wait(
+    pub(crate) async fn stream_object_from_or_wait(
         &self,
         group_id: u64,
-        index: u64,
-    ) -> Option<Arc<DataObject>> {
+        subgroup_id: &StreamSubgroupId,
+        object_id: u64,
+    ) -> Option<(u64, Arc<DataObject>)> {
+        let group = self
+            .stream_groups
+            .read()
+            .await
+            .get(&group_id)
+            .and_then(|subgroups| subgroups.get(subgroup_id))
+            .cloned()?;
+        group.object_from_or_wait(object_id).await
+    }
+
+    pub(crate) async fn datagram_object_from_or_wait(
+        &self,
+        group_id: u64,
+        object_id: u64,
+    ) -> Option<(u64, Arc<DataObject>)> {
         let group = self.datagram_groups.read().await.get(&group_id).cloned()?;
-        group.get_or_wait(index).await
+        group.object_from_or_wait(object_id).await
     }
 
     pub(crate) async fn has_stream_group(&self, group_id: u64) -> bool {
@@ -187,28 +198,22 @@ impl TrackCache {
         //   group=2: include object_id 0,1,2,3,4 -> stop before 5 (exclusive)
         let mut fetch_objects = Vec::new();
         for (group_id, cache) in caches_in_range {
-            let subgroup_objects = cache.snapshot().await;
-
-            let Some(header) = subgroup_objects.first() else {
-                tracing::error!("unexpected: GroupCache is empty");
+            let Some(header) = cache.header().await else {
+                tracing::error!("unexpected: GroupCache has no subgroup header");
                 continue;
             };
-            let (publisher_priority, subgroup_id) = match header.data.as_ref() {
+            let (publisher_priority, subgroup_id) = match header.as_ref() {
                 DataObject::SubgroupHeader(h) => (h.publisher_priority, h.subgroup_id.resolve()),
                 _ => {
-                    tracing::error!("unexpected: GroupCache does not start with SubgroupHeader");
+                    tracing::error!("unexpected: GroupCache header is not a SubgroupHeader");
                     continue;
                 }
             };
 
-            // skip index=0 which is SubgroupHeader
-            for cached in subgroup_objects.iter().skip(1) {
-                let field = match cached.data.as_ref() {
+            for (current_object_id, object) in cache.objects_snapshot().await {
+                let field = match object.as_ref() {
                     DataObject::SubgroupObject(f) => f,
                     _ => continue,
-                };
-                let Some(current_object_id) = cached.object_id else {
-                    continue;
                 };
 
                 // Apply range filter for first and last groups
@@ -296,7 +301,7 @@ mod tests {
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
         cache
-            .append_stream_object(0, &subgroup, make_header(0))
+            .append_stream_object(0, &subgroup, None, make_header(0))
             .await;
         // Act / Assert: a header is not an object, so None is returned
         assert!(cache.largest_location().await.is_none());
@@ -304,84 +309,46 @@ mod tests {
 
     #[tokio::test]
     async fn largest_location_returns_single_object() {
-        // Arrange: one SubgroupObject with delta=0 in group_id=0
+        // Arrange: one object at id 0 in group 0
         let cache = TrackCache::new();
-        let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(0, &subgroup, make_header(0))
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await;
+        fill_group_with_ids(&cache, 0, &[0]).await;
         // Act
         let loc = cache.largest_location().await.unwrap();
-        // Assert: object_id resolves to 0 (delta=0, no previous)
+        // Assert: the only object's location is returned
         assert_eq!(loc.group_id, 0);
         assert_eq!(loc.object_id, 0);
     }
 
     #[tokio::test]
-    async fn largest_location_resolves_sequential_delta_chain() {
-        // Arrange: three objects with delta=0, yielding object_ids 0, 1, 2
+    async fn largest_location_returns_max_object_id() {
+        // Arrange: sequential object_ids 0, 1, 2 in group 0
         let cache = TrackCache::new();
-        let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(0, &subgroup, make_header(0))
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await; // object_id = 0
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await; // object_id = 1
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await; // object_id = 2
+        fill_group_with_ids(&cache, 0, &[0, 1, 2]).await;
         // Act
         let loc = cache.largest_location().await.unwrap();
-        // Assert: largest object_id in the delta chain is returned
+        // Assert: the largest object_id is returned
         assert_eq!(loc.group_id, 0);
         assert_eq!(loc.object_id, 2);
     }
 
     #[tokio::test]
-    async fn largest_location_resolves_delta_with_gap() {
-        // Arrange: first object has delta=5 (object_id=5), second has delta=2 (object_id=8)
+    async fn largest_location_returns_max_id_across_gap() {
+        // Arrange: gapped object_ids 5, 8 in group 0
         let cache = TrackCache::new();
-        let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(0, &subgroup, make_header(0))
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(5))
-            .await; // object_id = 5
-        cache
-            .append_stream_object(0, &subgroup, make_object(2))
-            .await; // object_id = 5+1+2 = 8
+        fill_group_with_ids(&cache, 0, &[5, 8]).await;
         // Act
         let loc = cache.largest_location().await.unwrap();
-        // Assert: delta gaps are resolved correctly
+        // Assert: the largest object_id is returned even with a gap
         assert_eq!(loc.group_id, 0);
         assert_eq!(loc.object_id, 8);
     }
 
     #[tokio::test]
     async fn largest_location_returns_latest_group() {
-        // Arrange: objects in group 0 and group 1
+        // Arrange: one object at id 0 in each of group 0 and group 1
         let cache = TrackCache::new();
-        let subgroup = StreamSubgroupId::Value(0);
-        cache
-            .append_stream_object(0, &subgroup, make_header(0))
-            .await;
-        cache
-            .append_stream_object(0, &subgroup, make_object(0))
-            .await; // group=0, object_id=0
-        cache
-            .append_stream_object(1, &subgroup, make_header(1))
-            .await;
-        cache
-            .append_stream_object(1, &subgroup, make_object(0))
-            .await; // group=1, object_id=0
+        fill_group_with_ids(&cache, 0, &[0]).await;
+        fill_group_with_ids(&cache, 1, &[0]).await;
         // Act
         let loc = cache.largest_location().await.unwrap();
         // Assert: the latest group's location is returned
@@ -390,14 +357,20 @@ mod tests {
     }
 
     async fn fill_group(cache: &TrackCache, group_id: u64, count: u64) {
+        // object_ids 0, 1, ..., count-1
+        let object_ids: Vec<u64> = (0..count).collect();
+        fill_group_with_ids(cache, group_id, &object_ids).await;
+    }
+
+    // Fills a group with objects at the given (non-sequential) absolute object_ids.
+    async fn fill_group_with_ids(cache: &TrackCache, group_id: u64, object_ids: &[u64]) {
         let subgroup = StreamSubgroupId::Value(0);
         cache
-            .append_stream_object(group_id, &subgroup, make_header(group_id))
+            .append_stream_object(group_id, &subgroup, None, make_header(group_id))
             .await;
-        // count objects with delta=0 -> object_ids 0, 1, ..., count-1
-        for _ in 0..count {
+        for &id in object_ids {
             cache
-                .append_stream_object(group_id, &subgroup, make_object(0))
+                .append_stream_object(group_id, &subgroup, Some(id), make_object(0))
                 .await;
         }
     }
@@ -451,6 +424,28 @@ mod tests {
             object_ids(&objects),
             vec![(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)]
         );
+    }
+
+    #[tokio::test]
+    async fn get_fetch_objects_filters_range_with_gaps() {
+        // Arrange: group 0 with gapped object_ids 0, 3, 5, 8
+        let cache = TrackCache::new();
+        fill_group_with_ids(&cache, 0, &[0, 3, 5, 8]).await;
+        // Act: fetch [{0,3}, {0,8}) -> start 3 inclusive, end 8 exclusive
+        let objects = cache
+            .get_fetch_objects(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 3,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 8,
+                },
+            )
+            .await;
+        // Assert: 0 skipped (< start), 8 excluded (>= end); 3 and 5 survive across the gaps
+        assert_eq!(object_ids(&objects), vec![(0, 3), (0, 5)]);
     }
 
     #[tokio::test]

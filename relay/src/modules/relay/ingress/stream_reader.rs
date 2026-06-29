@@ -78,6 +78,7 @@ impl StreamReader {
         let mut group_id = 0u64;
         let mut subgroup_id = StreamSubgroupId::None;
         let mut has_subgroup = false;
+        let mut prev_object_id: Option<u64> = None;
         let cache = cache_store.get_or_create(&track_key);
         let notify = object_notify_producer_map.get_or_create(&track_key);
         loop {
@@ -99,12 +100,14 @@ impl StreamReader {
                     group_id = header.group_id;
                     subgroup_id = StreamSubgroupId::from(&header.subgroup_id);
                     has_subgroup = true;
+                    prev_object_id = None;
                     span.record("group_id", group_id);
                     span.record("subgroup_id", tracing::field::debug(&subgroup_id));
                     cache
                         .append_stream_object(
                             group_id,
                             &subgroup_id,
+                            None,
                             DataObject::SubgroupHeader(header),
                         )
                         .await;
@@ -130,8 +133,10 @@ impl StreamReader {
                         },
                         _ => None,
                     };
+                    let object_id = object.resolve_absolute_object_id(prev_object_id);
+                    prev_object_id = object_id;
                     cache
-                        .append_stream_object(group_id, &subgroup_id, object)
+                        .append_stream_object(group_id, &subgroup_id, object_id, object)
                         .await;
                     if let Some(end_reason) = end_reason {
                         span.record("end_reason", end_reason);
