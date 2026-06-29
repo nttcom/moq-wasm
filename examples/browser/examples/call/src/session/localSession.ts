@@ -199,14 +199,6 @@ export class LocalSession {
     const resolvedRole = role ?? this.resolveTrackRole(trackName)
     if (resolvedRole === 'chat') {
       this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroup) => {
-        console.info('[call][moqt] received subgroup object', {
-          trackAlias: trackAlias.toString(),
-          groupId: groupId.toString(),
-          subgroupId: subgroup.subgroupId?.toString() ?? '0',
-          objectIdDelta: subgroup.objectIdDelta.toString(),
-          objectPayloadLength: subgroup.objectPayloadLength,
-          objectStatus: subgroup.objectStatus
-        })
         try {
           const payload = new Uint8Array(subgroup.objectPayload)
           const decoded = new TextDecoder().decode(payload)

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import {
   arrangeCallClient,
   enableMedia,
@@ -26,6 +26,40 @@ async function expectVideoPlaying(video: import('@playwright/test').Locator): Pr
     .toBeGreaterThan(0)
   // Assert: pause 状態でないことを確認する。
   await expect.poll(async () => video.evaluate((el) => (el as HTMLVideoElement).paused)).toBe(false)
+}
+
+// Wait until the debug video pipeline reports that a decoded frame with the target chunk type reached output.
+function waitForDecodedVideoFrameOutput(page: Page, chunkType: 'key' | 'delta'): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error(`Timed out waiting for decoded ${chunkType} video frame output`))
+    }, 30_000)
+    const onConsole = (message: import('@playwright/test').ConsoleMessage) => {
+      const text = message.text()
+      if (!text.startsWith('[videoDecoder][output]')) {
+        return
+      }
+      const jsonStart = text.indexOf('{')
+      if (jsonStart === -1) {
+        return
+      }
+      try {
+        const output = JSON.parse(text.slice(jsonStart)) as { event?: string; chunkType?: string }
+        if (output.event === 'output-frame' && output.chunkType === chunkType) {
+          cleanup()
+          resolve()
+        }
+      } catch {
+        // Ignore unrelated console payloads.
+      }
+    }
+    const cleanup = () => {
+      clearTimeout(timeout)
+      page.off('console', onConsole)
+    }
+    page.on('console', onConsole)
+  })
 }
 
 // Assert that an audio element has an active source object (track is being received).
@@ -97,6 +131,8 @@ test('cross-relay: two clients on different relays see each other and receive vi
     await expect(getCatalogStatus(client2.page.page, 'alice')).toHaveText('Subscribed', { timeout: 60_000 })
 
     // Act: Client1/Client2 が相手の映像・音声を明示的に購読する。
+    const bobDeltaOutput = waitForDecodedVideoFrameOutput(client1.page.page, 'delta')
+    const aliceDeltaOutput = waitForDecodedVideoFrameOutput(client2.page.page, 'delta')
     await subscribeMedia(client1.page.page, 'bob')
     await subscribeMedia(client2.page.page, 'alice')
 
@@ -109,6 +145,10 @@ test('cross-relay: two clients on different relays see each other and receive vi
     await expectVideoPlaying(getMemberVideo(client2.page.page, 'alice'))
     // Assert: Client2 が alice の音声を受信していることを確認する。
     await expectAudioReceiving(getMemberAudio(client2.page.page, 'alice'))
+
+    // Assert: both directions decode at least one inter-frame, not only keyframes.
+    await bobDeltaOutput
+    await aliceDeltaOutput
   } finally {
     await client1.context.close()
     await client2.context.close()
