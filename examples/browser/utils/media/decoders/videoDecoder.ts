@@ -198,7 +198,6 @@ let receivedFrameTimes: Map<string, number> = new Map()
 let lastOutputMetaResetAtMs = Number.NEGATIVE_INFINITY
 let decodedInputLogCount = 0
 let decodedOutputLogCount = 0
-let keyframeFlushInFlight: Promise<void> | null = null
 
 type OutputMeta = {
   groupId: bigint
@@ -982,7 +981,6 @@ async function decode(
   }
 
   try {
-    const wasWaitingForKeyFrame = waitingForKeyFrame
     lastDecodingObject = {
       groupId: groupId.toString(),
       objectId: subgroupStreamObject.objectId.toString(),
@@ -999,9 +997,6 @@ async function decode(
     await videoDecoder.decode(encodedVideoChunk)
     if (decoded.metadata.type === 'key') {
       waitingForKeyFrame = false
-      if (wasWaitingForKeyFrame) {
-        flushWaitingKeyframe(videoDecoder, lastDecodingObject)
-      }
     }
   } catch (error) {
     if (isKeyFrameRequiredError(error)) {
@@ -1016,55 +1011,6 @@ async function decode(
     }
     throw error
   }
-}
-
-function flushWaitingKeyframe(decoder: VideoDecoder, object: LastDecodingObjectInfo | null): void {
-  if (keyframeFlushInFlight || decoder.state === 'closed') {
-    return
-  }
-  if (debugVideoPipeline) {
-    console.info(
-      '[videoDecoder][flush]',
-      JSON.stringify({
-        event: 'start',
-        groupId: object?.groupId,
-        objectId: object?.objectId,
-        chunkType: object?.chunkType,
-        codec: object?.codec,
-        decodeQueueSize: decoder.decodeQueueSize
-      })
-    )
-  }
-  keyframeFlushInFlight = decoder
-    .flush()
-    .then(() => {
-      if (debugVideoPipeline) {
-        console.info(
-          '[videoDecoder][flush]',
-          JSON.stringify({
-            event: 'done',
-            groupId: object?.groupId,
-            objectId: object?.objectId,
-            chunkType: object?.chunkType,
-            codec: object?.codec,
-            decodeQueueSize: decoder.state === 'closed' ? null : decoder.decodeQueueSize
-          })
-        )
-      }
-    })
-    .catch((error) => {
-      waitingForKeyFrame = true
-      resetPlayoutTiming('error')
-      console.warn('[videoDecoder][flush] failed after waiting keyframe', {
-        groupId: object?.groupId,
-        objectId: object?.objectId,
-        chunkType: object?.chunkType,
-        error: error instanceof Error ? error.message : String(error)
-      })
-    })
-    .finally(() => {
-      keyframeFlushInFlight = null
-    })
 }
 
 function reportPacingStatus(action: 'decode' | 'wait' | 'config' | 'error' | 'jump', detailMs?: number) {
