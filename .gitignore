@@ -27,3 +27,41 @@ log/*
 test-results
 
 cargo-flamegraph.trace/*
+
+# Media files (license-violation guard; allow specific files with `!path/to/file.ext`)
+# Images
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.svg
+*.webp
+*.bmp
+*.heic
+*.heif
+*.tiff
+*.tif
+*.ico
+*.psd
+# Video
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.wmv
+*.flv
+*.mpeg
+*.mpg
+*.m4v
+*.3gp
+# Audio
+*.mp3
+*.wav
+*.aac
+*.flac
+*.m4a
+*.ogg
+*.opus
+*.aiff
+*.wma
