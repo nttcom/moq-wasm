@@ -1,6 +1,6 @@
 services:
   redis:
-    image: redis:7@sha256:33d7c9a245edd95e6703a0addbeaa48fe40c3b3b4783627a72085155462ebfdb
+    image: redis:8.8.0@sha256:2838d5524559494f6f1cd66e97e76b200d64a633a8614200620755ed395daf32
     ports:
       - "6379:6379"
     # Relays connect to redis once at startup with no retry, so gate them on health.
