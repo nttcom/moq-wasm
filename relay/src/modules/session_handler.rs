@@ -55,25 +55,36 @@ impl SessionHandler {
                         session_peer_relay_id = session_peer_relay_id,
                         relay_hostname = %relay_hostname,
                     );
-                    let Ok(connecting) = async {
-                        endpoint.accept().await.inspect_err(|e| {
-                            tracing::error!("failed to accept: {}", e);
+                    let connecting = async {
+                        endpoint.accept().await.inspect_err(|error| {
+                            if Self::is_endpoint_closing(error) {
+                                tracing::info!(%error, "transport endpoint closed");
+                            } else {
+                                tracing::warn!(%error, "failed to accept transport connection");
+                            }
                         })
                     }
                     .instrument(session_span.clone())
-                    .await
-                    else {
-                        break;
+                    .await;
+                    let connecting = match connecting {
+                        Ok(connecting) => connecting,
+                        Err(error) => {
+                            if Self::is_endpoint_closing(&error) {
+                                break;
+                            }
+                            continue;
+                        }
                     };
-                    let Ok(session) = async {
-                        connecting.await.inspect_err(|e| {
-                            tracing::error!("failed to accept: {}", e);
+                    let session = async {
+                        connecting.await.inspect_err(|error| {
+                            tracing::warn!(%error, "failed to establish session");
                         })
                     }
                     .instrument(session_span.clone())
-                    .await
-                    else {
-                        break;
+                    .await;
+                    let session = match session {
+                        Ok(session) => session,
+                        Err(_) => continue,
                     };
                     let session_add_span = tracing::info_span!(
                         parent: &session_span,
@@ -112,11 +123,62 @@ impl SessionHandler {
             })
             .unwrap()
     }
+
+    fn is_endpoint_closing(error: &anyhow::Error) -> bool {
+        error
+            .chain()
+            .any(|cause| cause.to_string() == "Endpoint is closing")
+    }
 }
 
 impl Drop for SessionHandler {
     fn drop(&mut self) {
         tracing::info!("Handle dropped.");
         self.join_handle.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Context;
+
+    use super::SessionHandler;
+
+    #[test]
+    fn endpoint_closing_error_stops_accept_loop() {
+        // Arrange
+        let error = anyhow::anyhow!("Endpoint is closing");
+
+        // Act
+        let should_stop = SessionHandler::is_endpoint_closing(&error);
+
+        // Assert
+        assert!(should_stop);
+    }
+
+    #[test]
+    fn wrapped_endpoint_closing_error_stops_accept_loop() {
+        // Arrange
+        let error = Err::<(), _>(anyhow::anyhow!("Endpoint is closing"))
+            .context("accept failed")
+            .unwrap_err();
+
+        // Act
+        let should_stop = SessionHandler::is_endpoint_closing(&error);
+
+        // Assert
+        assert!(should_stop);
+    }
+
+    #[test]
+    fn connection_timeout_error_keeps_accept_loop_running() {
+        // Arrange
+        let error = anyhow::anyhow!("connection error: timed out");
+
+        // Act
+        let should_stop = SessionHandler::is_endpoint_closing(&error);
+
+        // Assert
+        assert!(!should_stop);
     }
 }
