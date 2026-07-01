@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use dashmap::DashMap;
 
@@ -25,5 +25,53 @@ impl TrackCacheStore {
             .entry(track_key.clone())
             .or_insert_with(|| Arc::new(TrackCache::new()))
             .clone()
+    }
+
+    pub(crate) async fn evict(&self, ttl: Duration) {
+        // Snapshot handles so per-track eviction runs without holding a shard lock.
+        let entries: Vec<(TrackKey, Arc<TrackCache>)> = self
+            .caches
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+        for (_, track) in &entries {
+            track.evict(ttl).await;
+        }
+        // Drop the snapshot Arcs before the strong_count check so it counts only real holders.
+        let keys: Vec<TrackKey> = entries.into_iter().map(|(key, _)| key).collect();
+        for key in keys {
+            self.caches
+                .remove_if(&key, |_, track| Arc::strong_count(track) == 1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn evict_removes_unreferenced_track() {
+        // Arrange: a track held only by the store (the returned Arc is dropped immediately)
+        let store = TrackCacheStore::new();
+        let key = TrackKey::new("ns", "track");
+        store.get_or_create(&key);
+        // Act
+        store.evict(Duration::from_secs(10)).await;
+        // Assert: strong_count == 1, so the track is reclaimed
+        assert!(store.get(&key).is_none());
+    }
+
+    #[tokio::test]
+    async fn evict_keeps_referenced_track() {
+        // Arrange: a track someone else still holds (simulating an active ingress/egress)
+        let store = TrackCacheStore::new();
+        let key = TrackKey::new("ns", "track");
+        let _held = store.get_or_create(&key);
+        // Act
+        store.evict(Duration::from_secs(10)).await;
+        // Assert: strong_count > 1, so the track survives (new-join race avoidance)
+        assert!(store.get(&key).is_some());
     }
 }
