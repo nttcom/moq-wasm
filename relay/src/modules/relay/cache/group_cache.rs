@@ -1,12 +1,15 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use tokio::sync::{Notify, RwLock};
+use tokio::{
+    sync::{Notify, RwLock},
+    time::{Duration, Instant},
+};
 
 use crate::modules::core::data_object::DataObject;
 
 pub(crate) struct GroupCache {
     header: RwLock<Option<Arc<DataObject>>>,
-    objects: RwLock<BTreeMap<u64, Arc<DataObject>>>,
+    objects: RwLock<BTreeMap<u64, (Instant, Arc<DataObject>)>>,
     end_of_group: RwLock<bool>,
     notify: Notify,
 }
@@ -39,10 +42,21 @@ impl GroupCache {
                     .write()
                     .await
                     .entry(object_id)
-                    .or_insert(object);
+                    .or_insert((Instant::now(), object));
             }
         }
         self.notify.notify_waiters();
+    }
+
+    pub(crate) async fn evict_expired_objects(&self, ttl: Duration) {
+        self.objects
+            .write()
+            .await
+            .retain(|_, (inserted, _)| inserted.elapsed() <= ttl);
+    }
+
+    pub(crate) async fn is_evictable(&self) -> bool {
+        self.is_closed().await && self.objects.read().await.is_empty()
     }
 
     pub(crate) async fn header(&self) -> Option<Arc<DataObject>> {
@@ -82,7 +96,7 @@ impl GroupCache {
         loop {
             // Create notified() before the check to avoid a race between it and the wait.
             let notified = self.notify.notified();
-            if let Some((&id, object)) = self.objects.read().await.range(object_id..).next() {
+            if let Some((&id, (_, object))) = self.objects.read().await.range(object_id..).next() {
                 return Some((id, object.clone()));
             }
             if self.is_closed().await {
@@ -109,7 +123,7 @@ impl GroupCache {
             .read()
             .await
             .iter()
-            .map(|(&id, object)| (id, object.clone()))
+            .map(|(&id, (_, object))| (id, object.clone()))
             .collect()
     }
 }
@@ -119,6 +133,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use moqt::{ExtensionHeaders, SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField};
+    use std::time::Duration;
 
     fn payload_object(payload: &[u8]) -> Arc<DataObject> {
         let message_type =
@@ -210,6 +225,36 @@ mod tests {
         let (id, _) = cache.object_from_or_wait(4).await.unwrap();
         // Assert: the next available id (5) is returned across the gap
         assert_eq!(id, 5);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_removes_objects_older_than_ttl() {
+        // Arrange: object 0 at t=0, object 1 at t=6s, TTL=10s
+        let ttl = Duration::from_secs(10);
+        let cache = GroupCache::new();
+        cache.append(Some(0), payload_object(b"old")).await;
+        tokio::time::advance(Duration::from_secs(6)).await;
+        cache.append(Some(1), payload_object(b"new")).await;
+        // Act: at t=11s, object 0 is 11s old (>10), object 1 is 5s old (<=10)
+        tokio::time::advance(Duration::from_secs(5)).await;
+        cache.evict_expired_objects(ttl).await;
+        // Assert: only the expired object 0 is removed
+        let snapshot = cache.objects_snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].0, 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_keeps_object_at_exactly_ttl() {
+        // Arrange: object 0 at t=0, TTL=10s
+        let ttl = Duration::from_secs(10);
+        let cache = GroupCache::new();
+        cache.append(Some(0), payload_object(b"o")).await;
+        // Act: at exactly t=10s, age == TTL, which is not `> TTL`
+        tokio::time::advance(Duration::from_secs(10)).await;
+        cache.evict_expired_objects(ttl).await;
+        // Assert: the boundary object survives
+        assert_eq!(cache.objects_snapshot().await.len(), 1);
     }
 
     #[tokio::test]

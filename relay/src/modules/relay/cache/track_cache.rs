@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use tokio::sync::RwLock;
 
@@ -95,6 +95,60 @@ impl TrackCache {
     pub(crate) async fn close_datagram_group(&self, group_id: u64) {
         let group = self.ensure_datagram_group(group_id).await;
         group.mark_end_of_group().await;
+    }
+
+    pub(crate) async fn evict(&self, ttl: Duration) {
+        // Snapshot group handles so per-group eviction runs without holding the map lock.
+        let stream_groups: Vec<(u64, StreamSubgroupId, Arc<GroupCache>)> = {
+            let groups = self.stream_groups.read().await;
+            groups
+                .iter()
+                .flat_map(|(&group_id, subgroups)| {
+                    subgroups.iter().map(move |(subgroup_id, group)| {
+                        (group_id, subgroup_id.clone(), group.clone())
+                    })
+                })
+                .collect()
+        };
+        let mut removable_streams: Vec<(u64, StreamSubgroupId)> = Vec::new();
+        for (group_id, subgroup_id, group) in stream_groups {
+            group.evict_expired_objects(ttl).await;
+            if group.is_evictable().await {
+                removable_streams.push((group_id, subgroup_id));
+            }
+        }
+        if !removable_streams.is_empty() {
+            let mut groups = self.stream_groups.write().await;
+            for (group_id, subgroup_id) in removable_streams {
+                if let Some(subgroups) = groups.get_mut(&group_id) {
+                    subgroups.remove(&subgroup_id);
+                    if subgroups.is_empty() {
+                        groups.remove(&group_id);
+                    }
+                }
+            }
+        }
+
+        let datagram_groups: Vec<(u64, Arc<GroupCache>)> = {
+            let groups = self.datagram_groups.read().await;
+            groups
+                .iter()
+                .map(|(&group_id, group)| (group_id, group.clone()))
+                .collect()
+        };
+        let mut removable_datagrams: Vec<u64> = Vec::new();
+        for (group_id, group) in datagram_groups {
+            group.evict_expired_objects(ttl).await;
+            if group.is_evictable().await {
+                removable_datagrams.push(group_id);
+            }
+        }
+        if !removable_datagrams.is_empty() {
+            let mut groups = self.datagram_groups.write().await;
+            for group_id in removable_datagrams {
+                groups.remove(&group_id);
+            }
+        }
     }
 
     /// Returns the Largest Location as defined in the MoQT spec.
@@ -260,6 +314,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use moqt::{ExtensionHeaders, SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField};
+    use std::time::Duration;
 
     fn make_header(group_id: u64) -> DataObject {
         DataObject::SubgroupHeader(SubgroupHeader::new(
@@ -354,6 +409,53 @@ mod tests {
         // Assert: the latest group's location is returned
         assert_eq!(loc.group_id, 1);
         assert_eq!(loc.object_id, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_removes_closed_group_after_objects_drain() {
+        // Arrange: a closed group whose objects will all expire, TTL=10s
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        fill_group(&cache, 0, 3).await;
+        cache.close_stream_subgroup(0, &subgroup).await;
+        // Act: at t=11s, all objects have drained via object TTL
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl).await;
+        // Assert: the closed, drained group (header included) is reclaimed
+        assert!(!cache.has_stream_group(0).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_keeps_open_group_without_objects() {
+        // Arrange: an open group with only a header, no objects yet, TTL=10s
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .append_stream_object(0, &subgroup, None, make_header(0))
+            .await;
+        // Act: long past the TTL, but the group is still open
+        tokio::time::advance(Duration::from_secs(100)).await;
+        cache.evict(ttl).await;
+        // Assert: an open group is never evicted, so no resurrection can occur
+        assert!(cache.has_stream_group(0).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_keeps_closed_group_with_remaining_objects() {
+        // Arrange: a closed group whose objects are still within TTL
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        fill_group(&cache, 0, 3).await;
+        cache.close_stream_subgroup(0, &subgroup).await;
+        // Act: at t=5s, the objects have not drained yet
+        tokio::time::advance(Duration::from_secs(5)).await;
+        cache.evict(ttl).await;
+        // Assert: the group survives until its objects drain
+        assert!(cache.has_stream_group(0).await);
+        assert_eq!(cache.largest_location().await.unwrap().object_id, 2);
     }
 
     async fn fill_group(cache: &TrackCache, group_id: u64, count: u64) {

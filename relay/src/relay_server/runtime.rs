@@ -6,7 +6,8 @@ use crate::modules::{
     event_handler::EventHandler,
     inter_relay::InterRelayConnectionManager,
     relay::{
-        egress::coordinator::EgressCoordinator, ingress::ingress_coordinator::IngressCoordinator,
+        cache::eviction_job::spawn_cache_eviction_job, egress::coordinator::EgressCoordinator,
+        ingress::ingress_coordinator::IngressCoordinator,
     },
     route_registry::RelayRouteRegistry,
     session_event::SessionEvent,
@@ -19,6 +20,7 @@ pub(crate) struct RelayRuntime {
     _ingress: IngressCoordinator,
     _egress: EgressCoordinator,
     _manager: EventHandler,
+    _evict_job: tokio::task::JoinHandle<()>,
 }
 
 impl RelayRuntime {
@@ -56,12 +58,14 @@ impl RelayRuntime {
             upstream_publisher_resolver,
             store.cache_store.clone(),
         );
+        let evict_job = spawn_cache_eviction_job(store.cache_store.clone());
         (
             sender,
             Self {
                 _ingress: ingress,
                 _egress: egress,
                 _manager: manager,
+                _evict_job: evict_job,
             },
         )
     }

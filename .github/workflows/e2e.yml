@@ -13,6 +13,7 @@ on:
       - "scripts/media-e2e-helpers.mjs"
       - "scripts/ensure-relay-certs.mjs"
       - "scripts/chrome_linux.sh"
+      - "scripts/cache-eviction-e2e.sh"
       - "scripts/cascading-relay-e2e.sh"
       - "scripts/fetch-e2e.sh"
       - "scripts/multiple-publishers-e2e.sh"
@@ -23,6 +24,7 @@ on:
       - "relay/**"
       - "moqt/**"
       - "shared/**"
+      - "tests/cache-eviction-e2e/**"
       - "tests/cascading-relay-e2e/**"
       - "tests/fetch-e2e/**"
       - "tests/multiple-publishers-e2e/**"
@@ -46,6 +48,7 @@ on:
       - "scripts/media-e2e-helpers.mjs"
       - "scripts/ensure-relay-certs.mjs"
       - "scripts/chrome_linux.sh"
+      - "scripts/cache-eviction-e2e.sh"
       - "scripts/cascading-relay-e2e.sh"
       - "scripts/fetch-e2e.sh"
       - "scripts/multiple-publishers-e2e.sh"
@@ -56,6 +59,7 @@ on:
       - "relay/**"
       - "moqt/**"
       - "shared/**"
+      - "tests/cache-eviction-e2e/**"
       - "tests/cascading-relay-e2e/**"
       - "tests/fetch-e2e/**"
       - "tests/multiple-publishers-e2e/**"
@@ -79,6 +83,7 @@ jobs:
       media: ${{ steps.filter.outputs.media }}
       call: ${{ steps.filter.outputs.call }}
       cascading: ${{ steps.filter.outputs.cascading }}
+      cache_eviction: ${{ steps.filter.outputs.cache_eviction }}
       fetch: ${{ steps.filter.outputs.fetch }}
       multipub: ${{ steps.filter.outputs.multipub }}
       dedup: ${{ steps.filter.outputs.dedup }}
@@ -102,6 +107,7 @@ jobs:
             media=true
             call=true
             cascading=true
+            cache_eviction=true
             fetch=true
             multipub=true
             dedup=true
@@ -117,6 +123,7 @@ jobs:
             media=false
             call=false
             cascading=false
+            cache_eviction=false
             fetch=false
             multipub=false
             dedup=false
@@ -141,6 +148,12 @@ jobs:
               esac
 
               case "$path" in
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cache-eviction-e2e.sh|scripts/ensure-relay-certs.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cache-eviction-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  cache_eviction=true
+                  ;;
+              esac
+
+              case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/fetch-e2e.sh|scripts/ensure-relay-certs.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/fetch-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   fetch=true
                   ;;
@@ -160,7 +173,7 @@ jobs:
             done < changed-files.txt
           fi
 
-          if [[ "$call" == "true" || "$cascading" == "true" || "$fetch" == "true" || "$multipub" == "true" || "$dedup" == "true" ]]; then
+          if [[ "$call" == "true" || "$cascading" == "true" || "$cache_eviction" == "true" || "$fetch" == "true" || "$multipub" == "true" || "$dedup" == "true" ]]; then
             relay=true
           else
             relay=false
@@ -180,6 +193,7 @@ jobs:
             echo "media=$media"
             echo "call=$call"
             echo "cascading=$cascading"
+            echo "cache_eviction=$cache_eviction"
             echo "fetch=$fetch"
             echo "multipub=$multipub"
             echo "dedup=$dedup"
@@ -435,6 +449,69 @@ jobs:
         env:
           CI: "true"
         run: ./scripts/cascading-relay-e2e.sh
+
+  cache_eviction_e2e:
+    needs: [changes, relay_image_local, relay_image]
+    if: ${{ always() && needs.changes.outputs.cache_eviction == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        # actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 = v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.96.0
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Download local relay image
+        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
+        # actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 = v4.3.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: relay-image-local
+          path: ${{ runner.temp }}/relay-image
+
+      - name: Load local relay image
+        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
+        run: |
+          gunzip -c "${RUNNER_TEMP}/relay-image/relay-image.tar.gz" | docker load
+          docker tag moqt-relay:local-source moqt-relay:local
+
+      - name: Log in to GHCR
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+        # docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 = v3.7.0
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull prebuilt relay image
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+        run: |
+          docker pull "${{ needs.relay_image.outputs.image }}"
+          docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
+
+      - name: Log out from GHCR
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+        run: docker logout ghcr.io
+
+      - name: Run cache-eviction E2E
+        env:
+          CI: "true"
+        run: ./scripts/cache-eviction-e2e.sh
 
   fetch_e2e:
     needs: [changes, relay_image_local, relay_image]
