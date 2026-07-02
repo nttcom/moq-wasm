@@ -15,6 +15,7 @@
 //! Run a relay on localhost:4433, then `cargo run -p fetch-e2e` from the repo
 //! root. Any range that resolves to the wrong object set fails an assertion.
 
+use std::env;
 use std::net::ToSocketAddrs;
 use std::str::FromStr;
 
@@ -25,7 +26,7 @@ use moqt::{
     SubscribeOption,
 };
 
-const RELAY_URL: &str = "moqt://localhost:4433";
+const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";
 const NAMESPACE: &str = "room/alice";
 const TRACK_NAME: &str = "data";
 const PUBLISHER_PRIORITY: u8 = 128;
@@ -33,7 +34,9 @@ const GROUPS: u64 = 3;
 const OBJECTS_PER_GROUP: u64 = 5;
 
 async fn new_session() -> anyhow::Result<Session<QUIC>> {
-    let url = url::Url::from_str(RELAY_URL).unwrap();
+    let relay_url =
+        env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
+    let url = url::Url::from_str(&relay_url).unwrap();
     let host = url.host_str().unwrap();
     let remote = (host, url.port().unwrap_or(4433))
         .to_socket_addrs()?

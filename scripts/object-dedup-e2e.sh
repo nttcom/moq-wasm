@@ -37,7 +37,9 @@ fi
 docker compose up -d redis relay-a
 docker compose logs -f --no-color relay-a &
 LOGS_PID=$!
+RELAY_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4433)"
+echo "Using relay URL: $RELAY_URL"
 
 # bob asserts group 0 deduplicates to o0..o4 and panics on a duplicate, so a
 # non-zero exit is the only failure signal needed.
-cargo run -p object-dedup-e2e
+MOQT_E2E_RELAY_URL="$RELAY_URL" cargo run -p object-dedup-e2e

@@ -1,4 +1,6 @@
-export const DEFAULT_MOQT_URL = 'https://relay-1.moqt.research.skyway.io:443'
+import { DEFAULT_CLOUD_RELAY_URL, configureRelayUrlControls } from '../../utils/relayPresets'
+
+export const DEFAULT_MOQT_URL = DEFAULT_CLOUD_RELAY_URL
 export type MediaVideoHardwareAcceleration = 'prefer-hardware' | 'prefer-software' | 'no-preference'
 
 export type MediaVideoEncodingOverrides = {
@@ -7,8 +9,7 @@ export type MediaVideoEncodingOverrides = {
 }
 
 export function initializeMediaExamplePage(namespaceInputId: string): void {
-  bindUrlPresetButtons()
-  applyUrlOverride()
+  configureRelayUrlControls({ defaultUrl: DEFAULT_MOQT_URL })
   applyNamespaceOverride(namespaceInputId)
 }
 
@@ -54,36 +55,6 @@ export function getMediaVideoEncodingOverrides(): MediaVideoEncodingOverrides {
     codec: codec ?? undefined,
     hardwareAcceleration
   }
-}
-
-function bindUrlPresetButtons(): void {
-  const preset = document.getElementById('urlPresets')
-  const input = document.getElementById('url')
-  if (!(preset instanceof HTMLElement) || !(input instanceof HTMLInputElement)) {
-    return
-  }
-
-  preset.addEventListener('click', (event) => {
-    const target = event.target
-    if (!(target instanceof HTMLButtonElement)) {
-      return
-    }
-    const value = target.getAttribute('data-url')
-    if (!value) {
-      return
-    }
-    input.value = value
-  })
-}
-
-function applyUrlOverride(): void {
-  const input = document.getElementById('url')
-  if (!(input instanceof HTMLInputElement)) {
-    return
-  }
-
-  const params = new URLSearchParams(window.location.search)
-  input.value = firstNonEmptyValue(params, ['moqtUrl', 'url']) ?? (input.value.trim() || DEFAULT_MOQT_URL)
 }
 
 function applyNamespaceOverride(namespaceInputId: string): void {

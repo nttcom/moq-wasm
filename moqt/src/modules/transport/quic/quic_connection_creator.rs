@@ -1,7 +1,7 @@
 use anyhow::Ok;
 use async_trait::async_trait;
 use std::{
-    net::{Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
 };
 
@@ -68,7 +68,7 @@ impl QUICConnectionCreator {
     }
 
     fn create_client(port_num: u16, mut config: rustls::ClientConfig) -> anyhow::Result<Self> {
-        let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
+        let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port_num));
         let mut endpoint = quinn::Endpoint::client(address)?;
 
         let alpn = &[b"moq-00"];

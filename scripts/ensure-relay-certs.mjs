@@ -13,6 +13,13 @@ import {
   serverKeysDir,
 } from "./media-e2e-helpers.mjs";
 
+const requiredSubjectAltNames = [
+  "DNS:localhost",
+  "DNS:relay-a",
+  "DNS:relay-b",
+  "IP Address:127.0.0.1",
+];
+
 export async function ensureRelayCertificates() {
   ensureLinuxEnvironment();
   await assertOpenSsl();
@@ -23,42 +30,36 @@ export async function ensureRelayCertificates() {
   }
 
   mkdirSync(serverKeysDir, { recursive: true });
-  await runCommand(
-    resolveCommandName("openssl"),
-    [
-      "req",
-      "-newkey",
-      "rsa:2048",
-      "-nodes",
-      "-keyout",
-      keyPath,
-      "-x509",
-      "-out",
-      certPath,
-      "-days",
-      "365",
-      "-subj",
-      "/CN=Test Certificate",
-      "-addext",
-      "subjectAltName = DNS:localhost,IP:127.0.0.1",
-    ],
-    { cwd: repoRoot },
-  );
+  await generateRelayCertificate();
   ensureCertificatePermissions();
 }
 
-
 async function hasValidCertificates() {
   try {
-    await runCommand(resolveCommandName("openssl"), ["x509", "-in", certPath, "-noout"], {
-      cwd: repoRoot,
-      quiet: true,
-    });
-    await runCommand(resolveCommandName("openssl"), ["rsa", "-in", keyPath, "-check", "-noout"], {
-      cwd: repoRoot,
-      quiet: true,
-    });
-    return true;
+    await runCommand(
+      resolveCommandName("openssl"),
+      ["x509", "-in", certPath, "-noout"],
+      {
+        cwd: repoRoot,
+        quiet: true,
+      },
+    );
+    await runCommand(
+      resolveCommandName("openssl"),
+      ["rsa", "-in", keyPath, "-check", "-noout"],
+      {
+        cwd: repoRoot,
+        quiet: true,
+      },
+    );
+    const subjectAltName = await readCommand(
+      resolveCommandName("openssl"),
+      ["x509", "-in", certPath, "-noout", "-ext", "subjectAltName"],
+      { cwd: repoRoot },
+    );
+    return requiredSubjectAltNames.every((entry) =>
+      subjectAltName.includes(entry),
+    );
   } catch (_error) {
     return false;
   }
@@ -77,6 +78,30 @@ function ensureCertificatePermissions() {
   // disposable E2E keys read-only, so make them world-readable for tests.
   chmodSync(certPath, 0o644);
   chmodSync(keyPath, 0o644);
+}
+
+async function generateRelayCertificate() {
+  await runCommand(
+    resolveCommandName("openssl"),
+    [
+      "req",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-keyout",
+      keyPath,
+      "-x509",
+      "-out",
+      certPath,
+      "-days",
+      "365",
+      "-subj",
+      "/CN=Test Certificate",
+      "-addext",
+      "subjectAltName = DNS:localhost,DNS:relay-a,DNS:relay-b,IP:127.0.0.1",
+    ],
+    { cwd: repoRoot },
+  );
 }
 
 async function runCommand(command, args, options) {
@@ -116,7 +141,49 @@ async function runCommand(command, args, options) {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+async function readCommand(command, args, options) {
+  const { cwd, errorHint } = options;
+  return await new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(command, args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", (error) => {
+      rejectPromise(
+        new Error(
+          `${command} failed to start: ${getErrorMessage(error)} ${errorHint ?? ""}`.trim(),
+        ),
+      );
+    });
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolvePromise(stdout);
+        return;
+      }
+      rejectPromise(
+        new Error(
+          `${command} ${args.join(" ")} exited with code ${code}. ${errorHint ?? ""} ${stderr.trim()}`.trim(),
+        ),
+      );
+    });
+  });
+}
+
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   ensureRelayCertificates().catch((error) => {
     console.error(getErrorMessage(error));
     process.exitCode = 1;

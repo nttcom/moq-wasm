@@ -13,6 +13,7 @@
 //! from the repo root. Bob asserts `carol == 0`, that Alice keeps flowing after
 //! Carol leaves, and prints a summary.
 
+use std::env;
 use std::net::ToSocketAddrs;
 use std::str::FromStr;
 use std::time::Duration;
@@ -24,7 +25,7 @@ use moqt::{
 };
 use tokio::sync::oneshot;
 
-const RELAY_URL: &str = "moqt://localhost:4433";
+const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";
 const NAMESPACE: &str = "room/main";
 const TRACK_NAME: &str = "data";
 const PUBLISHER_PRIORITY: u8 = 128;
@@ -36,7 +37,9 @@ const OBJECTS_PER_GROUP: u64 = 5;
 const LATE_GROUP: u64 = 4;
 
 async fn new_session() -> anyhow::Result<Session<QUIC>> {
-    let url = url::Url::from_str(RELAY_URL).unwrap();
+    let relay_url =
+        env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
+    let url = url::Url::from_str(&relay_url).unwrap();
     let host = url.host_str().unwrap();
     let remote = (host, url.port().unwrap_or(4433))
         .to_socket_addrs()?

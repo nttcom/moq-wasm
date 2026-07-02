@@ -3,6 +3,7 @@ import { parse_msf_catalog_json } from '../../../pkg/moqt_client_wasm'
 import { AUTH_INFO } from '../const'
 import { getFormElement } from '../utils'
 import { extractCatalogVideoTracks, extractCatalogAudioTracks, type MediaCatalogTrack } from '../catalog'
+import { configureRelayUrlControls } from '../../../utils/relayPresets'
 
 const moqtClient = new MoqtClientWrapper()
 
@@ -871,6 +872,8 @@ moqtClient.setOnSubscribeResponseHandler((subscribeResponse) => {
 })
 
 // --- Init ---
+
+configureRelayUrlControls()
 
 const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {

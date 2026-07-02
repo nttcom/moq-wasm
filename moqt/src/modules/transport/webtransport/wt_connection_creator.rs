@@ -1,10 +1,20 @@
-use std::net::SocketAddr;
+use std::{
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
-use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+use quinn::rustls::{
+    self,
+    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+};
 
 use super::wt_connection::WtConnection;
-use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
+use crate::modules::transport::{
+    crypto_provider::install_default_crypto_provider,
+    quic::skip_certd_validation::SkipVerification,
+    transport_connection_creator::TransportConnectionCreator,
+};
 
 enum WtEndpoint {
     Server(tokio::sync::Mutex<web_transport_quinn::Server>),
@@ -15,17 +25,45 @@ pub struct WtConnectionCreator {
     endpoint: WtEndpoint,
 }
 
+impl WtConnectionCreator {
+    fn create_client(
+        port_num: u16,
+        mut crypto: rustls::ClientConfig,
+    ) -> anyhow::Result<web_transport_quinn::Client> {
+        crypto.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
+
+        let client_config = quinn::ClientConfig::new(Arc::new(
+            quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,
+        ));
+        let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port_num));
+        let endpoint = quinn::Endpoint::client(address)?;
+
+        Ok(web_transport_quinn::Client::new(endpoint, client_config))
+    }
+}
+
 #[async_trait]
 impl TransportConnectionCreator for WtConnectionCreator {
     type Connection = WtConnection;
 
     fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
+        install_default_crypto_provider();
+
         let client = if verify_certificate {
-            web_transport_quinn::ClientBuilder::new().with_system_roots()?
+            let mut roots = rustls::RootCertStore::empty();
+            for cert in rustls_native_certs::load_native_certs().unwrap() {
+                roots.add(cert)?;
+            }
+            let crypto = rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            Self::create_client(port_num, crypto)?
         } else {
-            web_transport_quinn::ClientBuilder::new()
+            let crypto = rustls::ClientConfig::builder()
                 .dangerous()
-                .with_no_certificate_verification()?
+                .with_custom_certificate_verifier(Arc::new(SkipVerification))
+                .with_no_client_auth();
+            Self::create_client(port_num, crypto)?
         };
 
         tracing::info!("Client ready! for WebTransport port: {}", port_num);
@@ -36,13 +74,14 @@ impl TransportConnectionCreator for WtConnectionCreator {
     }
 
     fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
+        install_default_crypto_provider();
+
         // 証明書を読み込む
         let certs: Vec<_> = CertificateDer::pem_file_iter(custom_cert_path)
             .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?
             .collect::<Result<Vec<_>, _>>()
             .inspect_err(|e| tracing::error!("Parsing certificate failed: {:?}", e))?;
 
-        // 自己署名証明書を信頼するクライアントを作る
         let client = web_transport_quinn::ClientBuilder::new().with_server_certificates(certs)?;
 
         tracing::info!("Client ready! for WebTransport port: {}", port_num);
@@ -58,6 +97,8 @@ impl TransportConnectionCreator for WtConnectionCreator {
         port_num: u16,
         _keep_alive_sec: u64,
     ) -> anyhow::Result<Self> {
+        install_default_crypto_provider();
+
         // 証明書を同期的に読み込む
         let certs: Vec<_> = CertificateDer::pem_file_iter(cert_path)
             .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?
@@ -68,7 +109,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         let key = PrivateKeyDer::from_pem_file(key_path)
             .inspect_err(|e| tracing::error!("Creating private key failed: {:?}", e.to_string()))?;
 
-        let addr: SocketAddr = format!("[::]:{}", port_num).parse()?;
+        let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
         let server = web_transport_quinn::ServerBuilder::new()
             .with_addr(addr)
             .with_certificate(certs, key)?;

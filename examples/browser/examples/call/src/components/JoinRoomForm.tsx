@@ -1,4 +1,5 @@
-import { useState, FormEvent, ChangeEvent } from 'react'
+import { useMemo, useState, FormEvent, ChangeEvent } from 'react'
+import { CLOUD_RELAY_PRESETS, LOAD_BALANCED_RELAY_PRESET, buildLocalRelayPresets } from '../../../../utils/relayPresets'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
@@ -7,58 +8,23 @@ interface JoinRoomFormProps {
   onJoin: (roomName: string, userName: string, relayUrl: string) => void
 }
 
-const RELAY_OPTION_GROUPS = [
-  {
-    label: 'Local Relay',
-    options: [
-      {
-        label: 'relay-a',
-        value: 'https://127.0.0.1:4433',
-        helper: 'Docker compose relay-a'
-      },
-      {
-        label: 'relay-b',
-        value: 'https://127.0.0.1:4434',
-        helper: 'Docker compose relay-b'
-      }
-    ]
-  },
-  {
-    label: 'Cloud (LB)',
-    options: [
-      {
-        label: 'relay.moqt.research.skyway.io',
-        value: 'https://relay.moqt.research.skyway.io:443',
-        helper: 'Load-balanced cloud relay'
-      }
-    ]
-  },
-  {
-    label: 'Cloud (specific relay)',
-    options: [
-      {
-        label: 'relay-1',
-        value: 'https://relay-1.moqt.research.skyway.io:443',
-        helper: 'relay-1.moqt.research.skyway.io:443'
-      },
-      {
-        label: 'relay-2',
-        value: 'https://relay-2.moqt.research.skyway.io:443',
-        helper: 'relay-2.moqt.research.skyway.io:443'
-      },
-      {
-        label: 'relay-3',
-        value: 'https://relay-3.moqt.research.skyway.io:443',
-        helper: 'relay-3.moqt.research.skyway.io:443'
-      }
-    ]
-  }
-] as const
+interface RelayOption {
+  label: string
+  value: string
+  helper: string
+  testId?: string
+}
+
+interface RelayOptionGroup {
+  label: string
+  options: RelayOption[]
+}
 
 export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
+  const relayOptionGroups = useMemo(() => buildRelayOptionGroups(), [])
   const [roomName, setRoomName] = useState('')
   const [userName, setUserName] = useState('')
-  const [relayUrl, setRelayUrl] = useState<string>(RELAY_OPTION_GROUPS[0].options[0].value)
+  const [relayUrl, setRelayUrl] = useState<string>(relayOptionGroups[0].options[0].value)
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
@@ -108,7 +74,7 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
           <div className="space-y-4">
             <Label className="text-2xl">Relay</Label>
             <div className="space-y-5">
-              {RELAY_OPTION_GROUPS.map((group) => (
+              {relayOptionGroups.map((group) => (
                 <fieldset key={group.label} className="space-y-3">
                   <legend className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                     {group.label}
@@ -126,13 +92,7 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
                           checked={relayUrl === option.value}
                           onChange={() => setRelayUrl(option.value)}
                           className="h-5 w-5 shrink-0 accent-blue-600"
-                          data-testid={
-                            option.value === 'https://127.0.0.1:4433'
-                              ? 'join-relay-a-radio'
-                              : option.value === 'https://127.0.0.1:4434'
-                                ? 'join-relay-b-radio'
-                                : undefined
-                          }
+                          data-testid={option.testId}
                         />
                         <div className="min-w-0">
                           <div className="font-semibold">{option.label}</div>
@@ -158,4 +118,21 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
       </div>
     </div>
   )
+}
+
+function buildRelayOptionGroups(): RelayOptionGroup[] {
+  return [
+    {
+      label: 'Local Relay',
+      options: buildLocalRelayPresets()
+    },
+    {
+      label: 'Cloud (LB)',
+      options: [LOAD_BALANCED_RELAY_PRESET]
+    },
+    {
+      label: 'Cloud (specific relay)',
+      options: CLOUD_RELAY_PRESETS
+    }
+  ]
 }
