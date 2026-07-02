@@ -29,9 +29,7 @@
 //!
 //! The client sleeps below assume TTL=5s / interval=1s.
 
-use std::net::ToSocketAddrs;
-use std::str::FromStr;
-use std::time::Duration;
+use std::{env, net::ToSocketAddrs, str::FromStr, time::Duration};
 
 use moqt::{
     ClientConfig, ContentExists, Endpoint, ExtensionHeaders, Fetch, FetchDataReceiver, FetchOption,
@@ -39,7 +37,7 @@ use moqt::{
     SubgroupObject, SubscribeOption,
 };
 
-const RELAY_URL: &str = "moqt://localhost:4433";
+const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";
 const NAMESPACE_A: &str = "evict/a";
 const NAMESPACE_B: &str = "evict/b";
 const TRACK_NAME: &str = "data";
@@ -47,7 +45,9 @@ const PUBLISHER_PRIORITY: u8 = 128;
 const OBJECTS_PER_GROUP: u64 = 5;
 
 async fn new_session() -> anyhow::Result<Session<QUIC>> {
-    let url = url::Url::from_str(RELAY_URL).unwrap();
+    let relay_url =
+        env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
+    let url = url::Url::from_str(&relay_url).unwrap();
     let host = url.host_str().unwrap();
     let remote = (host, url.port().unwrap_or(4433))
         .to_socket_addrs()?

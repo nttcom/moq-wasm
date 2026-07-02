@@ -21,8 +21,11 @@ import {
   resolveCommandName,
   waitForHttpOk,
 } from "./media-e2e-helpers.mjs";
+import { resolveLocalRelayUrl } from "./resolve-local-relay-url.mjs";
 
 const callIndexPath = "/moq-wasm/examples/call/index.html";
+const defaultRelayAUrl = "https://127.0.0.1:4433";
+const defaultRelayBUrl = "https://127.0.0.1:4434";
 
 const childProcesses = [];
 const playwrightArgs = process.argv.slice(2);
@@ -134,6 +137,10 @@ async function main() {
       waitForHttpOk(`${baseUrl}${callIndexPath}`, 120_000),
     ]);
 
+    const relayAUrl = getCallRelayUrl("CALL_E2E_RELAY_A_URL", defaultRelayAUrl);
+    const relayBUrl = getCallRelayUrl("CALL_E2E_RELAY_B_URL", defaultRelayBUrl);
+    console.error(`[setup] Using call relay URLs: ${relayAUrl}, ${relayBUrl}`);
+
     await runCommand(
       resolveCommandName("npm"),
       playwrightArgs.length > 0
@@ -144,12 +151,24 @@ async function main() {
         env: {
           ...process.env,
           MEDIA_E2E_BASE_URL: baseUrl,
+          CALL_E2E_RELAY_A_URL: relayAUrl,
+          CALL_E2E_RELAY_B_URL: relayBUrl,
         },
       },
     );
   } finally {
     await cleanup();
   }
+}
+
+function getCallRelayUrl(envName, defaultUrl) {
+  const configuredUrl = process.env[envName];
+  const url = configuredUrl ?? resolveLocalRelayUrl(defaultUrl).toString();
+  return stripTrailingSlash(url);
+}
+
+function stripTrailingSlash(url) {
+  return url.endsWith("/") ? url.slice(0, -1) : url;
 }
 
 // Return true if the relay image used by docker compose is already available

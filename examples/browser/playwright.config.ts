@@ -6,6 +6,14 @@ ensureLinuxEnvironment()
 const certificateSpki = computeCertificateSpkiBase64()
 const fakeVideoPath = ensureFakeVideoCaptureFile()
 const baseURL = process.env.MEDIA_E2E_BASE_URL ?? 'http://127.0.0.1:4173'
+const forceQuicOrigins = [
+  process.env.CALL_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433',
+  process.env.CALL_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434',
+  process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
+]
+  .map(toHttp3Authority)
+  .filter((origin, index, origins) => origins.indexOf(origin) === index)
+
 export default defineConfig({
   testDir: './tests',
   testMatch: /(media-e2e|call-e2e)\.spec\.ts/,
@@ -24,8 +32,8 @@ export default defineConfig({
     permissions: ['camera', 'microphone'],
     launchOptions: {
       args: [
-        // Force QUIC on both relays (relay-a at 4433, relay-b at 4434).
-        '--origin-to-force-quic-on=127.0.0.1:4433,127.0.0.1:4434',
+        // Force QUIC on the relay origins used by the E2E runners.
+        `--origin-to-force-quic-on=${forceQuicOrigins.join(',')}`,
         `--ignore-certificate-errors-spki-list=${certificateSpki}`,
         // Fallback for environments where SPKI pinning alone is insufficient.
         '--ignore-certificate-errors',
@@ -39,3 +47,7 @@ export default defineConfig({
     video: 'retain-on-failure'
   }
 })
+
+function toHttp3Authority(url: string): string {
+  return new URL(url).host
+}

@@ -1,8 +1,8 @@
 import { expect, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import { CALL_INDEX_PATH } from '../playwright.helpers'
 
-export const RELAY_A_URL = 'https://127.0.0.1:4433'
-export const RELAY_B_URL = 'https://127.0.0.1:4434'
+export const RELAY_A_URL = process.env.CALL_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433'
+export const RELAY_B_URL = process.env.CALL_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434'
 
 export interface CallClientPageModel {
   page: Page
@@ -43,6 +43,8 @@ async function openCallPage(page: Page): Promise<void> {
     e2eVideoHeight: String(E2E_VIDEO_HEIGHT),
     e2eVideoFramerate: String(E2E_VIDEO_FRAMERATE),
     e2eVideoBitrate: String(E2E_VIDEO_BITRATE),
+    relayAUrl: RELAY_A_URL,
+    relayBUrl: RELAY_B_URL,
     debugVideoPipeline: '1'
   })
   await page.goto(`${CALL_INDEX_PATH}?${params.toString()}`, { waitUntil: 'domcontentloaded' })

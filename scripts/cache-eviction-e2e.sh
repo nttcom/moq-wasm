@@ -40,7 +40,9 @@ fi
 docker compose up -d redis relay-a
 docker compose logs -f --no-color relay-a &
 LOGS_PID=$!
+RELAY_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4433)"
+echo "Using relay URL: $RELAY_URL"
 
 # The client asserts object-TTL and strong_count reclaim and panics/exits
 # non-zero on mismatch, so a non-zero exit is the only failure signal needed.
-cargo run -p cache-eviction-e2e
+MOQT_E2E_RELAY_URL="$RELAY_URL" cargo run -p cache-eviction-e2e

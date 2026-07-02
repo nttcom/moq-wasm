@@ -12,6 +12,7 @@ on:
       - "scripts/run-call-e2e.mjs"
       - "scripts/media-e2e-helpers.mjs"
       - "scripts/ensure-relay-certs.mjs"
+      - "scripts/resolve-local-relay-url.mjs"
       - "scripts/chrome_linux.sh"
       - "scripts/cache-eviction-e2e.sh"
       - "scripts/cascading-relay-e2e.sh"
@@ -47,6 +48,7 @@ on:
       - "scripts/run-call-e2e.mjs"
       - "scripts/media-e2e-helpers.mjs"
       - "scripts/ensure-relay-certs.mjs"
+      - "scripts/resolve-local-relay-url.mjs"
       - "scripts/chrome_linux.sh"
       - "scripts/cache-eviction-e2e.sh"
       - "scripts/cascading-relay-e2e.sh"
@@ -130,43 +132,43 @@ jobs:
 
             while IFS= read -r path; do
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|README.md|scripts/setup-media-e2e.mjs|scripts/run-media-e2e.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|README.md|scripts/setup-media-e2e.mjs|scripts/run-media-e2e.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   media=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-call-e2e.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-call-e2e.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   call=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cascading-relay-e2e.sh|scripts/ensure-relay-certs.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cascading-relay-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cascading-relay-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cascading-relay-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   cascading=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cache-eviction-e2e.sh|scripts/ensure-relay-certs.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cache-eviction-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cache-eviction-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cache-eviction-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   cache_eviction=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/fetch-e2e.sh|scripts/ensure-relay-certs.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/fetch-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/fetch-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/fetch-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   fetch=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/multiple-publishers-e2e.sh|scripts/ensure-relay-certs.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/multiple-publishers-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/multiple-publishers-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/multiple-publishers-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   multipub=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/object-dedup-e2e.sh|scripts/ensure-relay-certs.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/object-dedup-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/object-dedup-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/object-dedup-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   dedup=true
                   ;;
               esac

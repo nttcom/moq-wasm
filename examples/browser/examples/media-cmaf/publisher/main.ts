@@ -3,6 +3,7 @@ import type { MOQTClient } from '../../../pkg/moqt_client_wasm'
 import { AUTH_INFO, CMAF_FPS } from '../const'
 import { getFormElement } from '../utils'
 import { MediaTransportState } from '../../../utils/media/transportState'
+import { configureRelayUrlControls } from '../../../utils/relayPresets'
 import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES, MEDIA_CATALOG_TRACK_NAME, buildCmafCatalogJson } from '../catalog'
 import {
   Output,
@@ -417,6 +418,7 @@ const setupCloseButtonHandler = (): void => {
   })
 }
 
+configureRelayUrlControls()
 setUpStartGetUserMediaButton()
 setupMoqSendVisualizationButton()
 setupClientCallbacks()

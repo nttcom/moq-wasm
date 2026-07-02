@@ -1,6 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
 import type { MOQTClient } from '../../pkg/moqt_client_wasm'
+import { configureRelayUrlControls } from '../../utils/relayPresets'
 
 const moqtClient = new MoqtClientWrapper()
 let audioDecoderWorker: Worker | null = null
@@ -1152,14 +1153,10 @@ function buildCommandUI(): void {
 function setupUrlPresets(): void {
   const urlInput = document.getElementById('moqt-url') as HTMLInputElement | null
   if (!urlInput) return
-  const buttons = document.querySelectorAll<HTMLButtonElement>('button[data-url]')
-  buttons.forEach((button) => {
-    button.addEventListener('click', () => {
-      const url = button.dataset.url
-      if (url) {
-        urlInput.value = url
-      }
-    })
+  const presetContainer = urlInput.closest('form')?.querySelector<HTMLElement>('.button-row')
+  configureRelayUrlControls({
+    input: urlInput,
+    presetContainer
   })
 }
 

@@ -10,6 +10,7 @@ import {
   SubscribeOkMessage
 } from '../../pkg/moqt_client_wasm'
 import { MoqtClientWrapper } from '../../lib/moqt/moqtClient'
+import { configureRelayUrlControls } from '../../utils/relayPresets'
 
 type HTMLFormControls = HTMLFormElement & {
   elements: HTMLFormControlsCollection
@@ -593,6 +594,7 @@ function setupActionButtons(): void {
   })
 }
 
+configureRelayUrlControls()
 setupConnectButton()
 setupCloseButton()
 setupActionButtons()

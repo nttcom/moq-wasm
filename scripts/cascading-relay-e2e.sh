@@ -37,10 +37,13 @@ fi
 docker compose up -d redis relay-a relay-b
 docker compose logs -f --no-color relay-a relay-b &
 LOGS_PID=$!
+RELAY_A_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4433)"
+RELAY_B_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4434)"
+echo "Using relay URLs: $RELAY_A_URL, $RELAY_B_URL"
 
 if ! cargo run -p cascading-relay-e2e -- \
-  --relay-a-url moqt://localhost:4433 \
-  --relay-b-url moqt://localhost:4434 \
+  --relay-a-url "$RELAY_A_URL" \
+  --relay-b-url "$RELAY_B_URL" \
   --redis-url redis://localhost:6379 \
   --track-namespace App/Channel/UserA \
   --track-name video 2>&1 | tee "$RESULT_LOG"; then

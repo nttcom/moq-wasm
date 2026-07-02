@@ -2,6 +2,10 @@ export RUSTFLAGS := --cfg tokio_unstable --cfg web_sys_unstable_apis --remap-pat
 
 -include .env
 
+LOCAL_MOQT_URL ?= $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)")
+LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
+ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
+
 .PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed
 
 # Applications
@@ -19,10 +23,11 @@ chrome\:linux:
 
 # RTMP/SRT Bridges
 live-ingest:
+	@echo "Using MoQT relay URL: $(LIVE_INGEST_MOQT_URL)"
 	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-bridge-live-ingest -- \
 		--rtmp-addr 0.0.0.0:1935 \
 		--srt-addr 0.0.0.0:9000 \
-		--moqt-url https://127.0.0.1:4433
+		--moqt-url $(LIVE_INGEST_MOQT_URL)
 
 ## Media helpers
 relay-certs:
@@ -43,11 +48,18 @@ onvif:
 		echo "ONVIF_IP/ONVIF_USERNAME/ONVIF_PASSWORD are required (set in .env or environment)"; \
 		exit 1; \
 	fi
+	@echo "Using MoQT relay URL: $(ONVIF_MOQT_URL)"
 	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-bridge-onvif --bin moqt-onvif-client -- \
 		--ip $(ONVIF_IP) \
 		--username $(ONVIF_USERNAME) \
 		--password $(ONVIF_PASSWORD) \
-		--moqt-url $(MOQT_URL) \
+		--moqt-url $(ONVIF_MOQT_URL) \
+		--publish-namespace onvif/client \
+		--subscribe-namespace onvif/viewer \
+		--video-track video \
+		--audio-track audio \
+		--catalog-track catalog \
+		--command-track command \
 		--dump-keyframe \
 		--payload-format avcc \
 		--insecure-skip-tls-verify

@@ -34,7 +34,8 @@ pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
         let subject_alt_names = vec![
             "localhost".to_string(),
             "127.0.0.1".to_string(),
-            "moqt.research.skyway.io".to_string(),
+            "relay-a".to_string(),
+            "relay-b".to_string(),
         ];
         let CertifiedKey { cert, signing_key } =
             generate_simple_self_signed(subject_alt_names).unwrap();
