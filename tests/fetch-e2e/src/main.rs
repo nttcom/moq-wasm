@@ -14,19 +14,35 @@
 //!
 //! Run a relay on localhost:4433, then `cargo run -p fetch-e2e` from the repo
 //! root. Any range that resolves to the wrong object set fails an assertion.
+//!
+//! ## Multi-relay FETCH forwarding scenarios
+//!
+//! When MOQT_E2E_RELAY_A_URL and MOQT_E2E_RELAY_B_URL are set (pointing to two
+//! distinct relays backed by shared Redis routing), two additional scenarios run:
+//!
+//!   1. relay-b has no local cache for the track. FETCH issued to relay-b must
+//!      be forwarded upstream to relay-a, which HAS the objects in cache.
+//!      Expected: FETCH_OK, all objects delivered to the end subscriber.
+//!
+//!   2. relay-b has no local cache. FETCH issued to relay-b is forwarded to
+//!      relay-a, which does NOT have the requested track in cache.
+//!      Expected: FETCH_ERROR returned to the end subscriber.
 
 use std::env;
 use std::net::ToSocketAddrs;
 use std::str::FromStr;
+use std::time::{Duration, SystemTime};
 
 use moqt::{
-    ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, Fetch,
-    FetchDataReceiver, FetchObject, FetchOption, FilterType, GroupOrder, Location, QUIC, Session,
+    ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, Fetch, FetchDataReceiver,
+    FetchObject, FetchOption, FilterType, GroupOrder, Location, QUIC, Session,
     StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupId, SubgroupObject,
     SubscribeOption,
 };
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";
+const DEFAULT_RELAY_A_URL: &str = "moqt://127.0.0.1:4433";
+const DEFAULT_RELAY_B_URL: &str = "moqt://127.0.0.1:4434";
 const NAMESPACE: &str = "room/alice";
 const TRACK_NAME: &str = "data";
 const PUBLISHER_PRIORITY: u8 = 128;
@@ -36,18 +52,30 @@ const OBJECTS_PER_GROUP: u64 = 5;
 async fn new_session() -> anyhow::Result<Session<QUIC>> {
     let relay_url =
         env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
-    let url = url::Url::from_str(&relay_url).unwrap();
-    let host = url.host_str().unwrap();
-    let remote = (host, url.port().unwrap_or(4433))
+    new_session_to(&relay_url).await
+}
+
+async fn new_session_to(url: &str) -> anyhow::Result<Session<QUIC>> {
+    let parsed = url::Url::from_str(url)?;
+    let host = parsed.host_str().unwrap_or("127.0.0.1");
+    let port = parsed.port().unwrap_or(4433);
+    let remote = (host, port)
         .to_socket_addrs()?
         .next()
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!("failed to resolve relay address for {url}"))?;
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
     })?;
     let connecting = endpoint.connect(remote, host).await?;
     connecting.await
+}
+
+fn run_id() -> String {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis().to_string())
+        .unwrap_or_else(|_| "0".to_string())
 }
 
 async fn send_group(factory: &StreamDataSenderFactory<QUIC>, group_id: u64) -> anyhow::Result<()> {
@@ -75,11 +103,15 @@ async fn send_group(factory: &StreamDataSenderFactory<QUIC>, group_id: u64) -> a
 /// delivery order. A receive error before `Fetch::End` is propagated.
 async fn run_fetch(
     subscriber: &mut moqt::Subscriber<QUIC>,
+    namespace: &str,
+    track_name: &str,
     start: Location,
     end: Location,
 ) -> anyhow::Result<Vec<(u64, u64)>> {
     tracing::info!(
-        "[bob] fetching g{}:o{}..g{}:o{}",
+        "fetching {}/{} g{}:o{}..g{}:o{}",
+        namespace,
+        track_name,
         start.group_id,
         start.object_id,
         end.group_id,
@@ -87,8 +119,8 @@ async fn run_fetch(
     );
     let handle = subscriber
         .fetch(
-            NAMESPACE.to_string(),
-            TRACK_NAME.to_string(),
+            namespace.to_string(),
+            track_name.to_string(),
             start,
             end,
             FetchOption::default(),
@@ -104,12 +136,12 @@ async fn run_fetch(
                     FetchObject::Payload(b) => String::from_utf8_lossy(b).to_string(),
                     FetchObject::Status(s) => format!("{:?}", s),
                 };
-                tracing::info!("[bob] g{}:o{} = {}", obj.group_id, obj.object_id, payload);
+                tracing::info!("g{}:o{} = {}", obj.group_id, obj.object_id, payload);
                 received.push((obj.group_id, obj.object_id));
             }
             Ok(Fetch::End) => {
                 tracing::info!(
-                    "[bob] fetch done g{}:o{}..g{}:o{}",
+                    "fetch done g{}:o{}..g{}:o{}",
                     start.group_id,
                     start.object_id,
                     end.group_id,
@@ -119,7 +151,9 @@ async fn run_fetch(
             }
             Err(e) => {
                 return Err(anyhow::anyhow!(
-                    "[bob] fetch g{}:o{}..g{}:o{} failed: {}",
+                    "fetch {}/{} g{}:o{}..g{}:o{} failed: {}",
+                    namespace,
+                    track_name,
                     start.group_id,
                     start.object_id,
                     end.group_id,
@@ -306,6 +340,8 @@ async fn bob(
     // fetch A: [g0/o0, g1/o3) = g0/o0..g0/o4 + g1/o0..g1/o2 (8 objects)
     let received_a = run_fetch(
         &mut subscriber,
+        NAMESPACE,
+        TRACK_NAME,
         Location {
             group_id: 0,
             object_id: 0,
@@ -327,6 +363,8 @@ async fn bob(
     // fetch B: [g1/o2, g2/o4) = g1/o2..g1/o4 + g2/o0..g2/o3 (7 objects)
     let received_b = run_fetch(
         &mut subscriber,
+        NAMESPACE,
+        TRACK_NAME,
         Location {
             group_id: 1,
             object_id: 2,
@@ -348,6 +386,8 @@ async fn bob(
     // fetch C: [g1/o0, g1/o0) = entire group 1 (object_id==0 = whole group, 5 objects)
     let received_c = run_fetch(
         &mut subscriber,
+        NAMESPACE,
+        TRACK_NAME,
         Location {
             group_id: 1,
             object_id: 0,
@@ -378,6 +418,229 @@ async fn bob(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Multi-relay FETCH forwarding helpers
+// ---------------------------------------------------------------------------
+
+/// Publisher that handles one SUBSCRIBE by sending `groups` groups, then exits.
+/// Used in the multi-relay forwarding scenarios where the relay-a cache must be
+/// populated before a downstream relay-b issues a FETCH.
+async fn upstream_publisher(session: Session<QUIC>, groups: u64) -> anyhow::Result<()> {
+    loop {
+        match session.receive_event().await? {
+            moqt::SessionEvent::Subscribe(handler) => {
+                tracing::info!(
+                    "[upstream-pub] SUBSCRIBE for {}/{}",
+                    handler.track_namespace,
+                    handler.track_name
+                );
+                let track_alias = handler.ok(0, ContentExists::False).await?;
+                let publication = handler.into_subscription(track_alias);
+                let factory = session.publisher().create_stream(&publication);
+                for group_id in 0..groups {
+                    send_group(&factory, group_id).await?;
+                }
+                tracing::info!("[upstream-pub] all {} groups sent", groups);
+                return Ok(());
+            }
+            moqt::SessionEvent::Disconnected() => return Ok(()),
+            _ => {}
+        }
+    }
+}
+
+/// Subscribes to `namespace/TRACK_NAME` on `relay_url` and drains exactly
+/// `groups` subgroup streams to completion, ensuring the relay's cache is fully
+/// populated before returning.
+async fn drain_groups_from_relay(
+    relay_url: &str,
+    namespace: &str,
+    groups: u64,
+) -> anyhow::Result<()> {
+    let session = new_session_to(relay_url).await?;
+    let mut subscriber = session.subscriber();
+    let subscription = subscriber
+        .subscribe(
+            namespace.to_string(),
+            TRACK_NAME.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        )
+        .await?;
+
+    let data_receiver = subscriber.accept_data_receiver(&subscription).await?;
+    let mut factory: StreamDataReceiverFactory<QUIC> = match data_receiver {
+        DataReceiver::Stream(f) => f,
+        DataReceiver::Datagram(_) => anyhow::bail!("[drain] unexpected datagram"),
+    };
+
+    for _ in 0..groups {
+        let mut stream = factory.next().await?;
+        loop {
+            match stream.receive().await {
+                Ok(Subgroup::Header(h)) => {
+                    tracing::info!("[drain] group {}", h.group_id);
+                }
+                Ok(Subgroup::Object(_)) => {}
+                Err(_) => break, // stream closed — move to the next group
+            }
+        }
+    }
+    tracing::info!("[drain] {} groups drained; relay cache populated", groups);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Multi-relay scenario 1: relay-b cache miss → FETCH forwarded upstream →
+// relay-a HAS the data → FETCH_OK, all objects delivered
+// ---------------------------------------------------------------------------
+
+/// relay-b has no local cache for the track.  A FETCH issued to relay-b must
+/// be forwarded upstream to relay-a (which populated its cache via a drain
+/// subscriber).  The end subscriber on relay-b must receive all published
+/// objects.
+///
+/// This test FAILS with the current implementation because relay-b returns
+/// FETCH_ERROR immediately on a cache miss without forwarding upstream.
+async fn run_upstream_fetch_forwarding_data_exists(
+    relay_a_url: &str,
+    relay_b_url: &str,
+) -> anyhow::Result<()> {
+    let ns = format!("fetch-fwd-exists/{}", run_id());
+    tracing::info!(
+        "[fetch-fwd-exists] namespace={} relay_a={} relay_b={}",
+        ns,
+        relay_a_url,
+        relay_b_url
+    );
+
+    // Publisher connects to relay-a and waits for a SUBSCRIBE to send groups.
+    let pub_session = new_session_to(relay_a_url).await?;
+    pub_session
+        .publisher()
+        .publish_namespace(ns.clone())
+        .await?;
+    let pub_handle = tokio::spawn(upstream_publisher(pub_session, GROUPS));
+
+    // Drain subscriber on relay-a: triggers publisher → relay-a cache fills.
+    drain_groups_from_relay(relay_a_url, &ns, GROUPS).await?;
+    tracing::info!("[fetch-fwd-exists] relay-a cache populated");
+
+    // End subscriber on relay-b — relay-b has no local cache for this track.
+    // With upstream FETCH forwarding implemented, relay-b must route the FETCH
+    // to relay-a and serve the cached objects back to this subscriber.
+    let session_b = new_session_to(relay_b_url).await?;
+    let mut sub_b = session_b.subscriber();
+
+    // Request the full range: all GROUPS groups, all OBJECTS_PER_GROUP objects.
+    // End location object_id = OBJECTS_PER_GROUP (exclusive) covers o0..o(N-1).
+    let received = run_fetch(
+        &mut sub_b,
+        &ns,
+        TRACK_NAME,
+        Location {
+            group_id: 0,
+            object_id: 0,
+        },
+        Location {
+            group_id: GROUPS - 1,
+            object_id: OBJECTS_PER_GROUP,
+        },
+    )
+    .await?;
+
+    let expected: Vec<(u64, u64)> = (0..GROUPS)
+        .flat_map(|g| (0..OBJECTS_PER_GROUP).map(move |o| (g, o)))
+        .collect();
+    assert_eq!(
+        received,
+        expected,
+        "[fetch-fwd-exists] upstream FETCH forwarding must deliver all {} objects",
+        GROUPS * OBJECTS_PER_GROUP,
+    );
+
+    tracing::info!(
+        "[fetch-fwd-exists] OK: {} objects received via upstream FETCH forwarding",
+        received.len()
+    );
+    pub_handle.abort();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Multi-relay scenario 2: relay-b cache miss → FETCH forwarded upstream →
+// relay-a does NOT have the track → FETCH_ERROR
+// ---------------------------------------------------------------------------
+
+/// relay-b has no local cache.  A FETCH issued to relay-b for a track that was
+/// never published on relay-a must be forwarded upstream and relay-a must
+/// respond with FETCH_ERROR (track not found in cache).  The end subscriber
+/// must receive FETCH_ERROR (subscriber.fetch() returns Err).
+///
+/// With the current implementation relay-b also returns FETCH_ERROR, but
+/// without contacting relay-a (local cache miss short-circuit).  This test
+/// passes both before and after the implementation — it guards against
+/// regressions where FETCH_ERROR is accidentally suppressed.
+async fn run_upstream_fetch_forwarding_data_not_found(
+    relay_a_url: &str,
+    relay_b_url: &str,
+) -> anyhow::Result<()> {
+    let ns = format!("fetch-fwd-notfound/{}", run_id());
+    tracing::info!(
+        "[fetch-fwd-notfound] namespace={} relay_a={} relay_b={}",
+        ns,
+        relay_a_url,
+        relay_b_url
+    );
+
+    // Publisher announces the namespace on relay-a so relay-b can resolve the
+    // upstream route via Redis.  No track is actually published.
+    let pub_session = new_session_to(relay_a_url).await?;
+    pub_session
+        .publisher()
+        .publish_namespace(ns.clone())
+        .await?;
+
+    // Give the namespace route time to propagate through Redis to relay-b.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // End subscriber on relay-b FETCHes a track that was never published.
+    // relay-b must forward the FETCH upstream and receive FETCH_ERROR from
+    // relay-a (or return FETCH_ERROR itself on cache miss — either way the
+    // subscriber must observe an error).
+    let session_b = new_session_to(relay_b_url).await?;
+    let mut sub_b = session_b.subscriber();
+
+    let result = sub_b
+        .fetch(
+            ns.clone(),
+            "nonexistent-track".to_string(),
+            Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            Location {
+                group_id: 0,
+                object_id: OBJECTS_PER_GROUP,
+            },
+            FetchOption::default(),
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "[fetch-fwd-notfound] expected FETCH_ERROR for track not found at upstream, but got Ok"
+    );
+    tracing::info!(
+        "[fetch-fwd-notfound] OK: FETCH_ERROR returned for nonexistent track (as expected)"
+    );
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -386,6 +649,9 @@ async fn main() -> anyhow::Result<()> {
         .try_init()
         .ok();
 
+    // -----------------------------------------------------------------------
+    // Single-relay scenarios (existing)
+    // -----------------------------------------------------------------------
     let (carol_ready_tx, carol_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let (carol_done_tx, carol_done_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -404,5 +670,37 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Multi-relay FETCH forwarding scenarios
+    // -----------------------------------------------------------------------
+    let relay_a_url = env::var("MOQT_E2E_RELAY_A_URL")
+        .or_else(|_| env::var("MOQT_E2E_RELAY_URL"))
+        .unwrap_or_else(|_| DEFAULT_RELAY_A_URL.to_string());
+    let relay_b_url = env::var("MOQT_E2E_RELAY_B_URL")
+        .unwrap_or_else(|_| DEFAULT_RELAY_B_URL.to_string());
+
+    tracing::info!(
+        "running multi-relay FETCH forwarding scenarios (relay_a={} relay_b={})",
+        relay_a_url,
+        relay_b_url
+    );
+
+    // Scenario 1: data exists at upstream relay → FETCH_OK
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        run_upstream_fetch_forwarding_data_exists(&relay_a_url, &relay_b_url),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("upstream FETCH forwarding (data-exists) timed out"))??;
+
+    // Scenario 2: track absent at upstream relay → FETCH_ERROR
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        run_upstream_fetch_forwarding_data_not_found(&relay_a_url, &relay_b_url),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("upstream FETCH forwarding (data-not-found) timed out"))??;
+
+    tracing::info!("all fetch-e2e scenarios passed");
     Ok(())
 }
