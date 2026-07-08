@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, ops::Range, sync::Arc};
 
 use tokio::{
     sync::{Notify, RwLock},
@@ -48,11 +48,25 @@ impl GroupCache {
         self.notify.notify_waiters();
     }
 
-    pub(crate) async fn evict_expired_objects(&self, ttl: Duration) {
+    pub(crate) async fn evict_expired_objects(&self, ttl: Duration) -> Option<Range<u64>> {
+        let mut removed_start = None;
+        let mut removed_end = None;
         self.objects
             .write()
             .await
-            .retain(|_, (inserted, _)| inserted.elapsed() <= ttl);
+            .retain(|&object_id, (inserted, _)| {
+                let keep = inserted.elapsed() <= ttl;
+                if !keep {
+                    removed_start =
+                        Some(removed_start.map_or(object_id, |start: u64| start.min(object_id)));
+                    removed_end =
+                        Some(removed_end.map_or(object_id, |end: u64| end.max(object_id)));
+                }
+                keep
+            });
+        removed_start
+            .zip(removed_end)
+            .map(|(start, end)| start..end.saturating_add(1))
     }
 
     pub(crate) async fn is_evictable(&self) -> bool {
@@ -125,6 +139,14 @@ impl GroupCache {
             .iter()
             .map(|(&id, (_, object))| (id, object.clone()))
             .collect()
+    }
+
+    pub(crate) async fn has_object_in_range(&self, start: u64, end_exclusive: Option<u64>) -> bool {
+        let objects = self.objects.read().await;
+        match end_exclusive {
+            Some(end_exclusive) => objects.range(start..end_exclusive).next().is_some(),
+            None => objects.range(start..).next().is_some(),
+        }
     }
 }
 

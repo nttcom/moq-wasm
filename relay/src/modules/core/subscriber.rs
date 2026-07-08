@@ -120,8 +120,14 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
         end_location: moqt::Location,
         option: moqt::FetchOption,
     ) -> anyhow::Result<moqt::FetchHandle> {
-        self.fetch(track_namespace, track_name, start_location, end_location, option)
-            .await
+        self.fetch(
+            track_namespace,
+            track_name,
+            start_location,
+            end_location,
+            option,
+        )
+        .await
     }
 
     #[tracing::instrument(

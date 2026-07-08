@@ -3,6 +3,8 @@ use async_trait::async_trait;
 #[async_trait]
 pub(crate) trait FetchHandler: 'static + Send + Sync {
     fn request_id(&self) -> u64;
+    fn subscriber_priority(&self) -> u8;
+    fn group_order(&self) -> moqt::GroupOrder;
     fn fetch_type(&self) -> moqt::wire::FetchType;
     async fn ok(
         &self,
@@ -16,6 +18,14 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
 impl<T: moqt::TransportProtocol> FetchHandler for moqt::FetchHandler<T> {
     fn request_id(&self) -> u64 {
         self.request_id
+    }
+
+    fn subscriber_priority(&self) -> u8 {
+        self.fetch.subscriber_priority
+    }
+
+    fn group_order(&self) -> moqt::GroupOrder {
+        self.fetch.group_order
     }
 
     fn fetch_type(&self) -> moqt::wire::FetchType {

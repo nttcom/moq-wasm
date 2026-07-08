@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{cmp::Ordering, collections::BTreeMap, sync::Arc, time::Duration};
 
 use tokio::sync::RwLock;
 
@@ -7,9 +7,24 @@ use crate::modules::{
     relay::{cache::group_cache::GroupCache, types::StreamSubgroupId},
 };
 
+#[derive(Clone, Copy)]
+struct LocationRange {
+    start: moqt::Location,
+    end: moqt::Location,
+}
+
 pub(crate) struct TrackCache {
     stream_groups: RwLock<BTreeMap<u64, BTreeMap<StreamSubgroupId, Arc<GroupCache>>>>,
     datagram_groups: RwLock<BTreeMap<u64, Arc<GroupCache>>>,
+    coverage_start: RwLock<Option<moqt::Location>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum FetchRangeResolution {
+    Serve { end_location: moqt::Location },
+    InvalidRange,
+    NoObjects,
+    NotCovered,
 }
 
 impl TrackCache {
@@ -17,6 +32,7 @@ impl TrackCache {
         Self {
             stream_groups: RwLock::new(BTreeMap::new()),
             datagram_groups: RwLock::new(BTreeMap::new()),
+            coverage_start: RwLock::new(None),
         }
     }
 
@@ -66,6 +82,13 @@ impl TrackCache {
     ) {
         let group = self.ensure_stream_subgroup(group_id, subgroup_id).await;
         group.append(object_id, Arc::new(object)).await;
+        if let Some(object_id) = object_id {
+            self.initialize_coverage_start(moqt::Location {
+                group_id,
+                object_id,
+            })
+            .await;
+        }
     }
 
     pub(crate) async fn append_datagram_object(
@@ -81,6 +104,11 @@ impl TrackCache {
         };
         let group = self.ensure_datagram_group(group_id).await;
         group.append(Some(object_id), Arc::new(object)).await;
+        self.initialize_coverage_start(moqt::Location {
+            group_id,
+            object_id,
+        })
+        .await;
     }
 
     pub(crate) async fn close_stream_subgroup(
@@ -111,8 +139,14 @@ impl TrackCache {
                 .collect()
         };
         let mut removable_streams: Vec<(u64, StreamSubgroupId)> = Vec::new();
+        let mut evicted_coverage: Option<LocationRange> = None;
         for (group_id, subgroup_id, group) in stream_groups {
-            group.evict_expired_objects(ttl).await;
+            if let Some(evicted_objects) = group.evict_expired_objects(ttl).await {
+                evicted_coverage = Self::merge_location_range(
+                    evicted_coverage,
+                    Self::object_range_to_location_range(group_id, evicted_objects),
+                );
+            }
             if group.is_evictable().await {
                 removable_streams.push((group_id, subgroup_id));
             }
@@ -138,7 +172,12 @@ impl TrackCache {
         };
         let mut removable_datagrams: Vec<u64> = Vec::new();
         for (group_id, group) in datagram_groups {
-            group.evict_expired_objects(ttl).await;
+            if let Some(evicted_objects) = group.evict_expired_objects(ttl).await {
+                evicted_coverage = Self::merge_location_range(
+                    evicted_coverage,
+                    Self::object_range_to_location_range(group_id, evicted_objects),
+                );
+            }
             if group.is_evictable().await {
                 removable_datagrams.push(group_id);
             }
@@ -149,21 +188,42 @@ impl TrackCache {
                 groups.remove(&group_id);
             }
         }
+        if let Some(range) = evicted_coverage {
+            self.advance_coverage_start(range.end).await;
+        }
     }
 
     /// Returns the Largest Location as defined in the MoQT spec.
     pub(crate) async fn largest_location(&self) -> Option<moqt::Location> {
-        let (group_id, cache) = {
+        let groups = {
             let groups = self.stream_groups.read().await;
-            let (&group_id, subgroups) = groups.iter().next_back()?;
-            let (_, cache) = subgroups.iter().next_back()?;
-            (group_id, cache.clone())
+            groups
+                .iter()
+                .rev()
+                .map(|(&group_id, subgroups)| {
+                    (group_id, subgroups.values().cloned().collect::<Vec<_>>())
+                })
+                .collect::<Vec<_>>()
         };
 
-        Some(moqt::Location {
-            group_id,
-            object_id: cache.largest_object_id().await?,
-        })
+        for (group_id, caches) in groups {
+            let mut largest_object_id = None;
+            for cache in caches {
+                if let Some(object_id) = cache.largest_object_id().await {
+                    largest_object_id = Some(
+                        largest_object_id.map_or(object_id, |current: u64| current.max(object_id)),
+                    );
+                }
+            }
+            if let Some(object_id) = largest_object_id {
+                return Some(moqt::Location {
+                    group_id,
+                    object_id,
+                });
+            }
+        }
+
+        None
     }
 
     pub(crate) async fn get_stream_header_or_wait(
@@ -221,6 +281,239 @@ impl TrackCache {
             .get(&group_id)
             .map(|subgroups| subgroups.keys().cloned().collect())
             .unwrap_or_default()
+    }
+
+    pub(crate) async fn resolve_fetch_range(
+        &self,
+        start: moqt::Location,
+        end: moqt::Location,
+    ) -> FetchRangeResolution {
+        if Self::explicit_end_before_or_equal_start(start, end) {
+            return FetchRangeResolution::InvalidRange;
+        }
+
+        let Some(largest) = self.largest_location().await else {
+            return FetchRangeResolution::NotCovered;
+        };
+        let Some(coverage_start) = *self.coverage_start.read().await else {
+            return FetchRangeResolution::NotCovered;
+        };
+
+        if Self::location_cmp(start, largest).is_gt() {
+            return FetchRangeResolution::InvalidRange;
+        }
+        if Self::location_cmp(start, coverage_start).is_lt() {
+            return FetchRangeResolution::NotCovered;
+        }
+
+        let end_location = self.resolve_fetch_end_location(end, largest).await;
+        if !self.covers(start, end_location, largest).await {
+            return FetchRangeResolution::NotCovered;
+        }
+        if !self.has_fetch_object(start, end_location).await {
+            return FetchRangeResolution::NoObjects;
+        }
+
+        FetchRangeResolution::Serve { end_location }
+    }
+
+    async fn initialize_coverage_start(&self, location: moqt::Location) {
+        let mut coverage_start = self.coverage_start.write().await;
+        if coverage_start.is_none() {
+            *coverage_start = Some(location);
+        }
+    }
+
+    async fn advance_coverage_start(&self, location: moqt::Location) {
+        let mut coverage_start = self.coverage_start.write().await;
+        match *coverage_start {
+            Some(current) if Self::location_cmp(current, location).is_ge() => {}
+            _ => *coverage_start = Some(location),
+        }
+    }
+
+    fn merge_location_range(
+        current: Option<LocationRange>,
+        candidate: LocationRange,
+    ) -> Option<LocationRange> {
+        match current {
+            Some(current) => Some(LocationRange {
+                start: Self::min_location(current.start, candidate.start),
+                end: Self::max_location(current.end, candidate.end),
+            }),
+            _ => Some(candidate),
+        }
+    }
+
+    fn object_range_to_location_range(group_id: u64, range: std::ops::Range<u64>) -> LocationRange {
+        LocationRange {
+            start: moqt::Location {
+                group_id,
+                object_id: range.start,
+            },
+            end: moqt::Location {
+                group_id,
+                object_id: range.end,
+            },
+        }
+    }
+
+    fn min_location(left: moqt::Location, right: moqt::Location) -> moqt::Location {
+        if Self::location_cmp(left, right).is_le() {
+            left
+        } else {
+            right
+        }
+    }
+
+    fn max_location(left: moqt::Location, right: moqt::Location) -> moqt::Location {
+        if Self::location_cmp(left, right).is_ge() {
+            left
+        } else {
+            right
+        }
+    }
+
+    fn location_after_object(group_id: u64, object_id: u64) -> moqt::Location {
+        moqt::Location {
+            group_id,
+            object_id: object_id.saturating_add(1),
+        }
+    }
+
+    fn location_cmp(left: moqt::Location, right: moqt::Location) -> Ordering {
+        (left.group_id, left.object_id).cmp(&(right.group_id, right.object_id))
+    }
+
+    fn explicit_end_before_or_equal_start(start: moqt::Location, end: moqt::Location) -> bool {
+        start.group_id > end.group_id
+            || (start.group_id == end.group_id
+                && end.object_id != 0
+                && start.object_id >= end.object_id)
+    }
+
+    async fn resolve_fetch_end_location(
+        &self,
+        requested_end: moqt::Location,
+        largest: moqt::Location,
+    ) -> moqt::Location {
+        if requested_end.group_id > largest.group_id
+            || (requested_end.group_id == largest.group_id
+                && requested_end.object_id != 0
+                && requested_end.object_id > largest.object_id.saturating_add(1))
+        {
+            return Self::location_after_object(largest.group_id, largest.object_id);
+        }
+
+        if requested_end.object_id == 0 {
+            if requested_end.group_id < largest.group_id
+                || self.stream_group_is_closed(requested_end.group_id).await
+            {
+                return requested_end;
+            }
+            return Self::location_after_object(largest.group_id, largest.object_id);
+        }
+
+        requested_end
+    }
+
+    async fn covers(
+        &self,
+        start: moqt::Location,
+        end: moqt::Location,
+        largest: moqt::Location,
+    ) -> bool {
+        if end.object_id != 0 && Self::location_cmp(start, end).is_ge() {
+            return false;
+        }
+        let end_group_id = end.group_id;
+        let groups_in_range: Vec<(u64, Vec<Arc<GroupCache>>)> = {
+            let groups = self.stream_groups.read().await;
+            groups
+                .range(start.group_id..=end_group_id)
+                .map(|(&group_id, subgroups)| {
+                    (group_id, subgroups.values().cloned().collect::<Vec<_>>())
+                })
+                .collect()
+        };
+
+        let mut expected_group_id = start.group_id;
+        for (group_id, caches) in groups_in_range {
+            if group_id != expected_group_id {
+                return false;
+            }
+            if caches.is_empty() {
+                return false;
+            }
+            if group_id != largest.group_id && !Self::all_subgroups_closed_for_group(&caches).await
+            {
+                return false;
+            }
+            if group_id == end_group_id {
+                return true;
+            }
+            let Some(next_group_id) = group_id.checked_add(1) else {
+                return false;
+            };
+            expected_group_id = next_group_id;
+        }
+
+        false
+    }
+
+    async fn stream_group_is_closed(&self, group_id: u64) -> bool {
+        let caches = {
+            let groups = self.stream_groups.read().await;
+            groups
+                .get(&group_id)
+                .map(|subgroups| subgroups.values().cloned().collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+        !caches.is_empty() && Self::all_subgroups_closed_for_group(&caches).await
+    }
+
+    async fn all_subgroups_closed_for_group(caches: &[Arc<GroupCache>]) -> bool {
+        for cache in caches {
+            if cache.header().await.is_none() || !cache.is_closed().await {
+                return false;
+            }
+        }
+        true
+    }
+
+    async fn has_fetch_object(&self, start: moqt::Location, end: moqt::Location) -> bool {
+        let groups_in_range: Vec<(u64, Vec<Arc<GroupCache>>)> = {
+            let groups = self.stream_groups.read().await;
+            groups
+                .range(start.group_id..=end.group_id)
+                .map(|(&group_id, subgroups)| {
+                    (group_id, subgroups.values().cloned().collect::<Vec<_>>())
+                })
+                .collect()
+        };
+
+        for (group_id, caches) in groups_in_range {
+            let start_object_id = if group_id == start.group_id {
+                start.object_id
+            } else {
+                0
+            };
+            let end_exclusive = if group_id == end.group_id && end.object_id != 0 {
+                Some(end.object_id)
+            } else {
+                None
+            };
+            for cache in caches {
+                if cache
+                    .has_object_in_range(start_object_id, end_exclusive)
+                    .await
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     pub(crate) async fn get_fetch_objects(
@@ -458,6 +751,66 @@ mod tests {
         assert_eq!(cache.largest_location().await.unwrap().object_id, 2);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn evict_advances_fetch_coverage_start() {
+        // Arrange: object 0 expires before object 1, leaving the cache head missing.
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .append_stream_object(0, &subgroup, None, make_header(0))
+            .await;
+        cache
+            .append_stream_object(0, &subgroup, Some(0), make_object(0))
+            .await;
+        tokio::time::advance(Duration::from_secs(6)).await;
+        cache
+            .append_stream_object(0, &subgroup, Some(1), make_object(0))
+            .await;
+
+        // Act: only object 0 is older than the TTL.
+        tokio::time::advance(Duration::from_secs(5)).await;
+        cache.evict(ttl).await;
+
+        // Assert: a fetch spanning the evicted head is no longer covered locally.
+        let head_missing = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 2,
+                },
+            )
+            .await;
+        assert_eq!(head_missing, FetchRangeResolution::NotCovered);
+
+        // Assert: the remaining covered suffix can still be served locally.
+        let covered_suffix = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 1,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 2,
+                },
+            )
+            .await;
+        assert_eq!(
+            covered_suffix,
+            FetchRangeResolution::Serve {
+                end_location: moqt::Location {
+                    group_id: 0,
+                    object_id: 2
+                }
+            }
+        );
+    }
+
     async fn fill_group(cache: &TrackCache, group_id: u64, count: u64) {
         // object_ids 0, 1, ..., count-1
         let object_ids: Vec<u64> = (0..count).collect();
@@ -479,6 +832,174 @@ mod tests {
 
     fn object_ids(objects: &[moqt::FetchObjectField]) -> Vec<(u64, u64)> {
         objects.iter().map(|o| (o.group_id, o.object_id)).collect()
+    }
+
+    #[tokio::test]
+    async fn resolve_fetch_range_returns_not_covered_for_empty_cache() {
+        // Arrange: empty cache
+        let cache = TrackCache::new();
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 1,
+                },
+            )
+            .await;
+        // Assert: no cached objects means the relay cannot safely FIN a fetch stream.
+        assert_eq!(resolution, FetchRangeResolution::NotCovered);
+    }
+
+    #[tokio::test]
+    async fn resolve_fetch_range_accepts_explicit_range() {
+        // Arrange: group 0 has exactly the requested object coverage.
+        let cache = TrackCache::new();
+        fill_group(&cache, 0, 3).await;
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 3,
+                },
+            )
+            .await;
+        // Assert: the explicit range [0, 3) can be served as requested.
+        assert_eq!(
+            resolution,
+            FetchRangeResolution::Serve {
+                end_location: moqt::Location {
+                    group_id: 0,
+                    object_id: 3
+                }
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_fetch_range_accepts_gapped_objects_with_known_coverage() {
+        // Arrange: object 1 is not cached, but cache coverage starts before it.
+        let cache = TrackCache::new();
+        fill_group_with_ids(&cache, 0, &[0, 2]).await;
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 3,
+                },
+            )
+            .await;
+        // Assert: coverage, not local object-id contiguity, decides servability.
+        assert_eq!(
+            resolution,
+            FetchRangeResolution::Serve {
+                end_location: moqt::Location {
+                    group_id: 0,
+                    object_id: 3
+                }
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_fetch_range_rejects_missing_group() {
+        // Arrange: group 1 is absent between cached group 0 and requested group 2.
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        fill_group(&cache, 0, 1).await;
+        cache.close_stream_subgroup(0, &subgroup).await;
+        fill_group(&cache, 2, 1).await;
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 2,
+                    object_id: 1,
+                },
+            )
+            .await;
+        // Assert: local FIN would imply group 1 has no objects.
+        assert_eq!(resolution, FetchRangeResolution::NotCovered);
+    }
+
+    #[tokio::test]
+    async fn resolve_fetch_range_clamps_entire_open_largest_group() {
+        // Arrange: end.object_id == 0 requests the full group, but it is still open.
+        let cache = TrackCache::new();
+        fill_group(&cache, 0, 3).await;
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+            )
+            .await;
+        // Assert: unpublished tail objects are not fetched; End Location is largest + 1.
+        assert_eq!(
+            resolution,
+            FetchRangeResolution::Serve {
+                end_location: moqt::Location {
+                    group_id: 0,
+                    object_id: 3
+                }
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_fetch_range_accepts_entire_closed_group() {
+        // Arrange: end.object_id == 0 requests the full group, and it is closed.
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        fill_group(&cache, 0, 3).await;
+        cache.close_stream_subgroup(0, &subgroup).await;
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+            )
+            .await;
+        // Assert: all currently requested group coverage is known locally.
+        assert_eq!(
+            resolution,
+            FetchRangeResolution::Serve {
+                end_location: moqt::Location {
+                    group_id: 0,
+                    object_id: 0
+                }
+            }
+        );
     }
 
     #[tokio::test]

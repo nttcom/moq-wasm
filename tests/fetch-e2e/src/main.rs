@@ -140,7 +140,13 @@ async fn run_fetch_ns(
                     FetchObject::Payload(b) => String::from_utf8_lossy(b).to_string(),
                     FetchObject::Status(s) => format!("{:?}", s),
                 };
-                tracing::info!("[{}] g{}:o{} = {}", label, obj.group_id, obj.object_id, payload);
+                tracing::info!(
+                    "[{}] g{}:o{} = {}",
+                    label,
+                    obj.group_id,
+                    obj.object_id,
+                    payload
+                );
                 received.push((obj.group_id, obj.object_id));
             }
             Ok(Fetch::End) => {
@@ -295,10 +301,7 @@ async fn alice() -> anyhow::Result<()> {
                 tracing::info!("[alice] all groups published");
             }
             moqt::SessionEvent::Fetch(handler) => {
-                tracing::info!(
-                    "[alice] received Fetch request_id={}",
-                    handler.request_id
-                );
+                tracing::info!("[alice] received Fetch request_id={}", handler.request_id);
                 // Alice relies on the relay cache to serve FETCHes; no explicit handling needed.
             }
             moqt::SessionEvent::Disconnected() => break,
@@ -611,10 +614,7 @@ async fn run_cross_relay_standalone_fetch(
 
 /// Cross-relay scenario E: Frank publishes on relay-A; Grace subscribes via relay-B
 /// (cross-relay SUBSCRIBE populates relay-B's cache) then issues a Joining Fetch from relay-B.
-async fn run_cross_relay_joining_fetch(
-    relay_a_url: &str,
-    relay_b_url: &str,
-) -> anyhow::Result<()> {
+async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> anyhow::Result<()> {
     tracing::info!("[E] cross-relay joining FETCH: Frank on relay-A, Grace on relay-B");
 
     let namespace = "room/frank-cross-join";
@@ -647,7 +647,10 @@ async fn run_cross_relay_joining_fetch(
             },
         )
         .await?;
-    tracing::info!("[grace] subscribe ok on relay-B, request_id={}", subscription.request_id());
+    tracing::info!(
+        "[grace] subscribe ok on relay-B, request_id={}",
+        subscription.request_id()
+    );
 
     // Drain Grace's live stream until all groups arrive (relay-B cache populated).
     drain_until_group(&mut grace_sub, &subscription, GROUPS - 1, "grace").await?;
@@ -658,8 +661,7 @@ async fn run_cross_relay_joining_fetch(
 
     // Joining Fetch: 1 group back from g2, so groups 1 and 2 in full.
     let received =
-        run_joining_fetch_with_label(&mut grace_sub, subscription.request_id(), 1, "grace")
-            .await?;
+        run_joining_fetch_with_label(&mut grace_sub, subscription.request_id(), 1, "grace").await?;
     let expected: Vec<(u64, u64)> = (0..OBJECTS_PER_GROUP)
         .map(|o| (1, o))
         .chain((0..OBJECTS_PER_GROUP).map(|o| (2, o)))
@@ -759,7 +761,9 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("relay-A and relay-B are the same; skipping cross-relay scenarios");
         }
     } else {
-        tracing::info!("MOQT_E2E_RELAY_A_URL or MOQT_E2E_RELAY_B_URL not set; skipping cross-relay scenarios");
+        tracing::info!(
+            "MOQT_E2E_RELAY_A_URL or MOQT_E2E_RELAY_B_URL not set; skipping cross-relay scenarios"
+        );
     }
 
     Ok(())

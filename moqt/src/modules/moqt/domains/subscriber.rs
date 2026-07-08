@@ -26,6 +26,7 @@ use crate::{
         protocol::TransportProtocol,
         runtime::dispatch::incoming_object::IncomingObject,
     },
+    wire::RequestError,
 };
 
 pub enum DataReceiver<T: TransportProtocol> {
@@ -206,7 +207,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         let response = self.session.await_response(fetch_message_rx).await?;
         match response {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
-            ResponseMessage::FetchError(_, _, _) => {
+            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
                 self.session
                     .fetch_notification_map
                     .write()
@@ -217,7 +218,12 @@ impl<T: TransportProtocol> Subscriber<T> {
                     .lock()
                     .await
                     .remove(&request_id);
-                bail!("Fetch error")
+                Err(RequestError {
+                    request_id,
+                    error_code,
+                    reason_phrase,
+                }
+                .into())
             }
             _ => bail!("Protocol violation"),
         }
@@ -274,7 +280,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         let response = self.session.await_response(fetch_message_rx).await?;
         match response {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
-            ResponseMessage::FetchError(_, _, _) => {
+            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
                 self.session
                     .fetch_notification_map
                     .write()
@@ -285,7 +291,12 @@ impl<T: TransportProtocol> Subscriber<T> {
                     .lock()
                     .await
                     .remove(&request_id);
-                bail!("Fetch error")
+                Err(RequestError {
+                    request_id,
+                    error_code,
+                    reason_phrase,
+                }
+                .into())
             }
             _ => bail!("Protocol violation"),
         }

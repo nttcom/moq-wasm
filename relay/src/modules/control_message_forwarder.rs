@@ -3,8 +3,7 @@ use std::sync::Arc;
 use crate::modules::{
     core::{
         data_receiver::fetch_receiver::UpstreamFetchReceiver,
-        data_sender::fetch_sender::FetchSender,
-        handler::publish::SubscribeOption,
+        data_sender::fetch_sender::FetchSender, handler::publish::SubscribeOption,
         subscription::UpstreamSubscription,
     },
     enums::{FilterType, GroupOrder},
@@ -159,6 +158,7 @@ impl ControlMessageForwarder {
         track_name: String,
         start_location: moqt::Location,
         end_location: moqt::Location,
+        option: moqt::FetchOption,
     ) -> anyhow::Result<(moqt::FetchHandle, Box<dyn UpstreamFetchReceiver>)> {
         let subscriber = self.repository.lock().await.subscriber(session_id);
         let Some(mut subscriber) = subscriber else {
@@ -177,7 +177,7 @@ impl ControlMessageForwarder {
                 track_name,
                 start_location,
                 end_location,
-                moqt::FetchOption::default(),
+                option,
             )
             .await?;
         let receiver = subscriber.create_fetch_receiver(&handle).await?;
