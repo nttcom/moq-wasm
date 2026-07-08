@@ -5,6 +5,7 @@ use tracing::{Instrument, Span};
 
 use crate::modules::{
     core::{
+        data_object::DataObject,
         data_sender::{DataSender, stream_sender_factory::StreamSenderFactory},
         publisher::Publisher,
         subscription::DownstreamSubscription,
@@ -79,7 +80,7 @@ impl GroupSender {
                             {
                                 Ok(sender) => {
                                     joinset.spawn(Self::send_stream_task(
-                                        track_alias,
+                                        self.downstream_subscription.clone(),
                                         group_id,
                                         subgroup_id,
                                         object_id,
@@ -121,7 +122,7 @@ impl GroupSender {
     }
 
     async fn send_stream_task(
-        track_alias: u64,
+        downstream_subscription: DownstreamSubscription,
         group_id: u64,
         subgroup_id: StreamSubgroupId,
         object_id: u64,
@@ -130,6 +131,7 @@ impl GroupSender {
         mut sender: Box<dyn DataSender>,
     ) {
         let span = Span::current();
+        let track_alias = downstream_subscription.track_alias();
         let mut object_count = 0u64;
         let Some(header) = cache
             .get_stream_header_or_wait(group_id, &subgroup_id)
@@ -146,6 +148,36 @@ impl GroupSender {
             );
             return;
         };
+        // Apply MoQT priorities before any bytes are written so the transport
+        // schedules this stream against competing subgroup streams (§7.2).
+        if let DataObject::SubgroupHeader(subgroup_header) = header.as_ref() {
+            tracing::debug!(
+                track_key = %track_key,
+                track_alias,
+                group_id,
+                subgroup_id = ?subgroup_id,
+                subscriber_priority = downstream_subscription.subscriber_priority(),
+                publisher_priority = subgroup_header.publisher_priority,
+                "applying egress stream priority"
+            );
+            if let Err(error) = sender
+                .set_priority(
+                    downstream_subscription.subscriber_priority(),
+                    subgroup_header.publisher_priority,
+                )
+                .await
+            {
+                // Prioritization is best-effort; delivery continues without it.
+                tracing::warn!(
+                    ?error,
+                    track_key = %track_key,
+                    track_alias,
+                    group_id,
+                    subgroup_id = ?subgroup_id,
+                    "failed to set egress stream priority"
+                );
+            }
+        }
         tracing::debug!(
             track_key = %track_key,
             track_alias,

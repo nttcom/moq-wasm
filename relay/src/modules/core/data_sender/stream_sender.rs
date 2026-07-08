@@ -43,6 +43,26 @@ impl<T: moqt::TransportProtocol> StreamSender<T> {
         }
     }
 
+    pub(crate) async fn set_priority(
+        &self,
+        subscriber_priority: u8,
+        publisher_priority: u8,
+    ) -> anyhow::Result<()> {
+        match self.inner.as_ref() {
+            Some(SenderInner::Uninitialized(sender)) => {
+                sender
+                    .set_priority(subscriber_priority, publisher_priority)
+                    .await
+            }
+            Some(SenderInner::HeaderSent(sender)) => {
+                sender
+                    .set_priority(subscriber_priority, publisher_priority)
+                    .await
+            }
+            None => Err(anyhow::anyhow!("StreamSender in invalid state")),
+        }
+    }
+
     pub(crate) async fn close(&mut self) -> anyhow::Result<()> {
         match self.inner.as_mut() {
             Some(SenderInner::Uninitialized(sender)) => sender.close().await,
@@ -56,6 +76,14 @@ impl<T: moqt::TransportProtocol> StreamSender<T> {
 impl<T: moqt::TransportProtocol> DataSender for StreamSender<T> {
     async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
         self.send(object).await
+    }
+
+    async fn set_priority(
+        &mut self,
+        subscriber_priority: u8,
+        publisher_priority: u8,
+    ) -> anyhow::Result<()> {
+        StreamSender::set_priority(self, subscriber_priority, publisher_priority).await
     }
 
     async fn close(&mut self) -> anyhow::Result<()> {

@@ -84,6 +84,10 @@ impl DownstreamSubscription {
     pub(crate) fn group_order(&self) -> GroupOrder {
         GroupOrder::from(self.inner.group_order())
     }
+
+    pub(crate) fn subscriber_priority(&self) -> u8 {
+        self.inner.subscriber_priority()
+    }
 }
 
 impl From<moqt::Subscription> for DownstreamSubscription {
