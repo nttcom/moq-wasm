@@ -28,4 +28,11 @@ impl TransportSendStream for DualSendStream {
             DualSendStream::WebTransport(s) => s.close().await,
         }
     }
+
+    async fn reset(&mut self, error_code: u64) -> Result<(), TransportSendError> {
+        match self {
+            DualSendStream::Quic(s) => s.reset(error_code).await,
+            DualSendStream::WebTransport(s) => s.reset(error_code).await,
+        }
+    }
 }

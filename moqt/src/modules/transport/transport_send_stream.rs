@@ -31,4 +31,5 @@ pub enum TransportSendError {
 pub(crate) trait TransportSendStream: Send + Sync + 'static + Debug {
     async fn send(&mut self, buffer: &BytesMut) -> Result<(), TransportSendError>;
     async fn close(&mut self) -> Result<(), TransportSendError>;
+    async fn reset(&mut self, error_code: u64) -> Result<(), TransportSendError>;
 }

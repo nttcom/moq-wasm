@@ -24,4 +24,8 @@ impl<T: TransportProtocol> StreamSender<T> {
     pub async fn close(&self) -> anyhow::Result<()> {
         Ok(self.send_stream.lock().await.close().await?)
     }
+
+    pub async fn reset(&self, error_code: u64) -> anyhow::Result<()> {
+        Ok(self.send_stream.lock().await.reset(error_code).await?)
+    }
 }

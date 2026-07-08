@@ -4,7 +4,10 @@ use tokio::sync::RwLock;
 
 use crate::modules::{
     core::data_object::DataObject,
-    relay::{cache::group_cache::GroupCache, types::StreamSubgroupId},
+    relay::{
+        cache::{group_cache::GroupCache, known_ranges::KnownRanges},
+        types::StreamSubgroupId,
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -17,6 +20,7 @@ pub(crate) struct TrackCache {
     stream_groups: RwLock<BTreeMap<u64, BTreeMap<StreamSubgroupId, Arc<GroupCache>>>>,
     datagram_groups: RwLock<BTreeMap<u64, Arc<GroupCache>>>,
     coverage_start: RwLock<Option<moqt::Location>>,
+    fetch_known_ranges: RwLock<KnownRanges>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -33,6 +37,7 @@ impl TrackCache {
             stream_groups: RwLock::new(BTreeMap::new()),
             datagram_groups: RwLock::new(BTreeMap::new()),
             coverage_start: RwLock::new(None),
+            fetch_known_ranges: RwLock::new(KnownRanges::default()),
         }
     }
 
@@ -104,11 +109,6 @@ impl TrackCache {
         };
         let group = self.ensure_datagram_group(group_id).await;
         group.append(Some(object_id), Arc::new(object)).await;
-        self.initialize_coverage_start(moqt::Location {
-            group_id,
-            object_id,
-        })
-        .await;
     }
 
     pub(crate) async fn close_stream_subgroup(
@@ -190,6 +190,10 @@ impl TrackCache {
         }
         if let Some(range) = evicted_coverage {
             self.advance_coverage_start(range.end).await;
+            self.fetch_known_ranges
+                .write()
+                .await
+                .remove_up_to(range.end);
         }
     }
 
@@ -295,19 +299,13 @@ impl TrackCache {
         let Some(largest) = self.largest_location().await else {
             return FetchRangeResolution::NotCovered;
         };
-        let Some(coverage_start) = *self.coverage_start.read().await else {
-            return FetchRangeResolution::NotCovered;
-        };
 
         if Self::location_cmp(start, largest).is_gt() {
             return FetchRangeResolution::InvalidRange;
         }
-        if Self::location_cmp(start, coverage_start).is_lt() {
-            return FetchRangeResolution::NotCovered;
-        }
 
         let end_location = self.resolve_fetch_end_location(end, largest).await;
-        if !self.covers(start, end_location, largest).await {
+        if !self.covers(start, end_location).await {
             return FetchRangeResolution::NotCovered;
         }
         if !self.has_fetch_object(start, end_location).await {
@@ -315,6 +313,42 @@ impl TrackCache {
         }
 
         FetchRangeResolution::Serve { end_location }
+    }
+
+    pub(crate) async fn insert_fetch_known_range(
+        &self,
+        start: moqt::Location,
+        end: moqt::Location,
+    ) {
+        self.fetch_known_ranges.write().await.insert(start, end);
+    }
+
+    pub(crate) async fn covers(&self, start: moqt::Location, end: moqt::Location) -> bool {
+        if self
+            .fetch_known_ranges
+            .read()
+            .await
+            .contains_range(start, end)
+        {
+            return true;
+        }
+
+        let Some(largest) = self.largest_location().await else {
+            return false;
+        };
+        let Some(coverage_start) = *self.coverage_start.read().await else {
+            return false;
+        };
+
+        if Self::location_cmp(start, coverage_start).is_lt() {
+            return self
+                .fetch_known_ranges
+                .read()
+                .await
+                .contains_range(start, coverage_start)
+                && self.live_covers(coverage_start, end, largest).await;
+        }
+        self.live_covers(start, end, largest).await
     }
 
     async fn initialize_coverage_start(&self, location: moqt::Location) {
@@ -417,7 +451,7 @@ impl TrackCache {
         requested_end
     }
 
-    async fn covers(
+    async fn live_covers(
         &self,
         start: moqt::Location,
         end: moqt::Location,
@@ -635,6 +669,21 @@ mod tests {
         })
     }
 
+    fn make_status_object(status: moqt::ObjectStatus) -> DataObject {
+        let message_type =
+            SubgroupHeader::new(0, 0, SubgroupId::Value(0), 0, false, false).message_type;
+        DataObject::SubgroupObject(SubgroupObjectField {
+            message_type,
+            object_id_delta: 0,
+            extension_headers: ExtensionHeaders {
+                prior_group_id_gap: vec![],
+                prior_object_id_gap: vec![],
+                immutable_extensions: vec![],
+            },
+            subgroup_object: SubgroupObject::new_status(u8::from(status) as u64),
+        })
+    }
+
     #[tokio::test]
     async fn largest_location_returns_none_when_empty() {
         // Arrange: empty cache
@@ -808,6 +857,215 @@ mod tests {
                     object_id: 2
                 }
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn covers_live_range_from_first_ingested_object_to_open_largest_group() {
+        // Arrange: live ingestion started at group 3, group 3 and 4 are closed,
+        // and group 5 is the currently open largest group.
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        fill_group_with_ids(&cache, 3, &[0]).await;
+        cache.close_stream_subgroup(3, &subgroup).await;
+        fill_group_with_ids(&cache, 4, &[0]).await;
+        cache.close_stream_subgroup(4, &subgroup).await;
+        fill_group_with_ids(&cache, 5, &[0]).await;
+
+        // Act / Assert: live coverage starts at group 3 and includes the open largest group.
+        assert!(
+            cache
+                .covers(
+                    moqt::Location {
+                        group_id: 3,
+                        object_id: 0
+                    },
+                    moqt::Location {
+                        group_id: 5,
+                        object_id: 1
+                    },
+                )
+                .await
+        );
+        assert!(
+            !cache
+                .covers(
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 0
+                    },
+                    moqt::Location {
+                        group_id: 5,
+                        object_id: 1
+                    },
+                )
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn covers_fetch_known_range_after_upstream_fetch_completes() {
+        // Arrange: an upstream FETCH completed for [g0:o0, g3:o0).
+        let cache = TrackCache::new();
+        cache
+            .insert_fetch_known_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 3,
+                    object_id: 0,
+                },
+            )
+            .await;
+
+        // Act / Assert: the completed FETCH range is now known even without live coverage.
+        assert!(
+            cache
+                .covers(
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 0
+                    },
+                    moqt::Location {
+                        group_id: 3,
+                        object_id: 0
+                    },
+                )
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_fetch_range_uses_fetch_known_range_before_live_coverage_start() {
+        // Arrange: live cache started at g3, then an upstream FETCH filled g0..g2.
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        fill_group_with_ids(&cache, 3, &[0]).await;
+        cache.close_stream_subgroup(3, &subgroup).await;
+        fill_group_with_ids(&cache, 0, &[0]).await;
+        cache
+            .insert_fetch_known_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 3,
+                    object_id: 0,
+                },
+            )
+            .await;
+
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 3,
+                    object_id: 0,
+                },
+            )
+            .await;
+
+        // Assert: the filled historical range is locally servable on later FETCHes.
+        assert_eq!(
+            resolution,
+            FetchRangeResolution::Serve {
+                end_location: moqt::Location {
+                    group_id: 3,
+                    object_id: 0
+                }
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn covers_returns_false_for_datagram_only_objects() {
+        // Arrange: datagrams are cached for delivery but cannot prove that gaps
+        // are object non-existence.
+        let cache = TrackCache::new();
+        cache
+            .append_datagram_object(0, Some(1), make_object(0))
+            .await;
+        cache
+            .append_datagram_object(0, Some(3), make_object(0))
+            .await;
+        cache.close_datagram_group(0).await;
+
+        // Act / Assert: datagram-only cache contents never establish fetch coverage.
+        assert!(
+            !cache
+                .covers(
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 1
+                    },
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 4
+                    },
+                )
+                .await
+        );
+        assert!(
+            !cache
+                .covers(
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 3
+                    },
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 4
+                    },
+                )
+                .await
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_removes_fetch_known_range_for_deleted_objects() {
+        // Arrange: a completed upstream FETCH made [g0:o0, g3:o0) known,
+        // but the cached object at the head later expires.
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        fill_group_with_ids(&cache, 0, &[0]).await;
+        cache
+            .insert_fetch_known_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 3,
+                    object_id: 0,
+                },
+            )
+            .await;
+
+        // Act: object g0:o0 expires.
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl).await;
+
+        // Assert: coverage can no longer claim the deleted head object.
+        assert!(
+            !cache
+                .covers(
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 0
+                    },
+                    moqt::Location {
+                        group_id: 1,
+                        object_id: 0
+                    },
+                )
+                .await
         );
     }
 
@@ -1022,6 +1280,45 @@ mod tests {
             .await;
         // Assert: 0,1,2 included; 3 (the End) excluded
         assert_eq!(object_ids(&objects), vec![(0, 0), (0, 1), (0, 2)]);
+    }
+
+    #[tokio::test]
+    async fn get_fetch_objects_preserves_status_objects() {
+        // Arrange: a status object carries positive knowledge about non-existence.
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .append_stream_object(0, &subgroup, None, make_header(0))
+            .await;
+        cache
+            .append_stream_object(
+                0,
+                &subgroup,
+                Some(2),
+                make_status_object(moqt::ObjectStatus::DoesNotExist),
+            )
+            .await;
+
+        // Act
+        let objects = cache
+            .get_fetch_objects(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 3,
+                },
+            )
+            .await;
+
+        // Assert: the status object is returned rather than filtered out.
+        assert_eq!(object_ids(&objects), vec![(0, 2)]);
+        assert!(matches!(
+            objects[0].fetch_object,
+            moqt::FetchObject::Status(moqt::ObjectStatus::DoesNotExist)
+        ));
     }
 
     #[tokio::test]
