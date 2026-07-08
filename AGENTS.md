@@ -28,6 +28,12 @@ Application and integration components (draft reference is normally not required
 
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
 
+### Architecture Documentation
+- Design overviews and the intent behind the module structure are recorded under `architecture_decision_record/`:
+  - `architecture_decision_record/moqt/architecture.md` — `moqt` crate design (transport abstraction, session/runtime model, control/data plane split).
+  - `architecture_decision_record/relay/architecture.md` — `relay` crate design (event pipeline, ingress/egress/cache, multi-relay routing).
+- Read the relevant architecture document before making structural changes (adding modules, moving responsibilities, changing task/channel topology) to `moqt` or `relay`, and update it when a change alters the documented design.
+
 ## 3. Specifications
 - MoQT-related specifications are stored in the `spec` directory.
 - For library components listed in the draft-governed table above, use only the draft listed in `Related Draft` as the authoritative specification. Do not consult other drafts unless the task explicitly requires them.
