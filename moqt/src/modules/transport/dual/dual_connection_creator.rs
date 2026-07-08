@@ -69,7 +69,9 @@ impl TransportConnectionCreator for DualProtocolCreator {
         let keep_alive_sec = std::time::Duration::from_secs(keep_alive_sec);
         transport_config.keep_alive_interval(Some(keep_alive_sec));
         transport_config.max_concurrent_uni_streams(100000u32.into());
-        transport_config.send_window(64 * 1024);
+        // Keep in sync with QUICConnectionCreator: priorities need room to
+        // buffer multiple streams at the QUIC layer (see quic_connection_creator.rs).
+        transport_config.send_window(8 * 1024 * 1024);
         transport_config.packet_threshold(5);
         transport_config.stream_receive_window(quinn::VarInt::from_u32(1024 * 1024));
 
