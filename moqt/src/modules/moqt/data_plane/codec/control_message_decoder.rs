@@ -263,3 +263,129 @@ impl ControlMessageDecoder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bytes::{BufMut, BytesMut};
+    use tokio_util::codec::Decoder;
+
+    use crate::modules::moqt::control_plane::control_messages::messages::parameters::{
+        filter_type::FilterType, group_order::GroupOrder,
+    };
+    use crate::modules::moqt::control_plane::control_messages::messages::{
+        subscribe::Subscribe, unsubscribe::Unsubscribe,
+    };
+    use crate::modules::moqt::data_plane::stream::received_message::ReceivedMessage;
+    use crate::wire::{ControlMessageType, encode_control_message};
+
+    use super::ControlMessageDecoder;
+
+    fn make_subscribe() -> Subscribe {
+        Subscribe {
+            request_id: 7,
+            track_namespace: vec!["test".to_string()],
+            track_name: "track".to_string(),
+            subscriber_priority: 0,
+            group_order: GroupOrder::Ascending,
+            forward: true,
+            filter_type: FilterType::LargestObject,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+        }
+    }
+
+    #[test]
+    fn decode_returns_none_for_empty_buffer() {
+        let mut decoder = ControlMessageDecoder;
+        let mut buf = BytesMut::new();
+
+        let result = decoder.decode(&mut buf).expect("decode should not fail");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn decode_waits_for_full_frame_then_completes() {
+        let mut decoder = ControlMessageDecoder;
+        let subscribe = make_subscribe();
+        let framed = encode_control_message(ControlMessageType::Subscribe, subscribe.encode());
+
+        let mut buf = BytesMut::from(&framed[..framed.len() - 1]);
+        let result = decoder.decode(&mut buf).expect("decode should not fail");
+        assert!(result.is_none());
+        // partial frame must stay in the buffer until the rest arrives
+        assert_eq!(buf.len(), framed.len() - 1);
+
+        buf.put_slice(&framed[framed.len() - 1..]);
+        let message = decoder
+            .decode(&mut buf)
+            .expect("decode should not fail")
+            .expect("frame should be complete");
+        match message {
+            ReceivedMessage::Subscribe(decoded) => assert_eq!(decoded, subscribe),
+            other => panic!("Expected Subscribe, got {:?}", other),
+        }
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn decode_multiple_messages_in_one_buffer() {
+        let mut decoder = ControlMessageDecoder;
+        let subscribe = make_subscribe();
+        let unsubscribe = Unsubscribe { request_id: 7 };
+
+        let mut buf = BytesMut::new();
+        buf.unsplit(encode_control_message(
+            ControlMessageType::Subscribe,
+            subscribe.encode(),
+        ));
+        buf.unsplit(encode_control_message(
+            ControlMessageType::UnSubscribe,
+            unsubscribe.encode(),
+        ));
+
+        let first = decoder
+            .decode(&mut buf)
+            .expect("decode should not fail")
+            .expect("first frame should be complete");
+        match first {
+            ReceivedMessage::Subscribe(decoded) => assert_eq!(decoded, subscribe),
+            other => panic!("Expected Subscribe, got {:?}", other),
+        }
+
+        let second = decoder
+            .decode(&mut buf)
+            .expect("decode should not fail")
+            .expect("second frame should be complete");
+        match second {
+            ReceivedMessage::Unsubscribe(decoded) => assert_eq!(decoded, unsubscribe),
+            other => panic!("Expected Unsubscribe, got {:?}", other),
+        }
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn decode_rejects_unknown_message_type() {
+        let mut decoder = ControlMessageDecoder;
+        // 0x3f is not a defined control message type
+        let mut buf = BytesMut::new();
+        buf.put_u8(0x3f);
+        buf.put_u16(0);
+
+        let result = decoder.decode(&mut buf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_malformed_payload_yields_fatal_error() {
+        let mut decoder = ControlMessageDecoder;
+        // Subscribe frame whose payload is truncated garbage
+        let payload = BytesMut::from(&[0x07_u8][..]);
+        let mut buf = encode_control_message(ControlMessageType::Subscribe, payload);
+
+        let message = decoder
+            .decode(&mut buf)
+            .expect("framing should succeed")
+            .expect("frame should be complete");
+        assert!(matches!(message, ReceivedMessage::FatalError()));
+    }
+}
